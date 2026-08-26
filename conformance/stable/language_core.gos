@@ -12,5 +12,5 @@ fn main() {
         499500 => "ok"
         _ => "bad"
     }
-    println!("{}:{}", label, answer)
+    println("{}:{}", label, answer)
 }

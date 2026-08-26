@@ -34,7 +34,7 @@ fn main() {
     // Alive: the strong binding is still in scope at the upgrade.
     let strong = Node::Pair(10, 20)
     let w = strong.downgrade()
-    println!("alive_sum={}", describe(w))
+    println("alive_sum={}", describe(w))
     let _keep_strong_alive = strong
 
     // Copying a weak keeps observing the same referent.
@@ -43,11 +43,11 @@ fn main() {
     let wb = wa
     match wb.upgrade() {
         Some(n) => match n {
-            Node::Leaf(v) => println!("copy_alive={}", v)
-            Node::Pair(_, _) => println!("copy_pair")
-            Node::Nil => println!("copy_nil")
+            Node::Leaf(v) => println("copy_alive={}", v)
+            Node::Pair(_, _) => println("copy_pair")
+            Node::Nil => println("copy_nil")
         }
-        None => println!("copy_dead")
+        None => println("copy_dead")
     }
     let _keep_strong2_alive = strong2
 
@@ -56,24 +56,24 @@ fn main() {
     let w3 = strong3.downgrade()
     if let Some(n) = w3.upgrade() {
         match n {
-            Node::Leaf(v) => println!("iflet_alive={}", v)
-            Node::Pair(_, _) => println!("iflet_pair")
-            Node::Nil => println!("iflet_nil")
+            Node::Leaf(v) => println("iflet_alive={}", v)
+            Node::Pair(_, _) => println("iflet_pair")
+            Node::Nil => println("iflet_nil")
         }
     } else {
-        println!("iflet_dead")
+        println("iflet_dead")
     }
     let _keep_strong3_alive = strong3
 
     // Dead: the referent was dropped at the end of make_dead_weak.
     let dead = make_dead_weak()
-    println!("dead_result={}", describe(dead))
+    println("dead_result={}", describe(dead))
 
     // `if let` upgrade form on a dead referent.
     let dead2 = make_dead_weak()
     if let Some(_n) = dead2.upgrade() {
-        println!("iflet_dead_some")
+        println("iflet_dead_some")
     } else {
-        println!("iflet_dead_none")
+        println("iflet_dead_none")
     }
 }

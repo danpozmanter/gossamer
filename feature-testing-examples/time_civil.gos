@@ -9,11 +9,11 @@ assert(civil.nanosecond == 999000000)
 let gap = time::CivilTime { year: 2026, month: 3, day: 8, hour: 2, minute: 30, second: 0, nanosecond: 0, offset_seconds: 0, weekday: 0 }
 match ny.resolve(gap).unwrap() {
     time::CivilResolution::Gap => ()
-    _ => panic!("expected DST gap")
+    _ => panic("expected DST gap")
 }
 
 let fold = time::CivilTime { year: 2026, month: 11, day: 1, hour: 1, minute: 30, second: 0, nanosecond: 0, offset_seconds: 0, weekday: 0 }
 match ny.resolve(fold).unwrap() {
     time::CivilResolution::Fold(earlier, later) => assert(earlier < later)
-    _ => panic!("expected DST fold")
+    _ => panic("expected DST fold")
 }

@@ -34,7 +34,7 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile, src: &str) -> Vec<Finding> {
         "redundant_clone" => lint_redundant_clone(sf),
         "double_negation" => lint_double_negation(sf),
         "self_assignment" => lint_self_assignment(sf),
-        "todo_macro" => lint_todo_macro(sf),
+        "todo_macro" => lint_todo_macro(sf, src),
         "i64_only_container_family" => lint_i64_only_container_family(sf),
         "bool_literal_in_condition" => lint_bool_literal_in_condition(sf),
         "let_and_return" => lint_let_and_return(sf),
@@ -72,7 +72,6 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile, src: &str) -> Vec<Finding> {
         "empty_loop" => lint_empty_loop(sf),
         "fill_loop" => lint_fill_loop(sf),
         "substring_byte_scan" => lint_substring_byte_scan(sf),
-        "detached_go_in_cohort" => lint_detached_go_in_cohort(sf),
         _ => Vec::new(),
     }
 }
@@ -176,7 +175,7 @@ pub(crate) fn walk_expr(expr: &Expr, visitor: &mut dyn FnMut(&Expr)) {
             walk_expr(body, visitor);
         }
         ExprKind::Closure { body, .. } => walk_expr(body, visitor),
-        ExprKind::Return(Some(inner)) | ExprKind::Try(inner) | ExprKind::Go(inner) => {
+        ExprKind::Return(Some(inner)) | ExprKind::Try(inner) => {
             walk_expr(inner, visitor);
         }
         ExprKind::Break { value: Some(v), .. } => walk_expr(v, visitor),
@@ -220,7 +219,6 @@ pub(crate) fn walk_expr(expr: &Expr, visitor: &mut dyn FnMut(&Expr)) {
         | ExprKind::Return(None)
         | ExprKind::Break { value: None, .. }
         | ExprKind::Continue { .. }
-        | ExprKind::MacroCall(_)
         | ExprKind::Error => {}
     }
 }
@@ -239,7 +237,7 @@ fn walk_stmt_exprs(stmt: &Stmt, visitor: &mut dyn FnMut(&Expr)) {
         StmtKind::Let {
             init: Some(init), ..
         } => walk_expr(init, visitor),
-        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => {
             walk_expr(expr, visitor);
         }
         StmtKind::Item(_) | StmtKind::Let { .. } => {}
@@ -652,10 +650,8 @@ fn lint_shadowed_binding(sf: &SourceFile) -> Vec<Finding> {
         for stmt in &block.stmts {
             if let StmtKind::Let { pattern, init, .. } = &stmt.kind {
                 if let Some((name, span, _)) = ident_name(pattern) {
-                    // `let m = ordered_map::insert(m, ...)` is the
-                    // functional re-bind idiom for the immutable-update
-                    // containers: the new binding is derived from the old
-                    // one, so the shadow is the point.
+                    // `let s = f(s)` derives the new binding from the old
+                    // one, so the shadow is the point of the statement.
                     let rebind = init
                         .as_ref()
                         .is_some_and(|init| expr_mentions_name(init, name));
@@ -763,23 +759,13 @@ fn lint_panic_in_main(sf: &SourceFile) -> Vec<Finding> {
                             if last_path_seg(path) == Some("panic") {
                                 out.push((
                                     expr.span,
-                                    "`panic!` inside `main` aborts without a clean exit code"
+                                    "`panic` inside `main` aborts without a clean exit code"
                                         .to_string(),
                                     Some(
                                         "return a `Result` or use `std::process::exit`".to_string(),
                                     ),
                                 ));
                             }
-                        }
-                    }
-                    if let ExprKind::MacroCall(mc) = &expr.kind {
-                        if mc.path.segments.last().map(|s| s.name.name.as_str()) == Some("panic") {
-                            out.push((
-                                expr.span,
-                                "`panic!` inside `main` aborts without a clean exit code"
-                                    .to_string(),
-                                Some("return a `Result` or use `std::process::exit`".to_string()),
-                            ));
                         }
                     }
                 });
@@ -945,37 +931,34 @@ fn lint_i64_only_container_family(sf: &SourceFile) -> Vec<Finding> {
     out
 }
 
-fn lint_todo_macro(sf: &SourceFile) -> Vec<Finding> {
+fn lint_todo_macro(sf: &SourceFile, src: &str) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
-        walk_expr(body, &mut |expr| match &expr.kind {
-            ExprKind::MacroCall(mc) => {
-                if let Some(name) = mc.path.segments.last().map(|s| s.name.name.as_str()) {
-                    if matches!(name, "todo" | "unimplemented") {
-                        out.push((
-                            expr.span,
-                            format!("`{name}!` is a placeholder, not a shippable expression"),
-                            Some("implement the branch before merging".to_string()),
-                        ));
-                    }
+        walk_expr(body, &mut |expr| {
+            // `todo(..)` and `unimplemented(..)` expand where they are
+            // written, so what reaches here is the panic they stand for,
+            // carrying the span of the call the author wrote.
+            let ExprKind::Call { callee, .. } = &expr.kind else {
+                return;
+            };
+            let ExprKind::Path(path) = &callee.kind else {
+                return;
+            };
+            if last_path_seg(path) != Some("panic") {
+                return;
+            }
+            let Some(text) = src.get(expr.span.start as usize..expr.span.end as usize) else {
+                return;
+            };
+            for name in ["todo", "unimplemented"] {
+                if text.starts_with(name) && text[name.len()..].trim_start().starts_with('(') {
+                    out.push((
+                        expr.span,
+                        format!("`{name}(...)` is a placeholder, not a shippable expression"),
+                        Some("implement the branch before merging".to_string()),
+                    ));
                 }
             }
-            ExprKind::Call { callee, .. } => {
-                if let ExprKind::Path(path) = &callee.kind {
-                    if let Some(name) = path.segments.last().map(|s| s.name.name.as_str()) {
-                        if matches!(name, "todo" | "unimplemented") {
-                            out.push((
-                                expr.span,
-                                format!(
-                                    "`{name}(...)` is a placeholder, not a shippable expression"
-                                ),
-                                Some("implement the branch before merging".to_string()),
-                            ));
-                        }
-                    }
-                }
-            }
-            _ => {}
         });
     });
     out
@@ -2323,70 +2306,6 @@ fn lint_fill_loop(sf: &SourceFile) -> Vec<Finding> {
 
 /// A `s.substring(i, i + 1)` single-byte read: `s.byte_at(i)` reads the
 /// same byte offset as an `i64` without allocating a String per step.
-/// A `go` inside a `cohort { }` body spawns a goroutine the cohort does
-/// not own, which is the leak the block exists to prevent. `spawn`
-/// attaches the child to the cohort instead.
-fn lint_detached_go_in_cohort(sf: &SourceFile) -> Vec<Finding> {
-    let mut out = Vec::new();
-    each_fn_body(sf, |body| {
-        walk_expr(body, &mut |expr| {
-            let ExprKind::Block(block) = &expr.kind else {
-                return;
-            };
-            if !block.is_cohort() {
-                return;
-            }
-            // Only this cohort's own statements: a nested cohort reports
-            // its own body, and reporting it twice would say the same
-            // thing about the same `go`.
-            for stmt in &block.stmts {
-                // Statement position (`go f()`) and expression position
-                // (`let _ = go f()`) are separate nodes in the grammar.
-                let inner = match &stmt.kind {
-                    StmtKind::Expr { expr: inner, .. } => inner,
-                    StmtKind::Go(_) => {
-                        out.push((
-                            stmt.span,
-                            "`go` inside a `cohort` spawns a goroutine the cohort does not own"
-                                .to_string(),
-                            Some(
-                                "use `spawn(..)` so the cohort joins the child and reports its \
-                                 failure"
-                                    .to_string(),
-                            ),
-                        ));
-                        continue;
-                    }
-                    StmtKind::Let {
-                        init: Some(inner), ..
-                    } => inner,
-                    _ => continue,
-                };
-                walk_expr(inner, &mut |candidate| {
-                    if let ExprKind::Block(nested) = &candidate.kind
-                        && nested.is_cohort()
-                    {
-                        return;
-                    }
-                    if matches!(candidate.kind, ExprKind::Go(_)) {
-                        out.push((
-                            candidate.span,
-                            "`go` inside a `cohort` spawns a goroutine the cohort does not own"
-                                .to_string(),
-                            Some(
-                                "use `spawn(..)` so the cohort joins the child and reports its \
-                                 failure"
-                                    .to_string(),
-                            ),
-                        ));
-                    }
-                });
-            }
-        });
-    });
-    out
-}
-
 fn lint_substring_byte_scan(sf: &SourceFile) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {

@@ -6,7 +6,7 @@
 // declaring the name settles it, because there is nothing else the call
 // could reach.
 
-enum Bag { One(i64), Many(Box<Bag>, Box<Bag>) }
+enum Bag { One(i64), Many(Bag, Bag) }
 
 impl Bag {
     // Every name here also names a sequence combinator.
@@ -20,7 +20,7 @@ impl Bag {
     fn find(&self) -> i64 { 48 }
 }
 
-enum Tree<T> { Leaf(T), Node(Box<Tree<T>>, Box<Tree<T>>) }
+enum Tree<T> { Leaf(T), Node(Tree<T>, Tree<T>) }
 
 impl<T> Tree<T> {
     fn which(&self) -> i64 {
@@ -33,14 +33,14 @@ impl<T> Tree<T> {
 
 enum Either<A, B> { Left(A), Right(B) }
 
-fn side<A, B>(e: &Either<A, B>) -> i64 {
+fn side<A, B>(e: Either<A, B>) -> i64 {
     match e { Either::Left(_) => 0, Either::Right(_) => 1 }
 }
 
 // Calls the methods under test enough times to pass the JIT's admission
 // threshold, so the compiled tier actually compiles this dispatch rather
 // than falling back to the interpreter and comparing it against itself.
-fn hot_dispatch(bag: &Bag, tree: &Tree<i64>) -> i64 {
+fn hot_dispatch(bag: Bag, tree: Tree<i64>) -> i64 {
     let mut total = 0
     for _ in 0..2000 {
         total += bag.count() + bag.len() + bag.sum() + bag.map() + bag.min() + bag.find()
@@ -51,19 +51,19 @@ fn hot_dispatch(bag: &Bag, tree: &Tree<i64>) -> i64 {
 
 fn main() {
     let bag = Bag::Many(Bag::One(1), Bag::Many(Bag::One(2), Bag::One(3)))
-    println!("count {}", bag.count())
-    println!("len {} sum {} map {}", bag.len(), bag.sum(), bag.map())
-    println!("min {} find {}", bag.min(), bag.find())
+    println("count {}", bag.count())
+    println("len {} sum {} map {}", bag.len(), bag.sum(), bag.map())
+    println("min {} find {}", bag.min(), bag.find())
 
     let leaf: Tree<i64> = Tree::Leaf(9)
-    println!("leaf which {} tally {}", leaf.which(), leaf.tally())
+    println("leaf which {} tally {}", leaf.which(), leaf.tally())
 
     let node: Tree<i64> = Tree::Node(Tree::Leaf(1), Tree::Node(Tree::Leaf(2), Tree::Leaf(3)))
-    println!("node which {} tally {}", node.which(), node.tally())
+    println("node which {} tally {}", node.which(), node.tally())
 
-    println!("hot {}", hot_dispatch(&bag, &node))
+    println("hot {}", hot_dispatch(bag, node))
 
     let l: Either<String, i64> = Either::Left("x")
     let r: Either<String, i64> = Either::Right(7)
-    println!("either {} {}", side(&l), side(&r))
+    println("either {} {}", side(l), side(r))
 }

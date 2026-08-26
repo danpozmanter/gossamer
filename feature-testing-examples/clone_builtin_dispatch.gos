@@ -10,19 +10,19 @@ enum Val { I(i64), T(String), N }
 
 fn main() {
     let s = "hello"
-    println!("str: {}", s.clone())
+    println("str: {}", s.clone())
 
     let xs: Vec<String> = Vec::from(["a", "b", "c"])
     let ys = xs.clone()
-    println!("vec: {} {}", ys.len(), ys[2])
+    println("vec: {} {}", ys.len(), ys[2])
 
     let p = Point { x: 3, y: 4 }
     let q = p.clone()
-    println!("point: {} {}", q.x, q.y)
+    println("point: {} {}", q.x, q.y)
 
     let v = Val::T("vt")
     match v.clone() {
-        Val::T(t) => println!("val: {}", t)
-        _ => println!("val: ?")
+        Val::T(t) => println("val: {}", t)
+        _ => println("val: ?")
     }
 }

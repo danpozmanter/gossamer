@@ -123,7 +123,7 @@ fn compiled_recursive_enum_loop_stays_under_rss_cap() {
     std::fs::write(
         &source,
         "
-enum Tree { Leaf, Node(i64, Box<Tree>, Box<Tree>) }
+enum Tree { Leaf, Node(i64, Tree, Tree) }
 
 fn build(d: i64) -> Tree {
     if d == 0 {
@@ -133,7 +133,7 @@ fn build(d: i64) -> Tree {
     }
 }
 
-fn checksum(t: &Tree) -> i64 {
+fn checksum(t: Tree) -> i64 {
     match t {
         Tree::Leaf => 1,
         Tree::Node(v, l, r) => *v + checksum(l) + checksum(r),
@@ -144,10 +144,10 @@ fn main() {
     let mut total = 0
     let mut i = 0
     while i < 200 {
-        total += checksum(&build(14))
+        total += checksum(build(14))
         i += 1
     }
-    println!(\"total = {}\", total)
+    println(\"total = {}\", total)
 }
 ",
     )
@@ -222,13 +222,13 @@ fn compiled_named_binding_loop_stays_under_rss_cap() {
     std::fs::write(
         &source,
         "
-enum Tree { Leaf, Node(i64, Box<Tree>, Box<Tree>) }
+enum Tree { Leaf, Node(i64, Tree, Tree) }
 
 fn build(d: i64) -> Tree {
     if d == 0 { Tree::Leaf } else { Tree::Node(d, Box::new(build(d - 1)), Box::new(build(d - 1))) }
 }
 
-fn checksum(t: &Tree) -> i64 {
+fn checksum(t: Tree) -> i64 {
     match t { Tree::Leaf => 1, Tree::Node(v, l, r) => *v + checksum(l) + checksum(r) }
 }
 
@@ -237,10 +237,10 @@ fn main() {
     let mut i = 0
     while i < 200 {
         let t = build(14)
-        total += checksum(&t)
+        total += checksum(t)
         i += 1
     }
-    println!(\"total = {}\", total)
+    println(\"total = {}\", total)
 }
 ",
     )
@@ -354,7 +354,7 @@ fn main() {
         r += 1
     }
     total += v.len()
-    println!(\"total = {}\", total)
+    println(\"total = {}\", total)
 }
 ",
     )
@@ -448,7 +448,7 @@ fn main() {
         total += rec.data.len() + rec.name.len()
         r += 1
     }
-    println!(\"total = {}\", total)
+    println(\"total = {}\", total)
 }
 ",
     )
@@ -555,7 +555,7 @@ fn vm_builtin_callback_loop_rss_is_independent_of_iteration_count() {
             &source,
             format!(
                 "
-fn work(xs: &Vec<i64>) -> i64 {{
+fn work(xs: Vec<i64>) -> i64 {{
     xs.iter().filter(|x| x > 5).count()
 }}
 
@@ -569,10 +569,10 @@ fn main() {{
     let mut total = 0
     let mut k = 0
     while k < {iterations} {{
-        total += work(&xs)
+        total += work(xs)
         k += 1
     }}
-    println!(\"total = {{}}\", total)
+    println(\"total = {{}}\", total)
 }}
 "
             ),
@@ -657,8 +657,8 @@ fn main() {
     let n = env::args().first().unwrap_or(\"64\").to_i64().unwrap_or(64)
     let mut k = 0
     let mut tags = #[]
-    for i in 0..n { (k, tags) = pair(i) }
-    println!(\"{} {}\", k, tags.len())
+    for i in 0..n { k, tags = pair(i) }
+    println(\"{} {}\", k, tags.len())
 }
 ",
     )

@@ -1,0 +1,48 @@
+// The one rule for a compiler-known format call: argument zero is the
+// template when it is a string literal, and a lone argument that is not
+// one renders as if the template were `"{}"`.
+//
+// The last case is the security property: a value is never read as a
+// template, so text that happens to carry braces prints as it stands.
+
+fn make_text() -> String { "from a call" }
+
+fn main() {
+    println("plain")
+
+    let x = 7
+    println("{x}")
+
+    println("v={}", x)
+
+    println(x)
+
+    println()
+
+    println(make_text())
+
+    let braces = "{x}"
+    println(braces)
+    println("{}", braces)
+
+    print("no newline")
+    print("\n")
+
+    let joined = format("{} and {}", 1, 2)
+    println(joined)
+
+    eprintln("to stderr")
+    eprint("also stderr\n")
+
+    let empty = ""
+    println(empty)
+    println("{}", "")
+
+    // Every placeholder shape a template can carry.
+    println("{}{}", 1, 2)
+    println("{} {} {}", 1, 2, 3)
+    println("{}!", 9)
+    println("prefix {}", 9)
+    println("{{literal}}")
+    println("{:?}", #[1, 2])
+}

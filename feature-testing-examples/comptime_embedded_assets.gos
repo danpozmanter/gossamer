@@ -16,16 +16,16 @@ use std::fs
 comptime fn asset_table() -> String {
     let entries = match fs::read_dir("comptime_assets") {
         Ok(entries) => entries
-        Err(e) => panic!("comptime_assets is unreadable: {}", e)
+        Err(e) => panic("comptime_assets is unreadable: {}", e)
     }
     let mut out = ""
     for entry in entries {
         if entry.is_file {
-            let text = match fs::read_to_string(&entry.path) {
+            let text = match fs::read_to_string(entry.path) {
                 Ok(text) => text
-                Err(e) => panic!("{} is unreadable: {}", entry.path, e)
+                Err(e) => panic("{} is unreadable: {}", entry.path, e)
             }
-            out += format!("{}\u{1}{}\u{2}", entry.name, text)
+            out += format("{}\u{1}{}\u{2}", entry.name, text)
         }
     }
     out
@@ -43,6 +43,6 @@ fn main() {
     let mut names = assets.keys()
     names.sort()
     for name in names {
-        println!("{} -> {} bytes", name, assets.get(name).unwrap_or("").byte_len())
+        println("{} -> {} bytes", name, assets.get(name).unwrap_or("").byte_len())
     }
 }

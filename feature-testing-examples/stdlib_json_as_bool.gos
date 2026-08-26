@@ -6,7 +6,7 @@
 use std::encoding::json
 
 fn run() -> Result<(), String> {
-    let v = json::parse(&"{\"active\": true, \"disabled\": false, \"count\": 7, \"label\": \"x\"}")?
+    let v = json::parse("{\"active\": true, \"disabled\": false, \"count\": 7, \"label\": \"x\"}")?
     report("active", json::as_bool(json::get(v, "active").unwrap()))
     report("disabled", json::as_bool(json::get(v, "disabled").unwrap()))
     report("count", json::as_bool(json::get(v, "count").unwrap()))
@@ -14,16 +14,16 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-fn report(label: &String, value: Option<bool>) {
+fn report(label: String, value: Option<bool>) {
     match value {
-        Some(b) => println!("{}=Some({})", label, b)
-        None => println!("{}=None", label)
+        Some(b) => println("{}=Some({})", label, b)
+        None => println("{}=None", label)
     }
 }
 
 fn main() {
     match run() {
-        Ok(_) => println!("done")
-        Err(e) => println!("error: {}", e)
+        Ok(_) => println("done")
+        Err(e) => println("error: {}", e)
     }
 }

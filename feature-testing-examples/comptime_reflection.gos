@@ -45,9 +45,9 @@ const USER_DDL: String = comptime { create_table("users", typeInfo::<User>()) }
 const POINT_DDL: String = comptime { create_table("points", typeInfo::<Point>()) }
 
 fn main() {
-    println!("{}", USER_DDL)
-    println!("{}", POINT_DDL)
-    println!("{}", comptime { field_list(typeInfo::<User>()) })
+    println("{}", USER_DDL)
+    println("{}", POINT_DDL)
+    println("{}", comptime { field_list(typeInfo::<User>()) })
     // Reflected field count, folded to an integer literal.
-    println!("{}", comptime { typeInfo::<Point>().len() })
+    println("{}", comptime { typeInfo::<Point>().len() })
 }

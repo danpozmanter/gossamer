@@ -74,30 +74,30 @@ fn writes_field(mut h: Holder) -> i64 {
 fn main() {
     // An immutable caller binding is never written by a callee.
     let a = 5
-    println!("small returned {}, caller {}", small_scalar(a), a)
+    println("small returned {}, caller {}", small_scalar(a), a)
     let b = 5
-    println!("large returned {}, caller {}", large_scalar(b), b)
+    println("large returned {}, caller {}", large_scalar(b), b)
 
     let x = 1.0
-    println!("float returned {}, caller {}", writes_float(x), x)
+    println("float returned {}, caller {}", writes_float(x), x)
     let flag = true
-    println!("bool returned {}, caller {}", writes_bool(flag), flag)
+    println("bool returned {}, caller {}", writes_bool(flag), flag)
 
     let xs = #[1, 2]
-    println!("vec returned {}, caller {:?}", writes_vec(xs), xs)
+    println("vec returned {}, caller {:?}", writes_vec(xs), xs)
 
     let mut m: Map<String, i64> = Map::new()
     m.insert("a", 1)
-    println!("map returned {}, caller {:?}", writes_map(m), m)
+    println("map returned {}, caller {:?}", writes_map(m), m)
 
     let s = "hi"
-    println!("string returned {}, caller {}", writes_string(s), s)
+    println("string returned {}, caller {}", writes_string(s), s)
 
     let h = Holder { items: #[1] }
-    println!("field returned {}, caller {:?}", writes_field(h), h.items)
+    println("field returned {}, caller {:?}", writes_field(h), h.items)
 
     // A reference parameter is the one that does write through.
     let mut owned = #[1]
     through_reference(&mut owned)
-    println!("through &mut: {:?}", owned)
+    println("through &mut: {:?}", owned)
 }

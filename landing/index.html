@@ -121,9 +121,13 @@
         <article class="card">
           <h3>Structured concurrency with colorless functions</h3>
           <p>
-            <code>cohort</code> blocks with <code>spawn</code> for structured
-            concurrency by default. <code>go</code> and typed channels on 
-            an M:N scheduler. Blocking calls park the goroutine, not the thread.
+            A <code>cohort { }</code> owns every goroutine
+            <code>spawn</code>ed inside it: it cannot be left until each
+            has finished, the first failure cancels its siblings, and no
+            goroutine outlives the block that started it. Typed channels
+            on an M:N scheduler. No <code>async</code>, no
+            <code>await</code>, no two colours of function - a blocking
+            call parks the goroutine, not the thread.
           </p>
         </article>
         <article class="card">
@@ -295,7 +299,7 @@ let top = stack.pop().unwrap_or(0)
 println!("Stack: top={} len={}", top, stack.len())
 
 let entry = (1, "widgets", 2.5)
-let (id, name, unit_price) = entry
+let id, name, unit_price = entry
 println!("Tuple: {} {} {:.2} (first={})", id, name, unit_price, entry.0)</code></pre>
         </div>
       </div>

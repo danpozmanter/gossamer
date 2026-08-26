@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0053]: A `Display` implementation declared its rendering as `to_string`. - here
+--- framed ---
+error[GP0053]: A `Display` implementation declared its rendering as `to_string`.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

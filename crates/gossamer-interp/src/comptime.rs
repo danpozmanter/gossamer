@@ -377,8 +377,7 @@ fn walk<'a>(expr: &'a HirExpr, info: &ComptimeInfo, out: &mut Vec<Region<'a>>) {
         | HirExprKind::Break {
             value: Some(inner), ..
         }
-        | HirExprKind::Cast { value: inner, .. }
-        | HirExprKind::Go(inner) => walk(inner, info, out),
+        | HirExprKind::Cast { value: inner, .. } => walk(inner, info, out),
         HirExprKind::Tuple(elems) | HirExprKind::Array(HirArrayExpr::List(elems)) => {
             for e in elems {
                 walk(e, info, out);
@@ -431,7 +430,7 @@ fn walk_block_stmts<'a>(stmts: &'a [HirStmt], info: &ComptimeInfo, out: &mut Vec
                 init: Some(expr), ..
             } => walk(expr, info, out),
             HirStmtKind::Expr { expr, .. } => walk(expr, info, out),
-            HirStmtKind::Go(inner) | HirStmtKind::Defer(inner) => walk(inner, info, out),
+            HirStmtKind::Defer(inner) => walk(inner, info, out),
             HirStmtKind::Let { init: None, .. } | HirStmtKind::Item(_) => {}
         }
     }

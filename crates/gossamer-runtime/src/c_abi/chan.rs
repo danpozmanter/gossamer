@@ -67,6 +67,12 @@ pub struct GosChan {
     /// Whether this channel is currently counted among those holding a
     /// waiter that could proceed. Kept in step by [`GosChan::sync_ready`].
     counted_ready: std::sync::atomic::AtomicBool,
+    /// How many parties still reach this channel. A channel a single
+    /// binding owns starts at one and is reclaimed by the drop the
+    /// codegen emits at its last use; a spawn handle is shared with the
+    /// child that delivers the outcome, so it starts at two and the
+    /// party that leaves last reclaims it.
+    refs: AtomicUsize,
 }
 
 /// A goroutine suspended inside a send, and the value it is waiting to
@@ -151,6 +157,7 @@ pub unsafe extern "C" fn gos_rt_chan_new(elem_bytes: u32, cap: i64) -> *mut GosC
             recv_waiters: AtomicUsize::new(0),
             send_waiters: AtomicUsize::new(0),
             counted_ready: std::sync::atomic::AtomicBool::new(false),
+            refs: AtomicUsize::new(1),
         }))
     })
 }
@@ -833,31 +840,55 @@ pub unsafe extern "C" fn gos_rt_chan_close(c: *mut GosChan) -> i32 {
     }
 }
 
-/// Drops a channel created with `gos_rt_chan_new`.
-/// Closes the channel first so any thread parked on `not_empty` /
-/// `not_full` wakes with `RecvResult::Closed` / `SendResult::Closed`
-/// before the underlying storage is reclaimed. Calling this on a
-/// channel that other threads are still using is a logic error;
-/// the codegen emits the call at the channel's last live use.
+/// Drops this caller's reference to a channel created with
+/// `gos_rt_chan_new`. The last reference closes the channel, so any
+/// thread parked on `not_empty` / `not_full` wakes with
+/// `RecvResult::Closed` / `SendResult::Closed` before the underlying
+/// storage is reclaimed. The codegen emits the call at the channel's
+/// last live use.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_chan_drop(c: *mut GosChan) {
     ffi_entry!((), {
         if c.is_null() {
             return;
         }
-        // Close + notify before reclamation so parked threads observe
-        // the closed flag rather than racing the Box drop. The Drop
-        // impl on `GosChan` repeats the close+notify, harmlessly,
-        // because callers may also drop a `Box<GosChan>` directly in
-        // tests without going through this entry point.
-        unsafe {
-            // Idempotent close for reclamation - must not panic if the
-            // user already closed this channel explicitly (the
-            // user-facing `gos_rt_chan_close` panics on double-close).
-            chan_close_idempotent(&*c);
-            drop(Box::from_raw(c));
-        }
+        // SAFETY: `c` is a live channel this caller holds a reference to.
+        unsafe { chan_release(c) };
     });
+}
+
+/// Records one more party reaching `chan`.
+pub(crate) fn chan_retain(chan: &GosChan) {
+    chan.refs.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Drops one party's reference to `chan`, reclaiming the storage once
+/// the last one is gone.
+///
+/// # Safety
+/// `chan` must be a live channel the caller holds a reference to, and
+/// the caller must not touch it again.
+pub(crate) unsafe fn chan_release(chan: *mut GosChan) {
+    if chan.is_null() {
+        return;
+    }
+    // SAFETY: the caller's reference keeps the channel alive for this read.
+    let remaining = unsafe { (*chan).refs.fetch_sub(1, Ordering::AcqRel) };
+    if remaining != 1 {
+        return;
+    }
+    // Close + notify before reclamation so parked threads observe the
+    // closed flag rather than racing the Box drop. The Drop impl on
+    // `GosChan` repeats the close+notify, harmlessly, because callers
+    // may also drop a `Box<GosChan>` directly in tests without going
+    // through this entry point.
+    unsafe {
+        // Idempotent close for reclamation - must not panic if the user
+        // already closed this channel explicitly (the user-facing
+        // `gos_rt_chan_close` panics on double-close).
+        chan_close_idempotent(&*chan);
+        drop(Box::from_raw(chan));
+    }
 }
 
 impl Drop for GosChan {
@@ -1324,6 +1355,25 @@ mod tests {
         let got = unsafe { gos_rt_chan_try_recv(chan, std::ptr::addr_of_mut!(out).cast()) };
         assert_eq!(got, 1);
         assert_eq!(out, 11);
+        unsafe { gos_rt_chan_drop(chan) };
+    }
+
+    #[test]
+    fn a_retained_channel_outlives_the_first_drop() {
+        let chan = unsafe { gos_rt_chan_new(8, 1) };
+        assert!(!chan.is_null());
+        // SAFETY: `chan` is the channel constructed above, still live.
+        unsafe { chan_retain(&*chan) };
+        unsafe { gos_rt_chan_drop(chan) };
+        // The second party still reaches the channel: sending and
+        // receiving here would fault if the first drop had reclaimed it.
+        let value = 5_i64;
+        let sent = unsafe { gos_rt_chan_try_send(chan, std::ptr::addr_of!(value).cast()) };
+        assert_eq!(sent, 1);
+        let mut out = 0_i64;
+        let got = unsafe { gos_rt_chan_try_recv(chan, std::ptr::addr_of_mut!(out).cast()) };
+        assert_eq!(got, 1);
+        assert_eq!(out, 5);
         unsafe { gos_rt_chan_drop(chan) };
     }
 }

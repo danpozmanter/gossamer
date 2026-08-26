@@ -11,5 +11,5 @@ fn main() {
         if b >= b'0' && b <= b'9' { digits += 1 }
         if b == b'>' { gt += 1 }
     }
-    println!("{} {} {}", upper, digits, gt)
+    println("{} {} {}", upper, digits, gt)
 }

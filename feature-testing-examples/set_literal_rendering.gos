@@ -9,22 +9,22 @@ use std::collections::{BTreeSet, Map, Set}
 
 fn main() {
     let plain = #{ 2, 1 }
-    println!("display: {}", plain)
-    println!("debug: {:?}", plain)
+    println("display: {}", plain)
+    println("debug: {:?}", plain)
 
     let ordered: BTreeSet<i64> = #{ 3, 1 }
-    println!("ordered display: {}", ordered)
-    println!("ordered debug: {:?}", ordered)
+    println("ordered display: {}", ordered)
+    println("ordered debug: {:?}", ordered)
 
-    println!("in vec: {:?}", #[#{ 1, 2 }])
-    println!("in tuple: {:?}", (#{ 1 }, 2))
-    println!("in map: {:?}", { "k": #{ 1, 2 } })
-    println!("in option: {:?}", Some(#{ 5 }))
-    println!("of strings: {:?}", #{ "b", "a" })
-    println!("empty: {:?}", Set::new())
+    println("in vec: {:?}", #[#{ 1, 2 }])
+    println("in tuple: {:?}", (#{ 1 }, 2))
+    println("in map: {:?}", { "k": #{ 1, 2 } })
+    println("in option: {:?}", Some(#{ 5 }))
+    println("of strings: {:?}", #{ "b", "a" })
+    println("empty: {:?}", Set::new())
 
     // A set's local carries the bare handle word, so the method that
     // answers the text has to reach the same formatter `{}` does.
-    println!("to_string: {}", plain.to_string())
-    println!("ordered to_string: {}", ordered.to_string())
+    println("to_string: {}", plain.to_string())
+    println("ordered to_string: {}", ordered.to_string())
 }

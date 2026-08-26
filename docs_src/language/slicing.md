@@ -9,18 +9,18 @@ Indexing with a range yields the elements it covers:
 ```gossamer
 let xs = #[1, 2, 3, 4, 5]
 
-println!("{:?}", xs[1..3])     // #[2, 3]
-println!("{:?}", xs[..2])      // #[1, 2]
-println!("{:?}", xs[3..])      // #[4, 5]
-println!("{:?}", xs[..])       // #[1, 2, 3, 4, 5]
-println!("{:?}", xs[1..=3])    // #[2, 3, 4]
+println("{:?}", xs[1..3])     // #[2, 3]
+println("{:?}", xs[..2])      // #[1, 2]
+println("{:?}", xs[3..])      // #[4, 5]
+println("{:?}", xs[..])       // #[1, 2, 3, 4, 5]
+println("{:?}", xs[1..=3])    // #[2, 3, 4]
 ```
 
 Fixed arrays, slices, and `Vec` all accept it:
 
 ```gossamer
 let a: [i64; 5] = [1, 2, 3, 4, 5]
-println!("{:?}", a[1..3])      // #[2, 3]
+println("{:?}", a[1..3])      // #[2, 3]
 ```
 
 A range binds looser than arithmetic, so `xs[i * 2..n]` is `xs[(i * 2)..n]`
@@ -32,8 +32,8 @@ An out-of-range range yields the part that exists:
 
 ```gossamer
 let xs = #[1, 2, 3]
-println!("{:?}", xs[1..99])    // #[2, 3]
-println!("{:?}", xs[9..12])    // #[]
+println("{:?}", xs[1..99])    // #[2, 3]
+println("{:?}", xs[9..12])    // #[]
 ```
 
 This differs from element indexing, which panics, and the difference is the
@@ -62,11 +62,11 @@ slicing a string *is* `substring`:
 
 ```gossamer
 let s = "héllo"                // 5 characters, 6 bytes
-println!("{}", s.len())        // 5
-println!("{}", s.byte_len())   // 6
+println("{}", s.len())        // 5
+println("{}", s.byte_len())   // 6
 
-println!("{}", s[1..3])        // é   - bytes 1..3, the two bytes of `é`
-println!("{}", s.substring(1, 3))  // é - the same operation
+println("{}", s[1..3])        // é   - bytes 1..3, the two bytes of `é`
+println("{}", s.substring(1, 3))  // é - the same operation
 ```
 
 Offsets snap outward to codepoint boundaries, so a slice is always valid

@@ -10,7 +10,7 @@ fn main() {
     let u = time::unix_ms()
     time::sleep(1)
     let d = time::since_ms(a)
-    println!("mono_ok={}", a >= 0 && b >= 0)
-    println!("now_ok={}", n > 0 && u > 0)
-    println!("since_ok={}", d >= 0)
+    println("mono_ok={}", a >= 0 && b >= 0)
+    println("now_ok={}", n > 0 && u > 0)
+    println("since_ok={}", d >= 0)
 }

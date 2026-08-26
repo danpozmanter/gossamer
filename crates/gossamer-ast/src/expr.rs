@@ -250,11 +250,6 @@ pub enum ExprKind {
     Try(Box<Expr>),
     /// `select { arms }` expression.
     Select(Vec<SelectArm>),
-    /// `name!(...)` or `name!{...}` macro invocation.
-    MacroCall(MacroCall),
-    /// `go expr` statement-expression form. When `expr` is a closure with no
-    /// arguments, pretty-printers emit the sugared `go fn() { body }` form.
-    Go(Box<Expr>),
     /// Synthetic error placeholder inserted during error recovery. Downstream
     /// passes return a fresh type variable or unit when they encounter this
     /// variant, suppressing cascading diagnostics for the same malformed
@@ -545,39 +540,4 @@ pub enum SelectOp {
     },
     /// `default`.
     Default,
-}
-
-/// A macro invocation such as `format!("hello {}", name)` or `vec![1, 2, 3]`.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct MacroCall {
-    /// Path naming the macro (e.g. `format`, `std::vec`).
-    pub path: PathExpr,
-    /// Delimiter used at the call site.
-    pub delim: MacroDelim,
-    /// Raw token-stream contents preserved as a string. A macro's body is not
-    /// parsed as a Gossamer expression at this layer; later passes expand it.
-    pub tokens: String,
-}
-
-/// Delimiter surrounding a macro invocation's token stream.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum MacroDelim {
-    /// `name!(...)`.
-    Paren,
-    /// `name![...]`.
-    Bracket,
-    /// `name!{...}`.
-    Brace,
-}
-
-impl MacroDelim {
-    /// Returns the opening and closing delimiters for this form.
-    #[must_use]
-    pub const fn pair(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Paren => ("(", ")"),
-            Self::Bracket => ("[", "]"),
-            Self::Brace => ("{", "}"),
-        }
-    }
 }

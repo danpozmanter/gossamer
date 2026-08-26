@@ -211,7 +211,8 @@ pub const FMT: StdModule = StdModule {
             name: "Display",
             kind: StdItemKind::Trait,
             doc: "How a value renders through `{}`. The rendering is synthesized; \
-                  `impl Display for T { fn to_string(&self) -> String }` overrides it.",
+                  `impl Display for T { fn fmt(&self) -> String }` overrides it, and \
+                  `x.to_string()` reaches the same rendering.",
         },
         StdItem {
             name: "Debug",
@@ -221,38 +222,28 @@ pub const FMT: StdModule = StdModule {
         },
         StdItem {
             name: "println",
-            kind: StdItemKind::Macro,
+            kind: StdItemKind::Builtin,
             doc: "Prints to stdout followed by a newline.",
         },
         StdItem {
             name: "print",
-            kind: StdItemKind::Macro,
+            kind: StdItemKind::Builtin,
             doc: "Prints to stdout without a trailing newline.",
         },
         StdItem {
             name: "eprintln",
-            kind: StdItemKind::Macro,
+            kind: StdItemKind::Builtin,
             doc: "Prints to stderr followed by a newline.",
         },
         StdItem {
             name: "eprint",
-            kind: StdItemKind::Macro,
+            kind: StdItemKind::Builtin,
             doc: "Prints to stderr without a trailing newline.",
         },
         StdItem {
             name: "format",
-            kind: StdItemKind::Macro,
+            kind: StdItemKind::Builtin,
             doc: "Formats arguments into an owned `String`.",
-        },
-        StdItem {
-            name: "write",
-            kind: StdItemKind::Macro,
-            doc: "Writes formatted output into a `Writer`.",
-        },
-        StdItem {
-            name: "writeln",
-            kind: StdItemKind::Macro,
-            doc: "Writes formatted output into a `Writer` followed by a newline.",
         },
     ],
 };
@@ -431,11 +422,6 @@ pub const STRINGS: StdModule = StdModule {
             name: "pad_right",
             kind: StdItemKind::Function,
             doc: "Right-pads to `width` with the given character.",
-        },
-        StdItem {
-            name: "parse",
-            kind: StdItemKind::Function,
-            doc: "Parses the string into the expected Result payload type.",
         },
         StdItem {
             name: "contains_any",
@@ -773,7 +759,7 @@ pub const HTML: StdModule = StdModule {
         StdItem {
             name: "escape",
             kind: StdItemKind::Function,
-            doc: "Escapes HTML metacharacters (&, <, >, \", ').",
+            doc: "Escapes HTML metacharacters (, <, >, \", ').",
         },
         StdItem {
             name: "unescape",

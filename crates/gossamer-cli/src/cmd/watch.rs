@@ -204,6 +204,10 @@ fn start_child(entry: &Path, options: &Options, generation: u64, status: &Status
     let child = command
         .spawn()
         .with_context(|| format!("start generation {generation}"))?;
+    // The generation leads a process group of its own, so it sits outside the
+    // terminal's foreground group and an interrupt reaches it only through the
+    // registry. `stop_child` drops the registration once it is reaped.
+    crate::child_processes::track(child.id());
     status.ok(&format!(
         "running pid={} generation={generation}",
         child.id()
@@ -250,6 +254,7 @@ fn configure_child_group(command: &mut Command) {
 fn configure_child_group(_command: &mut Command) {}
 
 fn stop_child(child: &mut Child, grace: Duration, status: &Status) -> Result<()> {
+    crate::child_processes::forget(child.id());
     status.info(&format!("stopping pid={} gracefully", child.id()));
     request_shutdown(child)?;
     let deadline = Instant::now() + grace;

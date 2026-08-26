@@ -8,18 +8,18 @@ use std::sync::WaitGroup
 
 fn main() {
     let root = context::Context::background()
-    println!("slept-full {}", time::sleep_ctx(&root, 10))
+    println("slept-full {}", time::sleep_ctx(root, 10))
 
-    let cancelled = context::Context::with_cancel(&root)
+    let cancelled = context::Context::with_cancel(root)
     cancelled.cancel()
-    println!("slept-cancelled {}", time::sleep_ctx(&cancelled, 5000))
+    println("slept-cancelled {}", time::sleep_ctx(cancelled, 5000))
 
     let complete = WaitGroup::new()
     complete.add(1)
     complete.done()
-    println!("wg-complete {}", complete.wait_ctx(&root))
+    println("wg-complete {}", complete.wait_ctx(root))
 
     let pending = WaitGroup::new()
     pending.add(1)
-    println!("wg-cancelled {}", pending.wait_ctx(&cancelled))
+    println("wg-cancelled {}", pending.wait_ctx(cancelled))
 }

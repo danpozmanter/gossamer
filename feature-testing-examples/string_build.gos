@@ -1,5 +1,5 @@
 // Fundamental String-building surface: String::new, String::with_capacity,
-// push(char), push_str(&str), and chars() driving a for-loop. Output is
+// push(char), push_str(str), and chars() driving a for-loop. Output is
 // deterministic and multibyte-aware (the cedilla 'ç' is two UTF-8
 // bytes, the euro 'EUR' sign three), so the tier-parity harness asserts
 // the rendered strings are bit-identical on VM, Cranelift, and LLVM.
@@ -7,7 +7,7 @@
 
 // Mirror of the escape-helper shape real code uses: walk a string's
 // chars, pushing each (or an escaped form) onto a freshly-built String.
-fn escape(text: &String) -> String {
+fn escape(text: String) -> String {
     let mut out = String::new()
     for ch in text.chars() {
         match ch {
@@ -28,7 +28,7 @@ fn main() {
     s.push_str(", ")
     s.push_str("world")
     s.push('!')
-    println!("s={}", s)
+    println("s={}", s)
     assert_eq(s.len(), 10)
 
     // `with_capacity` is a real VM builder reservation; its contents remain
@@ -36,7 +36,7 @@ fn main() {
     let mut reserved = String::with_capacity(64)
     reserved.push_str("reserved")
     reserved.push('!')
-    println!("reserved={}", reserved)
+    println("reserved={}", reserved)
     assert_eq(reserved.len(), 9)
 
     // chars() over a multibyte string, rebuilt char-by-char - the
@@ -48,13 +48,13 @@ fn main() {
         rebuilt.push(ch)
         count += 1
     }
-    println!("rebuilt={} count={}", rebuilt, count)
+    println("rebuilt={} count={}", rebuilt, count)
     assert_eq(count, 6)
     assert_eq(rebuilt.len(), original.len())
 
     // Escape helper: markup chars expand, others pass through.
-    let escaped = escape(&"a<b>&\"cç\"")
-    println!("escaped={}", escaped)
+    let escaped = escape("a<b>&\"cç\"")
+    println("escaped={}", escaped)
     assert_eq(escaped.len(), 19)
     assert_eq(escaped.as_bytes().len(), 20)
 }

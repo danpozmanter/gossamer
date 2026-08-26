@@ -5,6 +5,6 @@ use std::errors
 // exit nonzero - never silently succeed. Regression guard for the entry-point
 // Err drop + the gos-run-vs-gos-build exit-code divergence.
 fn main() -> Result<(), errors::Error> {
-    println!("before err")
+    println("before err")
     Err(errors::wrap(errors::new("root"), "boom"))
 }

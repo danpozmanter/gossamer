@@ -12,5 +12,6 @@ description = "Abstract syntax tree types for the Gossamer language."
 workspace = true
 
 [dependencies]
+gossamer-abi = { workspace = true }
 gossamer-lex = { workspace = true }
 serde = { workspace = true }

@@ -944,6 +944,7 @@ impl Lowerer<'_> {
             name: decl.name.clone(),
             kind: HirAdtKind::Struct(fields),
             self_ty: ty,
+            repr: gossamer_ast::EnumRepr::default(),
         }
     }
 
@@ -979,6 +980,7 @@ impl Lowerer<'_> {
             name: decl.name.clone(),
             kind: HirAdtKind::Enum(variants),
             self_ty: ty,
+            repr: decl.repr,
         }
     }
 
@@ -1127,10 +1129,10 @@ impl Lowerer<'_> {
                 {
                     lowered
                 } else {
-                    HirExprKind::Call {
-                        callee: Box::new(self.lower_expr(callee)),
-                        args: args.iter().map(|a| self.lower_expr(a)).collect(),
-                    }
+                    let callee = Box::new(self.lower_expr(callee));
+                    let mut args: Vec<HirExpr> = args.iter().map(|a| self.lower_expr(a)).collect();
+                    self.resolve_format_pad_request(&callee, &mut args);
+                    HirExprKind::Call { callee, args }
                 }
             }
             AstExprKind::MethodCall {
@@ -1310,7 +1312,6 @@ impl Lowerer<'_> {
             AstExprKind::Struct {
                 path, fields, base, ..
             } => self.lower_struct_literal(expr.id, path, fields, base.as_deref(), expr.span),
-            AstExprKind::MacroCall(_) => HirExprKind::Placeholder,
             AstExprKind::MapLiteral(entries) => {
                 let map_ty = self.ty_of(expr.id);
                 self.lower_map_literal(entries, expr.span, map_ty)
@@ -1330,7 +1331,6 @@ impl Lowerer<'_> {
                 inclusive: matches!(kind, gossamer_ast::RangeKind::Inclusive),
             },
             AstExprKind::Try(inner) => self.lower_try(inner, expr.span),
-            AstExprKind::Go(inner) => HirExprKind::Go(Box::new(self.lower_expr(inner))),
             AstExprKind::Error => HirExprKind::Placeholder,
         }
     }
@@ -1344,6 +1344,73 @@ impl Lowerer<'_> {
             lhs: Box::new(self.lower_expr(lhs)),
             rhs: Box::new(self.lower_expr(rhs)),
         }
+    }
+
+    /// Reads a lowered integer literal's value.
+    fn literal_int_of(expr: &HirExpr) -> Option<i64> {
+        match &expr.kind {
+            HirExprKind::Literal(HirLiteral::Int(text)) => text.parse().ok(),
+            _ => None,
+        }
+    }
+
+    /// Turns a `__fmt_pad` call's alignment *request* into the alignment the
+    /// runtime helpers implement.
+    ///
+    /// An omitted alignment and the `0` flag both read differently on a number
+    /// than on anything else, and the value's type is first available here.
+    fn resolve_format_pad_request(&mut self, callee: &HirExpr, args: &mut [HirExpr]) {
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return;
+        };
+        if !segments
+            .last()
+            .is_some_and(|segment| segment.name.as_str() == "__fmt_pad" && args.len() == 4)
+        {
+            return;
+        }
+        let Some(fill) = Self::literal_int_of(&args[2])
+            .and_then(|code| u32::try_from(code).ok())
+            .and_then(char::from_u32)
+        else {
+            return;
+        };
+        let Some(request) = Self::literal_int_of(&args[3]) else {
+            return;
+        };
+        let numeric = self.pad_value_is_numeric(&args[0]);
+        let (align, fill) = gossamer_ast::resolve_pad_request(request, fill, numeric);
+        args[2].kind = HirExprKind::Literal(HirLiteral::Int((fill as u32).to_string()));
+        args[3].kind = HirExprKind::Literal(HirLiteral::Int(align.to_string()));
+    }
+
+    /// Whether the value a `__fmt_pad` call pads renders as a number.
+    ///
+    /// The padded argument is the rendering wrapper the format expansion
+    /// built, so the number is one call in: `__concat(x)`, `__fmt_prec(x, n)`,
+    /// `__debug(x)`, or a radix prefix concatenated onto one of those.
+    fn pad_value_is_numeric(&mut self, rendered: &HirExpr) -> bool {
+        let HirExprKind::Call { callee, args } = &rendered.kind else {
+            return false;
+        };
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return false;
+        };
+        match segments.last().map(|segment| segment.name.as_str()) {
+            // `__concat(prefix, rendering)` - the `{:#x}` radix prefix.
+            Some("__concat") if args.len() == 2 => self.pad_value_is_numeric(&args[1]),
+            Some("__concat" | "__fmt_prec" | "__debug" | "__fmt_radix" | "__fmt_upper") => args
+                .first()
+                .is_some_and(|value| self.ty_renders_as_number(value.ty)),
+            _ => false,
+        }
+    }
+
+    fn ty_renders_as_number(&mut self, ty: gossamer_types::Ty) -> bool {
+        matches!(
+            self.tcx.kind_of(ty),
+            gossamer_types::TyKind::Int(_) | gossamer_types::TyKind::Float(_)
+        )
     }
 
     fn lower_pipe(&mut self, lhs: &AstExpr, rhs: &AstExpr) -> HirExprKind {
@@ -1455,6 +1522,7 @@ impl Lowerer<'_> {
     /// side is evaluated once, before the first target is written.
     fn lower_destructuring_assign<'a>(
         &mut self,
+        op: AssignOp,
         elems: &'a [AstExpr],
         place: &AstExpr,
         value: &'a AstExpr,
@@ -1486,6 +1554,23 @@ impl Lowerer<'_> {
                     segments: vec![name],
                     def: None,
                 },
+            };
+            // A compound operator applies element-wise: each place is read,
+            // combined with its element of the right-hand value, and written
+            // back, exactly as the single-place form does.
+            let source = if matches!(op, AssignOp::Assign) {
+                source
+            } else {
+                HirExpr {
+                    id: self.fresh(),
+                    span: target.span,
+                    ty,
+                    kind: HirExprKind::Binary {
+                        op: compound_assign_to_binary(op),
+                        lhs: Box::new(lowered_target.clone()),
+                        rhs: Box::new(source),
+                    },
+                }
             };
             let write = HirExpr {
                 id: self.fresh(),
@@ -1581,10 +1666,10 @@ impl Lowerer<'_> {
         value: &AstExpr,
         outer: &AstExpr,
     ) -> HirExprKind {
+        if let AstExprKind::Tuple(elems) = &place.kind {
+            return self.lower_destructuring_assign(op, elems, place, value, outer.span);
+        }
         if matches!(op, AssignOp::Assign) {
-            if let AstExprKind::Tuple(elems) = &place.kind {
-                return self.lower_destructuring_assign(elems, place, value, outer.span);
-            }
             return HirExprKind::Assign {
                 place: Box::new(self.lower_expr(place)),
                 value: Box::new(self.lower_expr(value)),
@@ -3377,7 +3462,6 @@ impl Lowerer<'_> {
                 }
             }
             AstStmtKind::Defer(inner) => HirStmtKind::Defer(self.lower_expr(inner)),
-            AstStmtKind::Go(inner) => HirStmtKind::Go(self.lower_expr(inner)),
         };
         HirStmt {
             id: self.fresh(),

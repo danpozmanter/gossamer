@@ -35,13 +35,13 @@ fn missing(r: http::Request) -> http::Response {
 fn serve_router() {
     let r = router::Router::new().get("/users/{id}", show_user).get("/files/{path...}", show_file).get("/plain", missing)
     if let Err(e) = http::serve("127.0.0.1:23881", r) {
-        eprintln!("serve failed: {e}")
+        eprintln("serve failed: {e}")
     }
 }
 
 // Polls until the server goroutine accepts connections; binding is
 // asynchronous, so readiness is observable only by connecting.
-fn await_ready(url: &String) {
+fn await_ready(url: String) {
     let mut tries = 0
     while tries < 400 {
         if let Ok(_) = http::get(url, Vec::from([])) {
@@ -53,19 +53,19 @@ fn await_ready(url: &String) {
 }
 
 fn main() {
-    go serve_router()
-    await_ready(&"http://127.0.0.1:23881/plain")
+    spawn(|| serve_router())
+    await_ready("http://127.0.0.1:23881/plain")
     match http::get("http://127.0.0.1:23881/users/42", Vec::from([])) {
-        Ok(r) => println!("A status={} body={}", r.status, r.body)
-        Err(e) => println!("A error: {}", e)
+        Ok(r) => println("A status={} body={}", r.status, r.body)
+        Err(e) => println("A error: {}", e)
     }
     match http::get("http://127.0.0.1:23881/files/docs/readme.md", Vec::from([])) {
-        Ok(r) => println!("B status={} body={}", r.status, r.body)
-        Err(e) => println!("B error: {}", e)
+        Ok(r) => println("B status={} body={}", r.status, r.body)
+        Err(e) => println("B error: {}", e)
     }
     match http::get("http://127.0.0.1:23881/plain", Vec::from([])) {
-        Ok(r) => println!("C status={} body={}", r.status, r.body)
-        Err(e) => println!("C error: {}", e)
+        Ok(r) => println("C status={} body={}", r.status, r.body)
+        Err(e) => println("C error: {}", e)
     }
     process::exit(0)
 }

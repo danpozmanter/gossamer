@@ -180,13 +180,13 @@ fn exec_spawn_returns_positive_pid_for_long_running_sleep() {
 use std::os::exec
 fn main() {
     let args: Vec<String> = ["30"].to_vec()
-    match exec::spawn(&"/bin/sleep", &args) {
+    match exec::spawn("/bin/sleep", args) {
         Ok(pid) => {
-            if pid > 0 { println!("spawned") } else { println!("zero pid") }
+            if pid > 0 { println("spawned") } else { println("zero pid") }
             let killed = exec::kill(pid)
-            if killed { println!("killed") } else { println!("kill failed") }
+            if killed { println("killed") } else { println("kill failed") }
         }
-        Err(e) => println!("error: {}", e.message()),
+        Err(e) => println("error: {}", e.message()),
     }
 }
 "#;
@@ -203,9 +203,9 @@ fn exec_spawn_returns_error_for_nonexistent_program() {
 use std::os::exec
 fn main() {
     let args: Vec<String> = Vec::from([])
-    match exec::spawn(&"/this/does/not/exist/please", &args) {
-        Ok(_) => println!("unexpected ok"),
-        Err(_) => println!("err"),
+    match exec::spawn("/this/does/not/exist/please", args) {
+        Ok(_) => println("unexpected ok"),
+        Err(_) => println("err"),
     }
 }
 "#;
@@ -222,14 +222,14 @@ fn exec_spawn_then_kill_round_trips_through_a_named_var() {
 use std::os::exec
 fn main() {
     let args: Vec<String> = ["10"].to_vec()
-    let r = exec::spawn(&"/bin/sleep", &args)
+    let r = exec::spawn("/bin/sleep", args)
     match r {
         Ok(pid) => {
-            println!("got pid")
+            println("got pid")
             let _ = exec::kill(pid)
-            println!("done")
+            println("done")
         }
-        Err(e) => println!("error: {}", e.message()),
+        Err(e) => println("error: {}", e.message()),
     }
 }
 "#;
@@ -246,13 +246,13 @@ fn exec_spawn_returns_positive_pid_for_long_running_ping() {
 use std::os::exec
 fn main() {
     let args: Vec<String> = ["127.0.0.1", "-n", "31"].to_vec()
-    match exec::spawn(&"ping", &args) {
+    match exec::spawn("ping", args) {
         Ok(pid) => {
-            if pid > 0 { println!("spawned") } else { println!("zero pid") }
+            if pid > 0 { println("spawned") } else { println("zero pid") }
             let killed = exec::kill(pid)
-            if killed { println!("killed") } else { println!("kill failed") }
+            if killed { println("killed") } else { println("kill failed") }
         }
-        Err(e) => println!("error: {}", e.message()),
+        Err(e) => println("error: {}", e.message()),
     }
 }
 "#;
@@ -266,9 +266,9 @@ fn exec_spawn_returns_error_for_nonexistent_program() {
 use std::os::exec
 fn main() {
     let args: Vec<String> = Vec::from([])
-    match exec::spawn(&"C:\\this\\does\\not\\exist\\please.exe", &args) {
-        Ok(_) => println!("unexpected ok"),
-        Err(_) => println!("err"),
+    match exec::spawn("C:\\this\\does\\not\\exist\\please.exe", args) {
+        Ok(_) => println("unexpected ok"),
+        Err(_) => println("err"),
     }
 }
 "#;
@@ -282,14 +282,14 @@ fn exec_spawn_then_kill_round_trips_through_a_named_var() {
 use std::os::exec
 fn main() {
     let args: Vec<String> = ["127.0.0.1", "-n", "11"].to_vec()
-    let r = exec::spawn(&"ping", &args)
+    let r = exec::spawn("ping", args)
     match r {
         Ok(pid) => {
-            println!("got pid")
+            println("got pid")
             let _ = exec::kill(pid)
-            println!("done")
+            println("done")
         }
-        Err(e) => println!("error: {}", e.message()),
+        Err(e) => println("error: {}", e.message()),
     }
 }
 "#;

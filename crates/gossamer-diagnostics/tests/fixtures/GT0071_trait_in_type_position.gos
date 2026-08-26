@@ -1,3 +1,4 @@
 // ERROR: GT0071
 use std::fmt::Display
+
 fn width(value: Display) -> i64 { 1 }

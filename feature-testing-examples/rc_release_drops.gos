@@ -8,7 +8,7 @@
 
 enum Tree {
     Leaf(i64)
-    Node(i64, Box<Tree>, Box<Tree>)
+    Node(i64, Tree, Tree)
 }
 
 struct Holder { t: Tree, tag: i64 }
@@ -22,13 +22,13 @@ fn aliased(depth: i64) -> i64 {
     let a = build(depth)
     let b = a
     let c = a
-    checksum(&a) + checksum(&b) + checksum(&c)
+    checksum(a) + checksum(b) + checksum(c)
 }
 
 // Stores a freshly-built tree into a struct field.
 fn via_struct(depth: i64) -> i64 {
     let h = Holder { t: build(depth), tag: 5 }
-    checksum(&h.t) + h.tag
+    checksum(h.t) + h.tag
 }
 
 fn build(depth: i64) -> Tree {
@@ -39,7 +39,7 @@ fn build(depth: i64) -> Tree {
     }
 }
 
-fn checksum(t: &Tree) -> i64 {
+fn checksum(t: Tree) -> i64 {
     match t {
         Tree::Leaf(v) => *v
         Tree::Node(v, l, r) => *v + checksum(l) + checksum(r)
@@ -49,7 +49,7 @@ fn checksum(t: &Tree) -> i64 {
 // Named binding released at end of scope (not moved out).
 fn transient_sum(depth: i64) -> i64 {
     let tree = build(depth)
-    checksum(&tree)
+    checksum(tree)
 }
 
 // Early return before the natural end of the function.
@@ -67,20 +67,20 @@ fn main() {
     let mut total = 0
     let mut i = 0
     while i < 200 {
-        total += checksum(&build(6))
+        total += checksum(build(6))
         total += aliased(5)
         total += via_struct(5)
-        total += checksum(&identity(build(5)))
+        total += checksum(identity(build(5)))
         i += 1
     }
-    println!("loop total = {}", total)
+    println("loop total = {}", total)
 
-    println!("transient = {}", transient_sum(8))
-    println!("capped low = {}", capped(4, 1000000))
-    println!("capped high = {}", capped(8, 100))
+    println("transient = {}", transient_sum(8))
+    println("capped low = {}", capped(4, 1000000))
+    println("capped high = {}", capped(8, 100))
 
     // A value moved into a binding, then borrowed repeatedly.
     let shared = build(5)
-    println!("shared a = {}", checksum(&shared))
-    println!("shared b = {}", checksum(&shared))
+    println("shared a = {}", checksum(shared))
+    println("shared b = {}", checksum(shared))
 }

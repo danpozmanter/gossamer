@@ -7,7 +7,7 @@ use std::errors
 
 fn main() -> Result<(), errors::Error> {
     let content = io::ReadAll(io::stdin())?
-    println!("[bytes {}]", content.len())
-    print!("{}", content)
+    println("[bytes {}]", content.len())
+    print("{}", content)
     Ok(())
 }

@@ -49,7 +49,7 @@ fn label(text: String, prefix: String = "item", times: i64 = 1) -> String {
 }
 
 fn flags(on: bool = true, scale: f64 = 1.5, sign: i64 = -2) -> String {
-    format!("{} {} {}", on, scale, sign)
+    format("{} {} {}", on, scale, sign)
 }
 
 fn hot(n: i64, step: i64 = 2, bias: i64 = -1) -> i64 {
@@ -63,8 +63,8 @@ fn hot_total() -> i64 {
     let mut total = 0
     for i in 0..2000 {
         total += volume(i)
-        total += volume(i, height = 3)
-        total += volume(depth = 2, width = i)
+        total += volume(i, height: 3)
+        total += volume(depth: 2, width: i)
         total += hot(i)
     }
     total
@@ -72,44 +72,44 @@ fn hot_total() -> i64 {
 
 fn main() {
     // Defaults fill the parameters a positional call leaves off.
-    println!("{}", volume(2))
-    println!("{}", volume(2, 3))
-    println!("{}", volume(2, 3, 4))
+    println("{}", volume(2))
+    println("{}", volume(2, 3))
+    println("{}", volume(2, 3, 4))
 
     // A name selects a parameter, so the written order is free.
-    println!("{}", volume(width = 2, height = 3, depth = 4))
-    println!("{}", volume(depth = 4, width = 2, height = 3))
-    println!("{}", volume(height = 3, depth = 4, width = 2))
+    println("{}", volume(width: 2, height: 3, depth: 4))
+    println("{}", volume(depth: 4, width: 2, height: 3))
+    println("{}", volume(height: 3, depth: 4, width: 2))
 
     // Positional arguments first, then names for the rest.
-    println!("{}", volume(2, depth = 10))
-    println!("{}", volume(2, 3, depth = 10))
+    println("{}", volume(2, depth: 10))
+    println("{}", volume(2, 3, depth: 10))
 
     // Associated functions and methods take both forms.
-    let r = Rect::make(w = 3)
-    println!("{} {}", r.w, r.h)
-    println!("{}", Rect::make(w = 3, h = 7).h)
-    println!("{}", r.scaled())
-    println!("{}", r.scaled(factor = 10))
+    let r = Rect::make(w: 3)
+    println("{} {}", r.w, r.h)
+    println("{}", Rect::make(w: 3, h: 7).h)
+    println("{}", r.scaled())
+    println("{}", r.scaled(factor: 10))
     let o = Other { v: 4 }
-    println!("{}", o.scaled())
-    println!("{}", o.scaled(factor = 5))
-    println!("{}", Other { v: 6 }.scaled())
+    println("{}", o.scaled())
+    println("{}", o.scaled(factor: 5))
+    println("{}", Other { v: 6 }.scaled())
 
     // Defaults of every constant shape, including a negated literal.
-    println!("{}", label("a"))
-    println!("{}", label("a", prefix = "x"))
-    println!("{}", label("a", times = 2))
-    println!("{}", label(text = "a", times = 2, prefix = "y"))
-    println!("{}", flags())
-    println!("{}", flags(on = false))
-    println!("{}", flags(sign = 7))
+    println("{}", label("a"))
+    println("{}", label("a", prefix: "x"))
+    println("{}", label("a", times: 2))
+    println("{}", label(text: "a", times: 2, prefix: "y"))
+    println("{}", flags())
+    println("{}", flags(on: false))
+    println("{}", flags(sign: 7))
 
     // A default is spliced per call site, so one call cannot disturb another.
-    println!("{} {} {}", volume(1), volume(1, 9), volume(1))
+    println("{} {} {}", volume(1), volume(1, 9), volume(1))
 
     // Colliding method names of different arity, all positional.
-    println!("{} {}", Cell { v: 1 }.get(2), Pair { v: 1 }.get(2, 3))
+    println("{} {}", Cell { v: 1 }.get(2), Pair { v: 1 }.get(2, 3))
 
-    println!("hot {}", hot_total())
+    println("hot {}", hot_total())
 }

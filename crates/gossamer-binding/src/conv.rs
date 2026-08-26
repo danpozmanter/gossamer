@@ -908,7 +908,7 @@ fn intern_arm_name(name: &str) -> &'static str {
                 "gossamer-binding: intern_arm_name pool reached its {INTERN_ARM_NAME_LIMIT}-entry \
                 cap. Subsequent unseen arm names return the `<arm-name-pool-exhausted>` \
                 sentinel. Variant arm names must be a small, stable set - bindings that \
-                synthesise names dynamically (e.g. `format!(\"Item-{{n}}\")`) leak \
+                synthesise names dynamically (e.g. `format(\"Item-{{n}}\")`) leak \
                 unboundedly. Switch to `Type::Opaque` or a stable name set."
             );
         }

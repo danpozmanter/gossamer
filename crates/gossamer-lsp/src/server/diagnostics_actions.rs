@@ -212,8 +212,9 @@ fn empty_diagnostics_notification(uri: &str) -> Value {
 
 const KEYWORDS: &[&str] = &[
     "fn", "let", "mut", "if", "else", "match", "while", "loop", "for", "in", "return", "break",
-    "continue", "struct", "enum", "trait", "impl", "pub", "use", "mod", "const", "static", "true",
-    "false", "go", "select", "defer", "where", "as",
+    "continue", "struct", "enum", "trait", "impl", "pub", "use", "mod", "newtype", "const",
+    "static", "true", "false", "select", "defer", "where", "as", "cohort", "arena", "comptime",
+    "spawn", "packed",
 ];
 
 const BUILTIN_COMPLETIONS: &[&str] = &[

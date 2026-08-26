@@ -37,7 +37,7 @@ impl Health {{
 struct Echo {{ }}
 impl Echo {{
     fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {{
-        Ok(http::Response::text(200, &format!("echo {{}}", r.path)))
+        Ok(http::Response::text(200, format("echo {{}}", r.path)))
     }}
 }}
 
@@ -69,7 +69,7 @@ fn health(_r: http::Request) -> Result<http::Response, http::Error> {{
 }}
 
 fn echo(r: http::Request) -> Result<http::Response, http::Error> {{
-    Ok(http::Response::text(200, &format!("echo {{}}", r.path)))
+    Ok(http::Response::text(200, format("echo {{}}", r.path)))
 }}
 
 fn main() {{

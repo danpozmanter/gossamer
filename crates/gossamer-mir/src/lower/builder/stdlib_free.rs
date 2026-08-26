@@ -903,8 +903,6 @@ impl<'a> Builder<'a> {
         resolved = resolved.or_else(|| self.lower_concurrency_free(joined, args));
         resolved = resolved.or_else(|| self.lower_concurrency_2_free(joined, args));
         resolved = resolved.or_else(|| self.lower_bytes_free(joined, args));
-        resolved = resolved.or_else(|| self.lower_ordered_free(joined, args));
-        resolved = resolved.or_else(|| self.lower_ordered_2_free(joined, args));
         resolved = resolved.or_else(|| self.lower_collections_free(joined, args));
         resolved = resolved.or_else(|| self.lower_collections_2_free(joined, args));
         resolved = resolved.or_else(|| self.lower_url_runtime_misc_free(joined, args));
@@ -3572,118 +3570,6 @@ impl<'a> Builder<'a> {
                 )
             }
             "bytes::replace" => ("gos_rt_bytes_replace", self.tcx.string_ty()),
-            _ => return None,
-        })
-    }
-
-    fn lower_ordered_free(
-        &mut self,
-        joined: &str,
-        _args: &[HirExpr],
-    ) -> Option<(&'static str, gossamer_types::Ty)> {
-        Some(match joined {
-            "heap::push" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_bheap_push_i64", vec)
-            }
-            "heap::pop" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_bheap_pop_i64", vec)
-            }
-            "heap::peek" => ("gos_rt_bheap_peek_i64", self.option_i64_adt_ty()),
-            "heap::len" => (
-                "gos_rt_bheap_len",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
-            "queue::push" | "stack::push" | "deque::push_back" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_vec_push_back_i64", vec)
-            }
-            "queue::pop" | "deque::pop_front" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_vec_pop_front_i64", vec)
-            }
-            "stack::pop" | "deque::pop_back" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_vec_pop_back_i64", vec)
-            }
-            "deque::push_front" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_vec_push_front_i64", vec)
-            }
-            "queue::peek" | "stack::peek_front" | "deque::peek_front" => {
-                ("gos_rt_vec_first", self.option_i64_adt_ty())
-            }
-            "stack::peek" | "deque::peek_back" => ("gos_rt_vec_last", self.option_i64_adt_ty()),
-            "queue::len" | "stack::len" | "deque::len" => (
-                "gos_rt_vec_len",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
-            "ordered_vec::insert" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_ovec_insert_i64", vec)
-            }
-            "ordered_vec::remove_at" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_ovec_remove_at_i64", vec)
-            }
-            "ordered_vec::contains" => ("gos_rt_ovec_contains_i64", self.tcx.bool_ty()),
-            "ordered_vec::index_of" => ("gos_rt_vec_index_of_i64", self.option_i64_adt_ty()),
-            "ordered_vec::peek_min" => ("gos_rt_vec_first", self.option_i64_adt_ty()),
-            "ordered_vec::peek_max" => ("gos_rt_vec_last", self.option_i64_adt_ty()),
-            "ordered_vec::len" => (
-                "gos_rt_vec_len",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
-            "ordered_set::insert" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_oset_insert_i64", vec)
-            }
-            _ => return None,
-        })
-    }
-
-    fn lower_ordered_2_free(
-        &mut self,
-        joined: &str,
-        _args: &[HirExpr],
-    ) -> Option<(&'static str, gossamer_types::Ty)> {
-        Some(match joined {
-            "ordered_set::remove" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_oset_remove_i64", vec)
-            }
-            "ordered_set::contains" => ("gos_rt_oset_contains_i64", self.tcx.bool_ty()),
-            "ordered_set::len" => (
-                "gos_rt_vec_len",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
-            "ordered_map::insert" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_omap_insert_i64", vec)
-            }
-            "ordered_map::remove" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec = self.tcx.intern(gossamer_types::TyKind::Vec(i));
-                ("gos_rt_omap_remove_i64", vec)
-            }
-            "ordered_map::get" => ("gos_rt_omap_get_i64", self.option_i64_adt_ty()),
-            "ordered_map::contains_key" => ("gos_rt_omap_contains_key_i64", self.tcx.bool_ty()),
-            "ordered_map::len" => (
-                "gos_rt_omap_len",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
             _ => return None,
         })
     }

@@ -43,7 +43,7 @@ fn run(rounds: i64) -> i64 {
     let mut total = 0
     let mut i = 0
     while i < rounds {
-        let (a, b, c) = triple(i)
+        let a, b, c = triple(i)
         total += a + b + c
 
         let p = make_point(i)
@@ -66,5 +66,5 @@ fn run(rounds: i64) -> i64 {
 }
 
 fn main() {
-    println!("{}", run(200000))
+    println("{}", run(200000))
 }

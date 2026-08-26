@@ -534,671 +534,6 @@
       "reference_status": "catalog_only"
     },
     {
-      "id": "std-collections-deque-len",
-      "name": "std::collections::deque::len",
-      "kind": "function",
-      "signature": "fn len(xs: Vec<i64>) -> i64",
-      "description": "Element count.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsdeque",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-deque-peek-back",
-      "name": "std::collections::deque::peek_back",
-      "kind": "function",
-      "signature": "fn peek_back(xs: Vec<i64>) -> Option<i64>",
-      "description": "Back element, or 0 if empty.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsdeque",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-deque-peek-front",
-      "name": "std::collections::deque::peek_front",
-      "kind": "function",
-      "signature": "fn peek_front(xs: Vec<i64>) -> Option<i64>",
-      "description": "Front element, or 0 if empty.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsdeque",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-deque-pop-back",
-      "name": "std::collections::deque::pop_back",
-      "kind": "function",
-      "signature": "fn pop_back(xs: Vec<i64>) -> Vec<i64>",
-      "description": "Drop the back.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsdeque",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-deque-pop-front",
-      "name": "std::collections::deque::pop_front",
-      "kind": "function",
-      "signature": "fn pop_front(xs: Vec<i64>) -> Vec<i64>",
-      "description": "Drop the front.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsdeque",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-deque-push-back",
-      "name": "std::collections::deque::push_back",
-      "kind": "function",
-      "signature": "fn push_back(xs: Vec<i64>, value: i64) -> Vec<i64>",
-      "description": "Append to the back.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsdeque",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-deque-push-front",
-      "name": "std::collections::deque::push_front",
-      "kind": "function",
-      "signature": "fn push_front(xs: Vec<i64>, value: i64) -> Vec<i64>",
-      "description": "Prepend to the front.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsdeque",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-heap-len",
-      "name": "std::collections::heap::len",
-      "kind": "function",
-      "signature": "fn len(xs: Vec<i64>) -> i64",
-      "description": "Element count.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsheap",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-heap-peek",
-      "name": "std::collections::heap::peek",
-      "kind": "function",
-      "signature": "fn peek(xs: Vec<i64>) -> Option<i64>",
-      "description": "Smallest element of the heap, or 0 if empty.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsheap",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-heap-pop",
-      "name": "std::collections::heap::pop",
-      "kind": "function",
-      "signature": "fn pop(xs: Vec<i64>) -> Vec<i64>",
-      "description": "Drop the root from the heap; returns the new heap (use `peek` first to read the value).",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsheap",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-heap-push",
-      "name": "std::collections::heap::push",
-      "kind": "function",
-      "signature": "fn push(xs: Vec<i64>, value: i64) -> Vec<i64>",
-      "description": "Push an i64 onto the min-heap; returns the new heap.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsheap",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-map-contains-key",
-      "name": "std::collections::ordered_map::contains_key",
-      "kind": "function",
-      "signature": "fn contains_key(map: Vec<i64>, key: i64) -> bool",
-      "description": "Key-membership test.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_map",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-map-get",
-      "name": "std::collections::ordered_map::get",
-      "kind": "function",
-      "signature": "fn get(map: Vec<i64>, key: i64) -> Option<i64>",
-      "description": "Lookup; returns 0 if absent.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_map",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-map-insert",
-      "name": "std::collections::ordered_map::insert",
-      "kind": "function",
-      "signature": "fn insert(map: Vec<i64>, key: i64, value: i64) -> Vec<i64>",
-      "description": "Set key => value.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_map",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-map-len",
-      "name": "std::collections::ordered_map::len",
-      "kind": "function",
-      "signature": "fn len(map: Vec<i64>) -> i64",
-      "description": "Pair count.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_map",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-map-remove",
-      "name": "std::collections::ordered_map::remove",
-      "kind": "function",
-      "signature": "fn remove(map: Vec<i64>, key: i64) -> Vec<i64>",
-      "description": "Remove a key.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_map",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-set-contains",
-      "name": "std::collections::ordered_set::contains",
-      "kind": "function",
-      "signature": "fn contains(xs: Vec<i64>, value: i64) -> bool",
-      "description": "Membership test.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_set",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-set-insert",
-      "name": "std::collections::ordered_set::insert",
-      "kind": "function",
-      "signature": "fn insert(xs: Vec<i64>, value: i64) -> Vec<i64>",
-      "description": "Insert (sorted, no duplicates).",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_set",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-set-len",
-      "name": "std::collections::ordered_set::len",
-      "kind": "function",
-      "signature": "fn len(xs: Vec<i64>) -> i64",
-      "description": "Element count.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_set",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-set-remove",
-      "name": "std::collections::ordered_set::remove",
-      "kind": "function",
-      "signature": "fn remove(xs: Vec<i64>, value: i64) -> Vec<i64>",
-      "description": "Remove a value.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_set",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-vec-contains",
-      "name": "std::collections::ordered_vec::contains",
-      "kind": "function",
-      "signature": "fn contains(xs: Vec<i64>, value: i64) -> bool",
-      "description": "Return true iff `value` is present.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_vec",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-vec-index-of",
-      "name": "std::collections::ordered_vec::index_of",
-      "kind": "function",
-      "signature": "fn index_of(xs: Vec<i64>, value: i64) -> Option<i64>",
-      "description": "Return the index of `value`, or -1.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_vec",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-vec-insert",
-      "name": "std::collections::ordered_vec::insert",
-      "kind": "function",
-      "signature": "fn insert(xs: Vec<i64>, value: i64) -> Vec<i64>",
-      "description": "Insert at the unique sorted position.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_vec",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-vec-len",
-      "name": "std::collections::ordered_vec::len",
-      "kind": "function",
-      "signature": "fn len(xs: Vec<i64>) -> i64",
-      "description": "Element count.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_vec",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-vec-peek-max",
-      "name": "std::collections::ordered_vec::peek_max",
-      "kind": "function",
-      "signature": "fn peek_max(xs: Vec<i64>) -> Option<i64>",
-      "description": "Largest element, or 0.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_vec",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-vec-peek-min",
-      "name": "std::collections::ordered_vec::peek_min",
-      "kind": "function",
-      "signature": "fn peek_min(xs: Vec<i64>) -> Option<i64>",
-      "description": "Smallest element, or 0.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_vec",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-ordered-vec-remove-at",
-      "name": "std::collections::ordered_vec::remove_at",
-      "kind": "function",
-      "signature": "fn remove_at(xs: Vec<i64>, index: i64) -> Vec<i64>",
-      "description": "Remove the element at index `i`.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsordered_vec",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-queue-len",
-      "name": "std::collections::queue::len",
-      "kind": "function",
-      "signature": "fn len(xs: Vec<i64>) -> i64",
-      "description": "Element count.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsqueue",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-queue-peek",
-      "name": "std::collections::queue::peek",
-      "kind": "function",
-      "signature": "fn peek(xs: Vec<i64>) -> Option<i64>",
-      "description": "Front element, or 0 if empty.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsqueue",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-queue-pop",
-      "name": "std::collections::queue::pop",
-      "kind": "function",
-      "signature": "fn pop(xs: Vec<i64>) -> Vec<i64>",
-      "description": "Drop the front element; returns the new queue.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsqueue",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-queue-push",
-      "name": "std::collections::queue::push",
-      "kind": "function",
-      "signature": "fn push(xs: Vec<i64>, value: i64) -> Vec<i64>",
-      "description": "Append an i64 to the back; returns the new queue.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsqueue",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-stack-len",
-      "name": "std::collections::stack::len",
-      "kind": "function",
-      "signature": "fn len(xs: Vec<i64>) -> i64",
-      "description": "Element count.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsstack",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-stack-peek",
-      "name": "std::collections::stack::peek",
-      "kind": "function",
-      "signature": "fn peek(xs: Vec<i64>) -> Option<i64>",
-      "description": "Top element, or 0 if empty.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsstack",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-stack-pop",
-      "name": "std::collections::stack::pop",
-      "kind": "function",
-      "signature": "fn pop(xs: Vec<i64>) -> Vec<i64>",
-      "description": "Drop the top; returns the new stack.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsstack",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-collections-stack-push",
-      "name": "std::collections::stack::push",
-      "kind": "function",
-      "signature": "fn push(xs: Vec<i64>, value: i64) -> Vec<i64>",
-      "description": "Push an i64 onto the top; returns the new stack.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdcollectionsstack",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
       "id": "std-compress-bzip2-compress",
       "name": "std::compress::bzip2::compress",
       "kind": "function",
@@ -2267,7 +1602,7 @@
       "name": "std::database::sql::Select",
       "kind": "type",
       "signature": null,
-      "description": "Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, sql::Value::Int(...))...render() -> String`; `.params()` returns the bound parameters. Emits Postgres-style `$N` placeholders.",
+      "description": "Fluent SELECT builder. `Select::new(table).columns([..]).where_eq(col, sql::Value::Int(...))...render() -> String`; `.params()` returns the bound parameters. Emits Postgres-style `$N` placeholders.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -2627,7 +1962,7 @@
       "id": "std-encoding-binary-get-u16-be-at",
       "name": "std::encoding::binary::get_u16_be_at",
       "kind": "function",
-      "signature": "fn get_u16_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
+      "signature": "fn get_u16_be_at(bytes: Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
       "description": "Reads a big-endian u16 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -2665,7 +2000,7 @@
       "id": "std-encoding-binary-get-u16-le-at",
       "name": "std::encoding::binary::get_u16_le_at",
       "kind": "function",
-      "signature": "fn get_u16_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
+      "signature": "fn get_u16_le_at(bytes: Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
       "description": "Reads a little-endian u16 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -2703,7 +2038,7 @@
       "id": "std-encoding-binary-get-u32-be-at",
       "name": "std::encoding::binary::get_u32_be_at",
       "kind": "function",
-      "signature": "fn get_u32_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
+      "signature": "fn get_u32_be_at(bytes: Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
       "description": "Reads a big-endian u32 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -2741,7 +2076,7 @@
       "id": "std-encoding-binary-get-u32-le-at",
       "name": "std::encoding::binary::get_u32_le_at",
       "kind": "function",
-      "signature": "fn get_u32_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
+      "signature": "fn get_u32_le_at(bytes: Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
       "description": "Reads a little-endian u32 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -2779,7 +2114,7 @@
       "id": "std-encoding-binary-get-u64-be-at",
       "name": "std::encoding::binary::get_u64_be_at",
       "kind": "function",
-      "signature": "fn get_u64_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
+      "signature": "fn get_u64_be_at(bytes: Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
       "description": "Reads a big-endian u64 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -2817,7 +2152,7 @@
       "id": "std-encoding-binary-get-u64-le-at",
       "name": "std::encoding::binary::get_u64_le_at",
       "kind": "function",
-      "signature": "fn get_u64_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
+      "signature": "fn get_u64_le_at(bytes: Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
       "description": "Reads a little-endian u64 at a byte offset of an existing buffer. An offset plus width past the end is an Err, never a zero-fill.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -4547,7 +3882,7 @@
       "name": "std::fmt::Display",
       "kind": "trait",
       "signature": null,
-      "description": "How a value renders through `{}`. The rendering is synthesized; `impl Display for T { fn to_string(&self) -> String }` overrides it.",
+      "description": "How a value renders through `{}`. The rendering is synthesized; `impl Display for T { fn fmt(&self) -> String }` overrides it, and `x.to_string()` reaches the same rendering.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -4564,7 +3899,7 @@
     {
       "id": "std-fmt-eprint",
       "name": "std::fmt::eprint",
-      "kind": "macro",
+      "kind": "builtin",
       "signature": null,
       "description": "Prints to stderr without a trailing newline.",
       "lifecycle": "experimental",
@@ -4583,7 +3918,7 @@
     {
       "id": "std-fmt-eprintln",
       "name": "std::fmt::eprintln",
-      "kind": "macro",
+      "kind": "builtin",
       "signature": null,
       "description": "Prints to stderr followed by a newline.",
       "lifecycle": "experimental",
@@ -4602,7 +3937,7 @@
     {
       "id": "std-fmt-format",
       "name": "std::fmt::format",
-      "kind": "macro",
+      "kind": "builtin",
       "signature": null,
       "description": "Formats arguments into an owned `String`.",
       "lifecycle": "experimental",
@@ -4621,7 +3956,7 @@
     {
       "id": "std-fmt-print",
       "name": "std::fmt::print",
-      "kind": "macro",
+      "kind": "builtin",
       "signature": null,
       "description": "Prints to stdout without a trailing newline.",
       "lifecycle": "experimental",
@@ -4640,47 +3975,9 @@
     {
       "id": "std-fmt-println",
       "name": "std::fmt::println",
-      "kind": "macro",
+      "kind": "builtin",
       "signature": null,
       "description": "Prints to stdout followed by a newline.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdfmt",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-fmt-write",
-      "name": "std::fmt::write",
-      "kind": "macro",
-      "signature": null,
-      "description": "Writes formatted output into a `Writer`.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdfmt",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-fmt-writeln",
-      "name": "std::fmt::writeln",
-      "kind": "macro",
-      "signature": null,
-      "description": "Writes formatted output into a `Writer` followed by a newline.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -5535,7 +4832,7 @@
       "name": "std::html::escape",
       "kind": "function",
       "signature": "fn escape(text: String) -> String",
-      "description": "Escapes HTML metacharacters (&, <, >, \", ').",
+      "description": "Escapes HTML metacharacters (, <, >, \", ').",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -7207,7 +6504,7 @@
       "name": "std::http::router::Handler",
       "kind": "trait",
       "signature": null,
-      "description": "Anything callable as `Fn(&Request, &Params) -> Response`.",
+      "description": "Anything callable as `Fn(Request, Params) -> Response`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -7815,7 +7112,7 @@
       "name": "std::http::websocket::serve",
       "kind": "function",
       "signature": "fn serve(addr: String, handler: Fn(http::websocket::Conn) -> ()) -> Result<(), errors::Error>",
-      "description": "serve(addr, handler) -> Result<(), Error>: bind, upgrade each connection, dispatch the handler's handle(&self, ws) per connection.",
+      "description": "serve(addr, handler) -> Result<(), Error>: bind, upgrade each connection, dispatch the handler's handle(self, ws) per connection.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -8385,7 +7682,7 @@
       "name": "std::io::pipe",
       "kind": "function",
       "signature": "fn pipe() -> (i64, i64)",
-      "description": "`pipe() -> (i64, i64)` - a connected `(reader, writer)` pair sharing one in-memory buffer. Reads return the bytes written so far and never block; `io::close_writer` marks the writer done. Example: `let (r, w) = io::pipe()`.",
+      "description": "`pipe() -> (i64, i64)` - a connected `(reader, writer)` pair sharing one in-memory buffer. Reads return the bytes written so far and never block; `io::close_writer` marks the writer done. Example: `let r, w = io::pipe()`.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -8517,7 +7814,7 @@
       "id": "std-iter-all",
       "name": "std::iter::all",
       "kind": "function",
-      "signature": "fn all<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> bool",
+      "signature": "fn all<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> bool",
       "description": "True if every element satisfies f.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8536,7 +7833,7 @@
       "id": "std-iter-any",
       "name": "std::iter::any",
       "kind": "function",
-      "signature": "fn any<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> bool",
+      "signature": "fn any<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> bool",
       "description": "True if any element satisfies f.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8574,7 +7871,7 @@
       "id": "std-iter-chunk-by",
       "name": "std::iter::chunk_by",
       "kind": "function",
-      "signature": "fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Map<K, Vec<T>>",
+      "signature": "fn chunk_by<T, K: Eq>(items: Vec<T>, key: Fn(T) -> K) -> Map<K, Vec<T>>",
       "description": "Groups elements into a map keyed by f.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8593,7 +7890,7 @@
       "id": "std-iter-chunks",
       "name": "std::iter::chunks",
       "kind": "function",
-      "signature": "fn chunks<T>(n: i64, items: Vec<T>) -> Vec<Vec<T>>",
+      "signature": "fn chunks<T>(items: Vec<T>, n: i64) -> Vec<Vec<T>>",
       "description": "Non-overlapping chunks of length n.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8650,7 +7947,7 @@
       "id": "std-iter-count-by",
       "name": "std::iter::count_by",
       "kind": "function",
-      "signature": "fn count_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Map<K, i64>",
+      "signature": "fn count_by<T, K: Eq>(items: Vec<T>, key: Fn(T) -> K) -> Map<K, i64>",
       "description": "Counts elements per key derived by f.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8726,7 +8023,7 @@
       "id": "std-iter-filter",
       "name": "std::iter::filter",
       "kind": "function",
-      "signature": "fn filter<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Vec<T>",
+      "signature": "fn filter<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> Vec<T>",
       "description": "Returns elements where f is true.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8745,7 +8042,7 @@
       "id": "std-iter-filter-map",
       "name": "std::iter::filter_map",
       "kind": "function",
-      "signature": "fn filter_map<T, U>(f: Fn(T) -> Option<U>, items: Vec<T>) -> Vec<U>",
+      "signature": "fn filter_map<T, U>(items: Vec<T>, f: Fn(T) -> Option<U>) -> Vec<U>",
       "description": "Maps each element and keeps the Some results.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8764,7 +8061,7 @@
       "id": "std-iter-find",
       "name": "std::iter::find",
       "kind": "function",
-      "signature": "fn find<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Option<T>",
+      "signature": "fn find<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> Option<T>",
       "description": "First element satisfying f, or None.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8783,7 +8080,7 @@
       "id": "std-iter-find-map",
       "name": "std::iter::find_map",
       "kind": "function",
-      "signature": "fn find_map<T, U>(f: Fn(T) -> Option<U>, items: Vec<T>) -> Option<U>",
+      "signature": "fn find_map<T, U>(items: Vec<T>, f: Fn(T) -> Option<U>) -> Option<U>",
       "description": "First Some result of f over the sequence.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8802,7 +8099,7 @@
       "id": "std-iter-flat-map",
       "name": "std::iter::flat_map",
       "kind": "function",
-      "signature": "fn flat_map<T, U>(f: Fn(T) -> Vec<U>, items: Vec<T>) -> Vec<U>",
+      "signature": "fn flat_map<T, U>(items: Vec<T>, f: Fn(T) -> Vec<U>) -> Vec<U>",
       "description": "Maps f and flattens one level.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8840,7 +8137,7 @@
       "id": "std-iter-fold",
       "name": "std::iter::fold",
       "kind": "function",
-      "signature": "fn fold<T, U>(init: U, f: Fn(U, T) -> U, items: Vec<T>) -> U",
+      "signature": "fn fold<T, U>(items: Vec<T>, init: U, f: Fn(U, T) -> U) -> U",
       "description": "Reduces a sequence with an accumulator.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8859,7 +8156,7 @@
       "id": "std-iter-for-each",
       "name": "std::iter::for_each",
       "kind": "function",
-      "signature": "fn for_each<T>(f: Fn(T) -> (), items: Vec<T>) -> ()",
+      "signature": "fn for_each<T>(items: Vec<T>, f: Fn(T) -> ()) -> ()",
       "description": "Applies f to each element for its side effect.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8878,7 +8175,7 @@
       "id": "std-iter-map",
       "name": "std::iter::map",
       "kind": "function",
-      "signature": "fn map<T, U>(f: Fn(T) -> U, items: Vec<T>) -> Vec<U>",
+      "signature": "fn map<T, U>(items: Vec<T>, f: Fn(T) -> U) -> Vec<U>",
       "description": "Applies f to each element. Returns a Vec for a Vec argument, and another iterator for an iterator argument.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8916,7 +8213,7 @@
       "id": "std-iter-max-by",
       "name": "std::iter::max_by",
       "kind": "function",
-      "signature": "fn max_by<T>(compare: Fn(T, T) -> i64, items: Vec<T>) -> Option<T>",
+      "signature": "fn max_by<T>(items: Vec<T>, compare: Fn(T, T) -> i64) -> Option<T>",
       "description": "Largest element by the comparison closure.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8935,7 +8232,7 @@
       "id": "std-iter-max-by-key",
       "name": "std::iter::max_by_key",
       "kind": "function",
-      "signature": "fn max_by_key<T, K: Ord>(key: Fn(T) -> K, items: Vec<T>) -> Option<T>",
+      "signature": "fn max_by_key<T, K: Ord>(items: Vec<T>, key: Fn(T) -> K) -> Option<T>",
       "description": "Element with the largest derived key.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8973,7 +8270,7 @@
       "id": "std-iter-min-by",
       "name": "std::iter::min_by",
       "kind": "function",
-      "signature": "fn min_by<T>(compare: Fn(T, T) -> i64, items: Vec<T>) -> Option<T>",
+      "signature": "fn min_by<T>(items: Vec<T>, compare: Fn(T, T) -> i64) -> Option<T>",
       "description": "Smallest element by the comparison closure.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -8992,7 +8289,7 @@
       "id": "std-iter-min-by-key",
       "name": "std::iter::min_by_key",
       "kind": "function",
-      "signature": "fn min_by_key<T, K: Ord>(key: Fn(T) -> K, items: Vec<T>) -> Option<T>",
+      "signature": "fn min_by_key<T, K: Ord>(items: Vec<T>, key: Fn(T) -> K) -> Option<T>",
       "description": "Element with the smallest derived key.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9049,7 +8346,7 @@
       "id": "std-iter-partition",
       "name": "std::iter::partition",
       "kind": "function",
-      "signature": "fn partition<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> (Vec<T>, Vec<T>)",
+      "signature": "fn partition<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> (Vec<T>, Vec<T>)",
       "description": "Splits into (matching, non-matching) by f.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9068,7 +8365,7 @@
       "id": "std-iter-position",
       "name": "std::iter::position",
       "kind": "function",
-      "signature": "fn position<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Option<i64>",
+      "signature": "fn position<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> Option<i64>",
       "description": "Index of the first element satisfying f, or None.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9106,7 +8403,7 @@
       "id": "std-iter-product-by",
       "name": "std::iter::product_by",
       "kind": "function",
-      "signature": "fn product_by<T>(f: Fn(T) -> i64, items: Vec<T>) -> i64",
+      "signature": "fn product_by<T>(items: Vec<T>, f: Fn(T) -> i64) -> i64",
       "description": "Product of f(element) over the sequence.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9163,7 +8460,7 @@
       "id": "std-iter-reduce",
       "name": "std::iter::reduce",
       "kind": "function",
-      "signature": "fn reduce<T>(f: Fn(T, T) -> T, items: Vec<T>) -> Option<T>",
+      "signature": "fn reduce<T>(items: Vec<T>, f: Fn(T, T) -> T) -> Option<T>",
       "description": "Folds with the first element as the initial accumulator.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9220,7 +8517,7 @@
       "id": "std-iter-scan",
       "name": "std::iter::scan",
       "kind": "function",
-      "signature": "fn scan<T, S>(init: S, f: Fn(S, T) -> S, items: Vec<T>) -> Vec<S>",
+      "signature": "fn scan<T, S>(items: Vec<T>, init: S, f: Fn(S, T) -> S) -> Vec<S>",
       "description": "Folds while yielding each intermediate accumulator.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9239,7 +8536,7 @@
       "id": "std-iter-skip",
       "name": "std::iter::skip",
       "kind": "function",
-      "signature": "fn skip<T>(n: i64, items: Vec<T>) -> Vec<T>",
+      "signature": "fn skip<T>(items: Vec<T>, n: i64) -> Vec<T>",
       "description": "All elements after the first n.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9258,7 +8555,7 @@
       "id": "std-iter-skip-while",
       "name": "std::iter::skip_while",
       "kind": "function",
-      "signature": "fn skip_while<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Vec<T>",
+      "signature": "fn skip_while<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> Vec<T>",
       "description": "Elements after the leading run satisfying f.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9277,7 +8574,7 @@
       "id": "std-iter-sort-by",
       "name": "std::iter::sort_by",
       "kind": "function",
-      "signature": "fn sort_by<T>(compare: Fn(T, T) -> i64, items: Vec<T>) -> Vec<T>",
+      "signature": "fn sort_by<T>(items: Vec<T>, compare: Fn(T, T) -> i64) -> Vec<T>",
       "description": "Sorted copy ordered by the comparison closure.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9296,7 +8593,7 @@
       "id": "std-iter-sort-by-key",
       "name": "std::iter::sort_by_key",
       "kind": "function",
-      "signature": "fn sort_by_key<T, K: Ord>(key: Fn(T) -> K, items: Vec<T>) -> Vec<T>",
+      "signature": "fn sort_by_key<T, K: Ord>(items: Vec<T>, key: Fn(T) -> K) -> Vec<T>",
       "description": "Sorted copy ordered by a derived key.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9315,7 +8612,7 @@
       "id": "std-iter-step-by",
       "name": "std::iter::step_by",
       "kind": "function",
-      "signature": "fn step_by<T>(step: i64, items: Vec<T>) -> Vec<T>",
+      "signature": "fn step_by<T>(items: Vec<T>, step: i64) -> Vec<T>",
       "description": "Every step-th element, starting at index 0.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9353,7 +8650,7 @@
       "id": "std-iter-sum-by",
       "name": "std::iter::sum_by",
       "kind": "function",
-      "signature": "fn sum_by<T>(f: Fn(T) -> i64, items: Vec<T>) -> i64",
+      "signature": "fn sum_by<T>(items: Vec<T>, f: Fn(T) -> i64) -> i64",
       "description": "Sum of f(element) over the sequence.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9372,7 +8669,7 @@
       "id": "std-iter-take",
       "name": "std::iter::take",
       "kind": "function",
-      "signature": "fn take<T>(n: i64, items: Vec<T>) -> Vec<T>",
+      "signature": "fn take<T>(items: Vec<T>, n: i64) -> Vec<T>",
       "description": "First n elements.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9391,7 +8688,7 @@
       "id": "std-iter-take-while",
       "name": "std::iter::take_while",
       "kind": "function",
-      "signature": "fn take_while<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Vec<T>",
+      "signature": "fn take_while<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> Vec<T>",
       "description": "Leading run of elements satisfying f.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -9429,7 +8726,7 @@
       "id": "std-iter-windows",
       "name": "std::iter::windows",
       "kind": "function",
-      "signature": "fn windows<T>(n: i64, items: Vec<T>) -> Vec<Vec<T>>",
+      "signature": "fn windows<T>(items: Vec<T>, n: i64) -> Vec<Vec<T>>",
       "description": "Overlapping windows of width n.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -12450,7 +11747,7 @@
       "id": "std-option-and-then",
       "name": "std::option::and_then",
       "kind": "function",
-      "signature": "fn and_then<T, U>(f: Fn(T) -> Option<U>, value: Option<T>) -> Option<U>",
+      "signature": "fn and_then<T, U>(value: Option<T>, f: Fn(T) -> Option<U>) -> Option<U>",
       "description": "Chains a fallible step: Some(v) -> f(v), None stays None.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -12469,7 +11766,7 @@
       "id": "std-option-expect",
       "name": "std::option::expect",
       "kind": "function",
-      "signature": "fn expect<T>(message: String, value: Option<T>) -> T",
+      "signature": "fn expect<T>(value: Option<T>, message: String) -> T",
       "description": "Returns the payload, panicking with the message when the value is None.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -12488,7 +11785,7 @@
       "id": "std-option-filter",
       "name": "std::option::filter",
       "kind": "function",
-      "signature": "fn filter<T>(predicate: Fn(T) -> bool, value: Option<T>) -> Option<T>",
+      "signature": "fn filter<T>(value: Option<T>, predicate: Fn(T) -> bool) -> Option<T>",
       "description": "Keeps Some(v) only when the predicate holds.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -12583,7 +11880,7 @@
       "id": "std-option-map",
       "name": "std::option::map",
       "kind": "function",
-      "signature": "fn map<T, U>(f: Fn(T) -> U, value: Option<T>) -> Option<U>",
+      "signature": "fn map<T, U>(value: Option<T>, f: Fn(T) -> U) -> Option<U>",
       "description": "Transforms the Some payload, None stays None.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -12602,7 +11899,7 @@
       "id": "std-option-ok-or",
       "name": "std::option::ok_or",
       "kind": "function",
-      "signature": "fn ok_or<T, E>(err: E, value: Option<T>) -> Result<T, E>",
+      "signature": "fn ok_or<T, E>(value: Option<T>, err: E) -> Result<T, E>",
       "description": "Converts Some to Ok, or None to Err with the provided error.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -12621,7 +11918,7 @@
       "id": "std-option-ok-or-else",
       "name": "std::option::ok_or_else",
       "kind": "function",
-      "signature": "fn ok_or_else<T, E>(err: Fn() -> E, value: Option<T>) -> Result<T, E>",
+      "signature": "fn ok_or_else<T, E>(value: Option<T>, err: Fn() -> E) -> Result<T, E>",
       "description": "Converts Some to Ok, or None to Err from a fallback closure.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -12640,7 +11937,7 @@
       "id": "std-option-or",
       "name": "std::option::or",
       "kind": "function",
-      "signature": "fn or<T>(fallback: Option<T>, value: Option<T>) -> Option<T>",
+      "signature": "fn or<T>(value: Option<T>, fallback: Option<T>) -> Option<T>",
       "description": "First Some of self and the alternative.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -12659,7 +11956,7 @@
       "id": "std-option-or-else",
       "name": "std::option::or_else",
       "kind": "function",
-      "signature": "fn or_else<T>(fallback: Fn() -> Option<T>, value: Option<T>) -> Option<T>",
+      "signature": "fn or_else<T>(value: Option<T>, fallback: Fn() -> Option<T>) -> Option<T>",
       "description": "First Some of self and a lazily built alternative.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -12697,7 +11994,7 @@
       "id": "std-option-unwrap-or",
       "name": "std::option::unwrap_or",
       "kind": "function",
-      "signature": "fn unwrap_or<T>(fallback: T, value: Option<T>) -> T",
+      "signature": "fn unwrap_or<T>(value: Option<T>, fallback: T) -> T",
       "description": "Unwraps with a fallback value for None.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -12716,7 +12013,7 @@
       "id": "std-option-unwrap-or-else",
       "name": "std::option::unwrap_or_else",
       "kind": "function",
-      "signature": "fn unwrap_or_else<T>(fallback: Fn() -> T, value: Option<T>) -> T",
+      "signature": "fn unwrap_or_else<T>(value: Option<T>, fallback: Fn() -> T) -> T",
       "description": "Unwraps with a lazily computed fallback for None.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -12735,7 +12032,7 @@
       "id": "std-option-zip",
       "name": "std::option::zip",
       "kind": "function",
-      "signature": "fn zip<T, U>(other: Option<U>, value: Option<T>) -> Option<(T, U)>",
+      "signature": "fn zip<T, U>(value: Option<T>, other: Option<U>) -> Option<(T, U)>",
       "description": "Pairs two Somes into Some((a, b)).",
       "lifecycle": "experimental",
       "tier_support": [
@@ -13228,7 +12525,7 @@
     {
       "id": "std-panic-panic",
       "name": "std::panic::panic",
-      "kind": "macro",
+      "kind": "builtin",
       "signature": null,
       "description": "Aborts the current goroutine with a message.",
       "lifecycle": "experimental",
@@ -14103,7 +13400,7 @@
       "id": "std-result-and-then",
       "name": "std::result::and_then",
       "kind": "function",
-      "signature": "fn and_then<T, E, U>(f: Fn(T) -> Result<U, E>, value: Result<T, E>) -> Result<U, E>",
+      "signature": "fn and_then<T, E, U>(value: Result<T, E>, f: Fn(T) -> Result<U, E>) -> Result<U, E>",
       "description": "Chains a fallible step on the Ok payload.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -14179,7 +13476,7 @@
       "id": "std-result-map",
       "name": "std::result::map",
       "kind": "function",
-      "signature": "fn map<T, E, U>(f: Fn(T) -> U, value: Result<T, E>) -> Result<U, E>",
+      "signature": "fn map<T, E, U>(value: Result<T, E>, f: Fn(T) -> U) -> Result<U, E>",
       "description": "Transforms the Ok payload, Err passes through.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -14198,7 +13495,7 @@
       "id": "std-result-map-err",
       "name": "std::result::map_err",
       "kind": "function",
-      "signature": "fn map_err<T, E, F>(f: Fn(E) -> F, value: Result<T, E>) -> Result<T, F>",
+      "signature": "fn map_err<T, E, F>(value: Result<T, E>, f: Fn(E) -> F) -> Result<T, F>",
       "description": "Transforms the Err payload, Ok passes through.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -14236,7 +13533,7 @@
       "id": "std-result-or-else",
       "name": "std::result::or_else",
       "kind": "function",
-      "signature": "fn or_else<T, E, F>(f: Fn(E) -> Result<T, F>, value: Result<T, E>) -> Result<T, F>",
+      "signature": "fn or_else<T, E, F>(value: Result<T, E>, f: Fn(E) -> Result<T, F>) -> Result<T, F>",
       "description": "Recovers from Err with a fallback computation.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -14255,7 +13552,7 @@
       "id": "std-result-unwrap-or",
       "name": "std::result::unwrap_or",
       "kind": "function",
-      "signature": "fn unwrap_or<T, E>(fallback: T, value: Result<T, E>) -> T",
+      "signature": "fn unwrap_or<T, E>(value: Result<T, E>, fallback: T) -> T",
       "description": "Unwraps Ok with a fallback value for Err.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -14274,7 +13571,7 @@
       "id": "std-result-unwrap-or-else",
       "name": "std::result::unwrap_or_else",
       "kind": "function",
-      "signature": "fn unwrap_or_else<T, E>(f: Fn(E) -> T, value: Result<T, E>) -> T",
+      "signature": "fn unwrap_or_else<T, E>(value: Result<T, E>, f: Fn(E) -> T) -> T",
       "description": "Consumes the result, handling Err with a callback.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -15639,25 +14936,6 @@
       "reference_status": "catalog_only"
     },
     {
-      "id": "std-strings-parse",
-      "name": "std::strings::parse",
-      "kind": "function",
-      "signature": "fn parse<T>(text: String) -> Result<T, errors::Error>",
-      "description": "Parses the string into the expected Result payload type.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdstrings",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
       "id": "std-strings-repeat",
       "name": "std::strings::repeat",
       "kind": "function",
@@ -16953,7 +16231,7 @@
       "id": "std-time-sleep-ctx",
       "name": "std::time::sleep_ctx",
       "kind": "function",
-      "signature": "fn sleep_ctx(ctx: &context::Context, ms: i64) -> bool",
+      "signature": "fn sleep_ctx(ctx: context::Context, ms: i64) -> bool",
       "description": "Sleeps unless the context fires first; false when it cancelled the wait.",
       "lifecycle": "experimental",
       "tier_support": [

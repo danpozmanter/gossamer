@@ -17,10 +17,10 @@ fn main() -> Result<(), flag::Error> {
     assert_eq(timeout.as_millis(), 1500, "default millis")
     assert_eq(timeout.as_secs(), 1, "default secs")
     assert_eq(timeout.as_micros(), 1500000, "default micros")
-    println!("timeout: {} {} {}", timeout.as_millis(), timeout.as_secs(), timeout.as_micros())
+    println("timeout: {} {} {}", timeout.as_millis(), timeout.as_secs(), timeout.as_micros())
 
     // Value-context use of the same cell auto-derefs to compare.
     let over_one_second = timeout > time::Duration::from_millis(1000)
-    println!("over 1s: {}", over_one_second)
+    println("over 1s: {}", over_one_second)
     Ok(())
 }

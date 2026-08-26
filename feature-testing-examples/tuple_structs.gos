@@ -26,18 +26,18 @@ fn classify(p: Pt) -> i64 {
 
 fn main() {
     let p = Pt(3, 4)
-    println!("{} {} {}", p.0, p.1, sum(Pt(10, 20)))
+    println("{} {} {}", p.0, p.1, sum(Pt(10, 20)))
 
     let r = Rec(7, "hi", true)
-    println!("{} {} {}", r.0, r.1, r.2)
+    println("{} {} {}", r.0, r.1, r.2)
 
     let UserId(id) = UserId(99)
-    println!("{} {}", id, classify(Pt(0, 5)))
+    println("{} {}", id, classify(Pt(0, 5)))
 
     let o = Pt::origin()
     let c = o.clone()
-    println!("{} {} {:?}", o.0, o == c, c)
+    println("{} {} {:?}", o.0, o == c, c)
 
     let d = Pt::default()
-    println!("{} {:?}", d == Pt(0, 0), d)
+    println("{} {:?}", d == Pt(0, 0), d)
 }

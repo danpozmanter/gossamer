@@ -12,7 +12,7 @@ fn main() {
     span.set_attribute("user", "alice")
     let ended = span.end()
     let json = ended.to_otlp_json()
-    println!("has_name={}", strings::contains(&json, "\"name\":\"checkout\""))
-    println!("has_attr_val={}", strings::contains(&json, "alice"))
-    println!("has_status_ok={}", strings::contains(&json, "\"code\":1"))
+    println("has_name={}", strings::contains(json, "\"name\":\"checkout\""))
+    println("has_attr_val={}", strings::contains(json, "alice"))
+    println("has_status_ok={}", strings::contains(json, "\"code\":1"))
 }

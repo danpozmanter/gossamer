@@ -189,8 +189,15 @@ impl Parser<'_> {
             text.push_str(self.slice(self.peek_span()));
             self.bump();
         }
+        // The qualifier is part of the spelling: a setting names one enum,
+        // so `Foo::FailFast` is not `Policy::FailFast` and reading only the
+        // last segment would accept it.
+        let qualified = match text.rsplit_once("::") {
+            Some((owner, _)) => owner == enum_name || owner == format!("cohort::{enum_name}"),
+            None => true,
+        };
         let variant = text.rsplit("::").next().unwrap_or_default().to_string();
-        if let Some((_, value)) = variants.iter().find(|(name, _)| *name == variant) {
+        if qualified && let Some((_, value)) = variants.iter().find(|(name, _)| *name == variant) {
             return *value;
         }
         let expected = variants

@@ -64,10 +64,10 @@ fn nested_continue_outer() -> i64 {
 }
 
 fn main() {
-    let (i, j) = first_factor_pair(12, 8)
-    println!("pair {} {}", i, j)
-    println!("count {}", count_skipping(3, 4))
-    println!("loop_value {}", labelled_loop_value())
-    println!("while_break {}", labelled_while_break(7))
-    println!("continue_outer {}", nested_continue_outer())
+    let i, j = first_factor_pair(12, 8)
+    println("pair {} {}", i, j)
+    println("count {}", count_skipping(3, 4))
+    println("loop_value {}", labelled_loop_value())
+    println("while_break {}", labelled_while_break(7))
+    println("continue_outer {}", nested_continue_outer())
 }

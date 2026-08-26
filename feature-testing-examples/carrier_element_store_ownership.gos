@@ -82,13 +82,13 @@ fn array_of_string_payloads(base: i64) -> i64 {
     let mut xs: [Option<(String, i64)>; 8] = [None; 8]
     let mut i = 0
     while i < 8 {
-        xs[i] = Some((format!("s{}", base + i), base + i))
+        xs[i] = Some((format("s{}", base + i), base + i))
         i += 1
     }
     let mut churn: [Option<(String, i64)>; 8] = [None; 8]
     let mut j = 0
     while j < 8 {
-        churn[j] = Some((format!("junk{}", j), -1))
+        churn[j] = Some((format("junk{}", j), -1))
         j += 1
     }
     // The text is part of the answer: a reused block shows up as a
@@ -113,7 +113,7 @@ fn conditional_store_fingerprint() -> i64 {
     }
     let mut head = 0
     while head < pairs.len() {
-        let (k, v) = pairs[head]
+        let k, v = pairs[head]
         head += 1
         if k % 2 == 0 {
             slots[k] = Some((v, k))
@@ -130,19 +130,19 @@ fn conditional_store_fingerprint() -> i64 {
 }
 
 fn main() {
-    println!("array: {} {} {}", array_of_option_tuples(0), array_of_option_tuples(1000), array_of_option_tuples(100000))
-    println!("vec: {} {} {}", vec_of_option_tuples(0), vec_of_option_tuples(1000), vec_of_option_tuples(100000))
-    println!("result: {} {}", array_of_result_tuples(0), array_of_result_tuples(100000))
-    println!("string: {} {}", array_of_string_payloads(0), array_of_string_payloads(500000))
+    println("array: {} {} {}", array_of_option_tuples(0), array_of_option_tuples(1000), array_of_option_tuples(100000))
+    println("vec: {} {} {}", vec_of_option_tuples(0), vec_of_option_tuples(1000), vec_of_option_tuples(100000))
+    println("result: {} {}", array_of_result_tuples(0), array_of_result_tuples(100000))
+    println("string: {} {}", array_of_string_payloads(0), array_of_string_payloads(500000))
     // Repeated so a body reaches the JIT threshold and the same answer
     // has to come back from the compiled entry.
     let mut i = 0
     while i < 8 {
         let f = conditional_store_fingerprint()
         if f != 30228 {
-            println!("conditional diverged: {}", f)
+            println("conditional diverged: {}", f)
         }
         i += 1
     }
-    println!("conditional: {}", conditional_store_fingerprint())
+    println("conditional: {}", conditional_store_fingerprint())
 }

@@ -7,7 +7,7 @@ use std::os::exec
 fn run_cmd(prog: String, args: Vec<String>) -> Result<String, String> {
     match exec::run(prog, args) {
         Ok(out) => Ok(out.stdout.trim().clone())
-        Err(e) => Err(format!("{e}"))
+        Err(e) => Err(format("{e}"))
     }
 }
 
@@ -22,41 +22,41 @@ fn main() {
     // echo - simple stdout capture
     match exec::run("echo", Vec::from(["hello from subprocess"])) {
         Ok(out) => {
-            println!("stdout: '{}'", out.stdout.trim())
-            println!("code: {}", out.code)
+            println("stdout: '{}'", out.stdout.trim())
+            println("code: {}", out.code)
         }
-        Err(e) => println!("error: {}", e)
+        Err(e) => println("error: {}", e)
     }
 
     // echo with multiple args
     match exec::run("echo", Vec::from(["foo", "bar", "baz"])) {
-        Ok(out) => println!("multi-arg: '{}'", out.stdout.trim())
-        Err(e) => println!("error: {}", e)
+        Ok(out) => println("multi-arg: '{}'", out.stdout.trim())
+        Err(e) => println("error: {}", e)
     }
 
     // true exits 0, false exits 1
     let true_code = run_and_check_code("true", Vec::from([]))
-    println!("true exit code = {}", true_code)
+    println("true exit code = {}", true_code)
 
     let false_code = run_and_check_code("false", Vec::from([]))
-    println!("false exit code = {}", false_code)
+    println("false exit code = {}", false_code)
 
     // printf for controlled output
     match exec::run("printf", Vec::from(["%d\\n", "42"])) {
-        Ok(out) => println!("printf output starts: {}", out.stdout.starts_with("42"))
-        Err(e) => println!("printf error: {}", e)
+        Ok(out) => println("printf output starts: {}", out.stdout.starts_with("42"))
+        Err(e) => println("printf error: {}", e)
     }
 
     // sh -c for pipeline
     match exec::run("sh", Vec::from(["-c", "echo hello | tr a-z A-Z"])) {
-        Ok(out) => println!("uppercase: '{}'", out.stdout.trim())
-        Err(e) => println!("sh error: {}", e)
+        Ok(out) => println("uppercase: '{}'", out.stdout.trim())
+        Err(e) => println("sh error: {}", e)
     }
 
     // Chained: run_cmd helper
     match run_cmd("echo", Vec::from(["world"])) {
-        Ok(s) => println!("run_cmd result: '{}'", s)
-        Err(e) => println!("run_cmd error: {}", e)
+        Ok(s) => println("run_cmd result: '{}'", s)
+        Err(e) => println("run_cmd error: {}", e)
     }
 }
 
@@ -69,7 +69,7 @@ mod tests {
     fn echo_captures_stdout() {
         match exec::run("echo", Vec::from(["gossamer"])) {
             Ok(out) => {
-                let _ = testing::check_eq(&out.code, &0, "exit code 0")
+                let _ = testing::check_eq(out.code, 0, "exit code 0")
                 let _ = testing::check(out.stdout.contains("gossamer"), "stdout contains gossamer")
             }
             Err(e) => { let _ = testing::check(false, e)
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn true_exits_zero() {
         match exec::run("true", Vec::from([])) {
-            Ok(out) => { let _ = testing::check_eq(&out.code, &0, "true exits 0")
+            Ok(out) => { let _ = testing::check_eq(out.code, 0, "true exits 0")
             }
             Err(e) => { let _ = testing::check(false, e)
             }

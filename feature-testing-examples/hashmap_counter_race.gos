@@ -13,14 +13,14 @@ fn main() {
     tally.inc("apple")
     tally.inc("apple", 3)
 
-    println!("apple = {}", tally.get_or("apple", 0))
-    println!("banana = {}", tally.get_or("banana", 0))
-    println!("cherry = {}", tally.get_or("cherry", 0))
+    println("apple = {}", tally.get_or("apple", 0))
+    println("banana = {}", tally.get_or("banana", 0))
+    println("cherry = {}", tally.get_or("cherry", 0))
 
     // or_insert pattern
     tally.or_insert("cherry", 10)
     tally.or_insert("cherry", 99)
-    println!("cherry after or_insert = {}", tally.get_or("cherry", 0))
+    println("cherry after or_insert = {}", tally.get_or("cherry", 0))
 
     // Manual update loop
     let words = #["one", "two", "two", "three", "three", "three"]
@@ -30,7 +30,7 @@ fn main() {
     }
 
     for (k, v) in counts.iter() {
-        println!("{} -> {}", k, v)
+        println("{} -> {}", k, v)
     }
 
     // Repeated mutation stress
@@ -39,7 +39,7 @@ fn main() {
         stress.inc(i % 7)
     }
     for i in 0..7 {
-        println!("bucket {} = {}", i, stress.get_or(i, 0))
+        println("bucket {} = {}", i, stress.get_or(i, 0))
     }
 }
 
@@ -54,7 +54,7 @@ mod tests {
         m.inc("x")
         m.inc("x")
         m.inc("x")
-        let _ = testing::check_eq(&m.get_or("x", 0), &3, "inc x 3 times = 3")
+        let _ = testing::check_eq(m.get_or("x", 0), 3, "inc x 3 times = 3")
     }
 
     #[test]
@@ -62,13 +62,13 @@ mod tests {
         let mut m: Map<String, i64> = Map::new()
         m.or_insert("k", 42)
         m.or_insert("k", 99)
-        let _ = testing::check_eq(&m.get_or("k", 0), &42, "or_insert keeps first value")
+        let _ = testing::check_eq(m.get_or("k", 0), 42, "or_insert keeps first value")
     }
 
     #[test]
     fn missing_key_returns_default() {
         let m: Map<String, i64> = Map::new()
-        let _ = testing::check_eq(&m.get_or("missing", -1), &-1, "missing key → default")
+        let _ = testing::check_eq(m.get_or("missing", -1), -1, "missing key → default")
     }
 
     #[test]
@@ -78,8 +78,8 @@ mod tests {
         for w in words {
             counts.inc(w)
         }
-        let _ = testing::check_eq(&counts.get_or("a", 0), &3, "a appears 3 times")
-        let _ = testing::check_eq(&counts.get_or("b", 0), &2, "b appears 2 times")
-        let _ = testing::check_eq(&counts.get_or("c", 0), &1, "c appears 1 time")
+        let _ = testing::check_eq(counts.get_or("a", 0), 3, "a appears 3 times")
+        let _ = testing::check_eq(counts.get_or("b", 0), 2, "b appears 2 times")
+        let _ = testing::check_eq(counts.get_or("c", 0), 1, "c appears 1 time")
     }
 }

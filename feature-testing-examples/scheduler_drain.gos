@@ -13,8 +13,8 @@ fn producer(tx: channel::Sender<i64>, n: i64) {
 }
 
 fn main() {
-    let (tx, rx) = channel()
-    go producer(tx, 5)
+    let tx, rx = channel()
+    spawn(|| producer(tx, 5))
 
     let mut total = 0
     let mut count = 0
@@ -22,6 +22,6 @@ fn main() {
         total += v
         count += 1
     }
-    println!("count = {}", count)
-    println!("total = {}", total)
+    println("count = {}", count)
+    println("total = {}", total)
 }

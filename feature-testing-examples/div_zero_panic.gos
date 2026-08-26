@@ -8,7 +8,7 @@ fn main() {
     let mut z = 0
     for x in xs { z += x }
     z -= 20
-    println!("before")
-    println!("{}", 100 / z)
-    println!("after")
+    println("before")
+    println("{}", 100 / z)
+    println("after")
 }

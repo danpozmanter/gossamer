@@ -31,5 +31,5 @@ fn main() {
     for n in c {
         sum += n
     }
-    println!("sum 0..5 = {}", sum)
+    println("sum 0..5 = {}", sum)
 }

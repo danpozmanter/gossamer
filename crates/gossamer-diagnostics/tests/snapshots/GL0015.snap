@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0015]: `todo!()` and `unimplemented!()` are placeholders, not shippable - here
+error[GL0015]: `todo()` and `unimplemented()` are placeholders, not shippable - here
 --- framed ---
-error[GL0015]: `todo!()` and `unimplemented!()` are placeholders, not shippable
+error[GL0015]: `todo()` and `unimplemented()` are placeholders, not shippable
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

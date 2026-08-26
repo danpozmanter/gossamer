@@ -171,8 +171,8 @@ fn map_i64(xs: Vec<i64>, f: Fn(i64) -> i64) -> Vec<i64> {
 fn main() {
     let xs = Vec::from([1, 2, 3, 4])
     let mapped = map_i64(xs, |x| x * 10)
-    println!("mapped[0]={}", mapped[0])
-    println!("mapped[3]={}", mapped[3])
+    println("mapped[0]={}", mapped[0])
+    println("mapped[3]={}", mapped[3])
 }
 "#;
     assert_three_tier("fn_i64_to_i64", src, "mapped[0]=10\nmapped[3]=40");
@@ -196,8 +196,8 @@ fn map_f64(xs: Vec<f64>, f: Fn(f64) -> f64) -> Vec<f64> {
 fn main() {
     let xs: Vec<f64> = [1.0, 2.0, 3.0, 4.0].to_vec()
     let halved = map_f64(xs, |x| x * 0.5)
-    println!("halved[0]={}", halved[0])
-    println!("halved[3]={}", halved[3])
+    println("halved[0]={}", halved[0])
+    println("halved[3]={}", halved[3])
 }
 "#;
     assert_three_tier("fn_f64_to_f64", src, "halved[0]=0.5\nhalved[3]=2");
@@ -221,8 +221,8 @@ fn map_f64_to_i64(xs: Vec<f64>, f: Fn(f64) -> i64) -> Vec<i64> {
 fn main() {
     let xs: Vec<f64> = [1.5, 2.5, 3.5, 4.5].to_vec()
     let buckets = map_f64_to_i64(xs, |x| if x > 3.0 { 100 } else { 7 })
-    println!("buckets[0]={}", buckets[0])
-    println!("buckets[3]={}", buckets[3])
+    println("buckets[0]={}", buckets[0])
+    println("buckets[3]={}", buckets[3])
 }
 "#;
     assert_three_tier("fn_f64_to_i64", src, "buckets[0]=7\nbuckets[3]=100");
@@ -244,8 +244,8 @@ fn map_i64_to_f64(xs: Vec<i64>, f: Fn(i64) -> f64) -> Vec<f64> {
 fn main() {
     let xs = Vec::from([2, 4, 6, 8])
     let weights = map_i64_to_f64(xs, |x| if x > 5 { 1.5 } else { 0.25 })
-    println!("weights[0]={}", weights[0])
-    println!("weights[3]={}", weights[3])
+    println("weights[0]={}", weights[0])
+    println("weights[3]={}", weights[3])
 }
 "#;
     assert_three_tier("fn_i64_to_f64", src, "weights[0]=0.25\nweights[3]=1.5");
@@ -268,9 +268,9 @@ fn reduce_f64(xs: Vec<f64>, init: f64, f: Fn(f64, f64) -> f64) -> f64 {
 fn main() {
     let xs: Vec<f64> = [1.5, 2.5, 3.5, 4.5].to_vec()
     let total = reduce_f64(xs, 0.0, |acc, x| acc + x)
-    println!("total={}", total)
+    println("total={}", total)
     let scaled = reduce_f64(xs, 1.0, |acc, x| acc * x)
-    println!("scaled={}", scaled)
+    println("scaled={}", scaled)
 }
 "#;
     assert_three_tier("fn_ff_to_f", src, "total=12\nscaled=59.0625");
@@ -297,8 +297,8 @@ fn map_f64(xs: Vec<f64>, f: Fn(f64) -> f64) -> Vec<f64> {
 fn main() {
     let xs: Vec<f64> = [0.25, 0.5, 1.0, 2.0].to_vec()
     let doubled = map_f64(xs, double)
-    println!("doubled[0]={}", doubled[0])
-    println!("doubled[3]={}", doubled[3])
+    println("doubled[0]={}", doubled[0])
+    println("doubled[3]={}", doubled[3])
 }
 "#;
     assert_three_tier("bare_fn_f", src, "doubled[0]=0.5\ndoubled[3]=4");
@@ -323,8 +323,8 @@ fn main() {
     let xs: Vec<f64> = [1.0, 2.0, 3.0, 4.0].to_vec()
     let bias = 100.0
     let shifted = map_f64(xs, |x| x + bias)
-    println!("shifted[0]={}", shifted[0])
-    println!("shifted[3]={}", shifted[3])
+    println("shifted[0]={}", shifted[0])
+    println("shifted[3]={}", shifted[3])
 }
 "#;
     assert_three_tier("capture_f", src, "shifted[0]=101\nshifted[3]=104");

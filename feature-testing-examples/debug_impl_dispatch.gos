@@ -9,8 +9,8 @@ struct Shown {
 }
 
 impl Display for Shown {
-    fn to_string(&self) -> String {
-        format!("S<{}>", self.id)
+    fn fmt(&self) -> String {
+        format("S<{}>", self.id)
     }
 }
 
@@ -20,7 +20,7 @@ struct Dumped {
 
 impl Debug for Dumped {
     fn fmt(&self) -> String {
-        format!("D<{}>", self.id)
+        format("D<{}>", self.id)
     }
 }
 
@@ -29,14 +29,14 @@ struct Both {
 }
 
 impl Display for Both {
-    fn to_string(&self) -> String {
-        format!("B-show-{}", self.id)
+    fn fmt(&self) -> String {
+        format("B-show-{}", self.id)
     }
 }
 
 impl Debug for Both {
     fn fmt(&self) -> String {
-        format!("B-dump-{}", self.id)
+        format("B-dump-{}", self.id)
     }
 }
 
@@ -46,9 +46,9 @@ enum Marked {
 }
 
 impl Display for Marked {
-    fn to_string(&self) -> String {
+    fn fmt(&self) -> String {
         match self {
-            Marked::Numbered(n) => format!("m{}", n)
+            Marked::Numbered(n) => format("m{}", n)
             Marked::Blank => "m-"
         }
     }
@@ -56,36 +56,36 @@ impl Display for Marked {
 
 fn main() {
     let shown = Shown { id: 1 }
-    println!("{}", shown)
-    println!("{:?}", shown)
+    println("{}", shown)
+    println("{:?}", shown)
 
     let dumped = Dumped { id: 2 }
-    println!("{}", dumped)
-    println!("{:?}", dumped)
+    println("{}", dumped)
+    println("{:?}", dumped)
 
     let both = Both { id: 3 }
-    println!("{}", both)
-    println!("{:?}", both)
+    println("{}", both)
+    println("{:?}", both)
 
-    println!("{}", shown.to_string())
-    println!("{}", format!("{}", both))
-    println!("{}", format!("{:?}", both))
+    println("{}", shown.to_string())
+    println("{}", format("{}", both))
+    println("{}", format("{:?}", both))
 
     let shows: Vec<Shown> = #[Shown { id: 4 }, Shown { id: 5 }]
-    println!("{}", shows)
-    println!("{:?}", shows)
+    println("{}", shows)
+    println("{:?}", shows)
 
     let boths: Vec<Both> = #[Both { id: 6 }]
-    println!("{}", boths)
-    println!("{:?}", boths)
+    println("{}", boths)
+    println("{:?}", boths)
 
-    println!("{}", Some(Both { id: 7 }))
-    println!("{:?}", Some(Both { id: 7 }))
-    println!("{}", (Both { id: 8 }, 9))
-    println!("{:?}", (Both { id: 8 }, 9))
+    println("{}", Some(Both { id: 7 }))
+    println("{:?}", Some(Both { id: 7 }))
+    println("{}", (Both { id: 8 }, 9))
+    println("{:?}", (Both { id: 8 }, 9))
 
-    println!("{}", Marked::Numbered(10))
-    println!("{:?}", Marked::Numbered(10))
-    println!("{}", Marked::Blank)
-    println!("{:?}", Marked::Blank)
+    println("{}", Marked::Numbered(10))
+    println("{:?}", Marked::Numbered(10))
+    println("{}", Marked::Blank)
+    println("{:?}", Marked::Blank)
 }

@@ -16,6 +16,7 @@
 mod arena_escape;
 mod checker;
 mod context;
+pub mod data_first;
 mod error;
 mod exhaustiveness;
 mod infer;

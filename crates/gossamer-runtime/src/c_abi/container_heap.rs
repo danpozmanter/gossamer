@@ -274,68 +274,6 @@ pub unsafe extern "C" fn gos_rt_bheap_clear(v: *mut GosVec) {
     });
 }
 
-/// Push `value` onto a min-heap clone of the input. Returns a
-/// fresh Vec so MIR can safely drop the input binding.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_bheap_push_i64(v: *mut GosVec, value: i64) -> *mut GosVec {
-    ffi_entry!(std::ptr::null_mut(), {
-        let cloned = if v.is_null() {
-            unsafe { gos_rt_vec_new(8) }
-        } else {
-            unsafe { gos_rt_vec_clone(v) }
-        };
-        unsafe { gos_rt_vec_push_i64(cloned, value) };
-        let vec = unsafe { &*cloned };
-        let len = vec.len as usize;
-        if len > 1 {
-            let buf = vec.ptr.cast::<i64>();
-            unsafe { heap_sift_up_i64(buf, len - 1) };
-        }
-        cloned
-    })
-}
-
-/// Drop the root of a clone of the input min-heap.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_bheap_pop_i64(v: *mut GosVec) -> *mut GosVec {
-    ffi_entry!(std::ptr::null_mut(), {
-        let cloned = if v.is_null() {
-            return unsafe { gos_rt_vec_new(8) };
-        } else {
-            unsafe { gos_rt_vec_clone(v) }
-        };
-        let vec = unsafe { &mut *cloned };
-        if vec.len <= 0 {
-            return cloned;
-        }
-        let buf = vec.ptr.cast::<i64>();
-        let last_idx = (vec.len - 1) as usize;
-        if last_idx > 0 {
-            unsafe { *buf = *buf.add(last_idx) };
-        }
-        vec.len -= 1;
-        let new_len = vec.len as usize;
-        if new_len > 1 {
-            unsafe { heap_sift_down_i64(buf, new_len, 0) };
-        }
-        cloned
-    })
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_bheap_peek_i64(v: *const GosVec) -> i128 {
-    ffi_entry!(super::vec::pack_result(1, 0), {
-        if v.is_null() {
-            return super::vec::pack_result(1, 0);
-        }
-        let vec = unsafe { &*v };
-        if vec.len <= 0 {
-            return super::vec::pack_result(1, 0);
-        }
-        super::vec::pack_result(0, unsafe { *vec.ptr.cast::<i64>() })
-    })
-}
-
 /// Renders `owner [a, b, c]` over the heap array's own order. Both tiers
 /// run the same sift routines, so that order is the same sequence of
 /// pushes and pops on either.

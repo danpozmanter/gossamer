@@ -159,11 +159,6 @@ impl Analyzer {
             HirStmtKind::Defer(expr) => self.visit_expr(expr, depth, in_closure, false),
             // A `go` body runs on another goroutine and may capture
             // locals; treat it like a closure boundary (never consumable).
-            HirStmtKind::Go(expr) => {
-                self.enter_closure();
-                self.visit_expr(expr, depth, true, false);
-                self.exit_closure();
-            }
             HirStmtKind::Item(_) => {}
         }
     }
@@ -294,11 +289,6 @@ impl Analyzer {
                     self.visit_expr(count, depth, in_closure, false);
                 }
             },
-            HirExprKind::Go(inner) => {
-                self.enter_closure();
-                self.visit_expr(inner, depth, true, false);
-                self.exit_closure();
-            }
             HirExprKind::Cast { value, .. } => self.visit_expr(value, depth, in_closure, false),
             HirExprKind::Range { start, end, .. } => {
                 if let Some(start) = start {
@@ -646,7 +636,6 @@ impl BlockLastUse {
             }
             HirStmtKind::Expr { expr, .. } => self.visit_expr(expr, stmt_idx, shadowed, captured),
             HirStmtKind::Defer(expr) => self.visit_expr(expr, stmt_idx, shadowed, true),
-            HirStmtKind::Go(expr) => self.visit_expr(expr, stmt_idx, shadowed, true),
             HirStmtKind::Item(_) => {}
         }
     }
@@ -663,7 +652,6 @@ impl BlockLastUse {
                 self.visit_expr(expr, stmt_idx, &mut shadowed, false);
             }
             HirStmtKind::Defer(expr) => self.visit_expr(expr, stmt_idx, &mut shadowed, true),
-            HirStmtKind::Go(expr) => self.visit_expr(expr, stmt_idx, &mut shadowed, true),
             HirStmtKind::Item(_) => {}
         }
     }
@@ -799,7 +787,6 @@ impl BlockLastUse {
                     self.visit_expr(count, stmt_idx, shadowed, captured);
                 }
             },
-            HirExprKind::Go(inner) => self.visit_expr(inner, stmt_idx, shadowed, true),
             HirExprKind::Range { start, end, .. } => {
                 if let Some(start) = start {
                     self.visit_expr(start, stmt_idx, shadowed, captured);

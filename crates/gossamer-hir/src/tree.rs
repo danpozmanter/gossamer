@@ -140,6 +140,9 @@ pub struct HirAdt {
     pub kind: HirAdtKind,
     /// Resolved self type for convenience.
     pub self_ty: Ty,
+    /// How an enum's discriminant is stored. A struct leaves it at its
+    /// default, which describes no packing.
+    pub repr: gossamer_ast::EnumRepr,
 }
 
 /// Kind of aggregate at the HIR level.
@@ -158,6 +161,17 @@ pub enum HirAdtKind {
     /// when the matching enum variant rather than a real struct
     /// is the target.
     Enum(Vec<HirEnumVariant>),
+}
+
+impl HirAdtKind {
+    /// The variants an enum declares, or an empty slice for a struct.
+    #[must_use]
+    pub fn variants(&self) -> &[HirEnumVariant] {
+        match self {
+            Self::Enum(variants) => variants,
+            Self::Struct(_) => &[],
+        }
+    }
 }
 
 /// A single enum variant's HIR representation.
@@ -262,8 +276,6 @@ pub enum HirStmtKind {
     },
     /// `defer { ... }`.
     Defer(HirExpr),
-    /// `go expr`.
-    Go(HirExpr),
     /// A nested item declaration.
     Item(Box<HirItem>),
 }
@@ -467,8 +479,6 @@ pub enum HirExprKind {
     Tuple(Vec<HirExpr>),
     /// Array literal (explicit or repeat form).
     Array(HirArrayExpr),
-    /// `go expr`.
-    Go(Box<HirExpr>),
     /// Cast `expr as T`.
     Cast {
         /// Value being cast.

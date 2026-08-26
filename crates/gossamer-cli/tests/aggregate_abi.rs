@@ -198,7 +198,7 @@ fn make_point() -> Point3 {
 
 fn main() {
     let p = make_point()
-    println!("x={} y={} z={}", p.x, p.y, p.z)
+    println("x={} y={} z={}", p.x, p.y, p.z)
 }
 "#;
     assert_three_tier_parity("struct_return", src, "x=11 y=22 z=33");
@@ -218,7 +218,7 @@ fn add_pair(left: i64, right: i64) -> i64 {
 }
 
 fn main() {
-    println!("{}", add_pair(7, 11))
+    println("{}", add_pair(7, 11))
 }
 "#;
     assert_three_tier_parity("short_lived_scalar_aggregate", src, "228");
@@ -236,13 +236,13 @@ fn struct_arg_passes_full_field_set_to_callee() {
 struct Point3 { x: i64, y: i64, z: i64 }
 
 fn dump(p: Point3) {
-    println!("inside x={} y={} z={}", p.x, p.y, p.z)
+    println("inside x={} y={} z={}", p.x, p.y, p.z)
 }
 
 fn main() {
     let p = Point3 { x: 7, y: 11, z: 13 }
     dump(p)
-    println!("outside x={} y={} z={}", p.x, p.y, p.z)
+    println("outside x={} y={} z={}", p.x, p.y, p.z)
 }
 "#;
     assert_three_tier_parity(
@@ -266,7 +266,7 @@ fn shift(mut p: Point) -> Point {
 fn main() {
     let original = Point { x: 1, y: 2 }
     let shifted = shift(original)
-    println!("orig=({},{}) shifted=({},{})", original.x, original.y, shifted.x, shifted.y)
+    println("orig=({},{}) shifted=({},{})", original.x, original.y, shifted.x, shifted.y)
 }
 "#;
     assert_three_tier_parity("struct_arg_byval", src, "orig=(1,2) shifted=(101,202)");
@@ -293,8 +293,8 @@ fn main() {
         let p = pts[i]
         sum = sum + p.x + p.y + p.z
     }
-    println!("sum={}", sum)
-    println!("p2=({},{},{})", pts[1].x, pts[1].y, pts[1].z)
+    println("sum={}", sum)
+    println("p2=({},{},{})", pts[1].x, pts[1].y, pts[1].z)
 }
 "#;
     assert_three_tier_parity("array_of_structs", src, "sum=45\np2=(4,5,6)");
@@ -313,10 +313,10 @@ fn divmod(a: i64, b: i64) -> (i64, i64) {
 }
 
 fn main() {
-    let (q, r) = divmod(17, 5)
-    println!("q={} r={}", q, r)
-    let (q2, r2) = divmod(100, 7)
-    println!("q2={} r2={}", q2, r2)
+    let q, r = divmod(17, 5)
+    println("q={} r={}", q, r)
+    let q2, r2 = divmod(100, 7)
+    println("q2={} r2={}", q2, r2)
 }
 "#;
     assert_three_tier_parity("tuple_return_destructure", src, "q=3 r=2\nq2=14 r2=2");
@@ -347,12 +347,12 @@ fn main() {
         Coord { row: 5, col: 6 },
     ]
     match find(7, grid) {
-        Some(c) => println!("found ({},{})", c.row, c.col),
-        None => println!("missing"),
+        Some(c) => println("found ({},{})", c.row, c.col),
+        None => println("missing"),
     }
     match find(99, grid) {
-        Some(c) => println!("found ({},{})", c.row, c.col),
-        None => println!("missing"),
+        Some(c) => println("found ({},{})", c.row, c.col),
+        None => println("missing"),
     }
 }
 "#;
@@ -379,12 +379,12 @@ fn parse_dim(s: String) -> Result<Parsed, errors::Error> {
 
 fn main() {
     match parse_dim("10x20") {
-        Ok(p) => println!("ok w={} h={}", p.width, p.height),
-        Err(e) => println!("err {}", e.message()),
+        Ok(p) => println("ok w={} h={}", p.width, p.height),
+        Err(e) => println("err {}", e.message()),
     }
     match parse_dim("garbage") {
-        Ok(p) => println!("ok w={} h={}", p.width, p.height),
-        Err(e) => println!("err {}", e.message()),
+        Ok(p) => println("ok w={} h={}", p.width, p.height),
+        Err(e) => println("err {}", e.message()),
     }
 }
 "#;
@@ -404,8 +404,8 @@ struct Outer { label: String, tag: String, n: i64, m: i64 }
 fn main() {
     let base = Outer { label: "alpha", tag: "first", n: 42, m: 17 }
     let updated = Outer { label: base.label, tag: base.tag, n: 99, m: base.m }
-    println!("label={} tag={}", updated.label, updated.tag)
-    println!("n={} m={}", updated.n, updated.m)
+    println("label={} tag={}", updated.label, updated.tag)
+    println("n={} m={}", updated.n, updated.m)
 }
 "#;
     assert_three_tier_parity(
@@ -424,8 +424,8 @@ struct Outer { inner: Inner, label: String, n: i64 }
 fn main() {
     let base = Outer { inner: Inner { tag: "first", count: 7 }, label: "alpha", n: 42 }
     let updated = Outer { inner: base.inner, label: base.label, n: 99 }
-    println!("inner.tag={} inner.count={}", updated.inner.tag, updated.inner.count)
-    println!("label={} n={}", updated.label, updated.n)
+    println("inner.tag={} inner.count={}", updated.inner.tag, updated.inner.count)
+    println("label={} n={}", updated.label, updated.n)
 }
 "#;
     assert_three_tier_parity(
@@ -448,7 +448,7 @@ struct Outer { inner: Inner, tag: String }
 
 fn main() {
     let o = Outer { inner: Inner { x: 100, y: 200 }, tag: "t" }
-    println!("{} {} {}", o.inner.x, o.inner.y, o.tag)
+    println("{} {} {}", o.inner.x, o.inner.y, o.tag)
 }
 "#;
     assert_three_tier_parity("nested_field_read", src, "100 200 t");
@@ -464,7 +464,7 @@ fn main() {
     let mut o = Outer { inner: Inner { x: 1, y: 2 }, tag: "t" }
     o.inner.x = 100
     o.inner.y = 200
-    println!("{} {} {}", o.inner.x, o.inner.y, o.tag)
+    println("{} {} {}", o.inner.x, o.inner.y, o.tag)
 }
 "#;
     assert_three_tier_parity("nested_field_of_field_assign", src, "100 200 t");
@@ -492,35 +492,35 @@ fn parallel_lowering_many_functions_share_string_literal() {
     // (DataId assigned) in the N9-B pre-declaration pass so none of the
     // workers hits OfflineModule::declare_data_in_func with an unknown id.
     let src = r#"
-fn f1() -> i64 { println!("ok")
+fn f1() -> i64 { println("ok")
  1 }
-fn f2() -> i64 { println!("ok")
+fn f2() -> i64 { println("ok")
  2 }
-fn f3() -> i64 { println!("ok")
+fn f3() -> i64 { println("ok")
  3 }
-fn f4() -> i64 { println!("ok")
+fn f4() -> i64 { println("ok")
  4 }
-fn f5() -> i64 { println!("ok")
+fn f5() -> i64 { println("ok")
  5 }
-fn f6() -> i64 { println!("ok")
+fn f6() -> i64 { println("ok")
  6 }
-fn f7() -> i64 { println!("ok")
+fn f7() -> i64 { println("ok")
  7 }
-fn f8() -> i64 { println!("ok")
+fn f8() -> i64 { println("ok")
  8 }
-fn f9() -> i64 { println!("ok")
+fn f9() -> i64 { println("ok")
  9 }
-fn f10() -> i64 { println!("ok")
+fn f10() -> i64 { println("ok")
  10 }
-fn f11() -> i64 { println!("ok")
+fn f11() -> i64 { println("ok")
  11 }
-fn f12() -> i64 { println!("ok")
+fn f12() -> i64 { println("ok")
  12 }
 
 fn main() {
     let sum = f1() + f2() + f3() + f4() + f5() + f6()
             + f7() + f8() + f9() + f10() + f11() + f12()
-    println!("sum={}", sum)
+    println("sum={}", sum)
 }
 "#;
     let expected = "ok\n".repeat(12) + "sum=78";
@@ -556,7 +556,7 @@ fn area(d: Dims) -> i64 {
 fn main() {
     let base = make_dims(3, 4)
     let big = scale_dims(base, 10)
-    println!("w={} h={} area={}", big.w, big.h, area(big))
+    println("w={} h={} area={}", big.w, big.h, area(big))
 }
 "#;
     assert_three_tier_parity("n9_aggregate_chain", src, "w=30 h=40 area=1200");

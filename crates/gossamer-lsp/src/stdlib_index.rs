@@ -270,7 +270,7 @@ const COMPLETION_KIND_CONSTANT: u32 = 21;
 
 fn completion_kind_for(kind: StdItemKind) -> u32 {
     match kind {
-        StdItemKind::Function | StdItemKind::Macro => COMPLETION_KIND_FUNCTION,
+        StdItemKind::Function | StdItemKind::Builtin => COMPLETION_KIND_FUNCTION,
         StdItemKind::Type => COMPLETION_KIND_STRUCT,
         StdItemKind::Trait => COMPLETION_KIND_TRAIT,
         StdItemKind::Const => COMPLETION_KIND_CONSTANT,
@@ -280,7 +280,7 @@ fn completion_kind_for(kind: StdItemKind) -> u32 {
 fn std_kind_label(kind: StdItemKind) -> &'static str {
     match kind {
         StdItemKind::Function => "fn",
-        StdItemKind::Macro => "macro",
+        StdItemKind::Builtin => "builtin",
         StdItemKind::Type => "type",
         StdItemKind::Trait => "trait",
         StdItemKind::Const => "const",

@@ -11,6 +11,6 @@ fn main() {
     buckets[0].items.push(10)
     buckets[0].items.push(20)
     buckets[1].items.push(99)
-    println!("len {} {}", buckets[0].items.len(), buckets[1].items.len())
-    println!("vals {} {} {}", buckets[0].items[0], buckets[0].items[1], buckets[1].items[0])
+    println("len {} {}", buckets[0].items.len(), buckets[1].items.len())
+    println("vals {} {} {}", buckets[0].items[0], buckets[0].items[1], buckets[1].items[0])
 }

@@ -13,13 +13,13 @@ fn main() {
     while let Some(v) = once.recv() {
         fired += v
     }
-    println!("after fired={}", fired)
+    println("after fired={}", fired)
 
     // Timer in a select: the short timer always wins against the long one.
     let fast = time::after(time::Duration::from_millis(2))
     let slow = time::after(time::Duration::from_millis(500))
     select {
-        _ = fast.recv() => println!("fast")
-        _ = slow.recv() => println!("slow")
+        _ = fast.recv() => println("fast")
+        _ = slow.recv() => println("slow")
     }
 }

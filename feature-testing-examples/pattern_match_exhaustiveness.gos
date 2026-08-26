@@ -15,21 +15,21 @@ enum Shape {
     Point
 }
 
-fn describe(shape: &Shape) -> String {
+fn describe(shape: Shape) -> String {
     match shape {
-        Shape::Circle(r, Color::Red) => format!("red circle r={}", r)
-        Shape::Circle(r, Color::Green) => format!("green circle r={}", r)
-        Shape::Circle(r, Color::Blue) => format!("blue circle r={}", r)
-        Shape::Rect(w, h, Color::Red) => format!("red rect {}x{}", w, h)
-        Shape::Rect(w, h, Color::Green) => format!("green rect {}x{}", w, h)
-        Shape::Rect(w, h, Color::Blue) => format!("blue rect {}x{}", w, h)
-        Shape::Triangle(base, height) if *base == *height => format!("iso triangle b=h={}", base)
-        Shape::Triangle(base, height) => format!("triangle {}x{}", base, height)
+        Shape::Circle(r, Color::Red) => format("red circle r={}", r)
+        Shape::Circle(r, Color::Green) => format("green circle r={}", r)
+        Shape::Circle(r, Color::Blue) => format("blue circle r={}", r)
+        Shape::Rect(w, h, Color::Red) => format("red rect {}x{}", w, h)
+        Shape::Rect(w, h, Color::Green) => format("green rect {}x{}", w, h)
+        Shape::Rect(w, h, Color::Blue) => format("blue rect {}x{}", w, h)
+        Shape::Triangle(base, height) if *base == *height => format("iso triangle b=h={}", base)
+        Shape::Triangle(base, height) => format("triangle {}x{}", base, height)
         Shape::Point => "point"
     }
 }
 
-fn classify_color(c: &Color) -> String {
+fn classify_color(c: Color) -> String {
     if let Color::Red = c {
         "warm"
     } else {
@@ -48,12 +48,12 @@ fn main() {
     ]
 
     for s in shapes {
-        println!("{}", describe(&s))
+        println("{}", describe(s))
     }
 
     let colors = #[Color::Red, Color::Green, Color::Blue]
     for c in colors {
-        println!("{} is {}", classify_color(&c), if let Color::Red = c { "warm" } else { "cool" })
+        println("{} is {}", classify_color(c), if let Color::Red = c { "warm" } else { "cool" })
     }
 }
 
@@ -64,13 +64,13 @@ mod tests {
     #[test]
     fn describe_point() {
         let s = super::Shape::Point
-        let _ = testing::check_eq(&super::describe(&s), &"point", "point")
+        let _ = testing::check_eq(super::describe(s), "point", "point")
     }
 
     #[test]
     fn describe_red_circle() {
         let s = super::Shape::Circle(2.0, super::Color::Red)
-        let d = super::describe(&s)
+        let d = super::describe(s)
         let _ = testing::check(d.contains("red circle"), "red circle")
         let _ = testing::check(d.contains("2"), "radius in description")
     }
@@ -78,7 +78,7 @@ mod tests {
     #[test]
     fn describe_iso_triangle() {
         let s = super::Shape::Triangle(5.0, 5.0)
-        let d = super::describe(&s)
+        let d = super::describe(s)
         let _ = testing::check(d.contains("iso"), "isosceles triangle")
     }
 

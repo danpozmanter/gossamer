@@ -48,9 +48,10 @@ fn capture_writer(text: &str) {
 fn run_program(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_with_autoderive(source, file);
+    let (mut sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -69,9 +70,10 @@ fn run_program(source: &str) -> String {
 fn call_and_return(source: &str, entry: &str, args: Vec<Value>) -> Value {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_with_autoderive(source, file);
+    let (mut sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -372,7 +374,7 @@ fn initializer_closure_call_resumes_its_local_frame() {
     // closure through `apply`, then resumes at its return destination.
     let source = r#"
 const ANSWER: i64 = (|n: i64| n + 1i64)(41i64)
-fn main() { println!("{}", ANSWER) }
+fn main() { println("{}", ANSWER) }
 "#;
     assert_eq!(run_program(source), "42\n");
 }
@@ -481,8 +483,9 @@ fn explode() -> i64 {
 "#;
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, _) = parse_with_autoderive(source, file);
+    let (mut sf, _) = parse_with_autoderive(source, file);
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -574,7 +577,7 @@ fn main() {
 fn goroutine_panic_does_not_abort_caller() {
     let source = r#"
 fn main() {
-    go panic("sibling explodes")
+    spawn(|| panic("sibling explodes"))
     println("caller survives")
 }
 "#;
@@ -585,7 +588,7 @@ fn main() {
 fn channels_deliver_sent_values_in_fifo_order() {
     let source = r#"
 fn main() {
-    let (tx, rx) = channel::unbounded()
+    let tx, rx = channel::unbounded()
     tx.send(1i64)
     tx.send(2i64)
     tx.send(3i64)
@@ -637,8 +640,9 @@ fn main() {
 "#;
     let mut map = SourceMap::new();
     let file = map.add_file("t.gos", source.to_string());
-    let (sf, _) = parse_with_autoderive(source, file);
+    let (mut sf, _) = parse_with_autoderive(source, file);
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -659,8 +663,9 @@ fn main() {
 "#;
     let mut map = SourceMap::new();
     let file = map.add_file("t.gos", source.to_string());
-    let (sf, _) = parse_with_autoderive(source, file);
+    let (mut sf, _) = parse_with_autoderive(source, file);
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -791,7 +796,7 @@ fn run() -> Result<i64, String> {
 fn select_picks_ready_channel_over_default() {
     let source = r#"
 fn main() {
-    let (tx, rx) = channel::unbounded()
+    let tx, rx = channel::unbounded()
     tx.send(7i64)
     select {
         v = rx.recv() => println("recv"),
@@ -807,7 +812,7 @@ fn main() {
 fn select_falls_back_to_default_when_no_channel_ready() {
     let source = r#"
 fn main() {
-    let (tx, rx) = channel::new()
+    let tx, rx = channel::new()
     select {
         v = rx.recv() => println("recv"),
         default => println("default"),
@@ -822,8 +827,8 @@ fn main() {
 fn select_dispatches_to_second_ready_arm_when_first_empty() {
     let source = r#"
 fn main() {
-    let (tx_a, rx_a) = channel::unbounded()
-    let (tx_b, rx_b) = channel::unbounded()
+    let tx_a, rx_a = channel::unbounded()
+    let tx_b, rx_b = channel::unbounded()
     tx_b.send(11i64)
     select {
         v = rx_a.recv() => println("a"),

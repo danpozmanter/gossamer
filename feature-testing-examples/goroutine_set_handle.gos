@@ -31,16 +31,16 @@ fn worker(gate: Receiver<i64>, tx: Sender<i64>) {
 }
 
 fn main() {
-    let (gate_tx, gate_rx) = channel()
-    let (tx, rx) = channel()
-    go worker(gate_rx, tx)
+    let gate_tx, gate_rx = channel()
+    let tx, rx = channel()
+    spawn(|| worker(gate_rx, tx))
     gate_tx.send(1)
     gate_tx.close()
     let mut vals = Vec::new()
     while let Some(v) = rx.recv() {
         vals.push(v)
     }
-    println!("len={}", vals[0])
-    println!("c10={}", vals[1])
-    println!("c30={}", vals[2])
+    println("len={}", vals[0])
+    println("c10={}", vals[1])
+    println("c30={}", vals[2])
 }

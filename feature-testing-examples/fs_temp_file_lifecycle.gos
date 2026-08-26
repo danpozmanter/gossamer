@@ -8,7 +8,7 @@ use std::fs
 use std::path
 
 fn temp_path(name: String) -> String {
-    path::join(&env::temp_dir(), &format!("gossamer_test_{}", name))
+    path::join(env::temp_dir(), format("gossamer_test_{}", name))
 }
 
 fn write_and_read(path: String, content: String) -> Result<String, errors::Error> {
@@ -21,53 +21,53 @@ fn main() {
 
     // Create
     match fs::write(path, "line one\nline two\nline three\n".as_bytes()) {
-        Ok(_) => println!("write ok")
-        Err(e) => { println!("write error: {}", e)
+        Ok(_) => println("write ok")
+        Err(e) => { println("write error: {}", e)
             return }
     }
 
     // Exists
-    println!("exists after write: {}", fs::exists(path))
+    println("exists after write: {}", fs::exists(path))
 
     // Read back
     match fs::read_to_string(path) {
         Ok(content) => {
             let lines = content.split("\n")
-            println!("line count = {}", lines.len() - 1)
-            println!("line[0] = {}", lines[0])
+            println("line count = {}", lines.len() - 1)
+            println("line[0] = {}", lines[0])
         }
-        Err(e) => println!("read error: {}", e)
+        Err(e) => println("read error: {}", e)
     }
 
     // Overwrite
     match fs::write(path, "replaced content".as_bytes()) {
-        Ok(_) => println!("overwrite ok")
-        Err(e) => println!("overwrite error: {}", e)
+        Ok(_) => println("overwrite ok")
+        Err(e) => println("overwrite error: {}", e)
     }
     match fs::read_to_string(path) {
-        Ok(s) => println!("overwritten: {}", s.trim())
-        Err(e) => println!("read error: {}", e)
+        Ok(s) => println("overwritten: {}", s.trim())
+        Err(e) => println("read error: {}", e)
     }
 
     // Remove
     match fs::remove_file(path) {
-        Ok(_) => println!("remove ok")
-        Err(e) => println!("remove error: {}", e)
+        Ok(_) => println("remove ok")
+        Err(e) => println("remove error: {}", e)
     }
-    println!("exists after remove: {}", fs::exists(path))
+    println("exists after remove: {}", fs::exists(path))
 
     // Directory creation and removal
     let dir = temp_path("lifecycle_dir")
     match fs::create_dir_all(dir) {
-        Ok(_) => println!("dir created")
-        Err(e) => println!("mkdir error: {}", e)
+        Ok(_) => println("dir created")
+        Err(e) => println("mkdir error: {}", e)
     }
-    println!("dir exists: {}", fs::exists(dir))
+    println("dir exists: {}", fs::exists(dir))
     match fs::remove_dir_all(dir) {
-        Ok(_) => println!("dir removed")
-        Err(e) => println!("rmdir error: {}", e)
+        Ok(_) => println("dir removed")
+        Err(e) => println("rmdir error: {}", e)
     }
-    println!("dir gone: {}", !fs::exists(dir))
+    println("dir gone: {}", !fs::exists(dir))
 }
 
 #[cfg(test)]
@@ -85,7 +85,7 @@ mod tests {
                 return }
         }
         match fs::read_to_string(path) {
-            Ok(s) => { let _ = testing::check_eq(&s.trim().to_string(), &content.to_string(), "roundtrip")
+            Ok(s) => { let _ = testing::check_eq(s.trim().to_string(), content.to_string(), "roundtrip")
             }
             Err(e) => { let _ = testing::check(false, e)
             }
@@ -110,7 +110,7 @@ mod tests {
         let _ = fs::write(path, "first".as_bytes())
         let _ = fs::write(path, "second".as_bytes())
         match fs::read_to_string(path) {
-            Ok(s) => { let _ = testing::check_eq(&s, &"second", "overwritten")
+            Ok(s) => { let _ = testing::check_eq(s, "second", "overwritten")
             }
             Err(e) => { let _ = testing::check(false, e)
             }

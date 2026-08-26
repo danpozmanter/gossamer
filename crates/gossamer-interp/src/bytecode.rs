@@ -663,39 +663,7 @@ pub enum Op {
         /// `i64` register holding the key.
         key_i: Reg,
     },
-    /// `go callee(args[0..argc])` - spawns a goroutine that runs
-    /// `callee` with the supplied args entirely through the bytecode
-    /// VM. Requires `FnChunk` to be `Send + Sync` (call/arith caches
-    /// live in per-`Vm` `ChunkState` rather than on the chunk).
-    Spawn {
-        /// Register holding the callee value (`Value::Closure` /
-        /// `Value::Builtin` / `Value::String` global name / etc.).
-        callee: Reg,
-        /// First register of the argument span. The block of `argc`
-        /// registers starting here is cloned into the new
-        /// goroutine's frame at spawn time.
-        args: Reg,
-        /// Number of arguments to pass.
-        argc: u16,
-    },
-    /// `go receiver.method_name(args[0..argc])` - spawns a
-    /// goroutine running the method whose name lives in the
-    /// chunk's globals at `name_idx`. Mirrors `Op::MethodCall`'s
-    /// resolution chain (`qualified_key` then bare name) so a
-    /// freshly-spawned goroutine takes the same dispatch path the
-    /// synchronous call would, running the method body on a separate
-    /// goroutine rather than the calling thread.
-    SpawnMethod {
-        /// Register holding the receiver value.
-        receiver: Reg,
-        /// Index into `FnChunk::globals` - holds the bare method name.
-        name_idx: GlobalIdx,
-        /// First register of the argument span.
-        args: Reg,
-        /// Number of user-supplied arguments (receiver excluded).
-        argc: u16,
-    },
-    /// `dst = base[index]` - native indexed read over arrays,
+    /// `go receiver.method_name(args[0..argc])` - spawns a    /// `dst = base[index]` - native indexed read over arrays,
     /// strings, tuples, vecs, and structs (tuple-struct
     /// projection).
     IndexGet {

@@ -57,8 +57,8 @@ fn main() {
         shapes: #[model::Shape::Dot, model::Shape::Line(3), model::Shape::Box { w: 1, h: 2 }]
         parts: #[model::Part { name: "a", size: 1 }, model::Part { name: "b", size: 2 }]
     }
-    println!("{:?}", holder)
-    println!("{:?}", holder.parts)
+    println("{:?}", holder)
+    println("{:?}", holder.parts)
 
     // An option field whose payload is a one-slot struct is a heap copy the
     // owner keeps a share of, so the value survives its builder's return.
@@ -67,12 +67,12 @@ fn main() {
         let with = model::build(true)
         let without = model::build(i % 2 == 0)
         if with.tag != "t" || without.tag != "t" {
-            println!("tag lost")
+            println("tag lost")
         }
         i += 1
     }
-    println!("{:?}", model::build(true))
-    println!("{:?}", model::build(false))
+    println("{:?}", model::build(true))
+    println("{:?}", model::build(false))
 
     // `insert` places a slot-block element the caller addresses in place.
     let mut parts: Vec<model::Part> = #[]
@@ -80,23 +80,23 @@ fn main() {
     parts.push(model::Part { name: "two", size: 2 })
     let _ = parts.insert(0, model::Part { name: "zero", size: 0 })
     let _ = parts.insert(2, model::Part { name: "mid", size: 9 })
-    println!("{:?}", parts)
+    println("{:?}", parts)
 
     let mut ones: Vec<model::One> = #[]
     ones.push(model::One { a: 1 })
     let _ = ones.insert(0, model::One { a: 7 })
-    println!("{:?}", ones)
+    println("{:?}", ones)
 
     let mut pairs: Vec<(i64, model::One)> = #[]
     pairs.push((1, model::One { a: 1 }))
     let _ = pairs.insert(0, (2, model::One { a: 2 }))
-    println!("{:?}", pairs)
+    println("{:?}", pairs)
 
     let mut words: Vec<String> = #["a", "c"]
     let _ = words.insert(1, "b")
-    println!("{:?}", words)
+    println("{:?}", words)
 
     let mut nums: Vec<i64> = #[1, 3]
     let _ = nums.insert(1, 2)
-    println!("{:?}", nums)
+    println("{:?}", nums)
 }

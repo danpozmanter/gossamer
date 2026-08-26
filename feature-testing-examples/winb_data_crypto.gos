@@ -11,56 +11,56 @@ fn main() {
     let abc: Vec<u8> = Vec::from([97, 98, 99])
 
     // --- SHA-256 (digest bytes + hex) on empty and known vectors ---
-    println!("sha256(empty) = {}", crypto::sha256::hex(""))
-    println!("sha256(abc) = {}", crypto::sha256::hex("abc"))
-    println!("sha256 digest len = {}", crypto::sha256::digest(abc).len())
-    println!("sha256 digest hex = {}", encoding::hex::encode(crypto::sha256::digest(abc)))
+    println("sha256(empty) = {}", crypto::sha256::hex(""))
+    println("sha256(abc) = {}", crypto::sha256::hex("abc"))
+    println("sha256 digest len = {}", crypto::sha256::digest(abc).len())
+    println("sha256 digest hex = {}", encoding::hex::encode(crypto::sha256::digest(abc)))
 
     // --- SHA-512 ---
-    println!("sha512(empty) = {}", crypto::sha512::hex(""))
-    println!("sha512(abc) = {}", crypto::sha512::hex("abc"))
-    println!("sha512 digest len = {}", crypto::sha512::digest(abc).len())
+    println("sha512(empty) = {}", crypto::sha512::hex(""))
+    println("sha512(abc) = {}", crypto::sha512::hex("abc"))
+    println("sha512 digest len = {}", crypto::sha512::digest(abc).len())
 
     // --- BLAKE3 ---
-    println!("blake3(empty) = {}", crypto::blake3::hex(""))
-    println!("blake3(abc) = {}", crypto::blake3::hex("abc"))
-    println!("blake3 digest len = {}", crypto::blake3::digest(abc).len())
+    println("blake3(empty) = {}", crypto::blake3::hex(""))
+    println("blake3(abc) = {}", crypto::blake3::hex("abc"))
+    println("blake3 digest len = {}", crypto::blake3::digest(abc).len())
 
     // --- HMAC-SHA256 edge cases (empty key, empty msg) ---
-    println!("hmac(key,msg) = {}", crypto::hmac::sha256_hex("key", "msg"))
-    println!("hmac(empty,empty) = {}", crypto::hmac::sha256_hex("", ""))
-    println!("hmac(key,empty) = {}", crypto::hmac::sha256_hex("key", ""))
-    println!("hmac mac len = {}", crypto::hmac::sha256_mac(Vec::from([107, 101, 121]), Vec::from([109, 115, 103])).len())
+    println("hmac(key,msg) = {}", crypto::hmac::sha256_hex("key", "msg"))
+    println("hmac(empty,empty) = {}", crypto::hmac::sha256_hex("", ""))
+    println("hmac(key,empty) = {}", crypto::hmac::sha256_hex("key", ""))
+    println("hmac mac len = {}", crypto::hmac::sha256_mac(Vec::from([107, 101, 121]), Vec::from([109, 115, 103])).len())
 
     // --- subtle constant-time eq, incl empty vs empty ---
-    println!("cteq empty/empty = {}", crypto::subtle::constant_time_eq(empty, empty))
-    println!("cteq abc/abc = {}", crypto::subtle::constant_time_eq(Vec::from([97, 98, 99]), Vec::from([97, 98, 99])))
-    println!("cteq abc/abd = {}", crypto::subtle::constant_time_eq(Vec::from([97, 98, 99]), Vec::from([97, 98, 100])))
-    println!("cteq len mismatch = {}", crypto::subtle::constant_time_eq(Vec::from([1, 2]), Vec::from([1, 2, 3])))
+    println("cteq empty/empty = {}", crypto::subtle::constant_time_eq(empty, empty))
+    println("cteq abc/abc = {}", crypto::subtle::constant_time_eq(Vec::from([97, 98, 99]), Vec::from([97, 98, 99])))
+    println("cteq abc/abd = {}", crypto::subtle::constant_time_eq(Vec::from([97, 98, 99]), Vec::from([97, 98, 100])))
+    println("cteq len mismatch = {}", crypto::subtle::constant_time_eq(Vec::from([1, 2]), Vec::from([1, 2, 3])))
 
     // --- insecure (MD5 / SHA-1) on empty + vector ---
-    println!("md5(empty) = {}", crypto::insecure::md5_hex(""))
-    println!("md5(abc) = {}", crypto::insecure::md5_hex("abc"))
-    println!("sha1(empty) = {}", crypto::insecure::sha1_hex(""))
-    println!("sha1(abc) = {}", crypto::insecure::sha1_hex("abc"))
+    println("md5(empty) = {}", crypto::insecure::md5_hex(""))
+    println("md5(abc) = {}", crypto::insecure::md5_hex("abc"))
+    println("sha1(empty) = {}", crypto::insecure::sha1_hex(""))
+    println("sha1(abc) = {}", crypto::insecure::sha1_hex("abc"))
 
     // --- non-crypto hashes on empty + bytes + chaining ---
-    println!("fnv1a32(empty) = {}", hash::fnv::hash32(empty))
-    println!("fnv1a32(hi) = {}", hash::fnv::hash32(Vec::from([104, 105])))
-    println!("fnv1a64(hi) = {}", hash::fnv::hash64(Vec::from([104, 105])))
-    println!("fnv str(hello) = {}", hash::fnv::hash_string("hello"))
-    println!("crc32(empty) = {}", hash::crc32::checksum(empty))
-    println!("crc32(hw) = {}", hash::crc32::checksum_string("hello world"))
-    println!("crc32 chained = {}", hash::crc32::update(hash::crc32::update(0, Vec::from([104])), Vec::from([105])))
-    println!("adler32(empty) = {}", hash::adler32::checksum(empty))
-    println!("adler32(hw) = {}", hash::adler32::checksum_string("hello world"))
-    println!("adler32 chained = {}", hash::adler32::update(hash::adler32::update(1, Vec::from([104])), Vec::from([105])))
+    println("fnv1a32(empty) = {}", hash::fnv::hash32(empty))
+    println("fnv1a32(hi) = {}", hash::fnv::hash32(Vec::from([104, 105])))
+    println("fnv1a64(hi) = {}", hash::fnv::hash64(Vec::from([104, 105])))
+    println("fnv str(hello) = {}", hash::fnv::hash_string("hello"))
+    println("crc32(empty) = {}", hash::crc32::checksum(empty))
+    println("crc32(hw) = {}", hash::crc32::checksum_string("hello world"))
+    println("crc32 chained = {}", hash::crc32::update(hash::crc32::update(0, Vec::from([104])), Vec::from([105])))
+    println("adler32(empty) = {}", hash::adler32::checksum(empty))
+    println("adler32(hw) = {}", hash::adler32::checksum_string("hello world"))
+    println("adler32 chained = {}", hash::adler32::update(hash::adler32::update(1, Vec::from([104])), Vec::from([105])))
 
     // --- KDF: PBKDF2-HMAC-SHA256 deterministic vectors ---
     let pw: Vec<u8> = Vec::from([112, 97, 115, 115, 119, 111, 114, 100])
     let salt: Vec<u8> = Vec::from([115, 97, 108, 116])
-    println!("pbkdf2 c1 = {}", encoding::hex::encode(crypto::kdf::pbkdf2_sha256(pw, salt, 1, 32)))
-    println!("pbkdf2 c2 = {}", encoding::hex::encode(crypto::kdf::pbkdf2_sha256(pw, salt, 2, 20)))
+    println("pbkdf2 c1 = {}", encoding::hex::encode(crypto::kdf::pbkdf2_sha256(pw, salt, 1, 32)))
+    println("pbkdf2 c2 = {}", encoding::hex::encode(crypto::kdf::pbkdf2_sha256(pw, salt, 2, 20)))
 
     // --- AEAD deterministic seal (fixed key + nonce) ---
     let key: Vec<u8> = Vec::from([
@@ -71,11 +71,11 @@ fn main() {
     let pt: Vec<u8> = Vec::from([104, 101, 108, 108, 111])
     let aad: Vec<u8> = Vec::from([109, 101, 116, 97])
     match crypto::aead::aes_256_gcm_seal(key, nonce, pt, aad) {
-        Ok(ct) => println!("aes ct = {}", encoding::hex::encode(ct))
-        Err(e) => println!("aes seal err {}", e)
+        Ok(ct) => println("aes ct = {}", encoding::hex::encode(ct))
+        Err(e) => println("aes seal err {}", e)
     }
     match crypto::aead::chacha20_poly1305_seal(key, nonce, pt, aad) {
-        Ok(ct) => println!("chacha ct = {}", encoding::hex::encode(ct))
-        Err(e) => println!("chacha seal err {}", e)
+        Ok(ct) => println("chacha ct = {}", encoding::hex::encode(ct))
+        Err(e) => println("chacha seal err {}", e)
     }
 }

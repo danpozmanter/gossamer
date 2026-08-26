@@ -4,7 +4,7 @@
 use std::sync::channel
 
 fn main() {
-    let (tx, _rx) = channel()
+    let tx, _rx = channel()
     tx.close()
     tx.close()
 }

@@ -12,16 +12,16 @@ fn main() {
     match encoding::xml::parse(src) {
         Ok(node) => {
             let out = encoding::xml::encode(node)
-            println!("{}", out)
-            println!("has_body={}", strings::contains(out, "<body>"))
-            println!("self_closing={}", strings::contains(out, "<empty/>"))
+            println("{}", out)
+            println("has_body={}", strings::contains(out, "<body>"))
+            println("self_closing={}", strings::contains(out, "<empty/>"))
         }
-        Err(e) => println!("err: {}", e)
+        Err(e) => println("err: {}", e)
     }
 
     // Empty/whitespace-only input is a parse error on every tier.
     match encoding::xml::parse("   ") {
-        Ok(_) => println!("unexpected ok")
-        Err(_) => println!("empty=err")
+        Ok(_) => println("unexpected ok")
+        Err(_) => println("empty=err")
     }
 }

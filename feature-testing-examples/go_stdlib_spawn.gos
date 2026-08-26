@@ -23,16 +23,16 @@ fn main() {
     // Non-blocking stdlib free calls under `go` of differing shapes:
     // each must spawn (its result is discarded) on every tier. Their
     // asynchronous execution leaves main's output untouched.
-    go time::sleep(1)
-    go strings::to_uppercase("async")
+    spawn(|| time::sleep(1))
+    spawn(|| strings::to_uppercase("async"))
 
     // Blocking stdlib free call under `go`: the deterministic async
     // proof. `gate` is shared by value through the process-global
     // barrier registry, so the spawned goroutine and main meet at the
     // same barrier.
     let gate = Barrier::new(2)
-    go Barrier::wait(gate)
-    println!("main reached barrier")
+    spawn(|| Barrier::wait(gate))
+    println("main reached barrier")
     Barrier::wait(gate)
-    println!("released")
+    println("released")
 }

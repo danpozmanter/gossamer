@@ -91,13 +91,6 @@ pub(crate) fn is_item_start(parser: &Parser<'_>) -> bool {
     let token = parser.peek();
     match token.kind {
         TokenKind::Punct(Punct::Hash) => hash_prefixed_item_start(parser),
-        // `comptime` is ambiguous: `comptime fn` starts an item, but
-        // `comptime { ... }` is an expression. Only treat it as an item
-        // start when a function keyword follows.
-        TokenKind::Keyword(Keyword::Comptime) => matches!(
-            parser.peek_nth(1).kind,
-            TokenKind::Keyword(Keyword::Fn | Keyword::Unsafe)
-        ),
         TokenKind::Keyword(keyword) => matches!(
             keyword,
             Keyword::Pub
@@ -114,6 +107,18 @@ pub(crate) fn is_item_start(parser: &Parser<'_>) -> bool {
                 | Keyword::Unsafe
                 | Keyword::Extern
         ),
+        // Contextual item words: only what follows makes each an item.
+        // `comptime` also opens an expression block and is an ordinary
+        // name on its own, so a function declaration has to follow.
+        TokenKind::Ident => match parser.slice(token.span) {
+            "newtype" => matches!(parser.peek_nth(1).kind, TokenKind::Ident),
+            "packed" => matches!(parser.peek_nth(1).kind, TokenKind::Keyword(Keyword::Enum)),
+            "comptime" => matches!(
+                parser.peek_nth(1).kind,
+                TokenKind::Keyword(Keyword::Fn | Keyword::Unsafe)
+            ),
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -130,8 +135,8 @@ fn hash_prefixed_item_start(parser: &Parser<'_>) -> bool {
     matches!(
         parser.peek_nth(offset).kind,
         TokenKind::Keyword(Keyword::Pub)
-    ) && keyword_item_start_after_attrs(parser.peek_nth(offset + 1).kind)
-        || keyword_item_start_after_attrs(parser.peek_nth(offset).kind)
+    ) && item_start_after_attrs(parser, offset + 1)
+        || item_start_after_attrs(parser, offset)
 }
 
 fn skip_outer_attrs(parser: &Parser<'_>, mut offset: usize) -> Option<usize> {
@@ -157,12 +162,29 @@ fn skip_outer_attrs(parser: &Parser<'_>, mut offset: usize) -> Option<usize> {
     Some(offset)
 }
 
-fn keyword_item_start_after_attrs(kind: TokenKind) -> bool {
+/// Whether the token `offset` ahead opens an item, once outer
+/// attributes have been skipped. The contextual item words are matched
+/// by the text they carry, as they are at an un-attributed item start.
+fn item_start_after_attrs(parser: &Parser<'_>, offset: usize) -> bool {
+    let token = parser.peek_nth(offset);
+    if matches!(token.kind, TokenKind::Ident) {
+        return match parser.slice(token.span) {
+            "newtype" => matches!(parser.peek_nth(offset + 1).kind, TokenKind::Ident),
+            "packed" => matches!(
+                parser.peek_nth(offset + 1).kind,
+                TokenKind::Keyword(Keyword::Enum)
+            ),
+            "comptime" => matches!(
+                parser.peek_nth(offset + 1).kind,
+                TokenKind::Keyword(Keyword::Fn | Keyword::Unsafe)
+            ),
+            _ => false,
+        };
+    }
     matches!(
-        kind,
+        token.kind,
         TokenKind::Keyword(
-            Keyword::Comptime
-                | Keyword::Fn
+            Keyword::Fn
                 | Keyword::Struct
                 | Keyword::Enum
                 | Keyword::Trait
@@ -182,6 +204,9 @@ fn keyword_item_start_after_attrs(kind: TokenKind) -> bool {
 pub(crate) fn is_stmt_start(parser: &Parser<'_>) -> bool {
     match parser.peek().kind {
         TokenKind::Keyword(keyword) => is_stmt_start_keyword(keyword),
+        // `defer` is contextual, so the statement it opens is recognised
+        // by the word rather than by a token kind.
+        TokenKind::Ident => parser.at_contextual_word("defer"),
         _ => false,
     }
 }
@@ -209,8 +234,6 @@ pub(crate) fn is_stmt_start_keyword(keyword: Keyword) -> bool {
             | Keyword::Const
             | Keyword::Static
             | Keyword::Mod
-            | Keyword::Go
-            | Keyword::Defer
             | Keyword::Pub
     )
 }

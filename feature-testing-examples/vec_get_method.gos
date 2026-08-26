@@ -1,14 +1,14 @@
 fn show_i64(label: String, value: Option<i64>) {
     match value {
-        Some(v) => println!("{}={}", label, v)
-        None => println!("{}=none", label)
+        Some(v) => println("{}={}", label, v)
+        None => println("{}=none", label)
     }
 }
 
 fn show_string(label: String, value: Option<String>) {
     match value {
-        Some(v) => println!("{}={}", label, v)
-        None => println!("{}=none", label)
+        Some(v) => println("{}={}", label, v)
+        None => println("{}=none", label)
     }
 }
 

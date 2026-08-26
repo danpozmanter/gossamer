@@ -13,18 +13,18 @@ use std::collections::Map
 use std::encoding::json
 
 /// The `std::` rows of `path`, each rendered as the tiers it states.
-fn evidence(path: &String, only_std: bool) -> Map<String, String> {
+fn evidence(path: String, only_std: bool) -> Map<String, String> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text
         Err(e) => {
-            eprintln!("feature_status_diff: reading {}: {}", path, e)
+            eprintln("feature_status_diff: reading {}: {}", path, e)
             process::exit(1)
         }
     }
-    let document = match json::parse(&text) {
+    let document = match json::parse(text) {
         Ok(document) => document
         Err(e) => {
-            eprintln!("feature_status_diff: parsing {}: {}", path, e)
+            eprintln("feature_status_diff: parsing {}: {}", path, e)
             process::exit(1)
         }
     }
@@ -33,7 +33,7 @@ fn evidence(path: &String, only_std: bool) -> Map<String, String> {
     while index < json::len(document) {
         let record = json::at(document, index)
         index += 1
-        let name = field(&record, &"name")
+        let name = field(record, "name")
         if only_std && !name.starts_with("std::") {
             continue
         }
@@ -43,7 +43,7 @@ fn evidence(path: &String, only_std: bool) -> Map<String, String> {
 }
 
 /// A string field of `record`, or empty when it carries none.
-fn field(record: &json::Value, key: &String) -> String {
+fn field(record: json::Value, key: String) -> String {
     match json::get(record, key) {
         Some(value) => json::as_str(value).unwrap_or("")
         None => ""
@@ -57,16 +57,16 @@ fn tiers_of(tiers: Option<json::Value>) -> String {
     keys.sort()
     let mut parts = #[]
     for key in keys {
-        parts.push(format!("{}={}", key, field(&tiers, &key)))
+        parts.push(format("{}={}", key, field(tiers, key)))
     }
     parts.join(",")
 }
 
 /// The names in `left` that `right` does not carry.
-fn missing_from(left: &Map<String, String>, right: &Map<String, String>) -> Vec<String> {
+fn missing_from(left: Map<String, String>, right: Map<String, String>) -> Vec<String> {
     let mut names = #[]
     for (name, _) in left.iter() {
-        if !right.contains_key(&name) {
+        if !right.contains_key(name) {
             names.push(name)
         }
     }
@@ -74,10 +74,10 @@ fn missing_from(left: &Map<String, String>, right: &Map<String, String>) -> Vec<
 }
 
 /// The names both carry whose verdicts differ.
-fn changed(left: &Map<String, String>, right: &Map<String, String>) -> Vec<String> {
+fn changed(left: Map<String, String>, right: Map<String, String>) -> Vec<String> {
     let mut names = #[]
     for (name, verdicts) in left.iter() {
-        if let Some(other) = right.get(&name) {
+        if let Some(other) = right.get(name) {
             if other != verdicts {
                 names.push(name)
             }
@@ -90,39 +90,39 @@ fn changed(left: &Map<String, String>, right: &Map<String, String>) -> Vec<Strin
 fn name_list(names: Vec<String>) -> String {
     let mut quoted = #[]
     for name in names {
-        quoted.push(format!("'{}'", name))
+        quoted.push(format("'{}'", name))
     }
-    format!("[{}]", quoted.join(", "))
+    format("[{}]", quoted.join(", "))
 }
 
 fn main() {
     let args = env::args()
     if args.len() != 2 {
-        eprintln!("usage: gos run scripts/feature_status_diff.gos <fresh> <committed>")
+        eprintln("usage: gos run scripts/feature_status_diff.gos <fresh> <committed>")
         process::exit(2)
     }
-    let fresh = evidence(&args[0], true)
-    let committed = evidence(&args[1], false)
+    let fresh = evidence(args[0], true)
+    let committed = evidence(args[1], false)
 
-    let added = missing_from(&fresh, &committed)
-    let removed = missing_from(&committed, &fresh)
-    let changed = changed(&fresh, &committed)
+    let added = missing_from(fresh, committed)
+    let removed = missing_from(committed, fresh)
+    let changed = changed(fresh, committed)
 
     if added.is_empty() && removed.is_empty() && changed.is_empty() {
-        println!("evidence is current ({} modules)", committed.len())
+        println("evidence is current ({} modules)", committed.len())
         return
     }
-    println!("{} is stale.", args[1])
+    println("{} is stale.", args[1])
     if !added.is_empty() {
-        println!("  added: {}", name_list(added))
+        println("  added: {}", name_list(added))
     }
     if !removed.is_empty() {
-        println!("  removed: {}", name_list(removed))
+        println("  removed: {}", name_list(removed))
     }
     if !changed.is_empty() {
-        println!("  changed: {}", name_list(changed))
+        println("  changed: {}", name_list(changed))
     }
-    println!("Regenerate with `gos test --tier-parity --report status` and copy the")
-    println!("std:: rows from target/debug/.feature-status.json.")
+    println("Regenerate with `gos test --tier-parity --report status` and copy the")
+    println("std:: rows from target/debug/.feature-status.json.")
     process::exit(1)
 }

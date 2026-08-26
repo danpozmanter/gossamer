@@ -49,7 +49,7 @@ let kind = match s {
 
 Patterns also drive `let`, `if let` / `while let`, `for`, and function
 parameters - see [fn](fn.md) for parameter destructuring. The
-`matches!(expr, pat)` macro is a boolean one-arm match.
+`matches(expr, pat)` macro is a boolean one-arm match.
 
 Reference patterns remove one reference layer before matching their inner
 pattern. They work both at the top level and when nested. `&mut pattern` is

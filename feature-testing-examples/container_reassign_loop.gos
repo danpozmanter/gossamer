@@ -25,6 +25,6 @@ fn main() {
     for x in v {
         sum += x
     }
-    println!("len: {}", v.len())
-    println!("sum: {}", sum)
+    println("len: {}", v.len())
+    println("sum: {}", sum)
 }

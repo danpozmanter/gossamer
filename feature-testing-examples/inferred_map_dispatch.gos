@@ -10,25 +10,25 @@ struct Account { balance: i64, txns: i64 }
 fn main() {
     let mut m = Map::new()
     m.insert("x", 5)
-    if let Some(v) = m.get(&"x") { println!("get={}", v) }
+    if let Some(v) = m.get("x") { println("get={}", v) }
 
     let mut accounts = Map::new()
     accounts.insert("ada", Account { balance: 100, txns: 2 })
-    if let Some(a) = accounts.get(&"ada") { println!("ada={} {}", a.balance, a.txns) }
+    if let Some(a) = accounts.get("ada") { println("ada={} {}", a.balance, a.txns) }
 
     let mut counts = Map::new()
     counts.inc("w")
     counts.inc("w", 4)
-    println!("count={}", counts.get_or("w", 0))
+    println("count={}", counts.get_or("w", 0))
 
     let mut sorted = BTreeMap::new()
     sorted.insert("b", 2)
     sorted.insert("a", 1)
-    for (k, v) in sorted.iter() { println!("{}: {}", k, v) }
-    if let Some(v) = sorted.get(&"a") { println!("a={}", v) }
+    for (k, v) in sorted.iter() { println("{}: {}", k, v) }
+    if let Some(v) = sorted.get("a") { println("a={}", v) }
 
     let mut seen = Set::new()
     seen.insert(7)
     seen.insert(7)
-    println!("set={} has={}", seen.len(), seen.contains(7))
+    println("set={} has={}", seen.len(), seen.contains(7))
 }

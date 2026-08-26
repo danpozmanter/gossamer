@@ -11,8 +11,8 @@ struct Tagged {
 }
 
 impl Display for Tagged {
-    fn to_string(&self) -> String {
-        format!("#{}", self.id)
+    fn fmt(&self) -> String {
+        format("#{}", self.id)
     }
 }
 
@@ -22,7 +22,7 @@ struct Inherent {
 
 impl Inherent {
     fn to_string(&self) -> String {
-        format!("<{}>", self.id)
+        format("<{}>", self.id)
     }
 }
 
@@ -41,9 +41,9 @@ enum Marked {
 }
 
 impl Display for Marked {
-    fn to_string(&self) -> String {
+    fn fmt(&self) -> String {
         match self {
-            Marked::Numbered(n) => format!("m{}", n)
+            Marked::Numbered(n) => format("m{}", n)
             Marked::Blank => "m-"
         }
     }
@@ -51,31 +51,31 @@ impl Display for Marked {
 
 fn main() {
     let tagged = Tagged { id: 1 }
-    println!("{}", tagged)
-    println!("{}", format!("{}", tagged))
-    println!("{}", tagged.to_string())
+    println("{}", tagged)
+    println("{}", format("{}", tagged))
+    println("{}", tagged.to_string())
 
     let inherent = Inherent { id: 2 }
-    println!("{}", inherent)
-    println!("{}", inherent.to_string())
+    println("{}", inherent)
+    println("{}", inherent.to_string())
 
-    println!("{}", Plain { id: 3 })
+    println("{}", Plain { id: 3 })
 
     let tags: Vec<Tagged> = #[Tagged { id: 4 }, Tagged { id: 5 }]
-    println!("{}", tags.join(", "))
-    println!("{}", tags)
+    println("{}", tags.join(", "))
+    println("{}", tags)
 
-    println!("{}", Some(Tagged { id: 6 }))
-    println!("{}", (Tagged { id: 7 }, 8))
-    println!("{}", Holder { tag: Tagged { id: 9 }, count: 10 })
+    println("{}", Some(Tagged { id: 6 }))
+    println("{}", (Tagged { id: 7 }, 8))
+    println("{}", Holder { tag: Tagged { id: 9 }, count: 10 })
 
     let mut byname: Map<String, Tagged> = Map::new()
     byname.insert("a", Tagged { id: 11 })
-    println!("{}", byname)
+    println("{}", byname)
 
-    println!("{}", Marked::Numbered(12))
-    println!("{}", Marked::Blank)
+    println("{}", Marked::Numbered(12))
+    println("{}", Marked::Blank)
     let marks: Vec<Marked> = #[Marked::Numbered(13), Marked::Blank]
-    println!("{}", marks.join("/"))
-    println!("{}", marks)
+    println("{}", marks.join("/"))
+    println("{}", marks)
 }

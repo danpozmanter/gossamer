@@ -304,7 +304,7 @@ fn cranelift_lowers_typed_iterator_mir_to_object_bytes() {
 fn gos_build_handles_tuple_destructuring_let() {
     assert_exit(
         "detup",
-        "fn main() -> i64 {\n    let (a, b) = (11i64, 22i64)\n    a + b\n}\n",
+        "fn main() -> i64 {\n    let a, b = (11i64, 22i64)\n    a + b\n}\n",
         33,
     );
 }

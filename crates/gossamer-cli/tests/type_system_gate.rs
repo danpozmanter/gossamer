@@ -61,27 +61,27 @@ fn function_arguments_are_checked_by_type_and_arity() {
         &[
             (
                 "wrong argument type",
-                "fn f(x: i64) -> i64 { x }\nfn main() { println!(\"{}\", f(\"s\")) }\n",
+                "fn f(x: i64) -> i64 { x }\nfn main() { println(\"{}\", f(\"s\")) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "too few arguments",
-                "fn f(a: i64, b: i64) -> i64 { a + b }\nfn main() { println!(\"{}\", f(1)) }\n",
+                "fn f(a: i64, b: i64) -> i64 { a + b }\nfn main() { println(\"{}\", f(1)) }\n",
                 Expect::Reject("GT0018"),
             ),
             (
                 "wrong return type",
-                "fn f() -> i64 { \"s\" }\nfn main() { println!(\"{}\", f()) }\n",
+                "fn f() -> i64 { \"s\" }\nfn main() { println(\"{}\", f()) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "calling a non-callable",
-                "fn main() { let a = 5\n println!(\"{}\", a(1)) }\n",
+                "fn main() { let a = 5\n println(\"{}\", a(1)) }\n",
                 Expect::Reject("GT0022"),
             ),
             (
                 "matching argument is accepted",
-                "fn f(x: i64) -> i64 { x }\nfn main() { println!(\"{}\", f(1)) }\n",
+                "fn f(x: i64) -> i64 { x }\nfn main() { println(\"{}\", f(1)) }\n",
                 Expect::Accept,
             ),
         ],
@@ -97,32 +97,32 @@ fn numeric_conversions_are_never_implicit() {
         &[
             (
                 "int is not a float",
-                "fn f(x: f64) -> f64 { x }\nfn main() { println!(\"{}\", f(1)) }\n",
+                "fn f(x: f64) -> f64 { x }\nfn main() { println(\"{}\", f(1)) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "float is not an int",
-                "fn f(x: i64) -> i64 { x }\nfn main() { println!(\"{}\", f(1.5)) }\n",
+                "fn f(x: i64) -> i64 { x }\nfn main() { println(\"{}\", f(1.5)) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "narrower int does not widen",
-                "fn f(x: i64) -> i64 { x }\nfn main() { let a: i32 = 1\n println!(\"{}\", f(a)) }\n",
+                "fn f(x: i64) -> i64 { x }\nfn main() { let a: i32 = 1\n println(\"{}\", f(a)) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "int is not a bool",
-                "fn main() { let b: bool = 1\n println!(\"{}\", b) }\n",
+                "fn main() { let b: bool = 1\n println(\"{}\", b) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "int is not a String",
-                "fn main() { let s: String = 5\n println!(\"{}\", s) }\n",
+                "fn main() { let s: String = 5\n println(\"{}\", s) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "a written cast is accepted",
-                "fn f(x: f64) -> f64 { x }\nfn main() { println!(\"{}\", f(1 as f64)) }\n",
+                "fn f(x: f64) -> f64 { x }\nfn main() { println(\"{}\", f(1 as f64)) }\n",
                 Expect::Accept,
             ),
         ],
@@ -135,28 +135,28 @@ fn references_distinguish_shared_from_mutable() {
         "reference",
         &[
             (
-                "shared reference does not satisfy a mutable parameter",
-                "fn bump(x: &mut i64) { *x += 1 }\nfn main() { let mut a = 1\n bump(&a)\n println!(\"{}\", a) }\n",
-                Expect::Reject("GT0001"),
+                "a value argument does not satisfy a mutable parameter",
+                "fn bump(x: &mut i64) { *x += 1 }\nfn main() { let mut a = 1\n bump(a)\n println(\"{}\", a) }\n",
+                Expect::Reject("GT0046"),
             ),
             (
-                "no write through a shared reference",
-                "fn w(x: &i64) { *x = 5 }\nfn main() { let mut a = 1\n w(&a)\n println!(\"{}\", a) }\n",
-                Expect::Reject("GT0031"),
+                "no write through a value",
+                "fn w(x: i64) { *x = 5 }\nfn main() { let mut a = 1\n w(a)\n println(\"{}\", a) }\n",
+                Expect::Reject("GT0083"),
             ),
             (
                 "no assignment to an immutable binding",
-                "fn main() { let a = 1\n a = 2\n println!(\"{}\", a) }\n",
+                "fn main() { let a = 1\n a = 2\n println(\"{}\", a) }\n",
                 Expect::Reject("GT0030"),
             ),
             (
                 "no field write through an immutable binding",
-                "struct P { x: i64 }\nfn main() { let p = P { x: 1 }\n p.x = 2\n println!(\"{}\", p.x) }\n",
+                "struct P { x: i64 }\nfn main() { let p = P { x: 1 }\n p.x = 2\n println(\"{}\", p.x) }\n",
                 Expect::Reject("GT0030"),
             ),
             (
                 "a mutable reference is accepted",
-                "fn bump(x: &mut i64) { *x += 1 }\nfn main() { let mut a = 1\n bump(&mut a)\n println!(\"{}\", a) }\n",
+                "fn bump(x: &mut i64) { *x += 1 }\nfn main() { let mut a = 1\n bump(&mut a)\n println(\"{}\", a) }\n",
                 Expect::Accept,
             ),
         ],
@@ -170,32 +170,32 @@ fn collections_keep_their_element_and_key_types() {
         &[
             (
                 "Vec element type is enforced",
-                "fn main() { let v: Vec<i64> = #[\"a\"]\n println!(\"{}\", v.len()) }\n",
+                "fn main() { let v: Vec<i64> = #[\"a\"]\n println(\"{}\", v.len()) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "Vec element type is enforced across a call",
-                "fn f(v: Vec<String>) -> i64 { v.len() }\nfn main() { println!(\"{}\", f(#[1,2])) }\n",
+                "fn f(v: Vec<String>) -> i64 { v.len() }\nfn main() { println(\"{}\", f(#[1,2])) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "Map value type is enforced",
-                "fn main() { let m: Map<String, i64> = {\"a\": \"b\"}\n println!(\"{}\", m.len()) }\n",
+                "fn main() { let m: Map<String, i64> = {\"a\": \"b\"}\n println(\"{}\", m.len()) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "a Set is not a Vec",
-                "fn f(v: Vec<i64>) -> i64 { v.len() }\nfn main() { println!(\"{}\", f(#{1,2})) }\n",
+                "fn f(v: Vec<i64>) -> i64 { v.len() }\nfn main() { println(\"{}\", f(#{1,2})) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "indexing a non-indexable value",
-                "fn main() { let a = 5\n println!(\"{}\", a[0]) }\n",
+                "fn main() { let a = 5\n println(\"{}\", a[0]) }\n",
                 Expect::Reject("GT0021"),
             ),
             (
                 "a matching Vec is accepted",
-                "fn f(v: Vec<i64>) -> i64 { v.len() }\nfn main() { println!(\"{}\", f(#[1,2])) }\n",
+                "fn f(v: Vec<i64>) -> i64 { v.len() }\nfn main() { println(\"{}\", f(#[1,2])) }\n",
                 Expect::Accept,
             ),
         ],
@@ -209,27 +209,27 @@ fn aggregates_keep_their_declared_shape() {
         &[
             (
                 "tuple element types are enforced",
-                "fn main() { let t: (i64, String) = (1, 2)\n println!(\"{}\", t.0) }\n",
+                "fn main() { let t: (i64, String) = (1, 2)\n println(\"{}\", t.0) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "enum payload type is enforced",
-                "enum E { A(i64) }\nfn main() { let e = E::A(\"s\")\n println!(\"ok\") }\n",
+                "enum E { A(i64) }\nfn main() { let e = E::A(\"s\")\n println(\"ok\") }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "an Option is not its payload",
-                "fn f() -> Option<i64> { Some(1) }\nfn main() { let x: i64 = f()\n println!(\"{}\", x) }\n",
+                "fn f() -> Option<i64> { Some(1) }\nfn main() { let x: i64 = f()\n println(\"{}\", x) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "unknown struct field",
-                "struct P { x: i64 }\nfn main() { let p = P { x: 1 }\n println!(\"{}\", p.z) }\n",
+                "struct P { x: i64 }\nfn main() { let p = P { x: 1 }\n println(\"{}\", p.z) }\n",
                 Expect::Reject("GT0006"),
             ),
             (
                 "a matching payload is accepted",
-                "enum E { A(i64) }\nfn main() { let e = E::A(1)\n println!(\"ok\") }\n",
+                "enum E { A(i64) }\nfn main() { let e = E::A(1)\n println(\"ok\") }\n",
                 Expect::Accept,
             ),
         ],
@@ -246,42 +246,42 @@ fn trait_bounds_are_authoritative() {
         &[
             (
                 "unsatisfied bound is rejected at the call site",
-                "trait Sh { fn a(&self) -> i64 }\nstruct R {}\nfn apply<T: Sh>(x: T) -> i64 { x.a() }\nfn main() { println!(\"{}\", apply(R{})) }\n",
+                "trait Sh { fn a(&self) -> i64 }\nstruct R {}\nfn apply<T: Sh>(x: T) -> i64 { x.a() }\nfn main() { println(\"{}\", apply(R{})) }\n",
                 Expect::Reject("GT0017"),
             ),
             (
                 "a method no bound declares is rejected",
-                "trait Sh { fn a(&self) -> i64 }\nstruct R {}\nimpl Sh for R { fn a(&self) -> i64 { 1 } }\nfn apply<T: Sh>(x: T) -> i64 { x.zzz() }\nfn main() { println!(\"{}\", apply(R{})) }\n",
+                "trait Sh { fn a(&self) -> i64 }\nstruct R {}\nimpl Sh for R { fn a(&self) -> i64 { 1 } }\nfn apply<T: Sh>(x: T) -> i64 { x.zzz() }\nfn main() { println(\"{}\", apply(R{})) }\n",
                 Expect::Reject("GT0056"),
             ),
             (
                 "an unbounded parameter has no methods",
-                "struct R {}\nimpl R { fn a(&self) -> i64 { 1 } }\nfn apply<T>(x: T) -> i64 { x.a() }\nfn main() { println!(\"{}\", apply(R{})) }\n",
+                "struct R {}\nimpl R { fn a(&self) -> i64 { 1 } }\nfn apply<T>(x: T) -> i64 { x.a() }\nfn main() { println(\"{}\", apply(R{})) }\n",
                 Expect::Reject("GT0056"),
             ),
             (
                 "a bound naming no trait is rejected",
-                "fn apply<T: Nope>(x: T) -> i64 { 1 }\nfn main() { println!(\"{}\", apply(1)) }\n",
+                "fn apply<T: Nope>(x: T) -> i64 { 1 }\nfn main() { println(\"{}\", apply(1)) }\n",
                 Expect::Reject("GT0011"),
             ),
             (
                 "iteration requires a bound that provides it",
-                "fn total<T: Clone>(it: T) -> i64 { let mut s = 0\n for x in it { s += x }\n s }\nfn main() { println!(\"{}\", total(0..5)) }\n",
+                "fn total<T: Clone>(it: T) -> i64 { let mut s = 0\n for x in it { s += x }\n s }\nfn main() { println(\"{}\", total(0..5)) }\n",
                 Expect::Reject("GT0056"),
             ),
             (
                 "a built-in iterator cannot instantiate an iteration bound",
-                "fn total<T: Iterator>(it: T) -> i64 { let mut s = 0\n for x in it { s += x }\n s }\nfn main() { println!(\"{}\", total(0..5)) }\n",
+                "fn total<T: Iterator>(it: T) -> i64 { let mut s = 0\n for x in it { s += x }\n s }\nfn main() { println(\"{}\", total(0..5)) }\n",
                 Expect::Reject("GT0057"),
             ),
             (
                 "naming the iterator on the parameter is accepted",
-                "fn total(it: Iterator<i64>) -> i64 { let mut s = 0\n for x in it { s += x }\n s }\nfn main() { println!(\"{}\", total(0..5)) }\n",
+                "fn total(it: Iterator<i64>) -> i64 { let mut s = 0\n for x in it { s += x }\n s }\nfn main() { println(\"{}\", total(0..5)) }\n",
                 Expect::Accept,
             ),
             (
                 "a bound-provided method is accepted",
-                "trait Sh { fn a(&self) -> i64 }\nstruct R {}\nimpl Sh for R { fn a(&self) -> i64 { 1 } }\nfn apply<T: Sh>(x: T) -> i64 { x.a() }\nfn main() { println!(\"{}\", apply(R{})) }\n",
+                "trait Sh { fn a(&self) -> i64 }\nstruct R {}\nimpl Sh for R { fn a(&self) -> i64 { 1 } }\nfn apply<T: Sh>(x: T) -> i64 { x.a() }\nfn main() { println(\"{}\", apply(R{})) }\n",
                 Expect::Accept,
             ),
         ],
@@ -297,12 +297,12 @@ fn declared_traits_are_checked_even_when_named_like_a_builtin() {
         &[
             (
                 "a user trait named Ord still constrains",
-                "trait Ord { fn cmpx(&self) -> i64 }\nstruct D {}\nimpl Ord for D { fn cmpx(&self) -> i64 { 1 } }\nstruct R {}\nfn apply<T: Ord>(x: T) -> i64 { x.cmpx() }\nfn main() { println!(\"{}\", apply(R{})) }\n",
+                "trait Ord { fn cmpx(&self) -> i64 }\nstruct D {}\nimpl Ord for D { fn cmpx(&self) -> i64 { 1 } }\nstruct R {}\nfn apply<T: Ord>(x: T) -> i64 { x.cmpx() }\nfn main() { println(\"{}\", apply(R{})) }\n",
                 Expect::Reject("GT0017"),
             ),
             (
                 "the implementing type is accepted",
-                "trait Ord { fn cmpx(&self) -> i64 }\nstruct D {}\nimpl Ord for D { fn cmpx(&self) -> i64 { 1 } }\nfn apply<T: Ord>(x: T) -> i64 { x.cmpx() }\nfn main() { println!(\"{}\", apply(D{})) }\n",
+                "trait Ord { fn cmpx(&self) -> i64 }\nstruct D {}\nimpl Ord for D { fn cmpx(&self) -> i64 { 1 } }\nfn apply<T: Ord>(x: T) -> i64 { x.cmpx() }\nfn main() { println(\"{}\", apply(D{})) }\n",
                 Expect::Accept,
             ),
         ],
@@ -321,22 +321,22 @@ fn names_without_a_type_behind_them_are_rejected() {
         &[
             (
                 "an undeclared f64 associated function is rejected",
-                "fn main() { println!(\"{}\", f64::nonexistent(1.0)) }\n",
+                "fn main() { println(\"{}\", f64::nonexistent(1.0)) }\n",
                 Expect::Reject("GR0001"),
             ),
             (
                 "an undeclared bool associated function is rejected",
-                "fn main() { println!(\"{}\", bool::nonexistent(1)) }\n",
+                "fn main() { println(\"{}\", bool::nonexistent(1)) }\n",
                 Expect::Reject("GR0001"),
             ),
             (
                 "an undeclared char associated function is rejected",
-                "fn main() { println!(\"{}\", char::nonexistent(1)) }\n",
+                "fn main() { println(\"{}\", char::nonexistent(1)) }\n",
                 Expect::Reject("GR0001"),
             ),
             (
                 "the IEEE-754 reinterpretations resolve",
-                "fn main() { println!(\"{}\", f64::from_bits(f64::to_bits(1.5))) }\n",
+                "fn main() { println(\"{}\", f64::from_bits(f64::to_bits(1.5))) }\n",
                 Expect::Accept,
             ),
         ],
@@ -346,22 +346,22 @@ fn names_without_a_type_behind_them_are_rejected() {
         &[
             (
                 "an undeclared type name is rejected",
-                "fn main() { let x: Nonexistent = 5\n println!(\"{}\", x) }\n",
+                "fn main() { let x: Nonexistent = 5\n println(\"{}\", x) }\n",
                 Expect::Reject("GR0001"),
             ),
             (
                 "a range converts to the iterator it advances through",
-                "fn mk() -> Range<i64> { 0..5 }\nfn take(r: Iterator<i64>) -> i64 { let mut s = 0\n for x in r { s += x }\n s }\nfn main() { println!(\"{}\", take(mk())) }\n",
+                "fn mk() -> Range<i64> { 0..5 }\nfn take(r: Iterator<i64>) -> i64 { let mut s = 0\n for x in r { s += x }\n s }\nfn main() { println(\"{}\", take(mk())) }\n",
                 Expect::Accept,
             ),
             (
                 "an iterator does not convert back to a range",
-                "fn mk() -> Iterator<i64> { 0..5 }\nfn take(r: Range<i64>) -> i64 { let mut s = 0\n for x in r { s += x }\n s }\nfn main() { println!(\"{}\", take(mk())) }\n",
+                "fn mk() -> Iterator<i64> { 0..5 }\nfn take(r: Range<i64>) -> i64 { let mut s = 0\n for x in r { s += x }\n s }\nfn main() { println(\"{}\", take(mk())) }\n",
                 Expect::Reject("GT0001"),
             ),
             (
                 "a range names a real type",
-                "fn total(it: Range<i64>) -> i64 { let mut s = 0\n for x in it { s += x }\n s }\nfn main() { println!(\"{}\", total(0..5)) }\n",
+                "fn total(it: Range<i64>) -> i64 { let mut s = 0\n for x in it { s += x }\n s }\nfn main() { println(\"{}\", total(0..5)) }\n",
                 Expect::Accept,
             ),
         ],
@@ -383,23 +383,23 @@ fn keyword_arguments_and_defaults() {
             ),
             (
                 "named argument",
-                &format!("{DECL}fn main() {{ let _ = wow(a = 9) }}"),
+                &format!("{DECL}fn main() {{ let _ = wow(a: 9) }}"),
                 Expect::Accept,
             ),
             (
                 "named out of order",
-                &format!("{DECL}fn main() {{ let _ = wow(b = 1, a = 9) }}"),
+                &format!("{DECL}fn main() {{ let _ = wow(b: 1, a: 9) }}"),
                 Expect::Accept,
             ),
             (
                 "parameter with no default omitted",
-                &format!("{DECL}fn main() {{ let _ = wow(b = 0) }}"),
+                &format!("{DECL}fn main() {{ let _ = wow(b: 0) }}"),
                 Expect::Reject("GR0015"),
             ),
             (
-                "colon is not a label",
-                &format!("{DECL}fn main() {{ let _ = wow(a: 9, b: 1) }}"),
-                Expect::Reject("GP0001"),
+                "equals is not a label",
+                &format!("{DECL}fn main() {{ let _ = wow(a = 9, b = 1) }}"),
+                Expect::Reject("GP0045"),
             ),
             (
                 "equality is not a label",
@@ -419,19 +419,19 @@ fn for_over_a_wrapper_is_rejected() {
         &[
             (
                 "result",
-                "use std::fs\nfn main() { for e in fs::read_dir(\".\") { println!(\"{}\", e.name) } }",
+                "use std::fs\nfn main() { for e in fs::read_dir(\".\") { println(\"{}\", e.name) } }",
                 Expect::Reject("GT0067"),
             ),
             (
                 "option",
-                "fn first_of(xs: &[i64]) -> Option<i64> { xs.first() }\n\
-                 fn main() { for v in first_of(&#[1, 2]) { println!(\"{}\", v) } }",
+                "fn first_of(xs: [i64]) -> Option<i64> { xs.first() }\n\
+                 fn main() { for v in first_of(#[1, 2]) { println(\"{}\", v) } }",
                 Expect::Reject("GT0067"),
             ),
             (
                 "taken first",
                 "use std::fs\n\
-                 fn main() { for e in fs::read_dir(\".\").unwrap_or(#[]) { println!(\"{}\", e.name) } }",
+                 fn main() { for e in fs::read_dir(\".\").unwrap_or(#[]) { println(\"{}\", e.name) } }",
                 Expect::Accept,
             ),
         ],

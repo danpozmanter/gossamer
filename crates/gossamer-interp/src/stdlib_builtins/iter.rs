@@ -1232,8 +1232,9 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
     // Register only qualified `iter::*` names to avoid shadowing built-in
     // method dispatch (Option::map, Result::filter, Vec::any, etc.).
     //
-    // Argument order is DATA-LAST throughout, matching SPEC §4.6 so
-    // `xs |> |v| iter::map(f, v)` reaches `iter::map(f, xs)` and threads.
+    // Argument order is DATA-LAST throughout: a written call takes its
+    // data first and the front end rotates it into this order once, so
+    // both a free call and a lowered method call arrive the same way.
     let static_entries: &[(&str, BuiltinFnPub)] = &[
         ("empty", builtin_iter_empty),
         ("once", builtin_iter_once),
@@ -1348,6 +1349,19 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("min_by_key", native_vec_min_by_key_method),
         ("fold", native_vec_fold_method),
         ("count", native_vec_count_method),
+        ("filter_map", native_vec_filter_map_method),
+        ("find_map", native_vec_find_map_method),
+        ("flat_map", native_vec_flat_map_method),
+        ("chunk_by", native_vec_chunk_by_method),
+        ("count_by", native_vec_count_by_method),
+        ("max_by", native_vec_max_by_method),
+        ("min_by", native_vec_min_by_method),
+        ("partition", native_vec_partition_method),
+        ("product_by", native_vec_product_by_method),
+        ("reduce", native_vec_reduce_method),
+        ("sum_by", native_vec_sum_by_method),
+        ("unzip", native_vec_unzip_method),
+        ("scan", native_vec_scan_method),
     ];
     for (short, call) in vec_native_entries {
         for owner in ["Vec", "Set", "BTreeSet", "Map", "BTreeMap"] {
@@ -1386,6 +1400,19 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("windows", native_iterator_windows_method as NativeCall),
         ("pairwise", native_iterator_pairwise_method as NativeCall),
         ("chunks", native_iterator_chunks_method as NativeCall),
+        ("filter_map", native_vec_filter_map_method as NativeCall),
+        ("find_map", native_vec_find_map_method as NativeCall),
+        ("flat_map", native_vec_flat_map_method as NativeCall),
+        ("chunk_by", native_vec_chunk_by_method as NativeCall),
+        ("count_by", native_vec_count_by_method as NativeCall),
+        ("max_by", native_vec_max_by_method as NativeCall),
+        ("min_by", native_vec_min_by_method as NativeCall),
+        ("partition", native_vec_partition_method as NativeCall),
+        ("product_by", native_vec_product_by_method as NativeCall),
+        ("reduce", native_vec_reduce_method as NativeCall),
+        ("sum_by", native_vec_sum_by_method as NativeCall),
+        ("unzip", native_vec_unzip_method as NativeCall),
+        ("scan", native_vec_scan_method as NativeCall),
     ] {
         let qualified: &'static str = Box::leak(format!("Iterator::{short}").into_boxed_str());
         globals.push((qualified, Value::native(qualified, call)));
@@ -1473,6 +1500,21 @@ vec_method_form!(native_vec_sum_method, native_iter_sum);
 vec_method_form!(native_vec_product_method, native_iter_product);
 vec_method_form!(native_vec_min_method, native_iter_min);
 vec_method_form!(native_vec_max_method, native_iter_max);
+// Every adapter chains from a receiver. These delegate to the same data-last
+// natives the `iter::` free calls use, with the receiver rotated to the back.
+vec_method_form!(native_vec_filter_map_method, native_iter_filter_map);
+vec_method_form!(native_vec_find_map_method, native_iter_find_map);
+vec_method_form!(native_vec_flat_map_method, native_iter_flat_map);
+vec_method_form!(native_vec_chunk_by_method, native_iter_chunk_by);
+vec_method_form!(native_vec_count_by_method, native_iter_count_by);
+vec_method_form!(native_vec_max_by_method, native_iter_max_by);
+vec_method_form!(native_vec_min_by_method, native_iter_min_by);
+vec_method_form!(native_vec_partition_method, native_iter_partition);
+vec_method_form!(native_vec_product_by_method, native_iter_product_by);
+vec_method_form!(native_vec_reduce_method, native_iter_reduce);
+vec_method_form!(native_vec_sum_by_method, native_iter_sum_by);
+vec_method_form!(native_vec_unzip_method, native_iter_unzip);
+vec_method_form!(native_vec_scan_method, native_iter_scan);
 
 /// `xs.count()` is the element count; `xs.count(f)` counts the
 /// elements the predicate accepts.

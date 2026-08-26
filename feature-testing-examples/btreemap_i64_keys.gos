@@ -9,12 +9,12 @@ fn main() {
     m.insert("b", 2)
     let mut out = ""
     for (k, v) in m.iter() {
-        out += format!("{}={} ", k, v)
+        out += format("{}={} ", k, v)
     }
     let entries = m.iter().collect()
     let mut indexed = ""
     for (i, entry) in entries.iter().enumerate() {
-        indexed += format!("{}:{}={} ", i, entry.0, entry.1)
+        indexed += format("{}:{}={} ", i, entry.0, entry.1)
     }
-    println!("{}{}len={} get={} has={}", out, indexed, m.len(), m.get_or("b", 0), m.contains("a"))
+    println("{}{}len={} get={} has={}", out, indexed, m.len(), m.get_or("b", 0), m.contains("a"))
 }

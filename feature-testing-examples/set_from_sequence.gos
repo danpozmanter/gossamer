@@ -8,18 +8,18 @@ use std::collections::BTreeSet
 fn main() {
     let words = Vec::from(["b", "a", "b", "c"])
     let s = Set::from(words)
-    println!("len      = {}", s.len())
-    println!("contains = {} {}", s.contains("a"), s.contains("z"))
-    println!("elements = {:?}", s.to_vec())
+    println("len      = {}", s.len())
+    println("contains = {} {}", s.contains("a"), s.contains("z"))
+    println("elements = {:?}", s.to_vec())
 
     let nums = Vec::from([3, 1, 3, 2])
     let n = Set::from(nums)
-    println!("num len  = {}", n.len())
-    println!("num elems= {:?}", n.to_vec())
+    println("num len  = {}", n.len())
+    println("num elems= {:?}", n.to_vec())
 
     let ordered: BTreeSet<String> = BTreeSet::from(words)
-    println!("btree    = {:?}", ordered.to_vec())
+    println("btree    = {:?}", ordered.to_vec())
 
     let empty: Vec<i64> = Vec::from([])
-    println!("empty    = {}", Set::from(empty).len())
+    println("empty    = {}", Set::from(empty).len())
 }

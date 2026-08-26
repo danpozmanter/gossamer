@@ -86,7 +86,7 @@ fn other_primitives(n: i64) -> String {
     let b = n % 2 == 0
     let c = 'A'
     let f = 9.0
-    format!("{} {} {}", b.flipped(), c.code(), f.halved())
+    format("{} {} {}", b.flipped(), c.code(), f.halved())
 }
 
 // A bound whose parameter resolves to an aggregate: the element is read as
@@ -112,27 +112,27 @@ fn total_twice<T: Doubler>(items: Vec<T>) -> i64 {
 fn main() {
     let mut last = 0
     for _ in 0..200 { last = from_local(21) }
-    println!("{}", last)
+    println("{}", last)
 
     for _ in 0..200 { last = from_element(5) }
-    println!("{}", last)
+    println("{}", last)
 
     for _ in 0..200 { last = from_loop(1) }
-    println!("{}", last)
+    println("{}", last)
 
     for _ in 0..200 { last = written_through(7) }
-    println!("{}", last)
+    println("{}", last)
 
     let mut text = ""
     for _ in 0..200 { text = other_primitives(4) }
-    println!("{}", text)
+    println("{}", text)
 
     for _ in 0..200 { last = total_area(#[Square { side: 2 }, Square { side: 3 }]) }
-    println!("{}", last)
+    println("{}", last)
 
     for _ in 0..200 { last = first_area(#[Square { side: 4 }]) }
-    println!("{}", last)
+    println("{}", last)
 
     for _ in 0..200 { last = total_twice(#[1, 2, 3]) }
-    println!("{}", last)
+    println("{}", last)
 }

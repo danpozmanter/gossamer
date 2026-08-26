@@ -1,6 +1,6 @@
 use std::errors
 
-struct Node { val: i64, next: Option<Box<Node>> }
+struct Node { val: i64, next: Option<Node> }
 struct Big { a: i64, b: i64 }
 
 // Overwrite of Some: the old chain must be released, not leaked,
@@ -66,5 +66,5 @@ fn case_err_side() -> i64 {
 }
 
 fn main() {
-    println!("{} {} {}", case_overwrite(), case_alias_after_overwrite(), case_err_side())
+    println("{} {} {}", case_overwrite(), case_alias_after_overwrite(), case_err_side())
 }

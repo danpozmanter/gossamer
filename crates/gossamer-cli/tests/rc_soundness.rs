@@ -29,17 +29,17 @@ fn aliased_recursive_enum_release_is_not_double_free() {
     std::fs::write(
         &source,
         "
-enum Tree { Leaf, Node(i64, Box<Tree>, Box<Tree>) }
+enum Tree { Leaf, Node(i64, Tree, Tree) }
 
 fn build(d: i64) -> Tree {
     if d == 0 {
         Tree::Leaf
     } else {
-        Tree::Node(d, Box::new(build(d - 1)), Box::new(build(d - 1)))
+        Tree::Node(d, build(d - 1), build(d - 1))
     }
 }
 
-fn checksum(t: &Tree) -> i64 {
+fn checksum(t: Tree) -> i64 {
     match t {
         Tree::Leaf => 1,
         Tree::Node(v, l, r) => *v + checksum(l) + checksum(r),
@@ -52,7 +52,7 @@ fn aliased(d: i64) -> i64 {
     let a = build(d)
     let b = a
     let c = a
-    checksum(&a) + checksum(&b) + checksum(&c)
+    checksum(a) + checksum(b) + checksum(c)
 }
 
 fn main() {
@@ -62,7 +62,7 @@ fn main() {
         total += aliased(8)
         i += 1
     }
-    println!(\"total = {}\", total)
+    println(\"total = {}\", total)
 }
 ",
     )

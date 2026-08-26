@@ -534,7 +534,6 @@ impl<'a> Builder<'a> {
             | "gos_rt_os_user_current_gid"
             | "gos_rt_os_user_lookup_name"
             | "gos_rt_netip_port_of"
-            | "gos_rt_bheap_peek_i64"
             | "gos_rt_bheap_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
             "gos_rt_min_f64" | "gos_rt_max_f64" | "gos_rt_clamp_f64" => {
                 self.tcx.float_ty(gossamer_types::FloatTy::F64)
@@ -717,36 +716,16 @@ impl<'a> Builder<'a> {
                 }
             }
             "gos_rt_vec_reversed"
-            | "gos_rt_bheap_push_i64"
-            | "gos_rt_bheap_pop_i64"
             | "gos_rt_bheap_max_push_i64"
             | "gos_rt_bheap_max_from_vec_i64"
             | "gos_rt_bheap_max_new_i64"
             | "gos_rt_bheap_min_push_i64"
             | "gos_rt_bheap_min_from_vec_i64"
             | "gos_rt_bheap_min_new_i64"
-            | "gos_rt_bheap_clear"
-            | "gos_rt_vec_pop_front_i64"
-            | "gos_rt_vec_pop_back_i64"
-            | "gos_rt_vec_push_front_i64"
-            | "gos_rt_vec_push_back_i64"
-            | "gos_rt_ovec_insert_i64"
-            | "gos_rt_ovec_remove_at_i64"
-            | "gos_rt_oset_insert_i64"
-            | "gos_rt_oset_remove_i64"
-            | "gos_rt_omap_insert_i64"
-            | "gos_rt_omap_remove_i64" => {
+            | "gos_rt_bheap_clear" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 self.tcx.intern(gossamer_types::TyKind::Vec(i))
             }
-            "gos_rt_vec_first_i64"
-            | "gos_rt_vec_last_i64"
-            | "gos_rt_ovec_index_of_i64"
-            | "gos_rt_omap_get_i64"
-            | "gos_rt_omap_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-            "gos_rt_ovec_contains_i64"
-            | "gos_rt_oset_contains_i64"
-            | "gos_rt_omap_contains_key_i64" => self.tcx.bool_ty(),
             "gos_rt_map_keys_vec" => {
                 // The element type is the map's KEY type, so a bound
                 // `let ks = m.keys()` on a `HashMap<String, _>` iterates

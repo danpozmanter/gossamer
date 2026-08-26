@@ -1,7 +1,7 @@
 // ERROR: GM0003
 enum Tree {
-    Node(Box<Tree>, Box<Tree>),
-    Nil,
+    Node(Tree, Tree)
+    Nil
 }
 
 fn build(d: i64) -> Tree {

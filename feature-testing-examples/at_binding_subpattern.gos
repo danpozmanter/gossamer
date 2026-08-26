@@ -4,16 +4,16 @@
 
 fn classify(n: i64) -> String {
     match n {
-        x @ 0 => format!("zero ({})", x)
-        x @ 1..=3 => format!("small {}", x)
-        x @ 4..=10 => format!("medium {}", x)
-        x => format!("other {}", x)
+        x @ 0 => format("zero ({})", x)
+        x @ 1..=3 => format("small {}", x)
+        x @ 4..=10 => format("medium {}", x)
+        x => format("other {}", x)
     }
 }
 
 fn main() {
     let inputs = #[0, 1, 2, 3, 4, 7, 10, 11, -1]
     for n in inputs {
-        println!("{}", classify(n))
+        println("{}", classify(n))
     }
 }

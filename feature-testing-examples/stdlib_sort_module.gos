@@ -5,43 +5,43 @@ use std::sort
 fn main() {
     let nums = #[5, 3, 9, 1, 3, 7]
     let ordered = sort::sort_stable(nums)
-    println!("{}", ordered.join(","))
+    println("{}", ordered.join(","))
 
     let words = #["pear", "apple", "fig", "apple", "date"]
-    println!("{}", sort::sort_stable(words).join(","))
+    println("{}", sort::sort_stable(words).join(","))
 
     let sorted = #[1, 3, 5, 7, 9]
     match sort::binary_search(sorted, 7) {
-        Some(i) => println!("found={}", i)
-        None => println!("found=none")
+        Some(i) => println("found={}", i)
+        None => println("found=none")
     }
     match sort::binary_search(sorted, 4) {
-        Some(i) => println!("found={}", i)
-        None => println!("found=none")
+        Some(i) => println("found={}", i)
+        None => println("found=none")
     }
 
     let names = #["ant", "bee", "cow", "dog"]
     match sort::binary_search(names, "cow") {
-        Some(i) => println!("name={}", i)
-        None => println!("name=none")
+        Some(i) => println("name={}", i)
+        None => println("name=none")
     }
     match sort::binary_search(names, "elk") {
-        Some(i) => println!("name={}", i)
-        None => println!("name=none")
+        Some(i) => println("name={}", i)
+        None => println("name=none")
     }
 
-    println!("{}", sort::partition_point(sorted, 6))
-    println!("{}", sort::partition_point(sorted, 1))
-    println!("{}", sort::partition_point(sorted, 100))
-    println!("{}", sort::partition_point(names, "cow"))
+    println("{}", sort::partition_point(sorted, 6))
+    println("{}", sort::partition_point(sorted, 1))
+    println("{}", sort::partition_point(sorted, 100))
+    println("{}", sort::partition_point(names, "cow"))
 
     // f64 elements use the total-order shims, not the String slot reads.
     let reals = #[2.5, 1.5, 3.5, 1.5]
-    println!("{}", sort::sort_stable(reals).join(","))
+    println("{}", sort::sort_stable(reals).join(","))
     let ordered = #[1.0, 2.0, 4.0, 8.0]
     match sort::binary_search(ordered, 4.0) {
-        Some(i) => println!("real={}", i)
-        None => println!("real=none")
+        Some(i) => println("real={}", i)
+        None => println("real=none")
     }
-    println!("{}", sort::partition_point(ordered, 3.0))
+    println("{}", sort::partition_point(ordered, 3.0))
 }

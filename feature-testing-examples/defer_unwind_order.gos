@@ -17,13 +17,13 @@ fn run_with_cleanup(actions: Vec<Fn() -> String>) -> Vec<String> {
 }
 
 fn make_cleanup(label: String) -> Fn() -> String {
-    || format!("cleanup: {}", label)
+    || format("cleanup: {}", label)
 }
 
 fn scope_guard(resource: String, work: Fn() -> i64) -> i64 {
-    println!("acquiring {}", resource)
+    println("acquiring {}", resource)
     let result = work()
-    println!("releasing {}", resource)
+    println("releasing {}", resource)
     result
 }
 
@@ -34,25 +34,25 @@ fn main() {
     actions.push(make_cleanup("second"))
     actions.push(make_cleanup("third"))
     let order = run_with_cleanup(actions)
-    println!("order[0] = {}", order[0])
-    println!("order[1] = {}", order[1])
-    println!("order[2] = {}", order[2])
+    println("order[0] = {}", order[0])
+    println("order[1] = {}", order[1])
+    println("order[2] = {}", order[2])
 
     // scope_guard: acquire before work, release after
     let result = scope_guard("file", || {
-        println!("working with file")
+        println("working with file")
         42
     })
-    println!("work result = {}", result)
+    println("work result = {}", result)
 
     // Nested scope guards (inner releases before outer)
     let outer = scope_guard("db_connection", || {
         scope_guard("db_transaction", || {
-            println!("executing query")
+            println("executing query")
             100
         })
     })
-    println!("nested result = {}", outer)
+    println("nested result = {}", outer)
 
     // Manual cleanup stack: push registrations, pop on exit
     let mut cleanup_log: Vec<String> = Vec::from([])
@@ -64,7 +64,7 @@ fn main() {
     let n = cleanup_log.len() as i64
     let mut i = n - 1
     while i >= 0 {
-        println!("closing: {}", cleanup_log[i])
+        println("closing: {}", cleanup_log[i])
         i -= 1
     }
 }
@@ -80,21 +80,21 @@ mod tests {
         actions.push(super::make_cleanup("b"))
         actions.push(super::make_cleanup("c"))
         let result = super::run_with_cleanup(actions)
-        let _ = testing::check_eq(&result[0], &"cleanup: c", "c last in, first out")
-        let _ = testing::check_eq(&result[1], &"cleanup: b", "b second")
-        let _ = testing::check_eq(&result[2], &"cleanup: a", "a first in, last out")
+        let _ = testing::check_eq(result[0], "cleanup: c", "c last in, first out")
+        let _ = testing::check_eq(result[1], "cleanup: b", "b second")
+        let _ = testing::check_eq(result[2], "cleanup: a", "a first in, last out")
     }
 
     #[test]
     fn scope_guard_returns_work_value() {
         let r = super::scope_guard("test_resource", || 99)
-        let _ = testing::check_eq(&r, &99, "scope_guard passes through work result")
+        let _ = testing::check_eq(r, 99, "scope_guard passes through work result")
     }
 
     #[test]
     fn empty_cleanup_stack() {
         let actions: Vec<Fn() -> String> = Vec::from([])
         let result = super::run_with_cleanup(actions)
-        let _ = testing::check_eq(&(result.len() as i64), &0, "empty stack empty result")
+        let _ = testing::check_eq((result.len() as i64), 0, "empty stack empty result")
     }
 }

@@ -10,15 +10,15 @@ struct Item { name: String, tags: Vec<String>, n: i64 }
 
 fn make(k: i64) -> Item {
     let mut tags: Vec<String> = Vec::from([])
-    tags.push(format!("tag-{}", k))
-    Item { name: format!("item-name-number-{}", k), tags: tags, n: k }
+    tags.push(format("tag-{}", k))
+    Item { name: format("item-name-number-{}", k), tags: tags, n: k }
 }
 
 fn churn() -> i64 {
     let mut acc = 0
     let mut i = 0
     while i < 20000 {
-        let s = format!("scratch-{}", i)
+        let s = format("scratch-{}", i)
         acc += s.len()
         i += 1
     }
@@ -38,7 +38,7 @@ fn main() {
     while key < 50 {
         match m.get(key) {
             Some(it) => {
-                if it.name == format!("item-name-number-{}", key) && it.tags.len() == 1 {
+                if it.name == format("item-name-number-{}", key) && it.tags.len() == 1 {
                     ok += 1
                 }
             }
@@ -46,5 +46,5 @@ fn main() {
         }
         key += 1
     }
-    println!("ok={}", ok)
+    println("ok={}", ok)
 }

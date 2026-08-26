@@ -6,11 +6,11 @@ struct Tally { hits: i64 }
 
 struct Weight { label: String, parts: Vec<String>, grams: i64 }
 
-fn read_map(m: &Map<String, i64>) -> String {
+fn read_map(m: Map<String, i64>) -> String {
     let found = m.find(|(_, n)| n > 1)
     let doubled = m.map(|(k, n)| (k, n * 2))
     let kept = m.filter(|(_, n)| n > 1)
-    format!(
+    format(
         "find {:?} any {} all {} count {} doubled {} kept {}"
         found
         m.any(|(_, n)| n == 2)
@@ -21,15 +21,15 @@ fn read_map(m: &Map<String, i64>) -> String {
     )
 }
 
-fn read_set(s: &Set<i64>) -> String {
+fn read_set(s: Set<i64>) -> String {
     let found = s.iter().find(|v| v > 1)
     let kept = s.iter().filter(|v| v > 1).collect()
-    format!("find {:?} any {} kept {}", found, s.iter().any(|v| v == 3), kept.len())
+    format("find {:?} any {} kept {}", found, s.iter().any(|v| v == 3), kept.len())
 }
 
-fn read_struct_values(m: &Map<String, Tally>) -> String {
+fn read_struct_values(m: Map<String, Tally>) -> String {
     let found = m.find(|(_, t)| t.hits > 1)
-    format!("struct find {} count {}", found.is_some(), m.count(|(_, t)| t.hits > 0))
+    format("struct find {} count {}", found.is_some(), m.count(|(_, t)| t.hits > 0))
 }
 
 // A struct value is stored boxed, so a walk hands the predicate a pair whose
@@ -37,7 +37,7 @@ fn read_struct_values(m: &Map<String, Tally>) -> String {
 // field read from the handle that names it: a count that accepts every entry,
 // a sum that adds pointers, or a kept pair whose fields read as addresses all
 // differ from these numbers.
-fn weigh_struct_values(m: &Map<String, Weight>) -> String {
+fn weigh_struct_values(m: Map<String, Weight>) -> String {
     let heavy = m.count(|(_, w)| w.grams > 20)
     let names = m.map(|(_, w)| w.label.len())
     let mut total = 0
@@ -45,7 +45,7 @@ fn weigh_struct_values(m: &Map<String, Weight>) -> String {
     let kept = m.filter(|(_, w)| w.grams > 20)
     let mut kept_grams = 0
     for (key, w) in kept { kept_grams += w.grams + key.len() + w.parts.len() }
-    format!("heavy {} labels {} kept {}", heavy, total, kept_grams)
+    format("heavy {} labels {} kept {}", heavy, total, kept_grams)
 }
 
 fn main() {
@@ -55,21 +55,21 @@ fn main() {
     tallies.insert("x", Tally { hits: 1 })
     tallies.insert("y", Tally { hits: 3 })
 
-    println!("{}", read_map(&m))
-    println!("{}", read_set(&s))
-    println!("{}", read_struct_values(&tallies))
+    println("{}", read_map(m))
+    println("{}", read_set(s))
+    println("{}", read_struct_values(tallies))
 
     let mut weights: Map<String, Weight> = Map::new()
     weights.insert("bolt", Weight { label: "bolt", parts: #["head", "thread"], grams: 12 })
     weights.insert("plate", Weight { label: "plate", parts: #["face"], grams: 30 })
-    println!("{}", weigh_struct_values(&weights))
-    println!("after {} {}", weights.len(), weights.get("plate").unwrap().parts.len())
+    println("{}", weigh_struct_values(weights))
+    println("after {} {}", weights.len(), weights.get("plate").unwrap().parts.len())
 
     // The same walks written on a local reference binding.
     let mr = &m
     let sr = &s
-    println!("{}", read_map(mr))
-    println!("{}", read_set(sr))
-    println!("ref find {:?}", mr.find(|(_, n)| n > 1))
-    println!("deref find {:?}", (*mr).find(|(_, n)| n > 1))
+    println("{}", read_map(*mr))
+    println("{}", read_set(*sr))
+    println("ref find {:?}", mr.find(|(_, n)| n > 1))
+    println("deref find {:?}", (*mr).find(|(_, n)| n > 1))
 }

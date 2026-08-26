@@ -46,24 +46,24 @@ fn set_snapshot_is_a_vec(n: i64) -> i64 {
 fn main() {
     let mut total = 0
     for _ in 0..200 { total = from_vec(1) }
-    println!("vec {}", total)
+    println("vec {}", total)
 
     for _ in 0..200 { total = from_set(5) }
-    println!("set {}", total)
+    println("set {}", total)
 
     for _ in 0..200 { total = from_map(3) }
-    println!("map {}", total)
+    println("map {}", total)
 
     let mut text = ""
     for _ in 0..200 { text = from_btree_set(1) }
-    println!("btreeset {}", text)
+    println("btreeset {}", text)
 
     for _ in 0..200 { total = from_btree_map(4) }
-    println!("btreemap {}", total)
+    println("btreemap {}", total)
 
     for _ in 0..200 { text = from_array(2) }
-    println!("array {}", text)
+    println("array {}", text)
 
     for _ in 0..200 { total = set_snapshot_is_a_vec(7) }
-    println!("to_vec {}", total)
+    println("to_vec {}", total)
 }

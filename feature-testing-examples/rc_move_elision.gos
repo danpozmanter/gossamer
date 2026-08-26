@@ -6,7 +6,7 @@
 // or off (it is reference-count preserving).
 
 enum Tree {
-    Node(Box<Tree>, Box<Tree>)
+    Node(Tree, Tree)
     Leaf(i64)
 }
 
@@ -18,7 +18,7 @@ fn build(depth: i64) -> Tree {
     }
 }
 
-fn sum(t: &Tree) -> i64 {
+fn sum(t: Tree) -> i64 {
     match t {
         Tree::Node(l, r) => sum(l) + sum(r)
         Tree::Leaf(v) => v
@@ -32,9 +32,9 @@ struct Named {
 
 fn make_named(k: i64) -> Named {
     let mut tags: Vec<String> = Vec::from([])
-    tags.push(format!("t{}", k))
-    tags.push(format!("u{}", k))
-    Named { label: format!("name-{}", k), tags: tags }
+    tags.push(format("t{}", k))
+    tags.push(format("u{}", k))
+    Named { label: format("name-{}", k), tags: tags }
 }
 
 fn main() {
@@ -42,10 +42,10 @@ fn main() {
     let mut i = 0
     while i < 200 {
         let t = build(8)
-        tree_total += sum(&t)
+        tree_total += sum(t)
         i += 1
     }
-    println!("tree_total={}", tree_total)
+    println("tree_total={}", tree_total)
 
     let mut chars = 0
     let mut k = 0
@@ -57,5 +57,5 @@ fn main() {
         }
         k += 1
     }
-    println!("named_chars={}", chars)
+    println("named_chars={}", chars)
 }

@@ -213,12 +213,12 @@ mod tests {
         let src = concat!(
             "use std::{env, strconv}\n",
             "\n",
-            "fn hanoi(n: i64, src: &String, dst: &String, aux: &String) {\n",
+            "fn hanoi(n: i64, src: String, dst: String, aux: String) {\n",
             "    if n == 1 {\n",
-            "        println!(\"Move disk 1 from {src} to {dst}\")\n",
+            "        println(\"Move disk 1 from {src} to {dst}\")\n",
             "    } else {\n",
             "        hanoi(n - 1, src, aux, dst)\n",
-            "        println!(\"Move disk {n} from {src} to {dst}\")\n",
+            "        println(\"Move disk {n} from {src} to {dst}\")\n",
             "        hanoi(n - 1, aux, dst, src)\n",
             "    }\n",
             "}\n",
@@ -543,7 +543,7 @@ mod tests {
         // codeAction. The handler must return an empty array
         // (not Null) so clients can lift it directly.
         let mut state = ServerState::new();
-        state.update("file:///ok.gos", "fn main() { println!(\"hi\") }\n");
+        state.update("file:///ok.gos", "fn main() { println(\"hi\") }\n");
 
         let mut text_doc = BTreeMap::new();
         text_doc.insert(
@@ -605,7 +605,7 @@ mod tests {
         // appear in `newText`, and the edit's end position must not
         // reach past the editor's buffer (the client would clamp it and
         // splice the expansion over all but the final line).
-        let src = "struct Account { balance: i64, txns: i64 }\n\nfn main() {\n    let a = Account { balance: 1, txns: 2 }\n    println!(\"{a.balance}\")\n}\n";
+        let src = "struct Account { balance: i64, txns: i64 }\n\nfn main() {\n    let a = Account { balance: 1, txns: 2 }\n    println(\"{a.balance}\")\n}\n";
         let mut state = ServerState::new();
         state.update("file:///fmt_tail.gos", src);
         let mut params = BTreeMap::new();
@@ -658,13 +658,13 @@ mod tests {
 
 struct Cur { s: Vec<char>, i: i64 }
 
-fn run(src: &String) -> i64 {
+fn run(src: String) -> i64 {
     0
 }
 
 fn main() {
     for src in ["2 + 3 * 4", "(2 + 3) * 4", "10 - 2 - 3", "2 * 3 + 4 * 5", "100 / 5 / 2"] {
-        println!("{} = {}", src, run(&src))
+        println("{} = {}", src, run(src))
     }
 }
 "#;
@@ -672,12 +672,12 @@ fn main() {
 
 struct Cur { s: Vec<char>, i: i64 }
 
-fn run(src: &String) -> i64 {
+fn run(src: String) -> i64 {
     0
 }
 
 for src in ["2 + 3 * 4", "(2 + 3) * 4", "10 - 2 - 3", "2 * 3 + 4 * 5", "100 / 5 / 2"] {
-    println!("{} = {}", src, run(&src))
+    println("{} = {}", src, run(src))
 }
 "#;
 
@@ -687,7 +687,7 @@ for src in ["2 + 3 * 4", "(2 + 3) * 4", "10 - 2 - 3", "2 * 3 + 4 * 5", "100 / 5 
         let mut current = PREVIOUS.to_string();
         apply_substr_change(&mut state, uri, &mut current, "fn main() {\n", "");
         apply_substr_change(&mut state, uri, &mut current, "    for src in ", "for src in ");
-        apply_substr_change(&mut state, uri, &mut current, "        println!", "    println!");
+        apply_substr_change(&mut state, uri, &mut current, "        println", "    println");
         apply_last_substr_change(&mut state, uri, &mut current, "    }\n}\n", "}\n");
 
         let stored = state.documents.get(uri).expect("document").user_source();

@@ -151,7 +151,7 @@ pub const DATABASE_SQL: StdModule = StdModule {
         StdItem {
             name: "Select",
             kind: StdItemKind::Type,
-            doc: "Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, sql::Value::Int(...))...render() -> String`; `.params()` returns the bound parameters. Emits Postgres-style `$N` placeholders.",
+            doc: "Fluent SELECT builder. `Select::new(table).columns([..]).where_eq(col, sql::Value::Int(...))...render() -> String`; `.params()` returns the bound parameters. Emits Postgres-style `$N` placeholders.",
         },
         StdItem {
             name: "migrate_up",

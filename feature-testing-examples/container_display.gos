@@ -7,7 +7,7 @@
 use std::collections
 
 fn render(d: collections::Deque<i64>) -> String {
-    format!("{}", d)
+    format("{}", d)
 }
 
 fn build_and_render(n: i64) -> String {
@@ -15,7 +15,7 @@ fn build_and_render(n: i64) -> String {
     d.push_back(n)
     let mut s = #{}
     s.insert(n)
-    format!("{} {}", d, s)
+    format("{} {}", d, s)
 }
 
 fn main() {
@@ -23,30 +23,30 @@ fn main() {
     d.push_back(1)
     d.push_back(2)
     d.push_front(0)
-    println!("{} {:?}", d, d)
+    println("{} {:?}", d, d)
 
     let q = collections::Queue::from([3, 4, 5])
-    println!("{} {:?}", q, q)
+    println("{} {:?}", q, q)
 
     let st = collections::Stack::from([6, 7])
-    println!("{} {:?}", st, st)
+    println("{} {:?}", st, st)
 
     let mut mx = collections::MaxHeap::new()
     mx.push(3)
     mx.push(9)
     mx.push(5)
-    println!("{} {:?}", mx, mx)
+    println("{} {:?}", mx, mx)
 
     let mn = collections::MinHeap::from([9, 2, 7])
-    println!("{} {:?}", mn, mn)
+    println("{} {:?}", mn, mn)
 
     let ints = #{ 2, 1 }
     let words = #{ "b", "a" }
-    println!("{} {}", ints, words)
+    println("{} {}", ints, words)
 
-    println!("{}", collections::Deque::new())
-    println!("{}", collections::Queue::from([8]))
-    println!("{}", render(d))
+    println("{}", collections::Deque::new())
+    println("{}", collections::Queue::from([8]))
+    println("{}", render(d))
 
     let mut i = 0
     let mut last = ""
@@ -54,5 +54,5 @@ fn main() {
         last = build_and_render(i)
         i += 1
     }
-    println!("{}", last)
+    println("{}", last)
 }

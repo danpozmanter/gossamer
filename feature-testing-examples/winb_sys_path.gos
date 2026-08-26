@@ -15,7 +15,7 @@ fn main() {
         ("", ""), ("a", "b/"), ("dir", "../sib")
     ]
     for (a, b) in joins {
-        println!("join({},{})=[{}]", a, b, path::join(&a, &b))
+        println("join({},{})=[{}]", a, b, path::join(a, b))
     }
 
     // split into (dir, file)
@@ -24,14 +24,14 @@ fn main() {
         "a/b/", "a/", "//", "trailing/", ".hidden", "x.tar.gz"
     ]
     for p in paths {
-        let (d, f) = path::split(&p)
-        println!("split({})=[{}][{}]", p, d, f)
+        let d, f = path::split(p)
+        println("split({})=[{}][{}]", p, d, f)
     }
 
     // file_name / parent
     for p in paths {
-        println!("file_name({})=[{}] parent=[{}]"
-            p, opt(path::file_name(&p)), opt(path::parent(&p)))
+        println("file_name({})=[{}] parent=[{}]"
+            p, opt(path::file_name(p)), opt(path::parent(p)))
     }
 
     // extension / file_stem / file_name / parent
@@ -40,10 +40,10 @@ fn main() {
         "/", "", "dir/", "x.", "..", ".", "a/.config"
     ]
     for p in names {
-        println!("extension({})=[{}]", p, opt(path::extension(&p)))
-        println!("file_stem({})=[{}]", p, opt(path::file_stem(&p)))
-        println!("file_name({})=[{}]", p, opt(path::file_name(&p)))
-        println!("parent({})=[{}]", p, opt(path::parent(&p)))
+        println("extension({})=[{}]", p, opt(path::extension(p)))
+        println("file_stem({})=[{}]", p, opt(path::file_stem(p)))
+        println("file_name({})=[{}]", p, opt(path::file_name(p)))
+        println("parent({})=[{}]", p, opt(path::parent(p)))
     }
 
     // normalize
@@ -53,12 +53,12 @@ fn main() {
         "...", "a/...", "/"
     ]
     for p in dirty {
-        println!("normalize({})=[{}]", p, path::normalize(&p))
+        println("normalize({})=[{}]", p, path::normalize(p))
     }
 
     // is_absolute
     for p in ["/abs", "rel", "", "/", "a/b", "//x"] {
-        println!("is_absolute({})={}", p, path::is_absolute(&p))
+        println("is_absolute({})={}", p, path::is_absolute(p))
     }
 
     // starts_with
@@ -68,6 +68,6 @@ fn main() {
         ("a", "a"), ("a/b", "a/b/c"), ("", "")
     ]
     for (p, pre) in prefixes {
-        println!("starts_with({},{})={}", p, pre, path::starts_with(&p, &pre))
+        println("starts_with({},{})={}", p, pre, path::starts_with(p, pre))
     }
 }

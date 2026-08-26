@@ -8,11 +8,11 @@
 use std::io
 
 let mut input = String::new()
-println!("Type something: ")
+println("Type something: ")
 
 io::stdin()
     .read_line(&mut input)
     .unwrap()
 
 let result = input.trim()
-println!("You typed: {}", result)
+println("You typed: {}", result)

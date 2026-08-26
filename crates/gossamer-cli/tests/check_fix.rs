@@ -49,13 +49,49 @@ fn run_fix(file: &PathBuf) -> String {
 fn a_resolvable_name_suggestion_is_applied() {
     let file = case(
         "typo",
-        "fn main() {\n    let total = 3\n    println!(\"{}\", totl)\n}\n",
+        "fn main() {\n    let total = 3\n    println(\"{}\", totl)\n}\n",
     );
     let report = run_fix(&file);
     assert!(report.contains("fix: 1 edit"), "report was: {report}");
     let after = std::fs::read_to_string(&file).unwrap();
-    assert!(after.contains("println!(\"{}\", total)"), "after: {after}");
+    assert!(after.contains("println(\"{}\", total)"), "after: {after}");
     let _ = std::fs::remove_dir_all(file.parent().unwrap());
+}
+
+/// `gos check` bundles every sibling module into one unit, and a
+/// suggestion raised in a sibling carries offsets into that unit. The
+/// edit has to land in the sibling's own file at its own offsets - and
+/// never in the entry, whose text those offsets do not address.
+#[test]
+fn a_suggestion_in_a_sibling_module_is_applied_to_that_module() {
+    let entry = case(
+        "sibling-entry",
+        "use helper::total\n\nfn main() {\n    println(\"{}\", total())\n}\n",
+    );
+    let dir = entry.parent().unwrap();
+    // A sibling `.gos` is a module of a project, so the manifest is what
+    // makes `helper` reachable from the entry at all.
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/sibling\"\nversion = \"0.1.0\"\nentry = \"sibling-entry.gos\"\n",
+    )
+    .expect("write manifest");
+    let helper = dir.join("helper.gos");
+    let before = "// A helper module, long enough that its offsets overrun the entry.\n\n\
+                  pub fn total() -> i64 {\n    let value = 3\n    valu\n}\n";
+    std::fs::write(&helper, before).expect("write helper");
+    let entry_before = std::fs::read_to_string(&entry).unwrap();
+
+    let report = run_fix(&entry);
+    assert!(report.contains("fix: 1 edit"), "report was: {report}");
+    let after = std::fs::read_to_string(&helper).unwrap();
+    assert!(after.contains("    value\n}"), "helper after: {after}");
+    assert_eq!(
+        std::fs::read_to_string(&entry).unwrap(),
+        entry_before,
+        "the entry carries no suggestion and must not change"
+    );
+    let _ = std::fs::remove_dir_all(entry.parent().unwrap());
 }
 
 #[test]
@@ -63,8 +99,8 @@ fn a_suggestion_that_does_not_resolve_the_error_is_refused() {
     // `coun` draws a did-you-mean pointing at `count`, a `String`;
     // substituting it trades the unresolved name for a type error, so
     // the source must survive untouched.
-    let before = "fn main() {\n    let count = \"text\"\n    println!(\"{}\", count)\n    \
-                  let total: i64 = coun + 1\n    println!(\"{}\", total)\n}\n";
+    let before = "fn main() {\n    let count = \"text\"\n    println(\"{}\", count)\n    \
+                  let total: i64 = coun + 1\n    println(\"{}\", total)\n}\n";
     let file = case("wrong_suggestion", before);
     let report = run_fix(&file);
     assert!(report.contains("fix: 0 edit"), "report was: {report}");
@@ -80,7 +116,7 @@ fn a_suggestion_that_does_not_resolve_the_error_is_refused() {
 fn lint_fixes_are_applied_alongside_diagnostic_suggestions() {
     let file = case(
         "lints",
-        "fn main() {\n    let unused = 1\n    let x = !!true\n    println!(\"{}\", x)\n}\n",
+        "fn main() {\n    let unused = 1\n    let x = !!true\n    println(\"{}\", x)\n}\n",
     );
     let report = run_fix(&file);
     assert!(report.contains("fix: 2 edit"), "report was: {report}");
@@ -92,7 +128,7 @@ fn lint_fixes_are_applied_alongside_diagnostic_suggestions() {
 
 #[test]
 fn a_clean_file_is_left_untouched() {
-    let before = "fn main() {\n    println!(\"{}\", 42)\n}\n";
+    let before = "fn main() {\n    println(\"{}\", 42)\n}\n";
     let file = case("clean", before);
     let report = run_fix(&file);
     assert!(report.contains("fix: 0 edit"), "report was: {report}");

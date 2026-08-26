@@ -3,7 +3,7 @@
 // A trivial in-memory `.gos` driver registers itself as a
 // std::database::sql driver, then is driven through the full
 // Conn/Stmt/Rows facade. The driver is a stateless struct with one
-// method, `dispatch(&self, op, h) -> i64`; all complex data flows
+// method, `dispatch(self, op, h) -> i64`; all complex data flows
 // through the sql::native_* side-channel helpers keyed by the token
 // `h`. This must produce byte-identical output on the bytecode VM
 // (gos), the Cranelift JIT, and the LLVM AOT tier (gos build /
@@ -67,9 +67,9 @@ impl FakeDriver {
 fn run() -> Result<(), errors::Error> {
     sql::register_native("fake", FakeDriver { })
     let mut db = sql::open("fake", "memory://x")?
-    let mut rows = db.query("SELECT greeting", &[])?
+    let mut rows = db.query("SELECT greeting", [])?
     while let Some(row) = rows.next_row()? {
-        println!("greeting = {}", row.get_text("greeting")?)
+        println("greeting = {}", row.get_text("greeting")?)
     }
     rows.close()?
     db.close()?
@@ -78,7 +78,7 @@ fn run() -> Result<(), errors::Error> {
 
 fn main() {
     match run() {
-        Ok(()) => println!("done")
-        Err(e) => println!("error: {}", e)
+        Ok(()) => println("done")
+        Err(e) => println("error: {}", e)
     }
 }

@@ -40,7 +40,7 @@ fn lcm(a: i64, b: i64) -> i64 {
 for (a, b) in [(12, 18), (100, 75), (17, 13), (0, 7), (1071, 462)] {
     let g = gcd_recursive(a, b)
     let l = lcm(a, b)
-    println!("gcd({}, {}) = {}, lcm = {}", a, b, g, l)
+    println("gcd({}, {}) = {}, lcm = {}", a, b, g, l)
 }
 
 // Sanity: iterative and recursive should agree everywhere.
@@ -49,5 +49,5 @@ let b = 1071
 let g_rec = gcd_recursive(a, b)
 let g_it = gcd_iterative(a, b)
 if g_rec == g_it {
-    println!("recursive and iterative agree: ok")
+    println("recursive and iterative agree: ok")
 }

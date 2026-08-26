@@ -37,8 +37,8 @@ impl<T: Add> Add for Wrap<T> {
 
 fn show(s: Sign) {
     match s {
-        Sign::Pos(n) => println!("pos {n}")
-        Sign::Neg(n) => println!("neg {n}")
+        Sign::Pos(n) => println("pos {n}")
+        Sign::Neg(n) => println("neg {n}")
     }
 }
 
@@ -54,8 +54,8 @@ fn main() {
     show(acc)
     let a = Wrap { v: 3 }
     let b = Wrap { v: 4 }
-    println!("{}", (a + b).v)
+    println("{}", (a + b).v)
     let c = Wrap { v: 1.5 }
     let d = Wrap { v: 0.25 }
-    println!("{}", (c + d).v)
+    println("{}", (c + d).v)
 }

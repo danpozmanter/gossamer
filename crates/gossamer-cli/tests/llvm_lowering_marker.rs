@@ -188,7 +188,7 @@ const SHAPES: &[Shape] = &[
 fn add(a: i64, b: i64) -> i64 { a + b }
 fn main() {
     let x = add(2, 3)
-    println!("{}", x)
+    println("{}", x)
 }
 "#,
         expect: &[("add", 2), ("gos_main", 2)],
@@ -203,7 +203,7 @@ fn sum_to(n: i64) -> i64 {
     }
     total
 }
-fn main() { println!("{}", sum_to(10)) }
+fn main() { println("{}", sum_to(10)) }
 "#,
         expect: &[("sum_to", 5), ("gos_main", 2)],
     },
@@ -215,7 +215,7 @@ fn dot(p: Point, q: Point) -> i64 { p.x * q.x + p.y * q.y }
 fn main() {
     let p = Point { x: 2, y: 3 }
     let q = Point { x: 4, y: 5 }
-    println!("{}", dot(p, q))
+    println("{}", dot(p, q))
 }
 "#,
         expect: &[("dot", 4)],
@@ -223,8 +223,8 @@ fn main() {
     Shape {
         tag: "string_concat",
         source: r#"
-fn greet(name: String) -> String { format!("hi {}", name) }
-fn main() { println!("{}", greet("world")) }
+fn greet(name: String) -> String { format("hi {}", name) }
+fn main() { println("{}", greet("world")) }
 "#,
         expect: &[("greet", 2)],
     },
@@ -233,7 +233,7 @@ fn main() { println!("{}", greet("world")) }
         source: r#"
 fn main() {
     let double = |x: i64| x * 2
-    println!("{}", double(7))
+    println("{}", double(7))
 }
 "#,
         expect: &[("gos_main", 2)],
@@ -248,7 +248,7 @@ fn name(n: i64) -> String {
         _ => "many",
     }
 }
-fn main() { println!("{}", name(1)) }
+fn main() { println("{}", name(1)) }
 "#,
         expect: &[("name", 4)],
     },
@@ -262,7 +262,7 @@ fn total(xs: Vec<i64>) -> i64 {
 }
 fn main() {
     let xs: Vec<i64> = [1, 2, 3, 4, 5].to_vec()
-    println!("{}", total(xs))
+    println("{}", total(xs))
 }
 "#,
         expect: &[("total", 4)],
@@ -272,8 +272,8 @@ fn main() {
         source: r#"
 fn divmod(a: i64, b: i64) -> (i64, i64) { (a / b, a % b) }
 fn main() {
-    let (q, r) = divmod(17, 5)
-    println!("{} {}", q, r)
+    let q, r = divmod(17, 5)
+    println("{} {}", q, r)
 }
 "#,
         expect: &[("divmod", 2)],
@@ -282,20 +282,20 @@ fn main() {
         tag: "result_question",
         source: r#"
 fn parse_or_zero(s: String) -> i64 {
-    match s.parse::<i64>() {
-        Ok(n) => n,
-        Err(_) => 0,
+    match s.to_i64() {
+        Some(n) => n,
+        None => 0,
     }
 }
-fn main() { println!("{}", parse_or_zero("42")) }
+fn main() { println("{}", parse_or_zero("42")) }
 "#,
         expect: &[("parse_or_zero", 3)],
     },
     Shape {
         tag: "format_macro",
         source: r#"
-fn label(n: i64) -> String { format!("n={}", n) }
-fn main() { println!("{}", label(7)) }
+fn label(n: i64) -> String { format("n={}", n) }
+fn main() { println("{}", label(7)) }
 "#,
         expect: &[("label", 2)],
     },
@@ -312,7 +312,7 @@ fn first_negative(xs: [i64; 5]) -> i64 {
 }
 fn main() {
     let xs = [1, 2, -3, 4, 5]
-    println!("{}", first_negative(xs))
+    println("{}", first_negative(xs))
 }
 "#,
         expect: &[("first_negative", 4)],
@@ -321,7 +321,7 @@ fn main() {
         tag: "float_arith",
         source: r#"
 fn norm(x: f64, y: f64) -> f64 { x * x + y * y }
-fn main() { println!("{:.2}", norm(3.0, 4.0)) }
+fn main() { println("{:.2}", norm(3.0, 4.0)) }
 "#,
         expect: &[("norm", 2)],
     },
@@ -332,9 +332,9 @@ fn classify(n: i64) -> bool {
     n > 0 && n < 100 && n % 2 == 0
 }
 fn main() {
-    println!("{}", classify(42))
-    println!("{}", classify(7))
-    println!("{}", classify(-1))
+    println("{}", classify(42))
+    println("{}", classify(7))
+    println("{}", classify(-1))
 }
 "#,
         expect: &[("classify", 2)],
@@ -348,7 +348,7 @@ fn ladder(x: i64) -> i64 {
     let x = x - 3
     x
 }
-fn main() { println!("{}", ladder(10)) }
+fn main() { println("{}", ladder(10)) }
 "#,
         expect: &[("ladder", 4)],
     },
@@ -362,8 +362,8 @@ fn grade(n: i64) -> String {
     else { "F" }
 }
 fn main() {
-    println!("{}", grade(95))
-    println!("{}", grade(72))
+    println("{}", grade(95))
+    println("{}", grade(72))
 }
 "#,
         expect: &[("grade", 4)],
@@ -384,7 +384,7 @@ fn product_table(n: i64) -> i64 {
     }
     total
 }
-fn main() { println!("{}", product_table(4)) }
+fn main() { println("{}", product_table(4)) }
 "#,
         expect: &[("product_table", 8)],
     },
@@ -395,8 +395,8 @@ fn first_char_code(s: String) -> i64 {
     if s.len() == 0 { 0 } else { s.byte_at(0) }
 }
 fn main() {
-    println!("{}", first_char_code("hi"))
-    println!("{}", first_char_code(""))
+    println("{}", first_char_code("hi"))
+    println("{}", first_char_code(""))
 }
 "#,
         expect: &[("first_char_code", 2)],
@@ -410,7 +410,7 @@ impl Counter {
 }
 fn main() {
     let c = Counter { n: 41 }
-    println!("{}", c.step())
+    println("{}", c.step())
 }
 "#,
         expect: &[],
@@ -424,9 +424,9 @@ fn maybe_neg(n: i64) -> i64 {
     0
 }
 fn main() {
-    println!("{}", maybe_neg(-5))
-    println!("{}", maybe_neg(50))
-    println!("{}", maybe_neg(200))
+    println("{}", maybe_neg(-5))
+    println("{}", maybe_neg(50))
+    println("{}", maybe_neg(200))
 }
 "#,
         expect: &[("maybe_neg", 4)],

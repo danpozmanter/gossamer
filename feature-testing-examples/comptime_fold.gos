@@ -30,26 +30,26 @@ fn main() {
         }
         acc
     }
-    println!("{}", triangular)
+    println("{}", triangular)
 
     // A bare call to a comptime fn folds at the call site.
-    println!("{}", cube(5))
+    println("{}", cube(5))
 
     // A comptime block may reference a top-level const.
-    println!("{}", comptime { cube(FOUR) })
+    println("{}", comptime { cube(FOUR) })
 
     // Const folded from a comptime block.
-    println!("{}", TABLE)
+    println("{}", TABLE)
 
     // String, float, bool, and char results all fold to literals.
-    println!("{}", comptime { "compile" + &"-time" })
-    println!("{:.3}", comptime { 1.0 / 8.0 })
-    println!("{}", comptime { fib(10) > 50 })
-    println!("{}", comptime {
+    println("{}", comptime { "compile" + &"-time" })
+    println("{:.3}", comptime { 1.0 / 8.0 })
+    println("{}", comptime { fib(10) > 50 })
+    println("{}", comptime {
         let c = 65
         c as char
     })
 
     // Nested comptime: the outer block subsumes the inner.
-    println!("{}", comptime { comptime { cube(2) } + fib(7) })
+    println("{}", comptime { comptime { cube(2) } + fib(7) })
 }

@@ -533,7 +533,6 @@ fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
                 visit_select_arm(arm, out);
             }
         }
-        ExprKind::Go(inner) => visit_expr(inner, out),
         ExprKind::Return(inner) => {
             if let Some(inner) = inner {
                 visit_expr(inner, out);
@@ -544,10 +543,7 @@ fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
                 visit_expr(value, out);
             }
         }
-        ExprKind::Literal(_)
-        | ExprKind::Continue { .. }
-        | ExprKind::MacroCall(_)
-        | ExprKind::Error => {}
+        ExprKind::Literal(_) | ExprKind::Continue { .. } | ExprKind::Error => {}
     }
 }
 
@@ -571,7 +567,7 @@ fn visit_stmt(stmt: &Stmt, out: &mut Vec<RawToken>) {
                 visit_expr(init, out);
             }
         }
-        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => {
             visit_expr(expr, out);
         }
         StmtKind::Item(item) => visit_item(item, out),

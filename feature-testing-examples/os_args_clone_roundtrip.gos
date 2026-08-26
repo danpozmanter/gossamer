@@ -24,11 +24,11 @@ fn main() {
         }
         i += 1
     }
-    println!("first={}", first)
+    println("first={}", first)
     let n = rest.len() as i64
     let mut k: i64 = 0
     while k < n {
-        println!("rest[{}]={}", k, rest[k])
+        println("rest[{}]={}", k, rest[k])
         k += 1
     }
 }

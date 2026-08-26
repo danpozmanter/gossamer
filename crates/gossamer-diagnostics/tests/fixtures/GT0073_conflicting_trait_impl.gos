@@ -2,9 +2,9 @@
 struct Point(i64)
 
 impl Display for Point {
-    fn to_string(&self) -> String { "a" }
+    fn fmt(&self) -> String { "a" }
 }
 
 impl Display for Point {
-    fn to_string(&self) -> String { "b" }
+    fn fmt(&self) -> String { "b" }
 }

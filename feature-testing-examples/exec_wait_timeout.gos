@@ -12,31 +12,31 @@ use std::os::exec
 
 fn main() {
     let empty: Vec<String> = #[]
-    match exec::spawn(&"/usr/bin/true", &empty) {
+    match exec::spawn("/usr/bin/true", empty) {
         Ok(pid) => {
             let code = exec::wait_timeout(pid, 5000)
             if code == 0 {
-                println!("quick: ok")
+                println("quick: ok")
             } else {
-                println!("quick: code={}", code)
+                println("quick: code={}", code)
             }
         }
-        Err(e) => println!("quick spawn err: {}", e.message())
+        Err(e) => println("quick spawn err: {}", e.message())
     }
 
     let sleep_args: Vec<String> = #["30"]
-    match exec::spawn(&"/bin/sleep", &sleep_args) {
+    match exec::spawn("/bin/sleep", sleep_args) {
         Ok(pid) => {
             let r = exec::wait_timeout(pid, 200)
             if r == -1 {
-                println!("slow: timeout")
+                println("slow: timeout")
             } else {
-                println!("slow: code={}", r)
+                println("slow: code={}", r)
             }
             let _ = exec::kill(pid)
             let _ = exec::wait_timeout(pid, 2000)
-            println!("slow: reaped")
+            println("slow: reaped")
         }
-        Err(e) => println!("slow spawn err: {}", e.message())
+        Err(e) => println("slow spawn err: {}", e.message())
     }
 }

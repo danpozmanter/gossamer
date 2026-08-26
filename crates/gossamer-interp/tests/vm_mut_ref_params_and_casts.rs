@@ -25,9 +25,10 @@ fn capture_writer(text: &str) {
 fn run_vm_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_with_autoderive(source, file);
+    let (mut sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     assert!(type_diags.is_empty(), "typecheck: {type_diags:?}");
@@ -53,7 +54,7 @@ fn set_first(v: &mut Vec<i64>) {
 fn main() {
     let mut a: Vec<i64> = Vec::from([1, 2, 3])
     set_first(&mut a)
-    println!("{} {} {}", a[0], a[1], a[2])
+    println("{} {} {}", a[0], a[1], a[2])
 }
 "#,
     );
@@ -77,7 +78,7 @@ fn main() {
     set_first(&mut v)
     let mut n = 1
     inc(&mut n)
-    println!("{} {}", v[0], n)
+    println("{} {}", v[0], n)
 }
 "#,
     );
@@ -99,10 +100,10 @@ impl Counter {
 fn main() {
     let mut counter = Counter { value: 7 }
     Counter::clear(&mut counter)
-    println!("{}", counter.value)
+    println("{}", counter.value)
     counter.value = 9
     counter.clear()
-    println!("{}", counter.value)
+    println("{}", counter.value)
 }
 "#,
     );
@@ -131,11 +132,11 @@ fn early(v: &mut Vec<i64>, stop: bool) {
 fn main() {
     let mut c: Vec<i64> = Vec::from([0, 0, 0])
     nested(&mut c)
-    println!("{} {} {}", c[0], c[1], c[2])
+    println("{} {} {}", c[0], c[1], c[2])
     early(&mut c, true)
-    println!("{}", c[2])
+    println("{}", c[2])
     early(&mut c, false)
-    println!("{}", c[2])
+    println("{}", c[2])
 }
 "#,
     );
@@ -153,7 +154,7 @@ fn push_one(v: &mut Vec<i64>) {
 fn main() {
     let mut e: Vec<i64> = Vec::from([1])
     push_one(&mut e)
-    println!("{} {}", e.len(), e[1])
+    println("{} {}", e.len(), e[1])
 }
 "#,
     );
@@ -172,7 +173,7 @@ fn swap_ends(v: &mut [i64]) {
 fn main() {
     let mut f: Vec<i64> = Vec::from([10, 20, 30])
     swap_ends(&mut f)
-    println!("{} {} {}", f[0], f[1], f[2])
+    println("{} {} {}", f[0], f[1], f[2])
 }
 "#,
     );
@@ -192,7 +193,7 @@ fn set_first(v: &mut Vec<i64>) {
 fn main() {
     let mut h = Holder { data: Vec::from([0, 0]) }
     set_first(&mut h.data)
-    println!("{}", h.data[0])
+    println("{}", h.data[0])
 }
 "#,
     );
@@ -211,10 +212,10 @@ fn main() {
     let setter = |v: &mut Vec<i64>| { v[0] = 9 }
     let mut a: Vec<i64> = Vec::from([1, 2])
     setter(&mut a)
-    println!("{}", a[0])
+    println("{}", a[0])
     let mut b: Vec<i64> = Vec::from([1, 2])
     apply_mut(setter, &mut b)
-    println!("{}", b[0])
+    println("{}", b[0])
 }
 "#,
     );
@@ -227,25 +228,25 @@ fn scalar_casts_follow_the_whitelist_on_the_vm() {
         r#"
 fn main() {
     let f: f32 = 3.9
-    println!("{}", f as i64)
-    println!("{}", true as i64)
-    println!("{}", false as i64)
-    println!("{}", 'A' as i64)
-    println!("{}", 65 as u8 as char)
-    println!("{}", 300.7 as u8)
-    println!("{}", 1e20 as i64)
+    println("{}", f as i64)
+    println("{}", true as i64)
+    println("{}", false as i64)
+    println("{}", 'A' as i64)
+    println("{}", 65 as u8 as char)
+    println("{}", 300.7 as u8)
+    println("{}", 1e20 as i64)
     let nan = 0.0 / 0.0
-    println!("{}", nan as i64)
-    println!("{}", -3.9 as i64)
-    println!("{}", 'A' as u8)
-    println!("{}", true as u8)
-    println!("{}", (0 - 1) as u64)
+    println("{}", nan as i64)
+    println("{}", -3.9 as i64)
+    println("{}", 'A' as u8)
+    println("{}", true as u8)
+    println("{}", (0 - 1) as u64)
 }
 "#,
     );
     assert_eq!(
         output,
-        "3\n1\n0\n65\nA\n300\n9223372036854775807\n0\n-3\n65\n1\n18446744073709551615\n"
+        "3\n1\n0\n65\nA\n255\n9223372036854775807\n0\n-3\n65\n1\n18446744073709551615\n"
     );
 }
 
@@ -256,7 +257,7 @@ fn casts_inside_capturing_closures_resolve_on_the_vm() {
 fn main() {
     let c = 'z'
     let f = || c as i64
-    println!("{}", f())
+    println("{}", f())
 }
 "#,
     );
@@ -275,7 +276,7 @@ fn set_first(v: &mut [i64]) {
 fn main() {
     let mut a = [1, 2, 3]
     set_first(&mut a)
-    println!("{}", a[0])
+    println("{}", a[0])
 }
 "#,
     );
@@ -295,9 +296,9 @@ fn main() {
     {
         let b = &mut a
         mutate_copy(b)
-        println!("{b}")
+        println("{b}")
     }
-    println!("{a}")
+    println("{a}")
 }
 "#,
     );
@@ -317,9 +318,9 @@ fn main() {
     {
         let b = &mut a
         mutate_copy(b)
-        println!("{b}")
+        println("{b}")
     }
-    println!("{a}")
+    println("{a}")
 }
 "#,
     );
@@ -330,16 +331,16 @@ fn main() {
 fn shared_reference_argument_does_not_consume_its_aliased_source() {
     let output = run_vm_main(
         r#"
-fn first(a: &[i64; 2]) -> i64 {
+fn first(a: [i64; 2]) -> i64 {
     a[0]
 }
 
 fn main() {
     let a = [1, 2]
     let b = &a
-    let result = first(b)
-    println!("{a}")
-    println!("{result}")
+    let result = first(*b)
+    println("{a}")
+    println("{result}")
 }
 "#,
     );

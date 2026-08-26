@@ -28,31 +28,31 @@ fn pair() -> Token { Token::Pair(3, 4) }
 
 fn main() {
     // PartialEq / Eq, including a nested-struct field.
-    println!("{}", unit_x() == unit_x())
-    println!("{}", unit_x() != Point { x: 9, y: 0 })
-    println!("{}", diag() == diag())
-    println!("{}", diag() != Line { from: Point { x: 0, y: 0 }, to: unit_x(), label: "d" })
+    println("{}", unit_x() == unit_x())
+    println("{}", unit_x() != Point { x: 9, y: 0 })
+    println("{}", diag() == diag())
+    println("{}", diag() != Line { from: Point { x: 0, y: 0 }, to: unit_x(), label: "d" })
 
     // Clone + Default.
-    println!("{}", diag().clone() == diag())
+    println("{}", diag().clone() == diag())
     let z = Line::default()
-    println!("{} {} '{}'", z.from.x, z.to.y, z.label)
+    println("{} {} '{}'", z.from.x, z.to.y, z.label)
 
     // Debug (nested + generic).
-    println!("{:?}", unit_x())
-    println!("{:?}", diag())
-    println!("{:?}", wrapped())
+    println("{:?}", unit_x())
+    println("{:?}", diag())
+    println("{:?}", wrapped())
 
     // Generic PartialEq.
-    println!("{}", wrapped() == Wrap { value: 7, tag: 1 })
-    println!("{}", wrapped() != Wrap { value: 8, tag: 1 })
+    println("{}", wrapped() == Wrap { value: 7, tag: 1 })
+    println("{}", wrapped() != Wrap { value: 8, tag: 1 })
 
     // Enum: Clone, PartialEq, Debug, Default.
-    println!("{}", pair() == pair().clone())
-    println!("{}", pair() != Token::Num(7))
-    println!("{:?}", pair())
-    println!("{:?}", Token::Num(5))
-    println!("{:?}", Token::default())
+    println("{}", pair() == pair().clone())
+    println("{}", pair() != Token::Num(7))
+    println("{:?}", pair())
+    println("{:?}", Token::Num(5))
+    println("{:?}", Token::default())
 }
 
 #[cfg(test)]

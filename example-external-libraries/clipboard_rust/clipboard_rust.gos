@@ -34,7 +34,7 @@ fn read_previous() -> String {
             }
         },
         Err(e) => {
-            eprintln!("{e}")
+            eprintln("{e}")
             "(clipboard unavailable)"
         },
     }
@@ -47,9 +47,9 @@ fn main() {
     if words.len() > 0 {
         let message = strings::join(words, " ")
         if let Err(e) = set_text(message) {
-            eprintln!("{e}")
+            eprintln("{e}")
         }
     }
 
-    println!("{}", previous)
+    println("{}", previous)
 }

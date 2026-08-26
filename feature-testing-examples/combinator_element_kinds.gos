@@ -18,54 +18,54 @@ struct Part {
 
 fn main() {
     let bs: Vec<bool> = #[true, false, true]
-    println!("{:?}", bs.map(|b| !b))
-    println!("{:?}", bs.map(|b| b == false))
-    println!("{:?}", bs.filter(|b| !b))
-    println!("{}", bs.iter().filter(|b| !b).count())
-    println!("{:?}", bs.map(|b| if b { 5 } else { 6 }))
+    println("{:?}", bs.map(|b| !b))
+    println("{:?}", bs.map(|b| b == false))
+    println("{:?}", bs.filter(|b| !b))
+    println("{}", bs.iter().filter(|b| !b).count())
+    println("{:?}", bs.map(|b| if b { 5 } else { 6 }))
 
     let ts: Vec<(i64, i64)> = #[(1, 2), (3, 4)]
-    println!("{:?}", ts.iter().map(|t| (t.1, t.0)).collect())
-    println!("{:?}", ts.iter().map(|t| t.0 + t.1).collect())
+    println("{:?}", ts.iter().map(|t| (t.1, t.0)).collect())
+    println("{:?}", ts.iter().map(|t| t.0 + t.1).collect())
 
     let fs: Vec<f64> = #[1.5, 4.5, 2.5]
-    println!("{:?}", fs.iter().max_by_key(|x| x))
-    println!("{:?}", fs.max_by_key(|x| x))
-    println!("{:?}", fs.min_by_key(|x| x))
-    println!("{:?}", fs.max_by_key(|x| x as i64))
+    println("{:?}", fs.iter().max_by_key(|x| x))
+    println("{:?}", fs.max_by_key(|x| x))
+    println("{:?}", fs.min_by_key(|x| x))
+    println("{:?}", fs.max_by_key(|x| x as i64))
 
     let ns: Vec<i64> = #[3, 1, 2]
-    println!("{:?}", ns.max_by_key(|n| n * -1))
-    println!("{:?}", ns.max_by_key(|n| n as f64))
+    println("{:?}", ns.max_by_key(|n| n * -1))
+    println("{:?}", ns.max_by_key(|n| n as f64))
 
     let ps: Vec<Part> = #[
         Part { name: "a", weight: 2.5 }
         Part { name: "b", weight: 9.5 }
     ]
-    println!("{:?}", ps.max_by_key(|p| p.weight))
+    println("{:?}", ps.max_by_key(|p| p.weight))
 
     let mut mf: Vec<f64> = #[3.5, 1.5, 2.5]
     mf.sort_by(|x, y| if x < y { -1 } else { 1 })
-    println!("{:?}", mf)
+    println("{:?}", mf)
 
     let mut mc: Vec<char> = #['c', 'a', 'b']
     mc.sort_by(|x, y| if x < y { -1 } else { 1 })
-    println!("{:?}", mc)
+    println("{:?}", mc)
 
     let mut mb: Vec<u8> = #[3, 1, 2]
     mb.sort_by(|x, y| if x < y { -1 } else { 1 })
-    println!("{:?}", mb)
+    println("{:?}", mb)
 
     let mut mk: Vec<f64> = #[3.5, 1.5, 2.5]
     mk.sort_by_key(|x| x)
-    println!("{:?}", mk)
+    println("{:?}", mk)
 
     let es: Vec<Shape> = #[Shape::Circle(1.0), Shape::Square, Shape::Circle(2.0)]
-    println!("{}", es.iter().filter(|s| matches!(s, Shape::Circle(_))).count())
+    println("{}", es.iter().filter(|s| matches(s, Shape::Circle(_))).count())
 
     let y: i64 = 5
-    println!("{}", bits::count_ones(y as u64))
-    println!("{}", bits::count_zeros(y as u64))
-    println!("{}", bits::leading_zeros(y as u64))
-    println!("{}", bits::len(y as u64))
+    println("{}", bits::count_ones(y as u64))
+    println("{}", bits::count_zeros(y as u64))
+    println("{}", bits::leading_zeros(y as u64))
+    println("{}", bits::len(y as u64))
 }

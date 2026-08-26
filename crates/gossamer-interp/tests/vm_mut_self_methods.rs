@@ -28,9 +28,10 @@ fn capture_writer(text: &str) {
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("mut_self.gos", source.to_string());
-    let (sf, parse_diags) = parse_with_autoderive(source, file);
+    let (mut sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -54,7 +55,7 @@ fn main() {
     c.bump()
     c.bump()
     c.bump()
-    println!("n={}", c.n)
+    println("n={}", c.n)
 }
 "#;
     assert_eq!(run_main(src), "n=3\n");
@@ -73,7 +74,7 @@ fn main() {
     let mut a = Acc { total: 0 }
     let r1 = a.add(5)
     let r2 = a.add(10)
-    println!("r1={} r2={} get={}", r1, r2, a.get())
+    println("r1={} r2={} get={}", r1, r2, a.get())
 }
 "#;
     assert_eq!(run_main(src), "r1=5 r2=15 get=15\n");
@@ -90,9 +91,9 @@ impl Point {
 }
 fn main() {
     let mut p = Point { x: 1, y: 2 }
-    println!("before={}", p.sum())
+    println("before={}", p.sum())
     p.shift(10)
-    println!("after={}", p.sum())
+    println("after={}", p.sum())
 }
 "#;
     assert_eq!(run_main(src), "before=3\nafter=23\n");
@@ -114,7 +115,7 @@ impl Counter {
 }
 fn main() {
     let c = Counter { base: 0i64 }
-    println!("{}", c.count(1000i64))
+    println("{}", c.count(1000i64))
 }
 "#;
     assert_eq!(run_main(src), "1000\n");
@@ -134,7 +135,7 @@ fn main() {
         it.tick()
         i = i + 1
     }
-    println!("{}={}", it.label, it.count)
+    println("{}={}", it.label, it.count)
 }
 "#;
     assert_eq!(run_main(src), "widget=100\n");
@@ -159,7 +160,7 @@ impl Mem {
 fn main() {
     let mut mem = Mem::new(Vec::from([1, 2, 3, 4]))
     mem.set_memory(1, 9)
-    println!("{} {}", mem.get_memory(1), mem.get_memory(2))
+    println("{} {}", mem.get_memory(1), mem.get_memory(2))
 }
 "#;
     assert_eq!(run_main(src), "2 9\n");
@@ -188,7 +189,7 @@ fn main() {
     s.advance()
     s.advance()
     s.advance()
-    println!("v={}", s.value())
+    println("v={}", s.value())
 }
 "#;
     assert_eq!(run_main(src), "v=3\n");

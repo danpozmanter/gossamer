@@ -21,24 +21,24 @@ fn main() {
     let err_payload: Result<(i64, Vec<i64>), String> = Err("boom")
     let none_payload: Option<(i64, Vec<i64>)> = None
 
-    println!("plain: {:?}", plain)
-    println!("vec: {:?}", vec_payload)
-    println!("map: {:?}", map_payload)
-    println!("array: {:?}", array_payload)
-    println!("nested: {:?}", nested_payload)
-    println!("set: {:?}", set_payload)
-    println!("option: {:?}", option_payload)
-    println!("err: {:?}", err_payload)
-    println!("none: {:?}", none_payload)
+    println("plain: {:?}", plain)
+    println("vec: {:?}", vec_payload)
+    println("map: {:?}", map_payload)
+    println("array: {:?}", array_payload)
+    println("nested: {:?}", nested_payload)
+    println("set: {:?}", set_payload)
+    println("option: {:?}", option_payload)
+    println("err: {:?}", err_payload)
+    println("none: {:?}", none_payload)
 
     // The same shapes reached as elements of a sequence, where the
     // carrier is stored rather than bound.
     let mut xs: [Option<(i64, Vec<i64>)>; 3] = [None; 3]
     xs[0] = Some((1, #[1]))
     xs[2] = Some((3, #[3, 3, 3]))
-    println!("elements: {:?}", xs)
+    println("elements: {:?}", xs)
 
     let mut ys: Vec<Option<(String, Map<String, i64>)>> = #[None; 2]
     ys[1] = Some(("k", { "z": 9 }))
-    println!("elements: {:?}", ys)
+    println("elements: {:?}", ys)
 }

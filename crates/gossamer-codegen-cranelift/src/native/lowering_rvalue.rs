@@ -415,9 +415,31 @@ pub(super) fn lower_rvalue_into(
                 // signed `i64`. Unsigned casts go through a same-
                 // width int rebox before this point.
                 (s, d) if s.is_int() && d.is_float() => builder.ins().fcvt_from_sint(d, src_v),
-                // Float → integer. Saturating conversion matches
-                // Rust's `as` (NaN → 0, ±Inf clamps to bounds).
-                (s, d) if s.is_float() && d.is_int() => builder.ins().fcvt_to_sint_sat(d, src_v),
+                // Float → integer saturates at the TARGET's range, so
+                // `300.7 as u8` is `255` and `-1.5 as u8` is `0`; NaN reads
+                // as zero. The intrinsic saturates at the machine width, and
+                // the declared width clamps what it answers.
+                (s, d) if s.is_float() && d.is_int() => {
+                    let converted = builder.ins().fcvt_to_sint_sat(d, src_v);
+                    let (width, signed) = match tcx.kind_of(*target) {
+                        TyKind::Int(IntTy::I8) => (8, true),
+                        TyKind::Int(IntTy::U8) => (8, false),
+                        TyKind::Int(IntTy::I16) => (16, true),
+                        TyKind::Int(IntTy::U16) => (16, false),
+                        TyKind::Int(IntTy::I32) => (32, true),
+                        TyKind::Int(IntTy::U32) => (32, false),
+                        _ => (64, true),
+                    };
+                    if width >= 64 || d != types::I64 {
+                        converted
+                    } else {
+                        let (low, high) = gossamer_abi::int_range::bounds(width, signed);
+                        let low_v = builder.ins().iconst(types::I64, low);
+                        let high_v = builder.ins().iconst(types::I64, high);
+                        let lifted = builder.ins().smax(converted, low_v);
+                        builder.ins().smin(lifted, high_v)
+                    }
+                }
                 // `u8 as char`: mask to the declared u8 width before
                 // narrowing into the char's i32 code-point slot -
                 // matches the VM's `cast_scalar` and the LLVM tier.

@@ -18,7 +18,7 @@ fn main() {
     let _ = [0i64; 100]
     let _ = vec![1i64, 2i64, 3i64]
     let _ = "interp {x} and {y + 1}"
-    let _ = format!("{x:>5}")
+    let _ = format("{x:>5}")
     let _ = -x.abs()
     let _ = !cond
     let _ = *p

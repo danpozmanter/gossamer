@@ -8,14 +8,14 @@ fn readiness_message(url: String) -> String {
     match http::get(url + "/ready", #[]) {
         Ok(response) => {
             if response.status >= 200 && response.status < 300 {
-                format!("ready status={} body={}", response.status, response.body)
+                format("ready status={} body={}", response.status, response.body)
             } else {
-                format!("unhealthy status={} body={}", response.status, response.body)
+                format("unhealthy status={} body={}", response.status, response.body)
             }
         }
-        Err(error) => format!("transport diagnostic: {}", error)
+        Err(error) => format("transport diagnostic: {}", error)
     }
 }
 
 let fixture = httptest::server(200, "database=up")
-println!("{}", readiness_message(fixture))
+println("{}", readiness_message(fixture))

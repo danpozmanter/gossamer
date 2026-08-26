@@ -8,7 +8,7 @@ fn main() {
     for x in lo..=hi {
         let _ = x
     }
-    println!("bounds {} {}", lo, hi)
+    println("bounds {} {}", lo, hi)
 
     // Re-entering the inner loop from an enclosing loop must reset it.
     for y in 0..2 {
@@ -17,7 +17,7 @@ fn main() {
             let _ = x
             n += 1
         }
-        println!("y={} n={}", y, n)
+        println("y={} n={}", y, n)
     }
 
     // The same holds under a reversed outer range and an exclusive inner one.
@@ -29,7 +29,7 @@ fn main() {
             let _ = x
             n += 1
         }
-        println!("rev y={} n={}", y, n)
+        println("rev y={} n={}", y, n)
     }
-    println!("bounds still {} {} {} {}", lo, hi, a, b)
+    println("bounds still {} {} {} {}", lo, hi, a, b)
 }

@@ -22,7 +22,7 @@ fn rec<T>(v: T) -> String {
             "f64" => "real"
             _ => "int"
         }
-        out += name + ":" + label + "=" + format!("{}", field_of(v, name)) + ";"
+        out += name + ":" + label + "=" + format("{}", field_of(v, name)) + ";"
     }
     out
 }
@@ -31,13 +31,13 @@ fn rec<T>(v: T) -> String {
 fn point_xy(p: Point) -> String {
     let mut out = ""
     for (name, _) in typeInfo::<Point>() {
-        out += name + "=" + format!("{}", field_of(p, name)) + " "
+        out += name + "=" + format("{}", field_of(p, name)) + " "
     }
     out
 }
 
 fn main() {
-    println!("{}", rec::<Point>(Point { x: 1, y: 2 }))
-    println!("{}", rec::<User>(User { id: 7, name: "jane", active: true }))
-    println!("{}", point_xy(Point { x: 3, y: 4 }))
+    println("{}", rec::<Point>(Point { x: 1, y: 2 }))
+    println("{}", rec::<User>(User { id: 7, name: "jane", active: true }))
+    println("{}", point_xy(Point { x: 3, y: 4 }))
 }

@@ -583,6 +583,13 @@ impl Vm {
                 Err(RuntimeError::Panic(msg)) => Some(msg.clone()),
                 Err(other) => Some(format!("{other}")),
             };
+            // A panic hook observes every panic. Being joinable decides
+            // whether the DEFAULT report is printed - the outcome carries
+            // the message to `join()` instead - and says nothing about a
+            // hook the program installed.
+            if let Err(RuntimeError::Panic(msg)) = &result {
+                let _ = vm.invoke_panic_hook(msg);
+            }
             let outcome = match result {
                 Ok(v) => Value::variant("Ok", vec![v]),
                 Err(RuntimeError::Panic(msg)) => {

@@ -23,7 +23,7 @@ fn half(n: i64) -> Option<i64> {
     }
 }
 
-fn first_half(xs: &[i64]) -> i64 {
+fn first_half(xs: [i64]) -> i64 {
     // `else { continue }` inside a loop over a `&[i64]` slice parameter:
     // skip odd elements, bind and use the half of the first even one.
     let mut found = -1
@@ -36,11 +36,11 @@ fn first_half(xs: &[i64]) -> i64 {
 }
 
 fn main() {
-    println!("{}", double_or_zero(Some(21)))
-    println!("{}", double_or_zero(None))
-    println!("{}", sum_or_zero(Some(10), Some(32)))
-    println!("{}", sum_or_zero(Some(10), None))
-    println!("{}", first_half(&[3, 5, 8, 9]))
+    println("{}", double_or_zero(Some(21)))
+    println("{}", double_or_zero(None))
+    println("{}", sum_or_zero(Some(10), Some(32)))
+    println("{}", sum_or_zero(Some(10), None))
+    println("{}", first_half([3, 5, 8, 9]))
 }
 
 #[cfg(test)]
@@ -65,6 +65,6 @@ mod tests {
 
     #[test]
     fn else_continue_over_slice() {
-        let _ = testing::check(super::first_half(&[3, 5, 8, 9]) == 4, "first even (8) halves to 4")
+        let _ = testing::check(super::first_half([3, 5, 8, 9]) == 4, "first even (8) halves to 4")
     }
 }

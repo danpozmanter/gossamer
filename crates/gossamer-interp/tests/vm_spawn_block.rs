@@ -1,12 +1,11 @@
-//! VM-native non-call `go` tests (destroy-tree-walker Phase 6).
+//! VM-native `spawn` tests.
 //!
-//! Every program runs entirely through the bytecode [`Vm`].
-//! Non-call `go` shapes (`go { block }`, `go` in
-//! expression position) lift the spawned expression into a zero-arg
-//! closure (`Op::MakeClosure`) and spawn it on the goroutine pool
-//! (`Op::Spawn`).  Channel + drain
-//! synchronization keeps output deterministic, so a magic sleep is
-//! never needed to observe the goroutine's effect.
+//! Every program runs entirely through the bytecode [`Vm`]. A
+//! `spawn(|| { .. })` attaches to the cohort it is written in - `main`
+//! runs inside an implicit root cohort - and the closure runs on the
+//! goroutine pool. Channel + drain synchronization keeps output
+//! deterministic, so a magic sleep is never needed to observe the
+//! goroutine's effect.
 
 use std::cell::RefCell;
 
@@ -27,10 +26,11 @@ fn capture_writer(text: &str) {
 
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
-    let file = map.add_file("go_block.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let file = map.add_file("spawn_block.gos", source.to_string());
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -45,8 +45,8 @@ fn run_main(source: &str) -> String {
 }
 
 #[test]
-fn single_producer_go_block_drains_in_order() {
-    // One `go { block }` produces an ordered sequence and closes the
+fn single_producer_spawn_drains_in_order() {
+    // One spawned closure produces an ordered sequence and closes the
     // channel; the `while let` drain sees the values in send order, so
     // the output is fully deterministic.
     let src = r#"
@@ -55,28 +55,28 @@ use std::sync::channel
 fn compute(n: i64) -> i64 { n * n }
 
 fn main() {
-    let (tx, rx) = channel()
+    let tx, rx = channel()
     let base = 10
-    go {
+    let producer = spawn(|| {
         let mut i = 0
         while i < 4 {
             tx.send(base + compute(i))
             i += 1
         }
         tx.close()
-    }
+    })
     while let Some(v) = rx.recv() {
-        println!("got {}", v)
+        println("got {}", v)
     }
-    println!("done")
+    println("done")
 }
 "#;
     assert_eq!(run_main(src), "got 10\ngot 11\ngot 14\ngot 19\ndone\n");
 }
 
 #[test]
-fn loop_spawning_go_blocks_stays_native_and_aggregates() {
-    // A loop body that spawns a `go { block }` each iteration must stay
+fn loop_spawning_closures_stays_native_and_aggregates() {
+    // A loop body that spawns a closure each iteration must stay
     // on the bytecode path (no whole-loop defer). Each goroutine sends
     // one value; main drains a known count, so the order-independent
     // sum is deterministic regardless of scheduling.
@@ -84,14 +84,14 @@ fn loop_spawning_go_blocks_stays_native_and_aggregates() {
 use std::sync::channel
 
 fn main() {
-    let (tx, rx) = channel()
+    let tx, rx = channel()
     let n = 5
     let mut i = 0
     while i < n {
         let k = i
-        go {
+        let worker = spawn(|| {
             tx.send(k * k)
-        }
+        })
         i += 1
     }
     let mut total = 0
@@ -102,31 +102,31 @@ fn main() {
             got += 1
         }
     }
-    println!("total {}", total)
+    println("total {}", total)
 }
 "#;
     assert_eq!(run_main(src), "total 30\n");
 }
 
 #[test]
-fn go_block_in_expression_position_runs() {
-    // `go { block }` used in expression position (its `()` result fed to
-    // a `let _`) must lower natively and run the goroutine.
+fn spawn_in_expression_position_runs() {
+    // A `spawn` used in expression position must lower natively and run
+    // the goroutine.
     let src = r#"
 use std::sync::channel
 
 fn main() {
-    let (tx, rx) = channel()
-    let _ = go {
+    let tx, rx = channel()
+    let sender = spawn(|| {
         tx.send(7)
         tx.send(35)
         tx.close()
-    }
+    })
     let mut sum = 0
     while let Some(v) = rx.recv() {
         sum += v
     }
-    println!("sum {}", sum)
+    println("sum {}", sum)
 }
 "#;
     assert_eq!(run_main(src), "sum 42\n");

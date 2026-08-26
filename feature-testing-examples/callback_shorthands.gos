@@ -9,30 +9,30 @@ fn main() {
     let raw = #[1.0, -2.0, 3.5]
 
     // A std free function stands for the closure that calls it.
-    println!("{:?}", raw.map(math::abs))
-    println!("{:?}", #["  a  ", " b "].map(strings::trim))
-    println!("{:?}", #["ab", "cd"].map(base64::encode))
+    println("{:?}", raw.map(math::abs))
+    println("{:?}", #["  a  ", " b "].map(strings::trim))
+    println("{:?}", #["ab", "cd"].map(base64::encode))
 
     // Every other callback is a written closure.
-    println!("{:?}", raw.map(|v| v.abs()))
-    println!("{:?}", #["hi", "yo"].map(|v| v.to_uppercase()))
-    println!("{:?}", #["ab", "cde"].map(|v| v.len()))
-    println!("{:?}", #[(1, 2), (3, 4)].map(|v| v.0))
-    println!("{:?}", #[#[1, 2], #[3, 4]].map(|v| v[1]))
+    println("{:?}", raw.map(|v| v.abs()))
+    println("{:?}", #["hi", "yo"].map(|v| v.to_uppercase()))
+    println("{:?}", #["ab", "cde"].map(|v| v.len()))
+    println("{:?}", #[(1, 2), (3, 4)].map(|v| v.0))
+    println("{:?}", #[#[1, 2], #[3, 4]].map(|v| v[1]))
 
     // A closure callback nests inside another the same way.
-    println!("{:?}", #[4.0, 9.0].map(|v| v.sqrt()))
+    println("{:?}", #[4.0, 9.0].map(|v| v.sqrt()))
 
     // A struct-typed sequence reaches its methods the same way.
     let readings = #[
         Reading { label: "a", value: -1.5 }
         Reading { label: "b", value: 2.5 }
     ]
-    println!("{:?}", readings.map(|r| r.value).map(|v| v.abs()))
+    println("{:?}", readings.map(|r| r.value).map(|v| v.abs()))
 
     // The mapped element type is concrete, so the debug rendering of
     // the result is the element's own.
     let scaled = raw.map(|v| v.abs()).map(|v| v * 2.0)
-    println!("{:?} {} {}", scaled, scaled[0], scaled.len())
-    println!("{:?} {:?}", #[1, -2].map(|v| v.abs()), #[2, 9].map(|v| v.sqrt()))
+    println("{:?} {} {}", scaled, scaled[0], scaled.len())
+    println("{:?} {:?}", #[1, -2].map(|v| v.abs()), #[2, 9].map(|v| v.sqrt()))
 }

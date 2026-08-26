@@ -104,12 +104,12 @@ fn aot_strconv_parse_i64() {
         r#"
 use std::strconv
 use std::errors
-fn parse(s: &String) -> Result<i64, errors::Error> {
+fn parse(s: String) -> Result<i64, errors::Error> {
     let n = strconv::parse_i64(s)?
     Ok(n)
 }
 fn main() {
-    if let Ok(n) = parse(&"42") { println!("n={}", n) }
+    if let Ok(n) = parse("42") { println("n={}", n) }
 }
 "#,
         "n=42\n",
@@ -123,12 +123,12 @@ fn aot_strconv_parse_f64() {
         r#"
 use std::strconv
 use std::errors
-fn parse(s: &String) -> Result<f64, errors::Error> {
+fn parse(s: String) -> Result<f64, errors::Error> {
     let n = strconv::parse_f64(s)?
     Ok(n)
 }
 fn main() {
-    if let Ok(n) = parse(&"3.5") { println!("n={}", n) }
+    if let Ok(n) = parse("3.5") { println("n={}", n) }
 }
 "#,
         "n=3.5\n",
@@ -142,12 +142,12 @@ fn aot_strconv_parse_bool() {
         r#"
 use std::strconv
 use std::errors
-fn parse(s: &String) -> Result<bool, errors::Error> {
+fn parse(s: String) -> Result<bool, errors::Error> {
     let b = strconv::parse_bool(s)?
     Ok(b)
 }
 fn main() {
-    if let Ok(b) = parse(&"true") { println!("b={}", b) }
+    if let Ok(b) = parse("true") { println("b={}", b) }
 }
 "#,
         "b=true\n",
@@ -161,7 +161,7 @@ fn aot_strconv_format_i64() {
         r#"
 use std::strconv
 fn main() {
-    println!("s={}", strconv::format_i64(123))
+    println("s={}", strconv::format_i64(123))
 }
 "#,
         "s=123\n",
@@ -175,7 +175,7 @@ fn aot_strconv_format_f64() {
         r#"
 use std::strconv
 fn main() {
-    println!("s={}", strconv::format_f64(2.5))
+    println("s={}", strconv::format_f64(2.5))
 }
 "#,
         "s=2.5\n",
@@ -189,7 +189,7 @@ fn aot_integer_abs_uses_integer_lowering() {
         r#"
 fn main() {
     let x: i64 = -42
-    println!("{}", x.abs())
+    println("{}", x.abs())
 }
 "#,
         "42\n",
@@ -208,7 +208,7 @@ fn aot_strings_trim() {
         r#"
 use std::strings
 fn main() {
-    println!("[{}]", strings::trim("  hi  "))
+    println("[{}]", strings::trim("  hi  "))
 }
 "#,
         "[hi]\n",
@@ -223,7 +223,7 @@ fn aot_strings_split() {
 use std::strings
 fn main() {
     let xs = strings::split("a,b,c", ",")
-    println!("n={}", xs.len())
+    println("n={}", xs.len())
 }
 "#,
         "n=3\n",
@@ -237,7 +237,7 @@ fn aot_strings_to_upper() {
         r#"
 use std::strings
 fn main() {
-    println!("{}", strings::to_uppercase("hi"))
+    println("{}", strings::to_uppercase("hi"))
 }
 "#,
         "HI\n",
@@ -251,7 +251,7 @@ fn aot_strings_to_lower() {
         r#"
 use std::strings
 fn main() {
-    println!("{}", strings::to_lowercase("HI"))
+    println("{}", strings::to_lowercase("HI"))
 }
 "#,
         "hi\n",
@@ -265,7 +265,7 @@ fn aot_strings_contains() {
         r#"
 use std::strings
 fn main() {
-    println!("b={}", strings::contains("hello", "ell"))
+    println("b={}", strings::contains("hello", "ell"))
 }
 "#,
         "b=true\n",
@@ -279,7 +279,7 @@ fn aot_strings_replace() {
         r#"
 use std::strings
 fn main() {
-    println!("{}", strings::replace("aaa", "a", "b"))
+    println("{}", strings::replace("aaa", "a", "b"))
 }
 "#,
         "bbb\n",
@@ -293,7 +293,7 @@ fn aot_strings_starts_with() {
         r#"
 use std::strings
 fn main() {
-    println!("b={}", strings::starts_with("hello", "he"))
+    println("b={}", strings::starts_with("hello", "he"))
 }
 "#,
         "b=true\n",
@@ -307,7 +307,7 @@ fn aot_strings_ends_with() {
         r#"
 use std::strings
 fn main() {
-    println!("b={}", strings::ends_with("hello", "lo"))
+    println("b={}", strings::ends_with("hello", "lo"))
 }
 "#,
         "b=true\n",
@@ -322,7 +322,7 @@ fn aot_strings_lines() {
 use std::strings
 fn main() {
     let xs = strings::lines("a\nb\nc")
-    println!("n={}", xs.len())
+    println("n={}", xs.len())
 }
 "#,
         "n=3\n",
@@ -337,7 +337,7 @@ fn aot_strings_find() {
 use std::strings
 fn main() {
     if let Some(i) = strings::find("hello", "ll") {
-        println!("i={}", i)
+        println("i={}", i)
     }
 }
 "#,
@@ -352,7 +352,7 @@ fn aot_strings_repeat() {
         r#"
 use std::strings
 fn main() {
-    println!("{}", strings::repeat("ab", 3))
+    println("{}", strings::repeat("ab", 3))
 }
 "#,
         "ababab\n",
@@ -366,7 +366,7 @@ fn aot_strings_trim_start() {
         r#"
 use std::strings
 fn main() {
-    println!("[{}]", strings::trim_start("  hi"))
+    println("[{}]", strings::trim_start("  hi"))
 }
 "#,
         "[hi]\n",
@@ -380,7 +380,7 @@ fn aot_strings_trim_end() {
         r#"
 use std::strings
 fn main() {
-    println!("[{}]", strings::trim_end("hi  "))
+    println("[{}]", strings::trim_end("hi  "))
 }
 "#,
         "[hi]\n",
@@ -398,7 +398,7 @@ fn aot_math_atan2() {
         r#"
 use std::math
 fn main() {
-    println!("{}", math::atan2(0.0, 1.0))
+    println("{}", math::atan2(0.0, 1.0))
 }
 "#,
         "0\n",
@@ -412,7 +412,7 @@ fn aot_math_log10() {
         r#"
 use std::math
 fn main() {
-    println!("{}", math::log10(1000.0))
+    println("{}", math::log10(1000.0))
 }
 "#,
         "3\n",
@@ -426,7 +426,7 @@ fn aot_math_tan() {
         r#"
 use std::math
 fn main() {
-    println!("{}", math::tan(0.0))
+    println("{}", math::tan(0.0))
 }
 "#,
         "0\n",
@@ -440,7 +440,7 @@ fn aot_math_round() {
         r#"
 use std::math
 fn main() {
-    println!("{}", math::round(2.7))
+    println("{}", math::round(2.7))
 }
 "#,
         "3\n",
@@ -459,7 +459,7 @@ fn aot_path_parent() {
 use std::path
 fn main() {
     if let Some(p) = path::parent("/a/b/c") {
-        println!("{}", p)
+        println("{}", p)
     }
 }
 "#,
@@ -475,7 +475,7 @@ fn aot_path_stem() {
 use std::path
 fn main() {
     if let Some(s) = path::file_stem("/a/file.txt") {
-        println!("{}", s)
+        println("{}", s)
     }
 }
 "#,
@@ -491,7 +491,7 @@ fn aot_path_file_name() {
 use std::path
 fn main() {
     if let Some(s) = path::file_name("/a/file.txt") {
-        println!("{}", s)
+        println("{}", s)
     }
 }
 "#,
@@ -508,7 +508,7 @@ use std::env
 fn main() {
     env::set_var("AOT_TEST_KEY", "hi")
     if let Some(v) = env::var("AOT_TEST_KEY") {
-        println!("v={}", v)
+        println("v={}", v)
     }
 }
 "#,
@@ -527,7 +527,7 @@ fn aot_env_program_name() {
 use std::env
 fn main() {
     let n = env::program_name()
-    println!("{}", n)
+    println("{}", n)
 }
 "#,
     );
@@ -551,7 +551,7 @@ fn aot_fs_metadata() {
 use std::fs
 fn main() {
     if let Ok(_m) = fs::metadata(".") {
-        println!("ok")
+        println("ok")
     }
 }
 "#,
@@ -569,7 +569,7 @@ use std::crypto
 use std::errors
 fn main() -> Result<(), errors::Error> {
     let b = crypto::rand::bytes(16)?
-    println!("n={}", b.len())
+    println("n={}", b.len())
     Ok(())
 }
 "#,
@@ -585,8 +585,8 @@ fn aot_crypto_rand_bytes_rejects_negative_count() {
 use std::crypto
 fn main() {
     match crypto::rand::bytes(-1) {
-        Ok(_) => println!("unexpected"),
-        Err(_) => println!("err"),
+        Ok(_) => println("unexpected"),
+        Err(_) => println("err"),
     }
 }
 "#,
@@ -607,8 +607,8 @@ fn aot_iter_sum_by() {
 use std::iter
 fn main() {
     let xs = [1, 2, 3]
-    let total = xs |> |v| iter::sum_by(|n| n*2, v)
-    println!("total={}", total)
+    let total = xs |> |v| iter::sum_by(v, |n| n*2)
+    println("total={}", total)
 }
 "#,
         "total=12\n",
@@ -623,8 +623,8 @@ fn aot_option_map() {
 use std::option
 fn main() {
     let o = Some(2)
-    let m = o |> |v| option::map(|n| n + 1, v)
-    if let Some(v) = m { println!("v={}", v) }
+    let m = o |> |v| option::map(v, |n| n + 1)
+    if let Some(v) = m { println("v={}", v) }
 }
 "#,
         "v=3\n",
@@ -640,8 +640,8 @@ use std::result
 use std::errors
 fn main() {
     let r: Result<i64, errors::Error> = Ok(2)
-    let m = r |> |v| result::map(|n| n + 1, v)
-    if let Ok(v) = m { println!("v={}", v) }
+    let m = r |> |v| result::map(v, |n| n + 1)
+    if let Ok(v) = m { println("v={}", v) }
 }
 "#,
         "v=3\n",
@@ -661,7 +661,7 @@ use std::collections::Map
 fn main() {
     let mut m: Map<String, i64> = Map::new()
     m.insert("a", 1)
-    println!("b={}", m.contains("a"))
+    println("b={}", m.contains("a"))
 }
 "#,
         "b=true\n",
@@ -677,7 +677,7 @@ use std::collections::BTreeMap
 fn main() {
     let mut m: BTreeMap<String, i64> = BTreeMap::new()
     m.insert("a", 5)
-    if let Some(v) = m.get("a") { println!("v={}", v) }
+    if let Some(v) = m.get("a") { println("v={}", v) }
 }
 "#,
         "v=5\n",
@@ -693,7 +693,7 @@ use std::collections::BTreeMap
 fn main() {
     let mut m: BTreeMap<String, i64> = BTreeMap::new()
     m.insert("a", 5)
-    println!("b={}", m.contains("a"))
+    println("b={}", m.contains("a"))
 }
 "#,
         "b=true\n",
@@ -718,7 +718,7 @@ fn main() {
     let a = sync::AtomicBool::new(false)
     a.store(true)
     let v = a.load()
-    if v != 0 { println!("v=true") } else { println!("v=false") }
+    if v != 0 { println("v=true") } else { println("v=false") }
 }
 "#,
         "v=true\n",
@@ -734,7 +734,7 @@ use std::sync
 fn main() {
     let a = sync::AtomicU64::new(0)
     a.fetch_add(5)
-    println!("v={}", a.load())
+    println("v={}", a.load())
 }
 "#,
         "v=5\n",
@@ -753,7 +753,7 @@ fn aot_duration_as_millis() {
 use std::time
 fn main() {
     let d = time::Duration::from_secs(2)
-    println!("ms={}", time::Duration::as_millis(d))
+    println("ms={}", time::Duration::as_millis(d))
 }
 "#,
         "ms=2000\n",
@@ -773,7 +773,7 @@ fn aot_vec_push_runtime() {
 fn main() {
     let mut xs = Vec::from([1, 2, 3])
     xs.push(4)
-    println!("len={} last={}", xs.len(), xs[3])
+    println("len={} last={}", xs.len(), xs[3])
 }
 "#,
         "len=4 last=4\n",
@@ -788,7 +788,7 @@ fn aot_vec_sort_runtime() {
 fn main() {
     let mut xs = [3, 1, 2]
     xs.sort()
-    println!("{} {} {}", xs[0], xs[1], xs[2])
+    println("{} {} {}", xs[0], xs[1], xs[2])
 }
 "#,
         "1 2 3\n",
@@ -803,7 +803,7 @@ fn aot_iter_for_each_runtime() {
 use std::iter
 fn main() {
     let xs = [10, 20, 30]
-    xs |> |v| iter::for_each(|n| println!("n={}", n), v)
+    xs |> |v| iter::for_each(v, |n| println("n={}", n))
 }
 "#,
         "n=10\nn=20\nn=30\n",

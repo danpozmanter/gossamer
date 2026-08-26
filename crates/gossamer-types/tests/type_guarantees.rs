@@ -8,9 +8,10 @@ use gossamer_types::{TypeDiagnostic, TypeError, typecheck_source_file};
 fn diagnostics(source: &str) -> Vec<TypeDiagnostic> {
     let mut map = SourceMap::new();
     let file = map.add_file("type-guarantees.gos", source.to_string());
-    let (parsed, parse_diags) = parse_source_file(source, file);
+    let (mut parsed, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse errors: {parse_diags:?}");
     let (resolutions, resolve_diags) = resolve_source_file(&parsed);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut parsed, &resolutions);
     assert!(
         resolve_diags.is_empty(),
         "resolve errors: {resolve_diags:?}"
@@ -180,14 +181,14 @@ fn byte_builder_and_buffer_have_complete_public_type_contracts() {
         "use std::bytes
          fn main() {
              let mut text = bytes::Builder::with_capacity(8)
-             text.write(&\"ab\")
+             text.write(\"ab\")
              text.write_char('c')
              let _: i64 = text.len()
              let _: String = text.as_str()
              let _: String = text.build()
 
              let mut data = bytes::Buffer::with_capacity(8)
-             data.write_str(&\"ab\")
+             data.write_str(\"ab\")
              data.push(255)
              let _: i64 = data.len()
              let _: bool = data.is_empty()

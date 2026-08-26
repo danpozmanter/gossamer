@@ -21,7 +21,7 @@ fn serialize_into(s: &mut String, xs: Vec<i64>) {
         if i > 0 {
             *s += ", "
         }
-        let n = format!("{}", xs[i])
+        let n = format("{}", xs[i])
         *s += n
         i += 1
     }
@@ -31,18 +31,18 @@ fn serialize_into(s: &mut String, xs: Vec<i64>) {
 fn main() {
     let mut a = "before"
     set_str(&mut a, "after")
-    println!("{}", a)
+    println("{}", a)
 
     let mut b = "hello"
     append(&mut b, ", world")
-    println!("{}", b)
+    println("{}", b)
 
     let mut c = ""
     serialize_into(&mut c, Vec::from([1, 2, 3, 40, 500]))
-    println!("{}", c)
+    println("{}", c)
 
     let mut d = "x"
     append(&mut d, "y")
     append(&mut d, "z")
-    println!("{}", d)
+    println("{}", d)
 }

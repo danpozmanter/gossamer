@@ -69,7 +69,7 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
             keyword."
         }
         "todo_macro" => {
-            "`todo!()` and `unimplemented!()` are placeholders, not shippable\n\
+            "`todo()` and `unimplemented()` are placeholders, not shippable\n\
             expressions. Implement the branch before merging."
         }
         "bool_literal_in_condition" => {
@@ -225,18 +225,6 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
             (`s.byte_at(i) - b'0'`), and render with `s.byte_at(i) as char`.\n\
             `s[i]` is not that byte: indexing counts Unicode scalars, so it\n\
             yields the `char` at character index `i`."
-        }
-        "detached_go_in_cohort" => {
-            "`go expr` is fire-and-forget: nothing ties the goroutine it\n\
-            starts to the block that started it, so a `go` written inside a\n\
-            `cohort { }` escapes the cohort's guarantee - the block can\n\
-            return while that goroutine is still running, and a failure in\n\
-            it reaches nobody.\n\
-            `spawn(f)` inside a cohort attaches the child to it: the block\n\
-            cannot be left until the child finishes, and the child's panic\n\
-            or `Err` becomes the cohort's `Err`.\n\
-            A goroutine that genuinely should outlive the block belongs\n\
-            outside it."
         }
         "i64_only_container_family" => {
             "`std::collections::{queue,stack,deque,heap,ordered_*}` hold\n\

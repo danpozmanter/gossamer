@@ -56,7 +56,7 @@ fn main() {
     // triangular sum, flip toggled an even number of times (back to false),
     // mark is untouched, scale grew but stays read as a coarse bucket.
     let big_scale = c.scale > 1.0e40
-    println!(
+    println(
         "{} {} {} {} {} {}"
         c.pos
         c.snapshot()

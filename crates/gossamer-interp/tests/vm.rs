@@ -22,9 +22,10 @@ fn capture_writer(text: &str) {
 fn build_vm(source: &str) -> Vm {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -74,7 +75,7 @@ fn main() {
         checksum = checksum.wrapping_add(text.byte_at(i))
         i += 1
     }
-    println!("{} {} {}", text.byte_at(-1), checksum, text.byte_at(text.len()))
+    println("{} {} {}", text.byte_at(-1), checksum, text.byte_at(text.len()))
 }
 "#,
     );
@@ -109,7 +110,7 @@ fn main() {
         values.push((i * 40 + 3) as u8)
         i += 1
     }
-    println!("{} {} {} {} {} {} len {}", values[0], values[1], values[2], values[3], values[4], values[5], values.len())
+    println("{} {} {} {} {} {} len {}", values[0], values[1], values[2], values[3], values[4], values[5], values.len())
 }
 "#;
 
@@ -201,8 +202,9 @@ fn compute(a: i64, b: i64) -> i64 {
 ";
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, _) = parse_source_file(source, file);
+    let (mut sf, _) = parse_source_file(source, file);
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);

@@ -4,22 +4,22 @@ use std::utf8
 use std::encoding
 
 fn main() {
-    let (ch, n) = utf8::decode_rune_in_string("héllo")
-    println!("dr {} {}", ch, n)
-    let (ch2, n2) = utf8::decode_last_rune_in_string("abc")
-    println!("dlr {} {}", ch2, n2)
+    let ch, n = utf8::decode_rune_in_string("héllo")
+    println("dr {} {}", ch, n)
+    let ch2, n2 = utf8::decode_last_rune_in_string("abc")
+    println("dlr {} {}", ch2, n2)
     let buf = utf8::append_rune(Vec::from([104]), 'i')
-    println!("append {} {} {}", buf.len(), buf[0], buf[1])
-    println!("{}", encoding::utf16::is_surrogate(0xD800))
-    println!("{}", encoding::utf16::rune_len('A'))
+    println("append {} {} {}", buf.len(), buf[0], buf[1])
+    println("{}", encoding::utf16::is_surrogate(0xD800))
+    println("{}", encoding::utf16::rune_len('A'))
     let units = encoding::utf16::encode_string("A😀")
-    println!("u16 {} {}", units.len(), encoding::utf16::decode_to_string(units))
-    match encoding::utf16::decode_surrogate_pair(0xD83D, 0xDE00) { Some(c) => println!("dsp {}", c), None => println!("dsp none") }
+    println("u16 {} {}", units.len(), encoding::utf16::decode_to_string(units))
+    match encoding::utf16::decode_surrogate_pair(0xD83D, 0xDE00) { Some(c) => println("dsp {}", c), None => println("dsp none") }
     let b = encoding::binary::put_u32_be(Vec::from([]), 305419896)
-    match encoding::binary::get_u32_be(b) { Ok(v) => println!("be {}", v), Err(_e) => println!("be err") }
-    match encoding::binary::uvarint(Vec::from([172, 2])) { Ok((v, m)) => println!("uv {} {}", v, m), Err(_e) => println!("uv err") }
+    match encoding::binary::get_u32_be(b) { Ok(v) => println("be {}", v), Err(_e) => println("be err") }
+    match encoding::binary::uvarint(Vec::from([172, 2])) { Ok((v, m)) => println("uv {} {}", v, m), Err(_e) => println("uv err") }
     let fields = encoding::csv::parse_line("a,\"b,c\",d")
-    println!("csv {} {}", fields.len(), fields[1])
-    match encoding::csv::read("x,y\n1,2") { Ok(rows) => println!("rows {}", rows.len()), Err(_e) => println!("rows err") }
-    println!("Vec::from([{}])", encoding::csv::write(Vec::from([Vec::from(["p", "q,q"])])))
+    println("csv {} {}", fields.len(), fields[1])
+    match encoding::csv::read("x,y\n1,2") { Ok(rows) => println("rows {}", rows.len()), Err(_e) => println("rows err") }
+    println("Vec::from([{}])", encoding::csv::write(Vec::from([Vec::from(["p", "q,q"])])))
 }

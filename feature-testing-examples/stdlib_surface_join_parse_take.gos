@@ -6,29 +6,29 @@
 use std::iter
 
 fn main() {
-    println!("{}", #[1, 2, 3].join(" "))
-    println!("{}", #[1.5, 2.5].join(", "))
-    println!("{}", #[true, false].join("|"))
-    println!("{}", #[false, true, true].join(","))
-    println!("{}", #["a", "b", "c"].join("-"))
+    println("{}", #[1, 2, 3].join(" "))
+    println("{}", #[1.5, 2.5].join(", "))
+    println("{}", #[true, false].join("|"))
+    println("{}", #[false, true, true].join(","))
+    println("{}", #["a", "b", "c"].join("-"))
     let mut grown = [false; 2]
     grown[0] = true
-    println!("{}", grown.join("|"))
+    println("{}", grown.join("|"))
 
-    println!("{:?} {:?}", "42".to_i64(), "x7".to_i64())
-    println!("{:?} {:?}", "-3.25".to_f64(), "".to_f64())
-    println!("{:?} {:?}", "true".to_bool(), "yes".to_bool())
-    println!("{}", "8".to_i64().unwrap_or(3))
+    println("{:?} {:?}", "42".to_i64(), "x7".to_i64())
+    println("{:?} {:?}", "-3.25".to_f64(), "".to_f64())
+    println("{:?} {:?}", "true".to_bool(), "yes".to_bool())
+    println("{}", "8".to_i64().unwrap_or(3))
 
     let take3: Vec<i64> = (0..5).take(3) |> iter::collect
     let take0: Vec<i64> = (0..5).take(0) |> iter::collect
     let take99: Vec<i64> = (0..5).take(99) |> iter::collect
     let step2: Vec<i64> = (0..5).step_by(2) |> iter::collect
     let step1: Vec<i64> = (0..5).step_by(1) |> iter::collect
-    println!("{}", take3.join(","))
-    println!("{}", take0.join(","))
-    println!("{}", take99.join(","))
-    println!("{}", step2.join(","))
-    println!("{}", step1.join(","))
-    println!("{:?}", (0..10 |> |v| iter::filter(|k| k > 2, v)).take(4) |> iter::collect)
+    println("{}", take3.join(","))
+    println("{}", take0.join(","))
+    println("{}", take99.join(","))
+    println("{}", step2.join(","))
+    println("{}", step1.join(","))
+    println("{:?}", (0..10 |> |v| iter::filter(v, |k| k > 2)).take(4) |> iter::collect)
 }

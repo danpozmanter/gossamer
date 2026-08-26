@@ -32,19 +32,19 @@ fn main() {
         })
         .take(3)
         .collect()
-    println!("first_three {:?}", first_three)
-    println!("pulled {}", pulled.len())
+    println("first_three {:?}", first_three)
+    println("pulled {}", pulled.len())
 
     // Adapters over the same element shape, each ending in a terminal that
     // rebuilds storage of that shape.
-    println!("taken {:?}", pairs.iter().take(2).collect())
-    println!("skipped {:?}", pairs.iter().skip(1998).collect())
-    println!("stepped {:?}", pairs.iter().step_by(700).collect())
-    println!("kept {:?}", pairs.iter().filter(|p| p.0 > 1997).collect())
-    println!("count {}", pairs.iter().count())
-    println!("any {}", pairs.iter().any(|p| p.1 == 20))
-    println!("all {}", pairs.iter().all(|p| p.1 == p.0 * 10))
-    println!("folded {}", pairs.iter().take(4).fold(0, |acc, p| acc + p.1))
+    println("taken {:?}", pairs.iter().take(2).collect())
+    println("skipped {:?}", pairs.iter().skip(1998).collect())
+    println("stepped {:?}", pairs.iter().step_by(700).collect())
+    println("kept {:?}", pairs.iter().filter(|p| p.0 > 1997).collect())
+    println("count {}", pairs.iter().count())
+    println("any {}", pairs.iter().any(|p| p.1 == 20))
+    println("all {}", pairs.iter().all(|p| p.1 == p.0 * 10))
+    println("folded {}", pairs.iter().take(4).fold(0, |acc, p| acc + p.1))
 
     // A struct element and a pointer-bearing element take the same path.
     let samples = #[
@@ -52,28 +52,28 @@ fn main() {
         Sample { id: 2, weight: 20 }
         Sample { id: 3, weight: 30 }
     ]
-    println!("ids {:?}", samples.iter().map(|s| s.id).collect())
-    println!("heavy {:?}", samples.iter().filter(|s| s.weight > 15).map(|s| s.id).collect())
+    println("ids {:?}", samples.iter().map(|s| s.id).collect())
+    println("heavy {:?}", samples.iter().filter(|s| s.weight > 15).map(|s| s.id).collect())
 
     let labelled = #[("alpha", 1), ("beta", 2), ("gamma", 3)]
-    println!("lengths {:?}", labelled.iter().map(|p| p.0.len() * p.1).collect())
+    println("lengths {:?}", labelled.iter().map(|p| p.0.len() * p.1).collect())
     let long = labelled.iter().filter(|p| p.0.len() > 4).collect()
-    println!("long {:?}", long)
-    println!("long again {:?}", long)
+    println("long {:?}", long)
+    println("long again {:?}", long)
 
     // Terminals and adapters that read the element itself rather than hand it
     // to a callback: each answers at the element's own width.
     let unsorted = #[(3, 1), (1, 2), (2, 3)]
-    println!("min {:?}", unsorted.iter().min())
-    println!("max {:?}", unsorted.iter().max())
-    println!("found {:?}", unsorted.iter().find(|p| p.0 == 1))
-    println!("missing {:?}", unsorted.iter().find(|p| p.0 == 42))
-    println!("at {:?}", unsorted.iter().position(|p| p.1 == 2))
-    println!("reversed {:?}", unsorted.iter().rev().collect())
-    println!("chained {:?}", unsorted.iter().chain(#[(9, 9)].iter()).collect())
-    println!("indexed {:?}", unsorted.iter().enumerate().collect())
-    println!("by key {:?}", unsorted.iter().max_by_key(|p| p.1))
-    println!("intact {:?}", unsorted)
+    println("min {:?}", unsorted.iter().min())
+    println("max {:?}", unsorted.iter().max())
+    println("found {:?}", unsorted.iter().find(|p| p.0 == 1))
+    println("missing {:?}", unsorted.iter().find(|p| p.0 == 42))
+    println("at {:?}", unsorted.iter().position(|p| p.1 == 2))
+    println("reversed {:?}", unsorted.iter().rev().collect())
+    println("chained {:?}", unsorted.iter().chain(#[(9, 9)].iter()).collect())
+    println("indexed {:?}", unsorted.iter().enumerate().collect())
+    println("by key {:?}", unsorted.iter().max_by_key(|p| p.1))
+    println("intact {:?}", unsorted)
 
     // A struct element is a run of fields like a tuple, so ordering it
     // compares the whole element rather than its first field.
@@ -82,18 +82,18 @@ fn main() {
         Sample { id: 1, weight: 2 }
         Sample { id: 2, weight: 9 }
     ]
-    println!("least {:?}", ranked.iter().min())
-    println!("most {:?}", ranked.iter().max())
+    println("least {:?}", ranked.iter().min())
+    println("most {:?}", ranked.iter().max())
     ranked.sort()
-    println!("ranked {:?}", ranked)
+    println("ranked {:?}", ranked)
 
     // A map hands its pairs over through the same cursor.
     let scores = { 1: 100, 2: 200, 3: 300 }
-    println!("totals {:?}", scores.iter().map(|p| p.0 + p.1).collect())
-    println!("map count {}", scores.iter().count())
+    println("totals {:?}", scores.iter().map(|p| p.0 + p.1).collect())
+    println("map count {}", scores.iter().count())
     for (key, value) in scores.iter() {
-        println!("entry {} {}", key, value)
+        println("entry {} {}", key, value)
     }
     let named = { "a": 1, "b": 2 }
-    println!("named {:?}", named.iter().map(|p| p.1).collect())
+    println("named {:?}", named.iter().map(|p| p.1).collect())
 }

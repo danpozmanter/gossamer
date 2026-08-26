@@ -26,9 +26,9 @@ fn main() {
     let mut w = 0
     while w < 16 {
         wg.add(1)
-        go bump(c, wg)
+        spawn(|| bump(c, wg))
         w += 1
     }
     wg.wait()
-    println!("count={}", c.load())
+    println("count={}", c.load())
 }

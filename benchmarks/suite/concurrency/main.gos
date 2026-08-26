@@ -7,9 +7,10 @@ fn worker(id: i64, tx: Sender<i64>) {
 }
 
 fn main() {
-    let (tx, rx) = channel::<i64>(8)
+    let tx, rx = channel::<i64>(8)
     for id in 0..8 {
-        go worker(id, tx.clone())
+        let __spawn_arg_0 = tx.clone()
+        spawn(|| worker(id, __spawn_arg_0))
     }
     let mut total = 0
     let mut received = 0
@@ -20,5 +21,5 @@ fn main() {
             break
         }
     }
-    println!("{}", total)
+    println("{}", total)
 }

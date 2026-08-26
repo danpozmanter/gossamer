@@ -176,7 +176,7 @@ impl Fuser<'_> {
                     self.visit_expr(&mut arm.body);
                 }
             }
-            HirExprKind::Loop { body, .. } | HirExprKind::Go(body) => self.visit_expr(body),
+            HirExprKind::Loop { body, .. } => self.visit_expr(body),
             HirExprKind::While {
                 condition, body, ..
             } => {
@@ -236,9 +236,9 @@ impl Fuser<'_> {
                         self.visit_expr(e);
                     }
                 }
-                HirStmtKind::Expr { expr, .. }
-                | HirStmtKind::Defer(expr)
-                | HirStmtKind::Go(expr) => self.visit_expr(expr),
+                HirStmtKind::Expr { expr, .. } | HirStmtKind::Defer(expr) => {
+                    self.visit_expr(expr);
+                }
                 HirStmtKind::Item(item) => self.visit_item(item),
             }
         }
@@ -906,9 +906,9 @@ pub(crate) fn inline_safe(expr: &HirExpr, loop_depth: u32) -> bool {
                 HirStmtKind::Let { init, .. } => {
                     init.as_ref().is_none_or(|e| inline_safe(e, loop_depth))
                 }
-                HirStmtKind::Expr { expr, .. }
-                | HirStmtKind::Defer(expr)
-                | HirStmtKind::Go(expr) => inline_safe(expr, loop_depth),
+                HirStmtKind::Expr { expr, .. } | HirStmtKind::Defer(expr) => {
+                    inline_safe(expr, loop_depth)
+                }
                 HirStmtKind::Item(_) => true,
             }) && b.tail.as_ref().is_none_or(|t| inline_safe(t, loop_depth))
         }
@@ -925,7 +925,7 @@ pub(crate) fn inline_safe(expr: &HirExpr, loop_depth: u32) -> bool {
         }
         // Spawning / selecting inside a fused inline body is outside the
         // shapes this pass reasons about; be conservative.
-        HirExprKind::Select { .. } | HirExprKind::Go(_) => false,
+        HirExprKind::Select { .. } => false,
     }
 }
 

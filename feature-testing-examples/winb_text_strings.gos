@@ -1,23 +1,23 @@
 use std::strings
 
-fn opt_i(label: &String, o: Option<i64>) {
+fn opt_i(label: String, o: Option<i64>) {
     match o {
-        Some(n) => println!("{} = Some({})", label, n)
-        None => println!("{} = None", label)
+        Some(n) => println("{} = Some({})", label, n)
+        None => println("{} = None", label)
     }
 }
 
-fn opt_s(label: &String, o: Option<String>) {
+fn opt_s(label: String, o: Option<String>) {
     match o {
-        Some(s) => println!("{} = Some({:?})", label, s)
-        None => println!("{} = None", label)
+        Some(s) => println("{} = Some({:?})", label, s)
+        None => println("{} = None", label)
     }
 }
 
-fn opt_pair(label: &String, o: Option<(String, String)>) {
+fn opt_pair(label: String, o: Option<(String, String)>) {
     match o {
-        Some((a, b)) => println!("{} = Some(({:?}, {:?}))", label, a, b)
-        None => println!("{} = None", label)
+        Some((a, b)) => println("{} = Some(({:?}, {:?}))", label, a, b)
+        None => println("{} = None", label)
     }
 }
 
@@ -27,101 +27,101 @@ fn main() {
     let blank = ""
 
     // split / splitn / split_whitespace / lines
-    println!("split = {:?}", strings::split(&"a,b,c", &","))
-    println!("split-empty-sep = {:?}", strings::split(&"abc", &""))
-    println!("split-empty-str = {:?}", strings::split(blank, &","))
-    println!("splitn = {:?}", strings::splitn(&"a,b,c,d", 2, &","))
-    println!("split_ws = {:?}", strings::split_whitespace(&"  a  b\tc\n"))
-    println!("lines = {:?}", strings::lines(&"a\nb\nc\n"))
-    println!("lines-crlf = {:?}", strings::lines(&"a\r\nb\n"))
+    println("split = {:?}", strings::split("a,b,c", ","))
+    println("split-empty-sep = {:?}", strings::split("abc", ""))
+    println("split-empty-str = {:?}", strings::split(blank, ","))
+    println("splitn = {:?}", strings::splitn("a,b,c,d", 2, ","))
+    println("split_ws = {:?}", strings::split_whitespace("  a  b\tc\n"))
+    println("lines = {:?}", strings::lines("a\nb\nc\n"))
+    println("lines-crlf = {:?}", strings::lines("a\r\nb\n"))
 
     // trim family
-    println!("trim = {:?}", strings::trim(&"  pad  "))
-    println!("trim_start = {:?}", strings::trim_start(&"  pad  "))
-    println!("trim_end = {:?}", strings::trim_end(&"  pad  "))
-    println!("trim_matches = {:?}", strings::trim_matches(&"xxabcxx", &"x"))
-    println!("trim_start_matches = {:?}", strings::trim_start_matches(&"xxabcxx", &"x"))
-    println!("trim_end_matches = {:?}", strings::trim_end_matches(&"xxabcxx", &"x"))
-    println!("trim_matches-empty = {:?}", strings::trim_matches(&"abc", &""))
+    println("trim = {:?}", strings::trim("  pad  "))
+    println("trim_start = {:?}", strings::trim_start("  pad  "))
+    println("trim_end = {:?}", strings::trim_end("  pad  "))
+    println("trim_matches = {:?}", strings::trim_matches("xxabcxx", "x"))
+    println("trim_start_matches = {:?}", strings::trim_start_matches("xxabcxx", "x"))
+    println("trim_end_matches = {:?}", strings::trim_end_matches("xxabcxx", "x"))
+    println("trim_matches-empty = {:?}", strings::trim_matches("abc", ""))
 
     // contains / starts / ends
-    println!("contains = {}", strings::contains(s, &"World"))
-    println!("contains-no = {}", strings::contains(s, &"world"))
-    println!("contains-empty = {}", strings::contains(blank, &""))
-    println!("starts_with = {}", strings::starts_with(s, &"Hello"))
-    println!("ends_with = {}", strings::ends_with(s, &"World"))
-    println!("contains_any = {}", strings::contains_any(s, &"xyzW"))
-    println!("contains_any-no = {}", strings::contains_any(s, &"xyz"))
+    println("contains = {}", strings::contains(s, "World"))
+    println("contains-no = {}", strings::contains(s, "world"))
+    println("contains-empty = {}", strings::contains(blank, ""))
+    println("starts_with = {}", strings::starts_with(s, "Hello"))
+    println("ends_with = {}", strings::ends_with(s, "World"))
+    println("contains_any = {}", strings::contains_any(s, "xyzW"))
+    println("contains_any-no = {}", strings::contains_any(s, "xyz"))
 
     // find / rfind / find_any / rfind_any
-    opt_i(&"find", strings::find(s, &"o"))
-    opt_i(&"find-multi", strings::find(multi, &"ö"))
-    opt_i(&"find-none", strings::find(s, &"z"))
-    opt_i(&"rfind", strings::rfind(s, &"o"))
-    opt_i(&"find_any", strings::find_any(s, &"oW"))
-    opt_i(&"rfind_any", strings::rfind_any(s, &"oW"))
-    opt_i(&"find_any-none", strings::find_any(s, &"qz"))
+    opt_i("find", strings::find(s, "o"))
+    opt_i("find-multi", strings::find(multi, "ö"))
+    opt_i("find-none", strings::find(s, "z"))
+    opt_i("rfind", strings::rfind(s, "o"))
+    opt_i("find_any", strings::find_any(s, "oW"))
+    opt_i("rfind_any", strings::rfind_any(s, "oW"))
+    opt_i("find_any-none", strings::find_any(s, "qz"))
 
     // replace / replacen
-    println!("replace = {:?}", strings::replace(&"aaa", &"a", &"b"))
-    println!("replacen = {:?}", strings::replacen(&"aaa", &"a", &"b", 2))
-    println!("replace-multi = {:?}", strings::replace(&"naïve naïve", &"naïve", &"X"))
+    println("replace = {:?}", strings::replace("aaa", "a", "b"))
+    println("replacen = {:?}", strings::replacen("aaa", "a", "b", 2))
+    println("replace-multi = {:?}", strings::replace("naïve naïve", "naïve", "X"))
 
     // case
-    println!("to_lower = {:?}", strings::to_lowercase(&"HÉLLO"))
-    println!("to_upper = {:?}", strings::to_uppercase(&"héllo"))
-    println!("to_upper-ss = {:?}", strings::to_uppercase(&"straße"))
-    println!("to_title = {:?}", strings::to_title(&"hello world foo"))
-    println!("to_title-multi = {:?}", strings::to_title(&"über alles"))
+    println("to_lower = {:?}", strings::to_lowercase("HÉLLO"))
+    println("to_upper = {:?}", strings::to_uppercase("héllo"))
+    println("to_upper-ss = {:?}", strings::to_uppercase("straße"))
+    println("to_title = {:?}", strings::to_title("hello world foo"))
+    println("to_title-multi = {:?}", strings::to_title("über alles"))
 
     // count
-    println!("count = {}", strings::count(&"abababab", &"ab"))
-    println!("count-overlap = {}", strings::count(&"aaa", &"aa"))
-    println!("count-empty = {}", strings::count(&"abc", &""))
-    println!("count-multi = {}", strings::count(&"😀x😀x😀", &"😀"))
+    println("count = {}", strings::count("abababab", "ab"))
+    println("count-overlap = {}", strings::count("aaa", "aa"))
+    println("count-empty = {}", strings::count("abc", ""))
+    println("count-multi = {}", strings::count("😀x😀x😀", "😀"))
 
     // split_once / rsplit_once
-    opt_pair(&"split_once", strings::split_once(&"a=b=c", &"="))
-    opt_pair(&"split_once-none", strings::split_once(&"abc", &"="))
-    opt_pair(&"rsplit_once", strings::rsplit_once(&"a=b=c", &"="))
+    opt_pair("split_once", strings::split_once("a=b=c", "="))
+    opt_pair("split_once-none", strings::split_once("abc", "="))
+    opt_pair("rsplit_once", strings::rsplit_once("a=b=c", "="))
 
     // strip_prefix / strip_suffix
-    opt_s(&"strip_prefix", strings::strip_prefix(&"foobar", &"foo"))
-    opt_s(&"strip_prefix-no", strings::strip_prefix(&"foobar", &"baz"))
-    opt_s(&"strip_suffix", strings::strip_suffix(&"file.txt", &".txt"))
+    opt_s("strip_prefix", strings::strip_prefix("foobar", "foo"))
+    opt_s("strip_prefix-no", strings::strip_prefix("foobar", "baz"))
+    opt_s("strip_suffix", strings::strip_suffix("file.txt", ".txt"))
 
     // pad / center
-    println!("pad_left = {:?}", strings::pad_left(&"42", 5, '0'))
-    println!("pad_right = {:?}", strings::pad_right(&"42", 5, '.'))
-    println!("pad_left-multi = {:?}", strings::pad_left(&"é", 4, '*'))
-    println!("center = {:?}", strings::center(&"hi", 6, '-'))
-    println!("center-odd = {:?}", strings::center(&"hey", 6, '-'))
+    println("pad_left = {:?}", strings::pad_left("42", 5, '0'))
+    println("pad_right = {:?}", strings::pad_right("42", 5, '.'))
+    println("pad_left-multi = {:?}", strings::pad_left("é", 4, '*'))
+    println("center = {:?}", strings::center("hi", 6, '-'))
+    println("center-odd = {:?}", strings::center("hey", 6, '-'))
 
     // repeat / slice
-    println!("repeat = {:?}", strings::repeat(&"ab", 3))
-    println!("repeat-zero = {:?}", strings::repeat(&"ab", 0))
+    println("repeat = {:?}", strings::repeat("ab", 3))
+    println("repeat-zero = {:?}", strings::repeat("ab", 0))
     match strings::slice(multi, 0, 6) {
-        Ok(out) => println!("slice = Ok({:?})", out)
-        Err(e) => println!("slice = Err({})", e)
+        Ok(out) => println("slice = Ok({:?})", out)
+        Err(e) => println("slice = Err({})", e)
     }
     match strings::slice(multi, 0, 100) {
-        Ok(out) => println!("slice-oob = Ok({:?})", out)
-        Err(e) => println!("slice-oob = Err({})", e)
+        Ok(out) => println("slice-oob = Ok({:?})", out)
+        Err(e) => println("slice-oob = Err({})", e)
     }
     match strings::slice(multi, 0, 1) {
-        Ok(out) => println!("slice-mid = Ok({:?})", out)
-        Err(e) => println!("slice-mid = Err({})", e)
+        Ok(out) => println("slice-mid = Ok({:?})", out)
+        Err(e) => println("slice-mid = Err({})", e)
     }
 
     // join
-    println!("join = {:?}", strings::join(&["a", "b", "c"], &"-"))
-    println!("join-empty = {:?}", strings::join(&[], &"-"))
+    println("join = {:?}", strings::join(["a", "b", "c"], "-"))
+    println("join-empty = {:?}", strings::join([], "-"))
 
     // equal_fold (edge cases incl Kelvin K vs k, length differences)
-    println!("equal_fold-1 = {}", strings::equal_fold(&"Hello", &"hello"))
-    println!("equal_fold-2 = {}", strings::equal_fold(&"GoSSAMER", &"gossamer"))
-    println!("equal_fold-3 = {}", strings::equal_fold(&"hello", &"hell"))
-    println!("equal_fold-kelvin = {}", strings::equal_fold(&"\u{212A}", &"k"))
-    println!("equal_fold-prefix = {}", strings::equal_fold(&"\u{212A}", &"kab"))
-    println!("equal_fold-empty = {}", strings::equal_fold(blank, blank))
+    println("equal_fold-1 = {}", strings::equal_fold("Hello", "hello"))
+    println("equal_fold-2 = {}", strings::equal_fold("GoSSAMER", "gossamer"))
+    println("equal_fold-3 = {}", strings::equal_fold("hello", "hell"))
+    println("equal_fold-kelvin = {}", strings::equal_fold("\u{212A}", "k"))
+    println("equal_fold-prefix = {}", strings::equal_fold("\u{212A}", "kab"))
+    println("equal_fold-empty = {}", strings::equal_fold(blank, blank))
 }

@@ -280,18 +280,22 @@ fn raise(code: &str, prefix: &str, text: String) -> ! {
 /// interpreter calls this directly. `function`, `file`, and `line`
 /// identify the frame for panic dumps and SIGQUIT renders.
 ///
-/// All three pointer arguments must be NUL-terminated C strings
-/// or NULL. NULL is rendered as an empty string in the frame
-/// record. The shim is reentrant-safe; the registry lock is held
-/// only for the insertion.
+/// `function` and `file` must be string constants in the program
+/// image - the frame borrows them for the process lifetime rather
+/// than copying, which is what keeps this off the allocator on a
+/// path that runs once per call. NULL is rendered as an empty
+/// string. The shim is reentrant-safe and takes no lock.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_stack_push(
     function: *const c_char,
     file: *const c_char,
     line: u32,
 ) {
-    let function = unsafe { cstr_to_string(function) };
-    let file = unsafe { cstr_to_string(file) };
+    // SAFETY: the parameters are program-image string constants, per this
+    // shim's contract above.
+    let function = unsafe { crate::sigquit::ImageStr::new(function) };
+    // SAFETY: as above.
+    let file = unsafe { crate::sigquit::ImageStr::new(file) };
     crate::sigquit::stack_push(function, file, line);
 }
 
@@ -310,10 +314,6 @@ pub extern "C" fn gos_rt_stack_pop() {
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_stack_set_line(line: u32) {
     crate::sigquit::set_active_line(line);
-}
-
-unsafe fn cstr_to_string(p: *const c_char) -> String {
-    unsafe { crate::c_abi::gos_str_arg_string(p) }
 }
 
 /// Returns 1 if any spawned goroutine has panicked since process

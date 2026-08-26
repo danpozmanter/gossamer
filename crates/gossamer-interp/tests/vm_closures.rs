@@ -25,9 +25,10 @@ fn capture_writer(text: &str) {
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("closures.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -48,8 +49,8 @@ fn apply_twice(f: Fn(i64) -> i64, x: i64) -> i64 { f(f(x)) }
 fn main() {
     let scale = 3
     let scaled = |y: i64| scale * y
-    println!("inline={}", scaled(7))
-    println!("hof={}", apply_twice(scaled, 2))
+    println("inline={}", scaled(7))
+    println("hof={}", apply_twice(scaled, 2))
 }
 "#;
     assert_eq!(run_main(src), "inline=21\nhof=18\n");
@@ -65,7 +66,7 @@ fn main() {
     let mut x = 5
     let f = || x
     x = 99
-    println!("{} {}", call(f), x)
+    println("{} {}", call(f), x)
 }
 "#;
     assert_eq!(run_main(src), "5 99\n");
@@ -80,7 +81,7 @@ fn at(f: Fn(i64) -> i64, i: i64) -> i64 { f(i) }
 fn main() {
     let xs = [10, 20, 30]
     let get = |i: i64| xs[i]
-    println!("{} {} {}", at(get, 0), at(get, 1), at(get, 2))
+    println("{} {} {}", at(get, 0), at(get, 1), at(get, 2))
 }
 "#;
     assert_eq!(run_main(src), "10 20 30\n");
@@ -98,7 +99,7 @@ fn main() {
     let mut v: Vec<i64> = #[1, 2]
     let pusher = || { v.push(3) }
     run(pusher)
-    println!("{:?}", v)
+    println("{:?}", v)
 }
 "#;
     assert_eq!(run_main(src), "#[1, 2, 3]\n");
@@ -113,7 +114,7 @@ fn make_adder(n: i64) -> Fn(i64) -> i64 { |x| x + n }
 fn main() {
     let add5 = make_adder(5)
     let add10 = make_adder(10)
-    println!("{} {}", add5(1), add10(1))
+    println("{} {}", add5(1), add10(1))
 }
 "#;
     assert_eq!(run_main(src), "6 11\n");
@@ -127,7 +128,7 @@ fn make_mul(n: i64) -> Fn(i64) -> i64 { |x| x * n }
 fn compose(f: Fn(i64) -> i64, g: Fn(i64) -> i64) -> Fn(i64) -> i64 { |x| f(g(x)) }
 fn main() {
     let h = compose(make_adder(5), make_mul(3))
-    println!("{}", h(4))
+    println("{}", h(4))
 }
 "#;
     // h(4) = (4 * 3) + 5 = 17
@@ -146,7 +147,7 @@ fn count_down(n: i64) -> i64 {
     let below = recurse(n - 1i64)
     return below + 1i64
 }
-fn main() { println!("{}", count_down(1000)) }
+fn main() { println("{}", count_down(1000)) }
 "#;
     assert_eq!(run_main(src), "1000\n");
 }

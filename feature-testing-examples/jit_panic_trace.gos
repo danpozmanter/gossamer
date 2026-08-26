@@ -3,7 +3,7 @@
 // so the VM keeps it on bytecode; the panic must surface identically
 // (exit 101) whether or not the JIT is forced.
 fn risky(n: i64) -> i64 {
-    if n == 7 { panic!("boom at {}", n) }
+    if n == 7 { panic("boom at {}", n) }
     n * 2
 }
 
@@ -14,5 +14,5 @@ fn main() {
         total += risky(i)
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }

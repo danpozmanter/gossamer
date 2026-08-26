@@ -1,59 +1,59 @@
 fn main() {
     // integer width / alignment / fill / sign
-    println!("[{:>8}]", 42)
-    println!("[{:<8}]", 42)
-    println!("[{:^8}]", 42)
-    println!("[{:08}]", 42)
-    println!("[{:08}]", -42)
-    println!("[{:*>8}]", 42)
-    println!("[{:*<8}]", 42)
-    println!("[{:*^9}]", 42)
+    println("[{:>8}]", 42)
+    println("[{:<8}]", 42)
+    println("[{:^8}]", 42)
+    println("[{:08}]", 42)
+    println("[{:08}]", -42)
+    println("[{:*>8}]", 42)
+    println("[{:*<8}]", 42)
+    println("[{:*^9}]", 42)
 
     // radix
-    println!("[{:x}]", 255)
-    println!("[{:X}]", 255)
-    println!("[{:b}]", 10)
-    println!("[{:o}]", 64)
-    println!("[{:08x}]", 255)
-    println!("[{:#x}]", 255)
-    println!("[{:#b}]", 5)
+    println("[{:x}]", 255)
+    println("[{:X}]", 255)
+    println("[{:b}]", 10)
+    println("[{:o}]", 64)
+    println("[{:08x}]", 255)
+    println("[{:#x}]", 255)
+    println("[{:#b}]", 5)
 
     // float precision / width
-    println!("[{:.2}]", 3.14159)
-    println!("[{:.0}]", 3.6)
-    println!("[{:>8.2}]", 3.14159)
-    println!("[{:08.2}]", 3.14159)
-    println!("[{:.5}]", 1.0)
-    println!("[{:.3}]", -0.0001)
-    println!("[{}]", 1.0)
-    println!("[{}]", 1.5)
-    println!("[{}]", 100000000.0)
+    println("[{:.2}]", 3.14159)
+    println("[{:.0}]", 3.6)
+    println("[{:>8.2}]", 3.14159)
+    println("[{:08.2}]", 3.14159)
+    println("[{:.5}]", 1.0)
+    println("[{:.3}]", -0.0001)
+    println("[{}]", 1.0)
+    println("[{}]", 1.5)
+    println("[{}]", 100000000.0)
 
     // strings + width + fill
-    println!("[{:>8}]", "hi")
-    println!("[{:<8}]", "hi")
-    println!("[{:^6}]", "hi")
-    println!("[{:.>6}]", "hi")
+    println("[{:>8}]", "hi")
+    println("[{:<8}]", "hi")
+    println("[{:^6}]", "hi")
+    println("[{:.>6}]", "hi")
 
     // char and bool
-    println!("[{}]", 'A')
-    println!("[{}]", true)
-    println!("[{:>5}]", 'x')
+    println("[{}]", 'A')
+    println("[{}]", true)
+    println("[{:>5}]", 'x')
 
     // named captures and reuse
     let name = "jane"
     let count = 7
-    println!("hello {name}, count={count}")
+    println("hello {name}, count={count}")
     let n = 5
-    println!("{n:03}")
+    println("{n:03}")
 
     // negative / large ints
-    println!("[{}]", -9223372036854775808)
-    println!("[{:x}]", -1)
-    println!("[{:b}]", -2)
+    println("[{}]", -9223372036854775808)
+    println("[{:x}]", -1)
+    println("[{:b}]", -2)
 
     // debug formatting of scalars
-    println!("{:?}", "quoted \"str\"")
-    println!("{:?}", 'c')
-    println!("{:?}", "tab\tnl\nq")
+    println("{:?}", "quoted \"str\"")
+    println("{:?}", 'c')
+    println("{:?}", "tab\tnl\nq")
 }

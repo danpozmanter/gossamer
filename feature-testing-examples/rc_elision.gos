@@ -7,11 +7,11 @@
 
 struct Tag { name: String, count: i64 }
 
-fn make_tag(prefix: &String, n: i64) -> Tag {
-    Tag { name: format!("{}-{}", prefix, n), count: n }
+fn make_tag(prefix: String, n: i64) -> Tag {
+    Tag { name: format("{}-{}", prefix, n), count: n }
 }
 
-fn rename(t: Tag, suffix: &String) -> Tag {
+fn rename(t: Tag, suffix: String) -> Tag {
     Tag { name: t.name + suffix, count: t.count + 1 }
 }
 
@@ -20,20 +20,20 @@ fn main() {
     let mut total = 0
     let mut i = 0
     while i < 4 {
-        let t = make_tag(&"item", i)
+        let t = make_tag("item", i)
         total = total + t.count + t.name.len()
         i = i + 1
     }
-    println!("total = {}", total)
+    println("total = {}", total)
 
     // Move a struct through a function that reuses its String field.
-    let a = make_tag(&"alpha", 1)
-    let b = rename(a, &"!")
-    println!("renamed = {} ({})", b.name, b.count)
+    let a = make_tag("alpha", 1)
+    let b = rename(a, "!")
+    println("renamed = {} ({})", b.name, b.count)
 
     // Owned Vec<String> built, indexed, and dropped.
     let mut names: Vec<String> = Vec::from([])
-    names.push(make_tag(&"x", 7).name)
-    names.push(make_tag(&"y", 8).name)
-    println!("names = {}, {}", names[0], names[1])
+    names.push(make_tag("x", 7).name)
+    names.push(make_tag("y", 8).name)
+    println("names = {}, {}", names[0], names[1])
 }

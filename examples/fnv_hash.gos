@@ -12,28 +12,28 @@
 
 use std::hash
 
-fn fnv1a(bytes: &[u8]) -> i64 {
+fn fnv1a(bytes: [u8]) -> i64 {
     hash::fnv::hash64(bytes.to_vec())
 }
 
 for s in ["", "a", "abc", "the quick brown fox", "the quick brown box"] {
-    let h = fnv1a(&s.as_bytes())
-    println!("fnv1a({}) = {}", s, h)
+    let h = fnv1a(s.as_bytes())
+    println("fnv1a({}) = {}", s, h)
 }
 
 // Determinism: same input twice yields the same hash.
-let h1 = fnv1a(&"hello".as_bytes())
-let h2 = fnv1a(&"hello".as_bytes())
+let h1 = fnv1a("hello".as_bytes())
+let h2 = fnv1a("hello".as_bytes())
 if h1 == h2 {
-    println!("\ndeterministic across calls: ok")
+    println("\ndeterministic across calls: ok")
 } else {
-    println!("\nnon-deterministic: implementation bug")
+    println("\nnon-deterministic: implementation bug")
 }
 
 // Sensitivity: a one-bit input change produces a completely
 // different hash.
-let h_a = fnv1a(&"hello".as_bytes())
-let h_b = fnv1a(&"hellp".as_bytes())
+let h_a = fnv1a("hello".as_bytes())
+let h_b = fnv1a("hellp".as_bytes())
 if h_a != h_b {
-    println!("avalanche on single-byte change: ok")
+    println("avalanche on single-byte change: ok")
 }

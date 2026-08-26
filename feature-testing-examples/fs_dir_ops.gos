@@ -9,49 +9,49 @@ use std::fs
 use std::path
 
 fn main() {
-    let base = path::join(&env::temp_dir(), &"gossamer_parity_dirops")
-    let _ = fs::remove_dir_all(&base)
+    let base = path::join(env::temp_dir(), "gossamer_parity_dirops")
+    let _ = fs::remove_dir_all(base)
 
     // Non-recursive create on a missing parent fails.
-    let nested = path::join(&base, &"a/b")
-    match fs::create_dir(&nested) {
-        Ok(_) => println!("create_dir missing-parent: ok")
-        Err(_) => println!("create_dir missing-parent: err")
+    let nested = path::join(base, "a/b")
+    match fs::create_dir(nested) {
+        Ok(_) => println("create_dir missing-parent: ok")
+        Err(_) => println("create_dir missing-parent: err")
     }
 
     // Recursive create builds the whole tree.
-    match fs::create_dir_all(&nested) {
-        Ok(_) => println!("create_dir_all: ok")
-        Err(_) => println!("create_dir_all: err")
+    match fs::create_dir_all(nested) {
+        Ok(_) => println("create_dir_all: ok")
+        Err(_) => println("create_dir_all: err")
     }
-    println!("nested is_dir: {}", fs::is_dir(&nested))
+    println("nested is_dir: {}", fs::is_dir(nested))
 
     // Non-recursive create of a fresh leaf under an existing parent.
-    let leaf = path::join(&base, &"c")
-    match fs::create_dir(&leaf) {
-        Ok(_) => println!("create_dir leaf: ok")
-        Err(_) => println!("create_dir leaf: err")
+    let leaf = path::join(base, "c")
+    match fs::create_dir(leaf) {
+        Ok(_) => println("create_dir leaf: ok")
+        Err(_) => println("create_dir leaf: err")
     }
-    println!("leaf is_dir: {}", fs::is_dir(&leaf))
+    println("leaf is_dir: {}", fs::is_dir(leaf))
 
     // Non-recursive remove of the empty leaf succeeds.
-    match fs::remove_dir(&leaf) {
-        Ok(_) => println!("remove_dir leaf: ok")
-        Err(_) => println!("remove_dir leaf: err")
+    match fs::remove_dir(leaf) {
+        Ok(_) => println("remove_dir leaf: ok")
+        Err(_) => println("remove_dir leaf: err")
     }
-    println!("leaf gone: {}", !fs::exists(&leaf))
+    println("leaf gone: {}", !fs::exists(leaf))
 
     // Non-recursive remove of a non-empty directory fails.
-    match fs::remove_dir(&base) {
-        Ok(_) => println!("remove_dir nonempty: ok")
-        Err(_) => println!("remove_dir nonempty: err")
+    match fs::remove_dir(base) {
+        Ok(_) => println("remove_dir nonempty: ok")
+        Err(_) => println("remove_dir nonempty: err")
     }
-    println!("base still dir: {}", fs::is_dir(&base))
+    println("base still dir: {}", fs::is_dir(base))
 
     // Recursive remove clears the tree.
-    match fs::remove_dir_all(&base) {
-        Ok(_) => println!("remove_dir_all: ok")
-        Err(_) => println!("remove_dir_all: err")
+    match fs::remove_dir_all(base) {
+        Ok(_) => println("remove_dir_all: ok")
+        Err(_) => println("remove_dir_all: err")
     }
-    println!("base gone: {}", !fs::exists(&base))
+    println("base gone: {}", !fs::exists(base))
 }

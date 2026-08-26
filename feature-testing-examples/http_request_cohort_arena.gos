@@ -30,15 +30,15 @@ fn fanout(_r: http::Request) -> Result<http::Response, errors::Error> {
     let joined = cohort {
         let a = spawn(|| part("a"))
         let b = spawn(|| part("b"))
-        parts = format!(
+        parts = format(
             "{} {}"
             a.join().unwrap_or(Ok("?")).unwrap_or("?")
             b.join().unwrap_or(Ok("?")).unwrap_or("?")
         )
     }
     match joined {
-        Ok(_) => Ok(http::Response::text(200, format!("fanout ok: {}", parts)))
-        Err(e) => Ok(http::Response::text(500, format!("fanout failed: {}", e)))
+        Ok(_) => Ok(http::Response::text(200, format("fanout ok: {}", parts)))
+        Err(e) => Ok(http::Response::text(500, format("fanout failed: {}", e)))
     }
 }
 
@@ -62,27 +62,27 @@ fn assemble(_r: http::Request) -> Result<http::Response, errors::Error> {
         let mut lines: Vec<String> = #[]
         let mut i = 0
         while i < 2_000 {
-            lines.push(format!("row {}", i))
+            lines.push(format("row {}", i))
             i += 1
         }
         rows = lines.len()
     }
-    Ok(http::Response::text(200, format!("rows={}", rows)))
+    Ok(http::Response::text(200, format("rows={}", rows)))
 }
 
-fn part(name: &String) -> Result<String, errors::Error> {
+fn part(name: String) -> Result<String, errors::Error> {
     time::sleep(20)
-    Ok(format!("{}!", name))
+    Ok(format("{}!", name))
 }
 
 fn broken() -> Result<String, errors::Error> {
     Err(errors::new("upstream is down"))
 }
 
-fn status_and_body(url: &String) -> String {
+fn status_and_body(url: String) -> String {
     match http::get(url, Vec::from([])) {
-        Ok(r) => format!("{} {}", r.status, r.body)
-        Err(e) => format!("error {}", e)
+        Ok(r) => format("{} {}", r.status, r.body)
+        Err(e) => format("error {}", e)
     }
 }
 
@@ -91,19 +91,19 @@ fn main() -> Result<(), errors::Error> {
     let s = http::Server::new()
     s.listen("127.0.0.1:0")?
     let addr = s.addr()
-    go run(s, app)
+    spawn(|| run(s, app))
     time::sleep(300)
 
-    println!("fanout: {}", status_and_body(&format!("http://{}/fanout", addr)))
-    println!("fails: {}", status_and_body(&format!("http://{}/fanout-fails", addr)))
+    println("fanout: {}", status_and_body(format("http://{}/fanout", addr)))
+    println("fails: {}", status_and_body(format("http://{}/fanout-fails", addr)))
     // Repeated so a per-request arena that failed to release would show as
     // growth rather than a passing single run.
     let mut i = 0
     while i < 20 {
-        let _ = http::get(format!("http://{}/assemble", addr), Vec::from([]))
+        let _ = http::get(format("http://{}/assemble", addr), Vec::from([]))
         i += 1
     }
-    println!("assemble: {}", status_and_body(&format!("http://{}/assemble", addr)))
+    println("assemble: {}", status_and_body(format("http://{}/assemble", addr)))
 
     let _ = s.shutdown(2_000)
     Ok(())

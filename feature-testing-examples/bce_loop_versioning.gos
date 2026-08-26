@@ -20,7 +20,7 @@ fn float_zeros(n: i64) -> Vec<f64> {
     values
 }
 
-fn matmul_trace(a: &[i64], b: &[i64], n: i64) -> i64 {
+fn matmul_trace(a: [i64], b: [i64], n: i64) -> i64 {
     let sz = n * n
     let mut c = zeros(sz)
     for i in 0..n {
@@ -43,7 +43,7 @@ fn matmul_trace(a: &[i64], b: &[i64], n: i64) -> i64 {
 // A zero shift keeps this shape in bounds while still exercising the checked
 // fallback shape; invalid source indexing is covered by the dedicated panic
 // fixture.
-fn shifted_sum(xs: &[i64], shift: i64) -> i64 {
+fn shifted_sum(xs: [i64], shift: i64) -> i64 {
     let mut acc = 0
     let len = xs.len()
     for j in 0..len {
@@ -66,7 +66,7 @@ fn prefix_pass(seed: i64, n: i64) -> i64 {
 }
 
 // f64 affine access (8-byte word element) through the same unchecked path.
-fn scale_sum(xs: &[f64], n: i64) -> f64 {
+fn scale_sum(xs: [f64], n: i64) -> f64 {
     let mut ys = float_zeros(n)
     for i in 0..n {
         ys[i] = xs[i] * 2.0 + 1.0
@@ -86,19 +86,19 @@ fn main() {
         a[i] = i % 9
         b[i] = (i * 3) % 11
     }
-    println!("matmul_trace={}", matmul_trace(&a, &b, n))
+    println("matmul_trace={}", matmul_trace(a, b, n))
 
     let mut m = [0; 12]
     for i in 0..12 {
         m[i] = i + 1
     }
-    println!("shift0={}", shifted_sum(&m, 0))
+    println("shift0={}", shifted_sum(m, 0))
 
-    println!("prefix={}", prefix_pass(3, 8))
+    println("prefix={}", prefix_pass(3, 8))
 
     let mut fs = [0.0; 6]
     for i in 0..6 {
         fs[i] = (i as f64) + 0.5
     }
-    println!("scale={}", scale_sum(&fs, 6))
+    println("scale={}", scale_sum(fs, 6))
 }

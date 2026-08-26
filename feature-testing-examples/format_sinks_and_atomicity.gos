@@ -1,0 +1,60 @@
+// Where each formatting call writes, and that a line reaches the sink
+// whole.
+//
+// `println` hands the line and its terminator to the writer in one call,
+// so two goroutines printing at the same time produce two lines rather
+// than one spliced pair. The fixture prints a distinguishable line per
+// goroutine and sorts what it collected, so the check is that every line
+// arrived intact - the order they arrive in is the scheduler's.
+
+const WORKERS: i64 = 24
+
+fn line(id: i64) -> String {
+    let mut out = format("worker-{:03}", id)
+    let mut i = 0
+    while i < 8 {
+        out += format("-{:03}", id)
+        i += 1
+    }
+    out
+}
+
+fn main() {
+    print("no newline, ")
+    print("then one\n")
+    println("a whole line")
+    eprint("stderr, no newline, ")
+    eprintln("then one")
+
+    // Every line a worker writes must arrive whole.
+    let tx, rx = channel()
+    let _ = cohort {
+        let mut w = 0
+        while w < WORKERS {
+            let id = w
+            let sender = tx
+            spawn(|| {
+                println("{}", line(id))
+                sender.send(id)
+            })
+            w += 1
+        }
+        let mut seen = 0
+        while seen < WORKERS {
+            let _ = rx.recv()
+            seen += 1
+        }
+        tx.close()
+    }
+
+    // The shape a reader can check without depending on arrival order.
+    let mut expected: Vec<String> = #[]
+    let mut i = 0
+    while i < WORKERS {
+        expected.push(line(i))
+        i += 1
+    }
+    expected.sort()
+    println("expected {} lines, first {}, last {}", expected.len(), expected[0], expected[WORKERS - 1])
+    println("every line is {} characters", expected[0].len())
+}

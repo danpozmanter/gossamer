@@ -28,9 +28,10 @@ use gossamer_types::{TyCtxt, typecheck_source_file};
 fn build(source: &str) -> (Vec<Body>, TyCtxt) {
     let mut map = SourceMap::new();
     let file = map.add_file("verify.gos", source.to_string());
-    let (sf, diags) = parse_source_file(source, file);
+    let (mut sf, diags) = parse_source_file(source, file);
     assert!(diags.is_empty(), "parse: {diags:?}");
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -53,11 +54,12 @@ fn retained_mir_lower_oom_reproducers_terminate() {
         let source = std::str::from_utf8(bytes).expect("retained MIR artifact is UTF-8");
         let mut map = SourceMap::new();
         let file = map.add_file(format!("mir-lower-oom-{name}.gos"), source.to_owned());
-        let (sf, parse_diagnostics) = parse_source_file(source, file);
+        let (mut sf, parse_diagnostics) = parse_source_file(source, file);
         if !parse_diagnostics.is_empty() {
             continue;
         }
         let (resolutions, resolve_diagnostics) = resolve_source_file(&sf);
+        let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
         if !resolve_diagnostics.is_empty() {
             continue;
         }

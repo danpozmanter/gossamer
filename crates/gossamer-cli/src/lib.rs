@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod binding_dispatch;
+pub mod child_processes;
 pub mod cli;
 pub mod cmd;
 pub mod comptime_fold;

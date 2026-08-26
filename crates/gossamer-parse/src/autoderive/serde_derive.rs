@@ -226,7 +226,7 @@ fn emit_to_toml(out: &mut String, ty: &TyId) {
         serde_fn("to_toml", &ty.symbol)
     ));
     out.push_str(&format!("    let j = {}(value)?\n", to_json_fn(&ty.symbol)));
-    out.push_str("    toml::from_json(&j)\n");
+    out.push_str("    toml::from_json(j)\n");
     out.push_str("}\n\n");
 }
 
@@ -252,7 +252,7 @@ fn emit_to_yaml(out: &mut String, ty: &TyId) {
         serde_fn("to_yaml", &ty.symbol)
     ));
     out.push_str(&format!("    let j = {}(value)?\n", to_json_fn(&ty.symbol)));
-    out.push_str("    yaml::from_json(&j)\n");
+    out.push_str("    yaml::from_json(j)\n");
     out.push_str("}\n\n");
 }
 
@@ -693,6 +693,55 @@ fn types_with_user_method(parsed: &SourceFile, method: &str) -> HashSet<String> 
     out
 }
 
+/// Trait an `impl` header names, if it names one.
+fn impl_trait_head(decl: &gossamer_ast::ImplDecl) -> Option<&str> {
+    decl.trait_ref
+        .as_ref()
+        .and_then(|bound| bound.path.segments.last())
+        .map(|segment| segment.name.name.as_str())
+}
+
+/// Types whose `{}` rendering the source already supplies. Both rendering
+/// contracts declare `fn fmt`, so the `impl` header is what tells the two
+/// apart: a `fmt` under `impl Display for T` is the `Display` channel, and
+/// a `to_string` in any block is the same channel under the name every
+/// caller reaches it by.
+fn types_with_user_display(parsed: &SourceFile) -> HashSet<String> {
+    let mut out = types_with_user_method(parsed, "to_string");
+    for item in flatten_items(&parsed.items) {
+        if let ItemKind::Impl(decl) = &item.kind
+            && impl_trait_head(decl) == Some("Display")
+            && let Some(name) = type_head_name(&decl.self_ty)
+            && decl
+                .items
+                .iter()
+                .any(|i| matches!(i, gossamer_ast::ImplItem::Fn(f) if f.name.name == "fmt"))
+        {
+            out.insert(name.to_string());
+        }
+    }
+    out
+}
+
+/// Types whose `{:?}` rendering the source already supplies: a `fmt` in
+/// any block other than the one that names `Display`.
+fn types_with_user_debug(parsed: &SourceFile) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for item in flatten_items(&parsed.items) {
+        if let ItemKind::Impl(decl) = &item.kind
+            && impl_trait_head(decl) != Some("Display")
+            && let Some(name) = type_head_name(&decl.self_ty)
+            && decl
+                .items
+                .iter()
+                .any(|i| matches!(i, gossamer_ast::ImplItem::Fn(f) if f.name.name == "fmt"))
+        {
+            out.insert(name.to_string());
+        }
+    }
+    out
+}
+
 /// Synthesizes `impl` blocks for the `#[derive(...)]` traits, plus a
 /// structural `fmt` for every struct / enum that is formattable but has no
 /// `fmt` of its own, so `{}` / `{:?}` lowers on the compiled tiers exactly as
@@ -705,8 +754,8 @@ fn types_with_user_method(parsed: &SourceFile, method: &str) -> HashSet<String> 
 pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
     let struct_names: HashMap<String, TyId> = struct_identities(&parsed.items);
     let aliases = alias_targets(&parsed.items);
-    let user_fmt = types_with_user_method(parsed, "fmt");
-    let user_to_string = types_with_user_method(parsed, "to_string");
+    let user_fmt = types_with_user_debug(parsed);
+    let user_to_string = types_with_user_display(parsed);
     let user_eq = types_with_user_method(parsed, "eq");
     let user_cmp = types_with_user_method(parsed, "cmp");
 
@@ -1100,7 +1149,7 @@ fn emit_enum_derive_impl(
                         .map(|f| field_placeholder(render_method, &f.ty, aliases))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    format!("format!(\"{vn}({holes})\", {})", binds.join(", "))
+                    format!("format(\"{vn}({holes})\", {})", binds.join(", "))
                 }
                 StructBody::Named(fields) => {
                     let parts: Vec<String> = fields
@@ -1114,7 +1163,7 @@ fn emit_enum_derive_impl(
                         })
                         .collect();
                     format!(
-                        "format!(\"{vn} {{{{ {} }}}}\", {})",
+                        "format(\"{vn} {{{{ {} }}}}\", {})",
                         parts.join(", "),
                         binds.join(", ")
                     )
@@ -1178,11 +1227,11 @@ fn emit_named_struct_fmt_impl(
         .collect();
     if field_names.is_empty() {
         out.push_str(&format!(
-            "    fn {method}(&self) -> String {{ format!(\"{tmpl}\") }}\n"
+            "    fn {method}(&self) -> String {{ format(\"{tmpl}\") }}\n"
         ));
     } else {
         out.push_str(&format!(
-            "    fn {method}(&self) -> String {{ format!(\"{tmpl}\", {}) }}\n",
+            "    fn {method}(&self) -> String {{ format(\"{tmpl}\", {}) }}\n",
             argvals.join(", ")
         ));
     }
@@ -1326,7 +1375,7 @@ fn emit_tuple_struct_derive_impl(
             })
             .collect();
         out.push_str(&format!(
-            "    fn {render_method}(&self) -> String {{ format!(\"{bare}({})\", {}) }}\n",
+            "    fn {render_method}(&self) -> String {{ format(\"{bare}({})\", {}) }}\n",
             placeholders.join(", "),
             argvals.join(", ")
         ));

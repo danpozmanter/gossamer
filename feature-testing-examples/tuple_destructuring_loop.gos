@@ -9,7 +9,7 @@ fn main() {
 
     // Destructure in for
     for (n, word) in pairs {
-        println!("{} -> {}", n, word)
+        println("{} -> {}", n, word)
     }
 
     // Destructure from a map
@@ -26,28 +26,28 @@ fn main() {
     for (name, score) in scores.iter() {
         total += score + name.len()
     }
-    println!("scores total+namelen = {}", total)
+    println("scores total+namelen = {}", total)
 
     // Nested tuples
     let triples = #[(1, 2, 3), (4, 5, 6)]
     for (a, b, c) in triples {
-        println!("{} + {} + {} = {}", a, b, c, a + b + c)
+        println("{} + {} + {} = {}", a, b, c, a + b + c)
     }
 
     // Destructure at let with mut binding
-    let (mut x, y) = (10, 20)
+    let mut x, y = (10, 20)
     x += y
-    println!("x after += y = {}", x)
+    println("x after += y = {}", x)
 
     // Mixed pattern in let
-    let (first, .., last) = (1, 2, 3, 4, 5)
-    println!("first={}, last={}", first, last)
+    let first, .., last = (1, 2, 3, 4, 5)
+    println("first={}, last={}", first, last)
 
     // While let with tuple Option
     let mut cursor: Option<(i64, String)> = Some((1, "start"))
     while let Some((n, msg)) = cursor {
-        println!("cursor: {} {}", n, msg)
-        cursor = if n < 3 { Some((n + 1, format!("step {}", n + 1))) } else { None }
+        println("cursor: {} {}", n, msg)
+        cursor = if n < 3 { Some((n + 1, format("step {}", n + 1))) } else { None }
     }
 }
 
@@ -57,16 +57,16 @@ mod tests {
 
     #[test]
     fn destructure_pair_let() {
-        let (x, y) = (10, 20)
-        let _ = testing::check_eq(&x, &10, "first=10")
-        let _ = testing::check_eq(&y, &20, "second=20")
+        let x, y = (10, 20)
+        let _ = testing::check_eq(x, 10, "first=10")
+        let _ = testing::check_eq(y, 20, "second=20")
     }
 
     #[test]
     fn destructure_mut_binding() {
-        let (mut x, y) = (10, 20)
+        let mut x, y = (10, 20)
         x += y
-        let _ = testing::check_eq(&x, &30, "mut x += y = 30")
+        let _ = testing::check_eq(x, 30, "mut x += y = 30")
     }
 
     #[test]
@@ -76,8 +76,8 @@ mod tests {
         for (a, b, c) in triples {
             sums.push(a + b + c)
         }
-        let _ = testing::check_eq(&sums[0], &6, "1+2+3=6")
-        let _ = testing::check_eq(&sums[1], &15, "4+5+6=15")
+        let _ = testing::check_eq(sums[0], 6, "1+2+3=6")
+        let _ = testing::check_eq(sums[1], 15, "4+5+6=15")
     }
 
     #[test]
@@ -88,6 +88,6 @@ mod tests {
             count += 1
             cursor = if n > 1 { Some(n - 1) } else { None }
         }
-        let _ = testing::check_eq(&count, &3, "cursor runs 3 times: 3,2,1")
+        let _ = testing::check_eq(count, 3, "cursor runs 3 times: 3,2,1")
     }
 }

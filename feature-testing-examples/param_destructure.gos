@@ -11,8 +11,8 @@ fn pair(Pair { left, right }: Pair) -> i64 { left - right }
 fn nested((Point { x, y }, k): (Point, i64)) -> i64 { x + y + k }
 
 fn main() {
-    println!("{}", tup((6, 7)))
-    println!("{}", named(Point { x: 3, y: 4 }))
-    println!("{}", pair(Pair { left: 20, right: 5 }))
-    println!("{}", nested((Point { x: 1, y: 2 }, 10)))
+    println("{}", tup((6, 7)))
+    println("{}", named(Point { x: 3, y: 4 }))
+    println("{}", pair(Pair { left: 20, right: 5 }))
+    println("{}", nested((Point { x: 1, y: 2 }, 10)))
 }

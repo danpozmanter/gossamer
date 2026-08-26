@@ -16,14 +16,14 @@ fn produce(tx: Sender<i64>) {
 }
 
 fn main() {
-    let (tx, rx) = channel(2)
-    go produce(tx)
+    let tx, rx = channel(2)
+    spawn(|| produce(tx))
     let mut total = 0
     let mut received = 0
     while let Some(v) = rx.recv() {
         total += v
         received += 1
     }
-    println!("received: {}", received)
-    println!("total: {}", total)
+    println("received: {}", received)
+    println("total: {}", total)
 }

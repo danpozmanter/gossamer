@@ -14,15 +14,15 @@ fn main() {
     // thread::num_cpus - the count is host-dependent, so assert the
     // invariant rather than the raw value to stay tier-stable.
     let cpus = thread::num_cpus()
-    println!("cpus_ok={}", cpus >= 1)
+    println("cpus_ok={}", cpus >= 1)
 
     // strings::pad_* - 2-arg form defaults to a space; 3-arg form
     // honours a String pad glyph; the char-literal pad keeps working.
-    println!("[{}]", strings::pad_left("hi", 5, ' '))
-    println!("[{}]", strings::pad_right("hi", 5, ' '))
-    println!("[{}]", strings::pad_left("hi", 5, '*'))
-    println!("[{}]", strings::pad_right("hi", 5, '*'))
-    println!("[{}]", strings::pad_left("7", 4, '0'))
+    println("[{}]", strings::pad_left("hi", 5, ' '))
+    println("[{}]", strings::pad_right("hi", 5, ' '))
+    println("[{}]", strings::pad_left("hi", 5, '*'))
+    println("[{}]", strings::pad_right("hi", 5, '*'))
+    println("[{}]", strings::pad_left("7", 4, '0'))
 
     // BTreeMap::keys() -> Vec<String> in sorted order. Bound to a
     // local before iterating (the inline `for k in m.keys()` form
@@ -34,12 +34,12 @@ fn main() {
     ranks.insert("cherry", 2)
     let key_list = ranks.keys()
     for k in key_list {
-        println!("key={}", k)
+        println("key={}", k)
     }
 
     // math::PI in arithmetic and print context.
     let r = 2.0
     let area = math::PI * r * r
-    println!("pi={:.5}", math::PI)
-    println!("area={:.5}", area)
+    println("pi={:.5}", math::PI)
+    println("area={:.5}", area)
 }

@@ -18,8 +18,8 @@ struct Held {
 }
 
 fn store(into: &mut Map<String, Held>, n: i64) {
-    let held = Held { name: format!("held-{}", n), parts: #[n, n + 1, n + 2] }
-    let _ = into.insert(format!("k-{}", n), held.clone())
+    let held = Held { name: format("held-{}", n), parts: #[n, n + 1, n + 2] }
+    let _ = into.insert(format("k-{}", n), held.clone())
 }
 
 fn main() {
@@ -31,16 +31,16 @@ fn main() {
     // Allocation traffic of a shape that would take a freed entry's block.
     let mut filler: Vec<String> = #[]
     for n in 0..400 {
-        filler.push(format!("filler-{}", n))
+        filler.push(format("filler-{}", n))
     }
 
     let mut wrong_name = 0
     let mut wrong_parts = 0
     let mut missing = 0
     for n in 0..200 {
-        match kept.get(&format!("k-{}", n)) {
+        match kept.get(format("k-{}", n)) {
             Some(found) => {
-                if found.name != format!("held-{}", n) {
+                if found.name != format("held-{}", n) {
                     wrong_name += 1
                 }
                 if found.parts.len() != 3 || found.parts[0] != n || found.parts[2] != n + 2 {
@@ -50,15 +50,15 @@ fn main() {
             None => missing += 1
         }
     }
-    println!("entries whose name changed:  {}", wrong_name)
-    println!("entries whose parts changed: {}", wrong_parts)
-    println!("entries that went missing:   {}", missing)
-    println!("kept: {} filler: {}", kept.len(), filler.len())
+    println("entries whose name changed:  {}", wrong_name)
+    println("entries whose parts changed: {}", wrong_parts)
+    println("entries that went missing:   {}", missing)
+    println("kept: {} filler: {}", kept.len(), filler.len())
 
     // Taking one out hands its share over, and the value still reads.
     match Map::pop(&mut kept, "k-7") {
-        Some(taken) => println!("taken: {} {:?}", taken.name, taken.parts)
-        None => println!("taken: nothing")
+        Some(taken) => println("taken: {} {:?}", taken.name, taken.parts)
+        None => println("taken: nothing")
     }
-    println!("entries left: {}", kept.len())
+    println("entries left: {}", kept.len())
 }

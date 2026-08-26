@@ -17,9 +17,10 @@ fn build(source: &str) -> (Vec<gossamer_mir::Body>, TyCtxt) {
 fn build_inner(source: &str) -> (Vec<gossamer_mir::Body>, TyCtxt) {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_with_autoderive(source, file);
+    let (mut sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, diagnostics) =
         typecheck_source_file(&sf, &resolutions, &mut tcx);
@@ -77,7 +78,7 @@ fn padded_integer_formatting_avoids_an_intermediate_string() {
     let (bodies, _) = build(
         r#"
 fn key(i: i64) -> String {
-    format!("key-{:08}", i)
+    format("key-{:08}", i)
 }
 "#,
     );
@@ -399,7 +400,7 @@ fn fill(n: i64) -> i64 {
     let mut m: Map<String, i64> = Map::new()
     let mut i = 0i64
     while i < n {
-        m.insert(format!("key-{}", i), i)
+        m.insert(format("key-{}", i), i)
         i += 1i64
     }
     m.len()
@@ -751,7 +752,7 @@ fn loop_with_body_as_function_tail_does_not_emit_return_assign() {
 
 #[test]
 fn go_stmt_does_not_confuse_following_statements() {
-    let source = "fn main() {\n go fn() { let x = 1i64 }\n let y = 2i64\n}\n";
+    let source = "fn main() {\n spawn(|| { let x = 1i64 })\n let y = 2i64\n}\n";
     let (bodies, _) = build(source);
     let body = &bodies[0];
     assert_eq!(body.name, "main");
@@ -942,7 +943,7 @@ fn match_with_guard_lowers_to_chained_branches() {
 #[test]
 fn tuple_destructuring_let_binds_each_element() {
     let source = r"fn main() -> i64 {
-    let (a, b) = (11i64, 22i64)
+    let a, b = (11i64, 22i64)
     a + b
 }
 ";
@@ -1046,7 +1047,7 @@ fn make() -> Rec {
 
 fn main() {
     let rec = make()
-    println!("{}", rec.data.len())
+    println("{}", rec.data.len())
 }
 "#;
     let (bodies, _) = build(source);

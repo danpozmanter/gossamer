@@ -64,7 +64,7 @@ fn resolver_macro_item_table_matches_manifest() {
     for module in gossamer_std::manifest::ALL_MODULES {
         let path = module.path.strip_prefix("std::").unwrap_or(module.path);
         for item in module.items {
-            if matches!(item.kind, gossamer_std::registry::StdItemKind::Macro) {
+            if matches!(item.kind, gossamer_std::registry::StdItemKind::Builtin) {
                 manifest.push(format!("{path}::{}", item.name));
             }
         }

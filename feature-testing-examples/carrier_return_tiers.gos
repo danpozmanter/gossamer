@@ -1,0 +1,60 @@
+// A `Result<scalar, E>` / `Option<scalar>` return crosses the VM/JIT
+// boundary as a two-word carrier. Every tier must hand back the arm, not
+// the `[discriminant, payload]` pair the carrier is made of.
+use std::errors
+
+fn sum_to(n: i64) -> Result<i64, errors::Error> {
+    if n < 0 {
+        return Err(errors::new("negative bound"))
+    }
+    let mut total = 0
+    let mut i = 0
+    while i < n {
+        total += i
+        i += 1
+    }
+    Ok(total)
+}
+
+fn first_even(n: i64) -> Option<i64> {
+    let mut i = 0
+    while i < n {
+        if i % 2 == 0 && i > 0 {
+            return Some(i)
+        }
+        i += 1
+    }
+    None
+}
+
+fn ratio(n: i64) -> Result<f64, errors::Error> {
+    let mut total = 0.0
+    let mut i = 0
+    while i < n {
+        total += 1.5
+        i += 1
+    }
+    Ok(total)
+}
+
+fn tally(n: i64) -> Result<i64, errors::Error> {
+    let mut total = 0
+    let mut i = 0
+    while i < n {
+        total += sum_to(i)?
+        i += 1
+    }
+    Ok(total)
+}
+
+fn main() {
+    for n in 0..6 {
+        println("{:?} {:?} {:?}", sum_to(n), first_even(n), ratio(n))
+    }
+    println("{:?}", sum_to(-1))
+    println("{:?}", tally(6))
+    match tally(4) {
+        Ok(v) => println("ok {}", v)
+        Err(e) => println("err {}", e)
+    }
+}

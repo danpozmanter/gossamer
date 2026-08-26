@@ -13,5 +13,5 @@ fn main() {
     let b = d.peek_back().unwrap_or(0)
     let pf = d.pop_front().unwrap_or(0)
     let pb = d.pop_back().unwrap_or(0)
-    println!("{} {} {} {} len={}", f, b, pf, pb, d.len())
+    println("{} {} {} {} len={}", f, b, pf, pb, d.len())
 }

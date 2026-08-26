@@ -11,26 +11,26 @@ use std::{iter, sort, strings}
 fn main() {
     let names = #["gamma", "alpha", "beta"]
     for name in sort::sort_stable(names) {
-        println!("sorted: {}", name)
+        println("sorted: {}", name)
     }
 
     let numbers = #[3, 1, 2]
     for value in sort::sort_stable(numbers) {
-        println!("number: {}", value)
+        println("number: {}", value)
     }
 
-    for part in strings::split(&"a,b,c", &",") {
-        println!("part: {}", part)
+    for part in strings::split("a,b,c", ",") {
+        println("part: {}", part)
     }
 
-    for word in iter::map(|w| w.to_uppercase(), #["one", "two"]) {
-        println!("mapped: {}", word)
+    for word in iter::map(#["one", "two"], |w| w.to_uppercase()) {
+        println("mapped: {}", word)
     }
 
     // The same sequence bound first, which always worked, so the two
     // spellings are pinned against each other.
     let ordered = sort::sort_stable(names)
     for name in ordered {
-        println!("bound: {}", name)
+        println("bound: {}", name)
     }
 }

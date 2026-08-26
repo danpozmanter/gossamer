@@ -44,8 +44,19 @@ impl Parser<'_> {
             self.bump();
             return TypeKind::Never;
         }
+        // One callable type. The lowercase spelling described a raw pointer
+        // shape the language does not have, and `FnMut` / `FnOnce` name a
+        // distinction it does not draw, so each reports with the `Fn` rewrite
+        // and parses as `Fn` so the rest of the program still checks.
         if self.at_keyword(Keyword::Fn) {
-            return self.parse_fn_type(FnTypeKind::Fn);
+            let span = self.peek_span();
+            self.record(
+                ParseError::CallableTypeSpelling {
+                    written: "fn".to_string(),
+                },
+                span,
+            );
+            return self.parse_fn_type(FnTypeKind::ClosureFn);
         }
         if matches!(self.peek().kind, TokenKind::Ident) {
             let text = self.slice(self.peek_span());
@@ -53,13 +64,16 @@ impl Parser<'_> {
                 self.bump();
                 return self.parse_fn_type_after_keyword(FnTypeKind::ClosureFn);
             }
-            if text == "FnMut" {
+            if text == "FnMut" || text == "FnOnce" {
+                let span = self.peek_span();
+                self.record(
+                    ParseError::CallableTypeSpelling {
+                        written: text.to_string(),
+                    },
+                    span,
+                );
                 self.bump();
-                return self.parse_fn_type_after_keyword(FnTypeKind::ClosureFnMut);
-            }
-            if text == "FnOnce" {
-                self.bump();
-                return self.parse_fn_type_after_keyword(FnTypeKind::ClosureFnOnce);
+                return self.parse_fn_type_after_keyword(FnTypeKind::ClosureFn);
             }
             if text == "_" {
                 self.bump();
@@ -138,7 +152,11 @@ impl Parser<'_> {
         }
         let mut params = Vec::new();
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
-            params.push(self.parse_type());
+            // A callable type's parameters follow the same rule a written
+            // parameter list does: `T` or `&mut T`, with `[T]` the view.
+            let amp = self.peek_span();
+            let ty = self.parse_type();
+            params.push(self.strip_shared_parameter_reference(ty, amp));
             if !self.eat_list_separator() {
                 break;
             }

@@ -20,5 +20,5 @@ fn main() {
     for _ in 0..2000000 {
         acc = (acc + next() % 1000) % 1000000007
     }
-    println!("{}", acc)
+    println("{}", acc)
 }

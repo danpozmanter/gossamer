@@ -117,7 +117,7 @@ fn main() {
         acc = acc + i * i - i
         i = i + 1
     }
-    println!("acc={}", acc)
+    println("acc={}", acc)
 }
 "#;
 

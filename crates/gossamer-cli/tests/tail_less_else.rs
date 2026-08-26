@@ -177,7 +177,7 @@ fn returns_int() -> i64 { 1 }
 
 fn main() {
     if false { } else { let _ = returns_int() }
-    println!("done")
+    println("done")
 }
 "#;
     assert_three_tier_stdout("else_let_underscore_tail", src, "done");
@@ -195,7 +195,7 @@ fn unit_call() {
 
 fn main() {
     if false { } else { unit_call() }
-    println!("done")
+    println("done")
 }
 "#;
     assert_three_tier_stdout("else_unit_call_tail", src, "done");
@@ -214,12 +214,12 @@ fn returns_int() -> i64 { 5 }
 fn main() {
     let mut x: i64 = 0
     if false {
-        eprintln!("up")
+        eprintln("up")
     } else {
         x = 10
         let _ = returns_int()
     }
-    println!("x={}", x)
+    println("x={}", x)
 }
 "#;
     assert_three_tier_stdout("else_assign_then_let_underscore", src, "x=10");
@@ -243,7 +243,7 @@ fn main() {
         tag = 300
         let _ = returns_int()
     }
-    println!("tag={}", tag)
+    println("tag={}", tag)
 }
 "#;
     assert_three_tier_stdout("nested_if_else_tail_less", src, "tag=300");

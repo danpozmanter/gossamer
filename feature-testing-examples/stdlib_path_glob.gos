@@ -5,7 +5,7 @@
 use std::fs
 use std::path
 
-fn names_of(paths: &Vec<String>) -> Vec<String> {
+fn names_of(paths: Vec<String>) -> Vec<String> {
     let mut out = Vec::new()
     for p in paths {
         match path::file_name(p) {
@@ -17,40 +17,40 @@ fn names_of(paths: &Vec<String>) -> Vec<String> {
 }
 
 fn main() {
-    println!("{}", path::matches("*.gos", "main.gos"))
-    println!("{}", path::matches("*.gos", "main.rs"))
-    println!("{}", path::matches("a*c", "a/c"))
-    println!("{}", path::matches("h[aeiou]llo", "hello"))
-    println!("{}", path::matches("h[aeiou]llo", "hxllo"))
-    println!("{}", path::matches("?ello", "hello"))
-    println!("{}", path::matches("data/*", "data/x"))
+    println("{}", path::matches("*.gos", "main.gos"))
+    println("{}", path::matches("*.gos", "main.rs"))
+    println("{}", path::matches("a*c", "a/c"))
+    println("{}", path::matches("h[aeiou]llo", "hello"))
+    println("{}", path::matches("h[aeiou]llo", "hxllo"))
+    println("{}", path::matches("?ello", "hello"))
+    println("{}", path::matches("data/*", "data/x"))
 
     let root = match fs::temp_dir("gos-glob") {
         Ok(d) => d
-        Err(e) => { println!("temp_dir failed: {}", e); return }
+        Err(e) => { println("temp_dir failed: {}", e); return }
     }
-    let nested = path::join(&root, "nested")
-    if let Err(e) = fs::create_dir_all(&nested) {
-        println!("mkdir failed: {}", e)
+    let nested = path::join(root, "nested")
+    if let Err(e) = fs::create_dir_all(nested) {
+        println("mkdir failed: {}", e)
         return
     }
-    let _ = fs::write(&path::join(&root, "alpha.gos"), "a".as_bytes())
-    let _ = fs::write(&path::join(&root, "beta.gos"), "b".as_bytes())
-    let _ = fs::write(&path::join(&root, "gamma.txt"), "c".as_bytes())
-    let _ = fs::write(&path::join(&nested, "delta.gos"), "d".as_bytes())
+    let _ = fs::write(path::join(root, "alpha.gos"), "a".as_bytes())
+    let _ = fs::write(path::join(root, "beta.gos"), "b".as_bytes())
+    let _ = fs::write(path::join(root, "gamma.txt"), "c".as_bytes())
+    let _ = fs::write(path::join(nested, "delta.gos"), "d".as_bytes())
 
-    match path::glob(&path::join(&root, "*.gos")) {
-        Ok(found) => println!("top={}", names_of(&found).join(","))
-        Err(e) => println!("glob failed: {}", e)
+    match path::glob(path::join(root, "*.gos")) {
+        Ok(found) => println("top={}", names_of(found).join(","))
+        Err(e) => println("glob failed: {}", e)
     }
-    match path::glob(&path::join(&root, "**/*.gos")) {
-        Ok(found) => println!("deep={}", names_of(&found).join(","))
-        Err(e) => println!("glob failed: {}", e)
+    match path::glob(path::join(root, "**/*.gos")) {
+        Ok(found) => println("deep={}", names_of(found).join(","))
+        Err(e) => println("glob failed: {}", e)
     }
-    match path::glob(&path::join(&root, "*.md")) {
-        Ok(found) => println!("none={}", found.len())
-        Err(e) => println!("glob failed: {}", e)
+    match path::glob(path::join(root, "*.md")) {
+        Ok(found) => println("none={}", found.len())
+        Err(e) => println("glob failed: {}", e)
     }
 
-    let _ = fs::remove_dir_all(&root)
+    let _ = fs::remove_dir_all(root)
 }

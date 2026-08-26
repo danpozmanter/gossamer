@@ -35,7 +35,7 @@ fn main() {
     let mut values: Vec<i64> = Vec::from([1])
     append_value(&mut values, scalar)
 
-    println!(
+    println(
         "scalar={} counter={} values={} last={}"
         scalar
         counter.value

@@ -275,7 +275,7 @@ println!("sum of odds in 1..=5 = {total}")
     // Tuples group values of different types; read them positionally or
     // destructure them.
     let entry = ("gossamer", 2026, true)
-    let (name, year, _) = entry
+    let name, year, _ = entry
     println!("{name} ({year}), tuple len = {}", entry.len())
     println!("field access: {}", entry.0)
 }
@@ -551,15 +551,13 @@ println!("sum = ({}, {})", c.x, c.y)
       expression type needs nothing special: a variant payload can be the
       enum, and every node is heap-shared automatically. A
       <code>match</code> reaches straight through with no dereference.</p>
-      <p><code>Box</code>, <code>Arc</code>, and <code>Rc</code> are
-      transparent - you can write <code>Box&lt;Expr&gt;</code> to signal
-      heap sharing, but the bare <code>Expr</code> form compiles to the
-      same thing and is what most code uses. Here a tiny arithmetic
-      evaluator recurses with one exhaustive <code>match</code> - the
-      whole shape of a real tree-walking interpreter.</p>`,
+      <p>There are no pointer wrappers to reach for: every value is
+      heap-shared and reference-counted already, so a variant payload
+      names the enum directly. Here a tiny arithmetic evaluator recurses
+      with one exhaustive <code>match</code> - the whole shape of a real
+      tree-walking interpreter.</p>`,
     code: `// A recursive enum needs no wrapping: a variant payload can be the enum
-// itself, and every node is heap-shared. \\\`Box\\\`/\\\`Arc\\\`/\\\`Rc\\\` are
-// transparent, so \\\`Box<Expr>\\\` would compile to exactly the same thing.
+// itself, and every node is heap-shared and reference-counted.
 enum Expr {
     Num(i64),
     Add(Expr, Expr),
@@ -632,9 +630,9 @@ println!("half = {:?}", half_of_first_even(&[1, 3, 5]))
 
 // Fallible work returns \\\`Result<T, E>\\\`; \\\`?\\\` propagates the \\\`Err\\\`.
 fn parse_port(text: &String) -> Result<i64, errors::Error> {
-    let n: i64 = match text.parse() {
-        Ok(n) => n,
-        Err(_) => return Err(errors::new(format!("not a number: {text}"))),
+    let n: i64 = match text.to_i64() {
+        Some(n) => n,
+        None => return Err(errors::new(format!("not a number: {text}"))),
     }
     if n <= 0 { return Err(errors::new(format!("must be positive: {n}"))) }
     Ok(n)
@@ -673,7 +671,7 @@ fn produce(tx: sync::Sender<i64>) {
     tx.close()
 }
 
-let (tx, rx) = sync::channel(5)
+let tx, rx = sync::channel(5)
 go produce(tx)
 
 // \\\`recv\\\` yields \\\`Some\\\` until the channel is closed and drained.
@@ -700,8 +698,8 @@ fn produce(tx: sync::Sender<i64>, xs: Vec<i64>) {
     for x in xs { tx.send(x) }
 }
 
-let (tx_hi, rx_hi) = sync::channel(3)
-let (tx_lo, rx_lo) = sync::channel(2)
+let tx_hi, rx_hi = sync::channel(3)
+let tx_lo, rx_lo = sync::channel(2)
 
 go produce(tx_hi, #[1, 2, 3])
 go produce(tx_lo, #[10, 20])

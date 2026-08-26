@@ -3059,6 +3059,22 @@ pub unsafe extern "C" fn gos_rt_f64_prec_to_str(x: f64, prec: i64) -> *mut c_cha
     })
 }
 
+/// Truncates `s` to its first `prec` Unicode scalars, which is what a
+/// `{:.N}` spec asks of text: precision bounds how much of a value is
+/// shown, and a string's length is counted in scalars everywhere else.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_prec_to_str(s: *const c_char, prec: i64) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if prec < 0 {
+            crate::c_abi::panic::panic_text("__fmt_prec: precision must be non-negative");
+        }
+        let bytes = unsafe { typed_str_bytes(s) };
+        let text = String::from_utf8_lossy(bytes);
+        let taken: String = text.chars().take(prec as usize).collect();
+        alloc_cstring(taken.as_bytes())
+    })
+}
+
 /// Stringifies a bool (passed as i32: nonzero = true). Used by
 /// codegen to assemble multi-arg panic / format-style messages.
 #[unsafe(no_mangle)]
@@ -3283,7 +3299,8 @@ pub unsafe extern "C" fn gos_rt_str_pad_right(
 
 /// `__fmt_pad(s, width, fill, align)` - pads the already-rendered string `s`
 /// to `width` characters with the `fill` codepoint. `align`: 0 = right
-/// (pad on the left), 1 = left (pad on the right), 2 = center. Backs the
+/// (pad on the left), 1 = left (pad on the right), 2 = center, 3 = zeros
+/// between the number's sign (and radix prefix) and its digits. Backs the
 /// `{:>N}` / `{:<N}` / `{:^N}` / `{:0N}` format specs.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fmt_pad(
@@ -3311,6 +3328,16 @@ pub unsafe extern "C" fn gos_rt_fmt_pad(
             return alloc_cstring(text.as_bytes());
         }
         let total = width - count;
+        if align == gossamer_abi::format_pad::PAD_ALIGN_SIGN_AWARE_ZERO {
+            let split = gossamer_abi::format_pad::sign_aware_prefix_len(text);
+            let mut out = String::with_capacity(text.len() + total);
+            out.push_str(&text[..split]);
+            for _ in 0..total {
+                out.push('0');
+            }
+            out.push_str(&text[split..]);
+            return alloc_cstring(out.as_bytes());
+        }
         let (left, right) = match align {
             1 => (0, total),                     // left-align: pad on the right
             2 => (total / 2, total - total / 2), // center
@@ -3354,6 +3381,23 @@ pub unsafe extern "C" fn gos_rt_fmt_pad_i64(
             return alloc_cstring(rendered.as_bytes());
         }
         let total = width - count;
+        if align == gossamer_abi::format_pad::PAD_ALIGN_SIGN_AWARE_ZERO {
+            let split = gossamer_abi::format_pad::sign_aware_prefix_len(rendered);
+            let output_len = rendered.len().saturating_add(total);
+            return alloc_growable_with_fill(output_len, output_len, false, |out| {
+                unsafe { copy_small_bytes(rendered.as_ptr(), out, split) };
+                for index in 0..total {
+                    unsafe { out.add(split + index).write(b'0') };
+                }
+                unsafe {
+                    copy_small_bytes(
+                        rendered.as_ptr().add(split),
+                        out.add(split + total),
+                        rendered.len() - split,
+                    );
+                }
+            });
+        }
         let (left, right) = match align {
             1 => (0, total),
             2 => (total / 2, total - total / 2),
@@ -3402,6 +3446,28 @@ pub unsafe extern "C" fn gos_rt_concat_pad_i64(
             .and_then(char::from_u32)
             .unwrap_or(' ');
         let total = width.saturating_sub(rendered.len());
+        if align == gossamer_abi::format_pad::PAD_ALIGN_SIGN_AWARE_ZERO {
+            let split = gossamer_abi::format_pad::sign_aware_prefix_len(rendered);
+            let output_len = prefix
+                .len()
+                .saturating_add(rendered.len())
+                .saturating_add(total);
+            return alloc_growable_with_fill(output_len, output_len, false, |out| {
+                unsafe { copy_small_bytes(prefix.as_ptr(), out, prefix.len()) };
+                let base = prefix.len();
+                unsafe { copy_small_bytes(rendered.as_ptr(), out.add(base), split) };
+                for index in 0..total {
+                    unsafe { out.add(base + split + index).write(b'0') };
+                }
+                unsafe {
+                    copy_small_bytes(
+                        rendered.as_ptr().add(split),
+                        out.add(base + split + total),
+                        rendered.len() - split,
+                    );
+                }
+            });
+        }
         let (left, right) = match align {
             1 => (0, total),
             2 => (total / 2, total - total / 2),

@@ -29,14 +29,14 @@ mod tests {
     #[test]
     fn triangular_doc_test_mirror() {
         let t = super::triangular(5)
-        let _ = testing::check_eq(&t, &15, "triangular(5)")
+        let _ = testing::check_eq(t, 15, "triangular(5)")
     }
 
     #[test]
     fn triangular_edge_cases() {
-        let _ = testing::check_eq(&super::triangular(0), &0, "triangular(0)")
-        let _ = testing::check_eq(&super::triangular(1), &1, "triangular(1)")
-        let _ = testing::check_eq(&super::triangular(10), &55, "triangular(10)")
+        let _ = testing::check_eq(super::triangular(0), 0, "triangular(0)")
+        let _ = testing::check_eq(super::triangular(1), 1, "triangular(1)")
+        let _ = testing::check_eq(super::triangular(10), 55, "triangular(10)")
     }
 
     #[test]
@@ -54,7 +54,7 @@ mod tests {
 }
 
 fn main() {
-    println!("triangular(5) = {}", triangular(5))
-    println!("is_even(4) = {}", is_even(4))
-    println!("is_even(7) = {}", is_even(7))
+    println("triangular(5) = {}", triangular(5))
+    println("is_even(4) = {}", is_even(4))
+    println("is_even(7) = {}", is_even(7))
 }

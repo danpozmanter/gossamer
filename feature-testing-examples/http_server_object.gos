@@ -17,18 +17,18 @@ fn main() -> Result<(), errors::Error> {
     let s = http::Server::new().read_header_timeout_ms(5000).max_body_bytes(32).server_name("srvtest")
     s.listen("127.0.0.1:0")?
     let addr = s.addr()
-    println!("bound: {}", addr.contains("127.0.0.1:"))
-    go run_server(s)
+    println("bound: {}", addr.contains("127.0.0.1:"))
+    spawn(|| run_server(s))
     time::sleep(300)
-    match http::get(format!("http://{}/x", addr), Vec::from([])) {
-        Ok(r) => println!("get status={} body={}", r.status, r.body)
-        Err(e) => println!("get error: {}", e)
+    match http::get(format("http://{}/x", addr), Vec::from([])) {
+        Ok(r) => println("get status={} body={}", r.status, r.body)
+        Err(e) => println("get error: {}", e)
     }
-    match http::post(format!("http://{}/x", addr), "0123456789012345678901234567890123456789", "text/plain") {
-        Ok(r) => println!("big status={}", r.status)
-        Err(e) => println!("big error: {}", e)
+    match http::post(format("http://{}/x", addr), "0123456789012345678901234567890123456789", "text/plain") {
+        Ok(r) => println("big status={}", r.status)
+        Err(e) => println("big error: {}", e)
     }
-    println!("drained: {}", s.shutdown(2000))
+    println("drained: {}", s.shutdown(2000))
     Ok(())
 }
 

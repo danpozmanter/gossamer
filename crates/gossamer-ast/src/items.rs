@@ -402,6 +402,60 @@ pub struct TupleField {
     pub ty: Type,
 }
 
+/// How an enum's discriminant is stored.
+///
+/// A plain `enum` takes the smallest byte-aligned integer that holds every
+/// variant. `packed` asks for the smallest number of *bits* instead, which
+/// is what makes a sequence of them worth packing. Either form may name its
+/// own width with `: uN`, and a width too narrow for the variants is
+/// rejected at the declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct EnumRepr {
+    /// Whether the declaration wrote `packed`.
+    pub packed: bool,
+    /// The width `: uN` named, in bits, or `None` when the compiler picks.
+    pub declared_bits: Option<u32>,
+}
+
+impl EnumRepr {
+    /// The bits `variants` need, before any declared width is applied.
+    ///
+    /// A byte-aligned representation rounds up to a whole byte and never
+    /// answers less than one; a packed one answers exactly the bits the
+    /// discriminants occupy.
+    #[must_use]
+    pub const fn natural_bits(packed: bool, variants: usize) -> u32 {
+        let mut bits = 1u32;
+        while bits < 64 && (1usize << bits) < variants {
+            bits += 1;
+        }
+        if packed {
+            return bits;
+        }
+        // Round up to a whole byte: 1..=8 -> 8, 9..=16 -> 16, and so on.
+        let bytes = bits.div_ceil(8);
+        bytes * 8
+    }
+
+    /// The width this declaration stores its discriminant in.
+    #[must_use]
+    pub const fn bits(self, variants: usize) -> u32 {
+        match self.declared_bits {
+            Some(bits) => bits,
+            None => Self::natural_bits(self.packed, variants),
+        }
+    }
+
+    /// Whether `bits` can represent `variants` distinct discriminants.
+    #[must_use]
+    pub const fn fits(bits: u32, variants: usize) -> bool {
+        if bits >= 64 {
+            return true;
+        }
+        (variants as u128) <= (1u128 << bits)
+    }
+}
+
 /// An enum declaration.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EnumDecl {
@@ -413,6 +467,8 @@ pub struct EnumDecl {
     pub where_clause: WhereClause,
     /// Variants in source order.
     pub variants: Vec<EnumVariant>,
+    /// How the discriminant is stored.
+    pub repr: EnumRepr,
 }
 
 /// A single enum variant.

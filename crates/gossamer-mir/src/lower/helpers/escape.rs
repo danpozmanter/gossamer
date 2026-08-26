@@ -115,7 +115,7 @@ pub(crate) fn collect_region_unsafe_fns(program: &HirProgram, tcx: &TyCtxt) -> H
 }
 
 /// Every identifier a pattern binds, walking tuple / variant / struct / ref /
-/// `@` sub-patterns so a destructured `let (a, b) = …` registers both names.
+/// `@` sub-patterns so a destructured `let a, b = …` registers both names.
 fn pat_binding_names(pat: &gossamer_hir::HirPat, out: &mut Vec<String>) {
     use gossamer_hir::HirPatKind;
     match &pat.kind {
@@ -225,14 +225,13 @@ impl Scan<'_> {
                 }
             }
             HirStmtKind::Expr { expr, .. } | HirStmtKind::Defer(expr) => self.expr(expr),
-            HirStmtKind::Go(_) => self.unsafe_now = true,
             HirStmtKind::Item(_) => {}
         }
     }
 
     fn expr(&mut self, e: &HirExpr) {
         match &e.kind {
-            HirExprKind::Go(_) | HirExprKind::Select { .. } => {
+            HirExprKind::Select { .. } => {
                 self.unsafe_now = true;
             }
             HirExprKind::Call { callee, args } => {
@@ -550,7 +549,7 @@ impl<'a> LoopEligibility<'a> {
                     self.in_body.extend(names);
                 }
                 HirStmtKind::Expr { expr, .. } => self.expr(expr, false),
-                HirStmtKind::Defer(_) | HirStmtKind::Go(_) | HirStmtKind::Item(_) => {
+                HirStmtKind::Defer(_) | HirStmtKind::Item(_) => {
                     self.reject(RegionReject::DeferGoOrItem);
                 }
             }
@@ -602,7 +601,6 @@ impl<'a> LoopEligibility<'a> {
             HirExprKind::Return(_)
             | HirExprKind::Break { .. }
             | HirExprKind::Continue { .. }
-            | HirExprKind::Go(_)
             | HirExprKind::Select { .. }
             | HirExprKind::Closure { .. }
             | HirExprKind::LiftedClosure { .. } => {

@@ -80,7 +80,7 @@ The [implementation source](https://github.com/gossamer-lang/gossamer/blob/main/
 | [`Query`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `type Query` | Parsed query string with typed get / get_all / contains. |
 | [`request`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn request(method: String, url: String, body: String, headers: Vec<(String, String)>) -> Result<http::Response, errors::Error>` | One-shot request with a string body: `(method, url, body, headers) -> Result<Response, Error>`. |
 | [`request_bytes`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn request_bytes(method: String, url: String, body: Vec<u8>, headers: Vec<(String, String)>) -> Result<http::Response, errors::Error>` | One-shot request with a byte body: `(method, url, body: [u8], headers) -> Result<Response, Error>`. |
-| [`Handler`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `trait Handler` | Anything callable as `Fn(&Request, &Params) -> Response`. |
+| [`Handler`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `trait Handler` | Anything callable as `Fn(Request, Params) -> Response`. |
 | [`Params`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `type Params` | Captured path parameters. Read inside a handler with `r.path_value(name) -> String`; returns `""` for an undeclared name. All tiers. |
 | [`Router`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `type Router` | Routing table. Build with `Router::new()`, register routes via the verb methods, then pass to `http::serve`. Verb methods return the router so they chain with `|>`. |
 | [`add`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn add(router: http::router::Router, method: String, pattern: String) -> Result<(), errors::Error>` | Register a pattern-only route: `(router, method, pattern)`. Used with `lookup` for low-level dispatch. |
@@ -102,8 +102,8 @@ The [implementation source](https://github.com/gossamer-lang/gossamer/blob/main/
 | [`encode_comment`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn encode_comment(comment: String) -> String` | Render a `:`-prefixed keepalive line. Available in interp + compiled. |
 | [`encode_event`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn encode_event(event: String, data: String, id: String) -> String` | Render one event block as a string: `(event, data, id) -> String`. Available in interp + compiled. |
 | [`encode_retry`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn encode_retry(ms: i64) -> String` | Render a `retry:` reconnect-hint directive in milliseconds. Available in interp + compiled. |
-| [`AppState`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `type AppState` | TypeMap of Arc<T> values shared across handlers. |
-| [`State`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `type State` | Newtype wrapper Arc<T> for ergonomic handler arguments. |
+| [`AppState`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `type AppState` | TypeMap of T values shared across handlers. |
+| [`State`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `type State` | Newtype wrapper T for ergonomic handler arguments. |
 | [`FileServer`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `type FileServer` | Static-file handler rooted at a directory (Rust-side; streaming). |
 | [`mime_for_path`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn mime_for_path(path: String) -> String` | Guess a MIME type from a file path's extension. Available in interp + compiled. |
 | [`serve_file`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn serve_file(path: String) -> Result<http::Response, errors::Error>` | Read a single file and return it as a Response struct. Interp tier. |
@@ -119,7 +119,7 @@ The [implementation source](https://github.com/gossamer-lang/gossamer/blob/main/
 | [`recv`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn recv(conn: http::websocket::Conn) -> Result<http::websocket::Message, errors::Error>` | recv(ws) -> Result<String, Error>: next text message; Err on close/error. |
 | [`send_binary`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn send_binary(conn: http::websocket::Conn, data: Vec<u8>) -> Result<(), errors::Error>` | send_binary(ws, data) -> Result<(), Error>: send one binary frame. |
 | [`send_text`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn send_text(conn: http::websocket::Conn, text: String) -> Result<(), errors::Error>` | send_text(ws, s) -> Result<(), Error>: send one text frame. |
-| [`serve`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn serve(addr: String, handler: Fn(http::websocket::Conn) -> ()) -> Result<(), errors::Error>` | serve(addr, handler) -> Result<(), Error>: bind, upgrade each connection, dispatch the handler's handle(&self, ws) per connection. |
+| [`serve`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs) | `fn serve(addr: String, handler: Fn(http::websocket::Conn) -> ()) -> Result<(), errors::Error>` | serve(addr, handler) -> Result<(), Error>: bind, upgrade each connection, dispatch the handler's handle(self, ws) per connection. |
 
 
 ## `Request`
@@ -138,9 +138,9 @@ The value a handler receives. Identical fields on every tier.
 
 ```text
 fn serve(&self, r: http::Request) -> http::Response {
-    let who = header_of(&r.headers, "x-user")     // names arrive lowercased
+    let who = header_of(r.headers, "x-user")     // names arrive lowercased
     let upload: [u8] = r.raw_body                 // byte-exact body
-    http::Response::text(200, format!("{} {} q={}", r.method, r.path, r.query))
+    http::Response::text(200, format("{} {} q={}", r.method, r.path, r.query))
 }
 ```
 
@@ -212,9 +212,9 @@ the same stream to a second `Response::stream` produces an empty body.
 ```text
 fn forward_stream(method: String, target: String, body: String,
                   headers: [(String, String)]) -> http::Response {
-    match http::stream(&method, &target, &body, headers) {
+    match http::stream(method, target, body, headers) {
         Ok(up) => http::Response::stream(up.status, up.content_type, up),
-        Err(e) => http::Response::text(502, format!("upstream error: {}", e)),
+        Err(e) => http::Response::text(502, format("upstream error: {}", e)),
     }
 }
 ```
@@ -234,7 +234,7 @@ configured body cap until the public streaming handler ABI lands.
 ## Handlers and `serve`
 
 A handler is a struct implementing `http::Handler` with a
-`serve(&self, Request)` method. Both return shapes work, on every tier:
+`serve(self, Request)` method. Both return shapes work, on every tier:
 
 ```text
 impl http::Handler for App {
@@ -254,7 +254,7 @@ and `Ok(())` is returned on graceful shutdown:
 
 ```text
 if let Err(e) = http::serve("127.0.0.1:8080", app) {
-    eprintln!("{}", e)
+    eprintln("{}", e)
 }
 ```
 

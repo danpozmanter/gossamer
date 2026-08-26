@@ -142,12 +142,12 @@ fn main() {
     // The capability report is a value, so a program branches on what
     // the host honors instead of assuming one operating system.
     if sandbox::max_level() == "strict" {
-        println!("{}", sandbox::notes().join(&"\n"))
+        println("{}", sandbox::notes().join(&"\n"))
     }
 
     match sandbox::run(&policy, &#["cargo", "build"]) {
-        Ok(out) => println!("{} {}", out.code, out.stdout)
-        Err(e) => eprintln!("{}", e)
+        Ok(out) => println("{} {}", out.code, out.stdout)
+        Err(e) => eprintln("{}", e)
     }
 }
 ```

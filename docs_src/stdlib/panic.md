@@ -12,4 +12,4 @@ The [implementation source](https://github.com/gossamer-lang/gossamer/blob/main/
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`panic`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/panic.rs) | `macro panic!(...)` | Aborts the current goroutine with a message. |
+| [`panic`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/panic.rs) | `builtin panic(...)` | Aborts the current goroutine with a message. |

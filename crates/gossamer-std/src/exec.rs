@@ -230,6 +230,7 @@ impl Child {
         };
         let status = child.wait().map_err(|e| IoError::from_std(e, "wait"))?;
         *guard = None;
+        unregister_child(self.pid);
         Ok(ExitStatus {
             code: status.code(),
         })
@@ -251,6 +252,7 @@ impl Child {
                 match child.try_wait() {
                     Ok(Some(status)) => {
                         *guard = None;
+                        unregister_child(self.pid);
                         return Ok(Some(ExitStatus {
                             code: status.code(),
                         }));
@@ -562,6 +564,7 @@ impl Command {
         let pid = raw.id();
         let raw_stdout = raw.stdout.take();
         let raw_stderr = raw.stderr.take();
+        register_child(pid, self.process_group);
         let inner = Arc::new(Mutex::new(Some(raw)));
         let cancel_thread = self
             .ctx
@@ -647,6 +650,55 @@ fn apply_process_group(cmd: &mut process::Command, enabled: bool) {
 
 #[cfg(not(any(unix, windows)))]
 fn apply_process_group(_cmd: &mut process::Command, _enabled: bool) {}
+
+/// Children this process started and has not reaped, with whether each leads
+/// a process group of its own.
+///
+/// A host that ends while a child is still running - the REPL leaving its
+/// loop, a supervisor interrupted - would otherwise orphan it, and an
+/// orphan that is looping keeps consuming the machine with nobody left to
+/// stop it. Registration is what lets the host end what it started.
+static LIVE_CHILDREN: Mutex<Vec<(u32, bool)>> = Mutex::new(Vec::new());
+
+fn register_child(pid: u32, group: bool) {
+    LIVE_CHILDREN.lock().push((pid, group));
+}
+
+fn unregister_child(pid: u32) {
+    LIVE_CHILDREN.lock().retain(|(live, _)| *live != pid);
+}
+
+/// Ends every child this process started and has not reaped.
+///
+/// A child leading its own process group is signalled through the group, so
+/// what it started goes with it. Each is asked to stop and then killed, and
+/// a child that has already exited is skipped.
+pub fn terminate_live_children() {
+    let live: Vec<(u32, bool)> = std::mem::take(&mut *LIVE_CHILDREN.lock());
+    if live.is_empty() {
+        return;
+    }
+    for (pid, group) in &live {
+        let _ = send_signal(*pid as i32, Signal::Term, *group);
+    }
+    thread::sleep(Duration::from_millis(100));
+    for (pid, group) in &live {
+        let _ = send_signal(*pid as i32, Signal::Kill, *group);
+    }
+}
+
+/// Sends `sig` to the process group led by `pid`.
+///
+/// The caller started the leader in a group of its own, so one signal reaches
+/// every process it went on to start. A group that has already exited answers
+/// with an error rather than a fault.
+pub fn signal_process_group(pid: u32, sig: Signal) -> Result<(), IoError> {
+    send_signal(
+        i32::try_from(pid).map_err(|_| IoError::Other(format!("invalid pid {pid}")))?,
+        sig,
+        true,
+    )
+}
 
 #[cfg(unix)]
 #[allow(

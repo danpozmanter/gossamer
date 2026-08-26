@@ -26,9 +26,10 @@ fn capture_writer(text: &str) {
 fn run_program(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -47,9 +48,10 @@ fn run_program(source: &str) -> String {
 fn call_and_return(source: &str, entry: &str, args: Vec<Value>) -> Value {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -80,7 +82,7 @@ fn main() {
     map.insert("key", [1u8, 2u8])
     map.insert("key", [3u8, 4u8])
     let value = map.get("key").unwrap()
-    println(value[0], value[1], map.len())
+    println("{} {} {}", value[0], value[1], map.len())
 }
 "#;
     assert_eq!(run_program(source), "3 4 1\n");
@@ -107,7 +109,7 @@ fn main() {
         totals.push(point.x + point.y)
     }
     totals.sort()
-    println!("{:?}", totals)
+    println("{:?}", totals)
 }
 "#;
     assert_eq!(run_program(source), "#[3, 7]\n");
@@ -117,9 +119,9 @@ fn main() {
 fn padded_integer_concat_preserves_format_semantics() {
     let source = r#"
 fn main() {
-    println(format!("key-{:08}", 42i64))
-    println(format!("left-{:_<6}", 42i64))
-    println(format!("center-{:_^6}", 42i64))
+    println(format("key-{:08}", 42i64))
+    println(format("left-{:_<6}", 42i64))
+    println(format("center-{:_^6}", 42i64))
 }
 "#;
     assert_eq!(
@@ -217,7 +219,7 @@ fn tuple_destructuring_in_let_binds_components() {
     let source = r#"
 fn main() {
     let pair = (1i64, 2i64)
-    let (a, b) = pair
+    let a, b = pair
     println(a + b)
 }
 "#;
@@ -256,8 +258,8 @@ fn main() {
 }
 
 #[test]
-fn println_joins_multiple_arguments_with_spaces() {
-    let output = run_program("fn main() { println(\"a\", 1i64, true) }\n");
+fn println_renders_every_placeholder_in_the_template() {
+    let output = run_program("fn main() { println(\"{} {} {}\", \"a\", 1i64, true) }\n");
     assert_eq!(output, "a 1 true\n");
 }
 

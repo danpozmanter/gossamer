@@ -819,13 +819,13 @@ impl<'a> Lowerer<'a> {
         {
             return Ok(self.mask_to_int_width(&src_v, b));
         }
-        // Float → int is saturating at i64 width with no narrow
-        // mask, on every tier: the VM and Cranelift (`fcvt_to_
-        // sint_sat`) both produce `300.7 as u8 == 300`, `-1.5 as
-        // u8 == -1`, `1e20 as i64 == i64::MAX`. A plain `fptosi`
-        // is poison for out-of-range inputs, which `opt -O3`
-        // folds into garbage.
-        if let (NumericKind::Float(f), NumericKind::Int(_)) = (src_kind, dst_kind)
+        // Float → int saturates at the TARGET's range on every tier, which
+        // is what a reader of `300.7 as u8` expects: `255`, not the `300` a
+        // conversion that stopped at the runtime word would answer, and `0`
+        // for `-1.5 as u8`. A plain `fptosi` is poison for an out-of-range
+        // input, which `opt -O3` folds into garbage, so the conversion is the
+        // saturating intrinsic and the declared width clamps it.
+        if let (NumericKind::Float(f), NumericKind::Int(b)) = (src_kind, dst_kind)
             && dst_llvm == "i64"
         {
             let src_float = match f {
@@ -845,7 +845,7 @@ impl<'a> Lowerer<'a> {
             };
             let tmp = self.fresh();
             writeln!(self.out, "  {tmp} = call i64 @{intrinsic}({src_float} {v})").unwrap();
-            return Ok(tmp);
+            return Ok(self.clamp_to_int_range(&tmp, b));
         }
         if src_llvm == dst_llvm {
             return Ok(src_v);
@@ -1043,10 +1043,12 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    /// Lowers `__fmt_prec(value, prec)` as a call into
-    /// `gos_rt_f64_prec_to_str`. The value is widened to `f64` and
-    /// the precision to `i64` to match the runtime ABI; the returned
-    /// pointer becomes the destination's String value.
+    /// Lowers `__fmt_prec(value, prec)` as a call into the runtime helper
+    /// its argument's type names: a number is widened to `f64` and
+    /// rendered with `prec` fractional digits, and text is truncated to
+    /// its first `prec` scalars. The precision is widened to `i64` to
+    /// match the runtime ABI; the returned pointer becomes the
+    /// destination's String value.
     pub(crate) fn lower_fmt_prec_call(
         &mut self,
         args: &[Operand],
@@ -1058,17 +1060,34 @@ impl<'a> Lowerer<'a> {
                 "__fmt_prec expects exactly two arguments",
             ));
         }
-        declare_rt(&mut self.runtime_refs, "gos_rt_f64_prec_to_str");
+        let is_text = matches!(
+            self.tcx.kind_of(self.operand_ty(&args[0])),
+            gossamer_types::TyKind::String
+        );
+        let helper = if is_text {
+            "gos_rt_str_prec_to_str"
+        } else {
+            "gos_rt_f64_prec_to_str"
+        };
+        declare_rt(&mut self.runtime_refs, helper);
         let value_raw = self.lower_operand(&args[0])?;
-        let value = self.coerce_to_f64(&args[0], &value_raw);
         let prec_raw = self.lower_operand(&args[1])?;
         let prec = self.widen_to_i64(&args[1], &prec_raw);
         let result = self.fresh();
-        writeln!(
-            self.out,
-            "  {result} = call ptr @gos_rt_f64_prec_to_str(double {value}, i64 {prec})"
-        )
-        .unwrap();
+        if is_text {
+            writeln!(
+                self.out,
+                "  {result} = call ptr @gos_rt_str_prec_to_str(ptr {value_raw}, i64 {prec})"
+            )
+            .unwrap();
+        } else {
+            let value = self.coerce_to_f64(&args[0], &value_raw);
+            writeln!(
+                self.out,
+                "  {result} = call ptr @gos_rt_f64_prec_to_str(double {value}, i64 {prec})"
+            )
+            .unwrap();
+        }
         let dest_ty_mir = self.place_leaf_ty(destination);
         if !is_unit(self.tcx, dest_ty_mir) {
             let dest_ty = render_ty(self.tcx, dest_ty_mir);

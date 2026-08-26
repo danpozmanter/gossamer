@@ -24,5 +24,5 @@ fn main() {
         total += build(30)
         r += 1
     }
-    println!("total: {}", total)
+    println("total: {}", total)
 }

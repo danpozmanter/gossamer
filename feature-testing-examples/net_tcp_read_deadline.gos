@@ -13,27 +13,27 @@ use std::{net, time}
 fn main() {
     let listener = match net::TcpListener::bind("127.0.0.1:0") {
         Ok(l) => l
-        Err(e) => { println!("bind failed: {}", e)
+        Err(e) => { println("bind failed: {}", e)
             return }
     }
     let addr = match listener.local_addr() {
         Ok(a) => a
-        Err(e) => { println!("addr failed: {}", e)
+        Err(e) => { println("addr failed: {}", e)
             return }
     }
-    let stream = match net::TcpStream::connect(&addr) {
+    let stream = match net::TcpStream::connect(addr) {
         Ok(s) => s
-        Err(e) => { println!("connect failed: {}", e)
+        Err(e) => { println("connect failed: {}", e)
             return }
     }
     let _ = stream.set_read_timeout_ms(200)
     let started = time::now_ms()
     match stream.read(16) {
-        Ok(b) => println!("read {} bytes", b.len())
-        Err(e) => println!("{}", e)
+        Ok(b) => println("read {} bytes", b.len())
+        Err(e) => println("{}", e)
     }
     let waited = time::now_ms() - started
-    println!("bounded by the deadline: {}", waited < 5_000)
+    println("bounded by the deadline: {}", waited < 5_000)
     let _ = stream.close()
     let _ = listener.close()
 }

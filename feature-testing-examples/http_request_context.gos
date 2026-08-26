@@ -14,7 +14,7 @@ fn slow(r: http::Request) -> Result<http::Response, errors::Error> {
     let mut waited = 0
     while waited < 2000 {
         if ctx.is_cancelled() {
-            return Ok(http::Response::text(200, format!("cancelled after {}ms", waited)))
+            return Ok(http::Response::text(200, format("cancelled after {}ms", waited)))
         }
         time::sleep(50)
         waited += 50
@@ -26,11 +26,11 @@ fn main() -> Result<(), errors::Error> {
     let s = http::Server::new().request_timeout_ms(300)
     s.listen("127.0.0.1:0")?
     let addr = s.addr()
-    go run(s)
+    spawn(|| run(s))
     time::sleep(300)
-    match http::get(format!("http://{}/x", addr), Vec::from([])) {
-        Ok(r) => println!("{}", r.body)
-        Err(e) => println!("error: {}", e)
+    match http::get(format("http://{}/x", addr), Vec::from([])) {
+        Ok(r) => println("{}", r.body)
+        Err(e) => println("error: {}", e)
     }
     let _ = s.shutdown(1000)
     Ok(())

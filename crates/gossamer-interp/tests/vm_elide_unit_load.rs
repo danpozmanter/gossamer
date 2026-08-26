@@ -26,9 +26,10 @@ fn capture_writer(text: &str) {
 fn run_program(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -54,7 +55,7 @@ fn main() {
         sum = sum + i
         i = i + 1
     }
-    println!("{} {}", i, sum)
+    println("{} {}", i, sum)
 }
 "#;
     assert_eq!(run_program(src), "5 10\n");
@@ -69,7 +70,7 @@ fn main() {
         if i >= 4 { break i * 10 }
         i = i + 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#;
     assert_eq!(run_program(src), "40\n");
@@ -83,7 +84,7 @@ fn main() {
     for n in 1..=4 {
         acc += n
     }
-    println!("{}", acc)
+    println("{}", acc)
 }
 "#;
     assert_eq!(run_program(src), "10\n");
@@ -97,7 +98,7 @@ fn classify(n: i64) -> i64 {
     label
 }
 fn main() {
-    println!("{} {} {}", classify(-7), classify(0), classify(7))
+    println("{} {} {}", classify(-7), classify(0), classify(7))
 }
 "#;
     assert_eq!(run_program(src), "-1 0 1\n");
@@ -114,7 +115,7 @@ fn name(s: Shape) -> String {
     }
 }
 fn main() {
-    println!("{} {}", name(Shape::Circle(1.0)), name(Shape::Rect { w: 2.0, h: 3.0 }))
+    println("{} {}", name(Shape::Circle(1.0)), name(Shape::Rect { w: 2.0, h: 3.0 }))
 }
 "#;
     assert_eq!(run_program(src), "round boxy\n");
@@ -129,7 +130,7 @@ fn main() {
         let b = 4
         a * b
     }
-    println!("{}", v)
+    println("{}", v)
 }
 "#;
     assert_eq!(run_program(src), "12\n");
@@ -149,7 +150,7 @@ fn main() {
         }
         i = i + 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#;
     assert_eq!(run_program(src), "9\n");
@@ -165,7 +166,7 @@ fn main() {
         i = i + 1
         xs.push(i * i)
     }
-    println!("{} {}", xs.len(), xs[3])
+    println("{} {}", xs.len(), xs[3])
 }
 "#;
     assert_eq!(run_program(src), "4 16\n");
@@ -181,7 +182,7 @@ fn main() {
     {
         x = x + 41
     }
-    println!("{}", x)
+    println("{}", x)
 }
 "#;
     assert_eq!(run_program(src), "42\n");

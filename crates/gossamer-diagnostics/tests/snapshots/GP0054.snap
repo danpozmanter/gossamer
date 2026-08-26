@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0054]: A parameter was declared with a shared reference type. An argument - here
+--- framed ---
+error[GP0054]: A parameter was declared with a shared reference type. An argument
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -5,7 +5,7 @@
 
 fn main() {
     let s = "ab\0cd"
-    println!("len={}", s.len())
+    println("len={}", s.len())
 
     let mut nuls = 0
     let mut sum = 0
@@ -15,26 +15,26 @@ fn main() {
         }
         sum += b as i64
     }
-    println!("nuls={nuls} sum={sum}")
+    println("nuls={nuls} sum={sum}")
 
-    println!("chars={}", s.chars().count())
-    println!("eq_self={}", s == "ab\0cd")
-    println!("eq_prefix={}", s == "ab")
-    println!("contains={}", s.contains("\0c"))
-    println!("starts={}", s.starts_with("ab\0"))
-    println!("find={}", s.find("cd").unwrap_or(-1))
+    println("chars={}", s.chars().count())
+    println("eq_self={}", s == "ab\0cd")
+    println("eq_prefix={}", s == "ab")
+    println("contains={}", s.contains("\0c"))
+    println("starts={}", s.starts_with("ab\0"))
+    println("find={}", s.find("cd").unwrap_or(-1))
 
     let parts = "a\0b\0c".split("\0")
-    println!("parts={} mid={}", parts.len(), parts[1].len())
+    println("parts={} mid={}", parts.len(), parts[1].len())
 
-    println!("slice_len={}", s.substring(1, 4).len())
-    println!("upper_len={}", s.to_uppercase().len())
-    println!("fmt_len={}", format!("[{s}]").len())
+    println("slice_len={}", s.substring(1, 4).len())
+    println("upper_len={}", s.to_uppercase().len())
+    println("fmt_len={}", format("[{s}]").len())
 
     let held = #["x\0y", "\0z"]
     let mut total = 0
     for item in held {
         total += item.len()
     }
-    println!("held={total}")
+    println("held={total}")
 }

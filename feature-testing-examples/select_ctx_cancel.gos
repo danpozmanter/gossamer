@@ -25,22 +25,22 @@ fn main() {
 
     // Before any cancel: the done channels are open, so the recv arms
     // are not ready and the default fires.
-    println!("ctx before = {}", poll_done(ctx))
-    println!("child before = {}", poll_done(child))
+    println("ctx before = {}", poll_done(ctx))
+    println("child before = {}", poll_done(child))
 
     // Cancelling the parent closes its done channel AND every
     // descendant's, so both select arms become ready.
     ctx.cancel()
-    println!("ctx after = {}", poll_done(ctx))
-    println!("child after = {}", poll_done(child))
+    println("ctx after = {}", poll_done(ctx))
+    println("child after = {}", poll_done(child))
 
     // The boolean surface stays consistent with the selectable one.
-    println!("ctx is_cancelled = {}", ctx.is_cancelled())
-    println!("child is_cancelled = {}", child.is_cancelled())
+    println("ctx is_cancelled = {}", ctx.is_cancelled())
+    println("child is_cancelled = {}", child.is_cancelled())
 
     // A sibling under a never-cancelled root stays open.
     let other = context::Context::with_cancel(root)
-    println!("other = {}", poll_done(other))
+    println("other = {}", poll_done(other))
 }
 
 #[cfg(test)]
@@ -59,7 +59,7 @@ mod select_ctx_tests {
     fn open_context_done_arm_not_ready() {
         let root = context::Context::background()
         let ctx = context::Context::with_cancel(root)
-        let _ = testing::check_eq(&super::poll_done(ctx), &0, "open ctx done arm falls to default")
+        let _ = testing::check_eq(super::poll_done(ctx), 0, "open ctx done arm falls to default")
     }
 
     #[test]
@@ -67,7 +67,7 @@ mod select_ctx_tests {
         let root = context::Context::background()
         let ctx = context::Context::with_cancel(root)
         ctx.cancel()
-        let _ = testing::check_eq(&super::poll_done(ctx), &1, "cancelled ctx done arm is ready")
+        let _ = testing::check_eq(super::poll_done(ctx), 1, "cancelled ctx done arm is ready")
     }
 
     #[test]
@@ -76,6 +76,6 @@ mod select_ctx_tests {
         let parent = context::Context::with_cancel(root)
         let child = context::Context::with_cancel(parent)
         parent.cancel()
-        let _ = testing::check_eq(&ready(child), &1, "ancestor cancel makes descendant done arm ready")
+        let _ = testing::check_eq(ready(child), 1, "ancestor cancel makes descendant done arm ready")
     }
 }

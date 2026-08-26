@@ -3,15 +3,15 @@
 use std::iter
 
 fn main() {
-    let squares = 0..4 |> |v| iter::map(|i| i * i, v) |> iter::collect
-    println!("{:?}", squares)
-    println!("{}", 0..5 |> iter::sum)
-    let evens = 2..11 |> |v| iter::filter(|k| k % 2 == 0, v) |> iter::collect
-    println!("{:?} {}", evens, evens.last().unwrap())
+    let squares = 0..4 |> |v| iter::map(v, |i| i * i) |> iter::collect
+    println("{:?}", squares)
+    println("{}", 0..5 |> iter::sum)
+    let evens = 2..11 |> |v| iter::filter(v, |k| k % 2 == 0) |> iter::collect
+    println("{:?} {}", evens, evens.last().unwrap())
     let r = 1..=3 |> iter::collect
-    println!("{:?} {}", r, r.len())
+    println("{:?} {}", r, r.len())
     let n = 6
     let sieve: Vec<bool> = Vec::from([true; 6])
-    let live = 2..n |> |v| iter::filter(|k| sieve[k] && k != 4, v) |> iter::collect
-    println!("{:?}", live)
+    let live = 2..n |> |v| iter::filter(v, |k| sieve[k] && k != 4) |> iter::collect
+    println("{:?}", live)
 }

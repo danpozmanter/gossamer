@@ -4,49 +4,49 @@
 // insertion point. The search runs through a helper called per needle, so
 // the JIT tier compiles the search rather than only interpreting it.
 
-fn probe(sorted: &Vec<i64>, needle: i64) -> String {
+fn probe(sorted: Vec<i64>, needle: i64) -> String {
     match sorted.binary_search(needle) {
-        Ok(at) => format!("{} found at {}", needle, at)
-        Err(at) => format!("{} inserts at {}", needle, at)
+        Ok(at) => format("{} found at {}", needle, at)
+        Err(at) => format("{} inserts at {}", needle, at)
     }
 }
 
 fn main() {
     let mut a: Vec<i64> = #[1, 2, 3, 4, 5, 6]
     a.copy_within(0, 2, 3)
-    println!("overlapping forward {:?}", a)
+    println("overlapping forward {:?}", a)
     a.copy_within(3, 1, 2)
-    println!("overlapping back {:?}", a)
+    println("overlapping back {:?}", a)
 
     let mut b: Vec<i64> = #[9, 9, 9, 9, 9, 9]
-    b.copy_from_slice(&a)
-    println!("copied {:?}", b)
+    b.copy_from_slice(a)
+    println("copied {:?}", b)
 
     let mut grow: Vec<i64> = #[1, 2]
     grow.resize(5, 7)
-    println!("grown {:?}", grow)
+    println("grown {:?}", grow)
     grow.resize(2, 0)
-    println!("shrunk {:?}", grow)
+    println("shrunk {:?}", grow)
     grow.resize(2, 0)
-    println!("unchanged {:?}", grow)
+    println("unchanged {:?}", grow)
 
     let sorted: Vec<i64> = #[1, 3, 5, 7]
     for needle in #[5, 4, 0, 9, 1, 7] {
-        println!("{}", probe(&sorted, needle))
+        println("{}", probe(sorted, needle))
     }
 
     let mut bytes: Vec<u8> = #[1, 2, 3, 4]
     bytes.copy_within(2, 0, 2)
-    println!("bytes {:?}", bytes)
+    println("bytes {:?}", bytes)
     let mut page: Vec<u8> = #[]
     page.resize(4, 255)
-    println!("page {:?}", page)
+    println("page {:?}", page)
 
     let words: Vec<String> = #["ant", "bee", "cow"]
-    println!("word found {:?}", words.binary_search("bee"))
-    println!("word gap {:?}", words.binary_search("bat"))
+    println("word found {:?}", words.binary_search("bee"))
+    println("word gap {:?}", words.binary_search("bat"))
 
     let reals: Vec<f64> = #[1.5, 2.5, 3.5]
-    println!("real found {:?}", reals.binary_search(2.5))
-    println!("real gap {:?}", reals.binary_search(3.0))
+    println("real found {:?}", reals.binary_search(2.5))
+    println("real gap {:?}", reals.binary_search(3.0))
 }

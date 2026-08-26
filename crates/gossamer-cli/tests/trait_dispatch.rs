@@ -177,7 +177,7 @@ impl Counter {
 
 fn main() {
     let c = Counter { n: 7 }
-    println!("step={} doubled={}", c.step(), c.doubled())
+    println("step={} doubled={}", c.step(), c.doubled())
 }
 "#;
     assert_three_tier_parity("static_method_dispatch", src, "step=8 doubled=14");
@@ -199,18 +199,18 @@ struct Cat { name: String }
 struct Dog { name: String }
 
 impl Greet for Cat {
-    fn greet(&self) -> String { format!("meow {}", self.name) }
+    fn greet(&self) -> String { format("meow {}", self.name) }
 }
 
 impl Greet for Dog {
-    fn greet(&self) -> String { format!("woof {}", self.name) }
+    fn greet(&self) -> String { format("woof {}", self.name) }
 }
 
 fn main() {
     let c = Cat { name: "tabby" }
     let d = Dog { name: "rex" }
-    println!("{}", c.greet())
-    println!("{}", d.greet())
+    println("{}", c.greet())
+    println("{}", d.greet())
 }
 "#;
     assert_three_tier_parity("trait_concrete_dispatch", src, "meow tabby\nwoof rex");
@@ -236,13 +236,13 @@ trait Summarize {
 
 impl Summarize for Inventory {
     fn summary(&self) -> String {
-        format!("{} stock={} weight={}", self.name, self.stock, self.weight)
+        format("{} stock={} weight={}", self.name, self.stock, self.weight)
     }
 }
 
 fn main() {
     let inv = Inventory { name: "widgets", stock: 42, weight: 17 }
-    println!("{}", inv.summary())
+    println("{}", inv.summary())
 }
 "#;
     assert_three_tier_parity("trait_multi_field_self", src, "widgets stock=42 weight=17");
@@ -275,8 +275,8 @@ impl Shape for Circle {
 fn main() {
     let s = Square { side: 4.0 }
     let c = Circle { radius: 1.0 }
-    println!("{}={:.2}", s.name(), s.area())
-    println!("{}={:.5}", c.name(), c.area())
+    println("{}={:.2}", s.name(), s.area())
+    println("{}={:.5}", c.name(), c.area())
 }
 "#;
     assert_three_tier_parity(
@@ -302,7 +302,7 @@ impl Mix {
 
 fn main() {
     let m = Mix { x: 7, y: 4.0 }
-    println!("count={} ratio={:.1}", m.count(), m.ratio())
+    println("count={} ratio={:.1}", m.count(), m.ratio())
 }
 "#;
     assert_three_tier_parity("impl_mixed_returns", src, "count=107 ratio=10.0");

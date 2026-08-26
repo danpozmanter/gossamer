@@ -16,7 +16,7 @@ fn head_after_swap(n: i64, i: i64, j: i64) -> i64 {
 fn main() {
     let mut hot = 0
     for _ in 0..200 { hot += head_after_swap(3, 0, 2) }
-    println!("in-range={}", hot)
+    println("in-range={}", hot)
     let _ = head_after_swap(3, 0, 99)
-    println!("unreachable")
+    println("unreachable")
 }

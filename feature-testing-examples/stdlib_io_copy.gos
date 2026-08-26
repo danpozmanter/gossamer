@@ -6,5 +6,5 @@ use std::io
 
 fn main() {
     let n = io::Copy(io::stdout(), io::stdin())
-    println!("[copied {}]", n)
+    println("[copied {}]", n)
 }

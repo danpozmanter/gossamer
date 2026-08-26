@@ -242,12 +242,15 @@ fn materialize_temp(
 /// that asks [`CompiledPolicy::access`] about its own
 /// temp directory - otherwise sees two directories where there is one.
 fn resolved(directory: &std::path::Path) -> Result<std::path::PathBuf, SandboxError> {
-    directory.canonicalize().map_err(|error| {
-        SandboxError::Policy(format!(
-            "the temp directory {} could not be resolved: {error}",
-            directory.display()
-        ))
-    })
+    directory
+        .canonicalize()
+        .map(|path| policy::simplified(&path))
+        .map_err(|error| {
+            SandboxError::Policy(format!(
+                "the temp directory {} could not be resolved: {error}",
+                directory.display()
+            ))
+        })
 }
 
 /// Grants `directory` read-write, names it in every spelling a

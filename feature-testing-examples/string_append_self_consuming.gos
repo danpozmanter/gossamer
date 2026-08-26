@@ -23,7 +23,7 @@ fn interpolated_appends(n: i64) -> i64 {
     let mut s = ""
     let mut i = 0
     while i < n {
-        s += format!("{}-", i % 10)
+        s += format("{}-", i % 10)
         i += 1
     }
     s.len()
@@ -61,9 +61,9 @@ fn unicode_appends(n: i64) -> i64 {
 }
 
 fn main() {
-    println!("literal {}", literal_appends(4000))
-    println!("interpolated {}", interpolated_appends(4000))
-    println!("value {}", value_appends(4000))
-    println!("char {}", char_appends(4000))
-    println!("unicode {}", unicode_appends(500))
+    println("literal {}", literal_appends(4000))
+    println("interpolated {}", interpolated_appends(4000))
+    println("value {}", value_appends(4000))
+    println("char {}", char_appends(4000))
+    println("unicode {}", unicode_appends(500))
 }

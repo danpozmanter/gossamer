@@ -83,7 +83,7 @@ scope become the body of an implicit `fn main()`; items declared
 alongside them are hoisted out as usual:
 
 ```gossamer
-println!("Hello World")
+println("Hello World")
 ```
 
 A `?` at the top level makes the implicit main return
@@ -105,14 +105,14 @@ struct Cell<T>    { value: T }
 fn main() {
     // Parameters inferred: Pair<i64, String>
     let p = Pair { fst: 42, snd: "answer" }
-    println!("{} = {}", p.fst, p.snd)   // 42 = answer
+    println("{} = {}", p.fst, p.snd)   // 42 = answer
 
     // Same struct, different instantiation: Pair<i64, i64>
     let nums = Pair { fst: 10, snd: 32 }
-    println!("{}", nums.fst + nums.snd)  // 42
+    println("{}", nums.fst + nums.snd)  // 42
 
     let c = Cell { value: 99 }
-    println!("{}", c.value)              // 99
+    println("{}", c.value)              // 99
 }
 ```
 
@@ -162,14 +162,17 @@ temporary:
 ```gossamer
 let mut a = 1
 let mut b = 2
-(a, b) = (b, a)
-(p.x, xs[1]) = (5, 6)
-(_, kept) = (99, 42)
+a, b = b, a
+p.x, xs[1] = 5, 6
+_, kept = 99, 42
+x, y += 2, 3
 ```
 
 Each target must be a writable place - a binding, a field, an index, a tuple
 position, or a dereference - or `_` to discard the element. Targets nest, and
-only plain `=` destructures.
+a compound operator pairs element-wise. Parentheses group a pattern only
+where one sits beside others, so a parenthesised target list reports
+`GP0042` with the rewrite.
 
 ## Forward pipe (`|>`)
 
@@ -208,25 +211,23 @@ works the same way: `x |> |v| recv.m(a, v)`.
 
 ### Why the slot is named
 
-Gossamer's free functions do not share one argument convention.
-`iter::`, `option::`, and `result::` take their data last; `strings::`,
-`bytes::`, `path::`, `sort::`, and `fs::` take it first, mirroring the
-method receiver. An operator that assumed one convention would silently
-mis-fill the other, and those signatures are homogeneous enough that the
-type checker could not catch it - `strings::split(String, String)`
-accepts its arguments either way round.
-
-Naming the slot removes the assumption, so both conventions read alike:
+Every std free function takes its data first, so a step could in
+principle assume the leading slot. It does not: a step may pipe into any
+callee - a function this program declares, a package's, or a method on an
+external receiver - and none of those owe the operator a convention.
+Naming the slot means the reader sees which argument the value fills
+without knowing anything about the callee:
 
 ```gossamer
 use std::{iter, strings}
 
-let parts = "a,b,c" |> |v| strings::split(v, ",")     // data first
-let doubled = #[1, 2] |> |value| iter::map(|v| v * 2, value)  // data last
+let parts = "a,b,c" |> |v| strings::split(v, ",")
+let doubled = #[1, 2] |> |value| iter::map(value, |v| v * 2)
+let bounded = 3 |> |v| clamp(0, 10, v)
 ```
 
-An argument-taking step that is not a closure reports `GP0041`, and a
-formatting macro written as a step reports `GP0025`. `$`, which spelled
+An argument-taking step that is not a closure reports `GP0041`, whatever
+the callee is - a formatting call included. `$`, which spelled
 the slot in earlier releases, is no longer part of the language and
 reports `GP0027` wherever it appears. `gos check --fix` rewrites an
 argument-taking step into the closure it stands for, putting the
@@ -241,7 +242,7 @@ A std free function named where a value is expected is the closure that
 calls it, so `#[1.0, -2.0].map(math::abs)` means
 `map(|v| math::abs(v))`. A std item with no fixed parameter list has no
 such closure and reports `GT0015`; a macro is not a function at all, so
-`fmt::format` reports `GR0018` and is written `format!(..)` inside a
+`fmt::format` reports `GR0018` and is written `format(..)` inside a
 closure of your own.
 
 Everything else is a written closure - a method call, a field read, an
@@ -382,7 +383,7 @@ Range binds looser than arithmetic and tighter than `|>`, so
 use std::{fs, io}
 
 fn load(path: String) -> Result<String, io::Error> {
-    let raw = fs::read_to_string(&path)?
+    let raw = fs::read_to_string(path)?
     Ok(raw)
 }
 ```
@@ -395,7 +396,7 @@ fn load(path: String) -> Result<String, io::Error> {
 ```gossamer
 arena {
     let tree = build_tree(16)
-    total += check(&tree)
+    total += check(tree)
 }
 ```
 
@@ -417,19 +418,20 @@ fn gather() -> Result<(), errors::Error> {
     cohort {
         let a = spawn(|| fetch("one"))
         let b = spawn(|| fetch("two"))
-        println!("{} {}", a.join()??, b.join()??)
+        println("{} {}", a.join()??, b.join()??)
     }
 }
 
-// Detached: fire-and-forget, for work that should outlive the block.
-let (tx, rx) = channel::<i64>()
-go fn() { tx.send(42) }()
+// A spawn outside any `cohort { }` block attaches to the implicit root
+// cohort `main` runs inside; there is no detached form.
+let tx, rx = channel::<i64>()
+spawn(|| { tx.send(42) })
 let n = rx.recv()
 
 select {
     a = rx_a.recv() => handle_a(a),
     b = rx_b.recv() => handle_b(b),
-    _ = time::after(5000) => timeout(),
+    _ = time::after(Duration::from_millis(5000)).recv() => timeout(),
 }
 ```
 
@@ -443,7 +445,7 @@ reported at exit rather than lost. Settings ride the header:
 `cohort(context: Context::Isolated)` for FFI or CPU-bound children that
 need a thread of their own. See [cohorts](language/cohort.md).
 
-`go expr` spawns a goroutine - a real stackful coroutine on the
+`spawn(|| expr)` spawns a goroutine - a real stackful coroutine on the
 M:N scheduler. Blocking primitives (channel ops, mutex contention,
 `time::sleep`, network reads, filesystem syscalls) park the
 goroutine, freeing the worker thread to run other goroutines.
@@ -480,8 +482,8 @@ fn add_one(y: i64) -> i64 { y + 1 }
 fn main() {
     let scale = 10
     let scaled = |y: i64| scale * y    // captures `scale`
-    println!("{}", apply(scaled, 5))   // 50
-    println!("{}", apply(add_one, 41)) // 42 - bare fn coerces
+    println("{}", apply(scaled, 5))   // 50
+    println("{}", apply(add_one, 41)) // 42 - bare fn coerces
 }
 ```
 
@@ -503,7 +505,7 @@ fn bench_hot_path() { ... }
 fn scratch() { let x = 1 }
 
 #[cfg(test)]
-mod point_tests { ... }
+mod tests { ... }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct Point { x: i64, y: i64 }
@@ -522,19 +524,21 @@ use std::fmt::Display
 struct Tagged { id: i64 }
 
 impl Display for Tagged {
-    fn to_string(&self) -> String { format!("#{}", self.id) }
+    fn fmt(&self) -> String { format("#{}", self.id) }
 }
 ```
 
-`Tagged` then renders as `#1` through `{}`, `format!`, `to_string()`,
+`Tagged` then renders as `#1` through `{}`, `format`, `to_string()`,
 `join(sep)`, and wherever one sits inside a `Vec`, `Map`, tuple, `Option`, or
 struct field. `impl Debug for T { fn fmt(&self) -> String }` is the same
 override for `{:?}`.
 
-`Display` and `Debug` are distinct contracts: `{}` reaches only `to_string`
-and `{:?}` only `fmt`. A type implementing one keeps the synthesized
-rendering on the other channel, so `println!("{:?}", Tagged { id: 1 })`
-shows `Tagged { id: 1 }`.
+`Display` and `Debug` are distinct contracts. Each declares one method that
+answers a `String`, and both are written `fn fmt`; the `impl` header says
+which contract a block supplies. A type implementing one keeps the
+synthesized rendering on the other channel, so
+`println("{:?}", Tagged { id: 1 })` shows `Tagged { id: 1 }`. Declaring the
+rendering as `fn to_string` inside an `impl Display` block reports `GP0053`.
 
 An `impl Trait for Type` block defines the items the trait declares and
 nothing else. A `fn` outside that contract reports `GT0072`: it would
@@ -629,8 +633,8 @@ Rust-style format string with `{}` placeholders, plus named captures
 ```gossamer
 let name = "jane"
 let age = 30
-println!("hello, {name}! you are {age} years old.")
-let greeting = format!("welcome, {}", name)
+println("hello, {name}! you are {age} years old.")
+let greeting = format("welcome, {}", name)
 ```
 
 A named capture may walk a field path - `{account.balance}`, tuple
@@ -639,12 +643,12 @@ path (`{account.balance:>8}`).
 
 | Macro | Effect |
 |-------|--------|
-| `format!("…", a, b)` | Returns a `String`. |
-| `println!("…", a, b)` | Writes to stdout + newline. |
-| `print!("…", a, b)` | Writes to stdout, no newline. |
-| `eprintln!("…", a, b)` | Writes to stderr + newline. |
-| `eprint!("…", a, b)` | Writes to stderr, no newline. |
-| `panic!("…", a, b)` | Unwinds with the rendered message. |
+| `format("…", a, b)` | Returns a `String`. |
+| `println("…", a, b)` | Writes to stdout + newline. |
+| `print("…", a, b)` | Writes to stdout, no newline. |
+| `eprintln("…", a, b)` | Writes to stderr + newline. |
+| `eprint("…", a, b)` | Writes to stderr, no newline. |
+| `panic("…", a, b)` | Unwinds with the rendered message. |
 
 Alongside the format macros, a fixed set of desugar macros -
 `matches!`, `todo!`, `unimplemented!`, `unreachable!`, `dbg!` - and the

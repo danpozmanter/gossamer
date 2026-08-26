@@ -3,13 +3,13 @@ use std::env
 fn main() {
     let args = env::args()
     let n = args.len() as i64
-    println!("argc = {}", n)
+    println("argc = {}", n)
     let mut i: i64 = 0
     while i < n {
         let a = args[i].clone()
         let matches_one = a == "one"
         let matches_two = a == "two"
-        println!("arg[{}] len={} matches_one={} matches_two={}", i, a.len(), matches_one, matches_two)
+        println("arg[{}] len={} matches_one={} matches_two={}", i, a.len(), matches_one, matches_two)
         i += 1
     }
 }

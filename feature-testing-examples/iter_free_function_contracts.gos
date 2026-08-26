@@ -8,19 +8,19 @@ use std::iter
 
 fn folded(n: i64) -> i64 {
     let values = iter::collect(iter::range(1, n))
-    iter::fold(0, |acc: i64, x: i64| acc + x, values)
+    iter::fold(values, 0, |acc: i64, x: i64| acc + x)
 }
 
 fn scanned(n: i64) -> String {
     let values = iter::collect(iter::range(1, n))
-    let running = iter::scan(0, |acc: i64, x: i64| acc + x, values)
+    let running = iter::scan(values, 0, |acc: i64, x: i64| acc + x)
     running.join(",")
 }
 
 fn split_pairs() -> String {
     let pairs = #[(1, "one"), (2, "two"), (3, "three")]
-    let (numbers, names) = iter::unzip(pairs)
-    format!("{} {} {}", numbers.len(), names.join("-"), numbers[2])
+    let numbers, names = iter::unzip(pairs)
+    format("{} {} {}", numbers.len(), names.join("-"), numbers[2])
 }
 
 fn flattened() -> i64 {
@@ -37,13 +37,13 @@ fn empty_is_the_expected_element() -> i64 {
 fn main() {
     let mut total = 0
     for _ in 0..200 { total = folded(10) }
-    println!("fold {}", total)
+    println("fold {}", total)
 
     let mut text = ""
     for _ in 0..200 { text = scanned(6) }
-    println!("scan {}", text)
+    println("scan {}", text)
 
-    println!("unzip {}", split_pairs())
-    println!("flatten {}", flattened())
-    println!("empty {}", empty_is_the_expected_element())
+    println("unzip {}", split_pairs())
+    println("flatten {}", flattened())
+    println("empty {}", empty_is_the_expected_element())
 }

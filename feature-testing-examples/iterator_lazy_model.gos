@@ -19,17 +19,17 @@ fn windows(n: i64) -> String {
     let head = (0..n).take_while(|x| x < 4).count()
     let tail = (0..n).skip_while(|x| x < 4).count()
     let paired = (0..n).enumerate().count()
-    format!("{} {} {}", head, tail, paired)
+    format("{} {} {}", head, tail, paired)
 }
 
 fn strided(n: i64) -> String {
     let stepped = (0..n).step_by(3).collect().join(",")
     let middle = (0..n).skip(1).take(3).collect().join(",")
-    format!("{} {}", stepped, middle)
+    format("{} {}", stepped, middle)
 }
 
 fn terminals(n: i64) -> String {
-    format!("{} {} {}", (0..n).sum(), (0..n).count(), (0..n).any(|x| x > n - 2))
+    format("{} {} {}", (0..n).sum(), (0..n).count(), (0..n).any(|x| x > n - 2))
 }
 
 // Reversing a bounded range is position arithmetic, so only the values a
@@ -44,7 +44,7 @@ fn reversed_inclusive(n: i64) -> String {
 
 fn materialised(n: i64) -> String {
     let v = (0..n).map(|x| x + 1).collect()
-    format!("{} {}", v.len(), v.join("-"))
+    format("{} {}", v.len(), v.join("-"))
 }
 
 fn main() {
@@ -52,40 +52,40 @@ fn main() {
     for _ in 0..200 {
         last = marks(9)
     }
-    println!("[{}]", last)
+    println("[{}]", last)
 
     for _ in 0..200 {
         last = chained(20)
     }
-    println!("{}", last)
+    println("{}", last)
 
     for _ in 0..200 {
         last = windows(9)
     }
-    println!("{}", last)
+    println("{}", last)
 
     for _ in 0..200 {
         last = strided(9)
     }
-    println!("{}", last)
+    println("{}", last)
 
     for _ in 0..200 {
         last = terminals(9)
     }
-    println!("{}", last)
+    println("{}", last)
 
     for _ in 0..200 {
         last = reversed(1000000)
     }
-    println!("{}", last)
+    println("{}", last)
 
     for _ in 0..200 {
         last = reversed_inclusive(4)
     }
-    println!("{}", last)
+    println("{}", last)
 
     for _ in 0..200 {
         last = materialised(5)
     }
-    println!("{}", last)
+    println("{}", last)
 }

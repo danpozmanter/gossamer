@@ -173,8 +173,8 @@ or bring them in with `use`.
 use widget::greet
 
 fn main() {
-    println!("{}", greet(&"world"))
-    println!("{}", sub::ping())
+    println("{}", greet(&"world"))
+    println("{}", sub::ping())
 }
 ```
 
@@ -261,7 +261,7 @@ mod bindings {
 
 ```gossamer
 use native
-fn main() { println!("{}", native::shout("hello")) }
+fn main() { println("{}", native::shout("hello")) }
 ```
 
 This is the only FFI surface - a source-level `extern "C"` item form

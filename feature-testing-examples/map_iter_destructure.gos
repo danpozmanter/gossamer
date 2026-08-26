@@ -8,9 +8,9 @@ use std::collections::Map
 
 fn main() {
     let mut m: Map<String, i64> = Map::new()
-    m.insert(format!("a"), 1)
-    m.insert(format!("b"), 2)
-    m.insert(format!("c"), 3)
+    m.insert(format("a"), 1)
+    m.insert(format("b"), 2)
+    m.insert(format("c"), 3)
 
     let mut both = 0
     for (k, v) in m.iter() { both += k.len() + v }
@@ -21,5 +21,5 @@ fn main() {
     let mut klen = 0
     for (k, _) in m.iter() { klen += k.len() }
 
-    println!("both={} vals={} klen={}", both, vals, klen)
+    println("both={} vals={} klen={}", both, vals, klen)
 }

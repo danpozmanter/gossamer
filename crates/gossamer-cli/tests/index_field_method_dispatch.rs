@@ -205,7 +205,7 @@ fn build() -> Result<Bag, errors::Error> {
 fn main() {
     let r = build().unwrap_or(Bag { content: "", count: 0, items: [].to_vec() })
     let k: i64 = 0
-    println!("len={}", r.items[k].len())
+    println("len={}", r.items[k].len())
 }
 "#;
     assert_three_tier_stdout("idx_field_str_len_unwrap_or", src, "len=11");
@@ -229,7 +229,7 @@ fn build() -> Result<Bag, errors::Error> {
 fn run() -> Result<(), errors::Error> {
     let r = build()?
     let k: i64 = 0
-    println!("len={}", r.items[k].len())
+    println("len={}", r.items[k].len())
     Ok(())
 }
 
@@ -269,7 +269,7 @@ fn main() {
     ])
     let index = 1
     amplifiers[index].run(41)
-    println!("halted={} output={}", amplifiers[index].is_halted(), amplifiers[index].output)
+    println("halted={} output={}", amplifiers[index].is_halted(), amplifiers[index].output)
 }
 "#;
     assert_three_tier_stdout(
@@ -313,9 +313,9 @@ fn main() {
     for i in 0..3 {
         Amp::run(&mut amps[i], i + 10)
     }
-    println!("all={}", amps.iter().all(|amp| Amp::is_halted(amp)))
-    println!("outputs={} {} {}", amps[0].output, amps[1].output, amps[2].output)
-    println!("memory={} {}", amps[0].memory[0], amps[1].memory[0])
+    println("all={}", amps.iter().all(|amp| Amp::is_halted(amp)))
+    println("outputs={} {} {}", amps[0].output, amps[1].output, amps[2].output)
+    println("memory={} {}", amps[0].memory[0], amps[1].memory[0])
 }
 "#;
     assert_three_tier_stdout(
@@ -355,9 +355,9 @@ fn main() {
     for i in 0..3 {
         Amp::run(&mut amps[i], i + 10)
     }
-    println!("all={}", amps.iter().all(|amp| amp.is_halted()))
-    println!("outputs={} {} {}", amps[0].output, amps[1].output, amps[2].output)
-    println!("memory={} {}", amps[0].memory[0], amps[1].memory[0])
+    println("all={}", amps.iter().all(|amp| amp.is_halted()))
+    println("outputs={} {} {}", amps[0].output, amps[1].output, amps[2].output)
+    println("memory={} {}", amps[0].memory[0], amps[1].memory[0])
 }
 "#;
     assert_three_tier_stdout(

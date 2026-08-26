@@ -46,7 +46,7 @@ fn gos(args: &[&str], file: &PathBuf) -> (String, bool) {
 }
 
 /// A well-formed source with no registered migration applying to it.
-const UNTOUCHED: &str = "use std::iter\n\nfn dbl(n: i64) -> i64 { n * 2 }\n\nfn main() {\n    let xs = #[1, 2, 3]\n    println!(\"{}\", iter::sum(iter::map(dbl, xs)))\n}\n";
+const UNTOUCHED: &str = "use std::iter\n\nfn dbl(n: i64) -> i64 { n * 2 }\n\nfn main() {\n    let xs = #[1, 2, 3]\n    println(\"{}\", iter::sum(iter::map(xs, dbl)))\n}\n";
 
 #[test]
 fn fix_leaves_a_source_no_migration_applies_to() {

@@ -12,9 +12,9 @@ fn main() {
     v.push(1)
     v.push(2)
     v.sort_by_key(|n| n)
-    println!("{:?}", v)
+    println("{:?}", v)
     v.sort_by_key_desc(|n| n)
-    println!("{:?}", v)
+    println("{:?}", v)
 
     let mut rows: Vec<Row> = Vec::from([])
     rows.push(Row { count: 2, name: "b" })
@@ -23,6 +23,6 @@ fn main() {
     rows.push(Row { count: 1, name: "y" })
     rows.sort_by_key(|r| (Reverse(r.count), r.name))
     for r in rows {
-        println!("{} {}", r.count, r.name)
+        println("{} {}", r.count, r.name)
     }
 }

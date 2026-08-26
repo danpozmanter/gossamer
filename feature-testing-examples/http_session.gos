@@ -14,16 +14,16 @@ fn main() {
     let payload = "{\"user\":\"ada\",\"id\":7}"
 
     let cookie = http::session::sign(payload, key)
-    println!("cookie: {}", cookie)
+    println("cookie: {}", cookie)
 
     match http::session::verify(cookie, key) {
-        Ok(data) => println!("verify: {}", data)
-        Err(_) => println!("verify: err")
+        Ok(data) => println("verify: {}", data)
+        Err(_) => println("verify: err")
     }
 
     let wrong: Vec<u8> = Vec::from([9, 9, 9, 9, 9, 9, 9, 9])
     match http::session::verify(cookie, wrong) {
-        Ok(_) => println!("wrongkey: ok")
-        Err(_) => println!("wrongkey: err")
+        Ok(_) => println("wrongkey: ok")
+        Err(_) => println("wrongkey: err")
     }
 }

@@ -86,20 +86,20 @@ const PROBE: &str = r##"
 use std::pprof
 
 fn main() {
-    println!("goroutine: {}", pprof::goroutine_profile().starts_with("# pprof text format"))
-    println!("cpu: {}", pprof::cpu_profile(50).starts_with("# pprof text format"))
-    println!("heap: {}", pprof::heap_profile(50).starts_with("# pprof text format"))
-    println!("mutex: {}", pprof::mutex_profile().starts_with("# pprof text format"))
-    println!("block: {}", pprof::block_profile().starts_with("# pprof text format"))
+    println("goroutine: {}", pprof::goroutine_profile().starts_with("# pprof text format"))
+    println("cpu: {}", pprof::cpu_profile(50).starts_with("# pprof text format"))
+    println("heap: {}", pprof::heap_profile(50).starts_with("# pprof text format"))
+    println("mutex: {}", pprof::mutex_profile().starts_with("# pprof text format"))
+    println("block: {}", pprof::block_profile().starts_with("# pprof text format"))
     let trace = pprof::execution_trace(0)
-    println!("trace: {}", trace.starts_with("{\"traceEvents\":[") && trace.ends_with("]}"))
+    println("trace: {}", trace.starts_with("{\"traceEvents\":[") && trace.ends_with("]}"))
     match pprof::route("/debug/pprof/goroutine", "") {
-        Some(body) => println!("routed: {}", body.starts_with("# pprof text format"))
-        None => println!("routed: missing")
+        Some(body) => println("routed: {}", body.starts_with("# pprof text format"))
+        None => println("routed: missing")
     }
     match pprof::route("/debug/pprof/nope", "") {
-        Some(_) => println!("unknown: routed")
-        None => println!("unknown: none")
+        Some(_) => println("unknown: routed")
+        None => println("unknown: none")
     }
 }
 "##;
@@ -204,8 +204,8 @@ fn profiler(tx: Sender<String>) {
 }
 
 fn main() {
-    let (tx, rx) = channel()
-    go profiler(tx)
+    let tx, rx = channel()
+    spawn(|| profiler(tx))
     let _ = churn(200000)
     while let Some(p) = rx.recv() {
         let mut frames = 0
@@ -220,8 +220,8 @@ fn main() {
                 depth = 0
             }
         }
-        println!("frames={}", frames)
-        println!("deepest={}", deepest)
+        println("frames={}", frames)
+        println("deepest={}", deepest)
     }
 }
 "#;

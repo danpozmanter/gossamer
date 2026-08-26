@@ -19,14 +19,14 @@ impl Bounded for Gauge {
     }
 }
 
-fn headroom<T: Bounded>(gauge: &T) -> i64 {
+fn headroom<T: Bounded>(gauge: T) -> i64 {
     T::MAX - gauge.width() + T::STEP
 }
 
 fn main() {
     let gauge = Gauge { span: 30 }
-    println!("{}", Gauge::MAX)
-    println!("{}", Gauge::STEP)
-    println!("{}", gauge.width())
-    println!("{}", headroom(&gauge))
+    println("{}", Gauge::MAX)
+    println("{}", Gauge::STEP)
+    println("{}", gauge.width())
+    println("{}", headroom(gauge))
 }

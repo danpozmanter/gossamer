@@ -10,17 +10,17 @@ fn main() {
     let n = 10
     let sieve: Vec<bool> = Vec::from([true; 10])
     let f = |k: i64| sieve[k]
-    println!("{} {} {} {}", f(0), f(3), f(7), f(9))
-    println!("{} {}", apply(f, 2), apply(f, 8))
+    println("{} {} {} {}", f(0), f(3), f(7), f(9))
+    println("{} {}", apply(f, 2), apply(f, 8))
 
     let marks: Vec<i64> = Vec::from([65; 10])
     let g = |k: i64| marks[k]
-    println!("{} {}", g(3), g(9))
+    println("{} {}", g(3), g(9))
 
-    let odd_live = 2..n |> |v| iter::filter(|k| sieve[k] && k % 2 == 1, v) |> iter::collect
-    println!("{:?}", odd_live)
+    let odd_live = 2..n |> |v| iter::filter(v, |k| sieve[k] && k % 2 == 1) |> iter::collect
+    println("{:?}", odd_live)
 
     let names = #["ada", "grace"]
     let h = |i: i64| names[i]
-    println!("{} {} {}", h(0), h(1), h(0))
+    println("{} {} {}", h(0), h(1), h(0))
 }

@@ -122,7 +122,7 @@ fn check_execute_and_timeout_work_end_to_end() {
 
     // A clean program runs and its stdout comes back.
     let ok = dir.join("ok.gos");
-    std::fs::write(&ok, "fn main() { println!(\"mcp says {}\", 21 * 2) }\n").unwrap();
+    std::fs::write(&ok, "fn main() { println(\"mcp says {}\", 21 * 2) }\n").unwrap();
     let text = client.call_tool("execute", &format!("{{\"file\":\"{}\"}}", json_path(&ok)));
     assert!(text.contains("exit code: 0"), "execute output was: {text}");
     assert!(text.contains("mcp says 42"), "execute output was: {text}");
@@ -166,7 +166,7 @@ fn an_executed_program_runs_under_a_policy() {
     let mut client = McpClient::start();
     let enforcing = client.call_tool(
         "execute",
-        "{\"source\":\"use std::sandbox\\nfn main() { println!(\\\"{}\\\", sandbox::max_level()) }\\n\"}",
+        "{\"source\":\"use std::sandbox\\nfn main() { println(\\\"{}\\\", sandbox::max_level()) }\\n\"}",
     );
     if enforcing.contains("none") {
         return;
@@ -175,7 +175,7 @@ fn an_executed_program_runs_under_a_policy() {
     let outside = std::env::temp_dir().join("gos-mcp-policy-escape.txt");
     let _ = std::fs::remove_file(&outside);
     let source = format!(
-        "{{\"source\":\"use std::fs\\nfn main() {{ match fs::write(&\\\"{}\\\", &\\\"escaped\\\".as_bytes()) {{ Ok(_) => println!(\\\"WROTE\\\"), Err(e) => println!(\\\"denied\\\") }} }}\\n\"}}",
+        "{{\"source\":\"use std::fs\\nfn main() {{ match fs::write(\\\"{}\\\", \\\"escaped\\\".as_bytes()) {{ Ok(_) => println(\\\"WROTE\\\"), Err(e) => println(\\\"denied\\\") }} }}\\n\"}}",
         json_path(&outside)
     );
     let text = client.call_tool("execute", &source);
@@ -191,7 +191,7 @@ fn an_executed_program_runs_under_a_policy() {
 
     let text = client.call_tool(
         "execute",
-        "{\"source\":\"fn main() { println!(\\\"still runs {}\\\", 6 * 7) }\\n\"}",
+        "{\"source\":\"fn main() { println(\\\"still runs {}\\\", 6 * 7) }\\n\"}",
     );
     assert!(
         text.contains("still runs 42"),
@@ -222,14 +222,14 @@ fn inline_source_drives_check_execute_and_lint() {
 
     let text = client.call_tool(
         "execute",
-        "{\"source\":\"fn main() { println!(\\\"inline {}\\\", 6 * 7) }\\n\"}",
+        "{\"source\":\"fn main() { println(\\\"inline {}\\\", 6 * 7) }\\n\"}",
     );
     assert!(text.contains("exit code: 0"), "execute output was: {text}");
     assert!(text.contains("inline 42"), "execute output was: {text}");
 
     let text = client.call_tool(
         "lint",
-        "{\"source\":\"fn main() { let unused = 1\\n    println!(\\\"hi\\\") }\\n\"}",
+        "{\"source\":\"fn main() { let unused = 1\\n    println(\\\"hi\\\") }\\n\"}",
     );
     assert!(text.contains("unused_variable"), "lint output was: {text}");
 

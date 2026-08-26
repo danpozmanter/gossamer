@@ -33,5 +33,5 @@ fn main() {
     let t = time::Instant::now()
     assert(inst_ms(t) >= 0, "param elapsed_ms non-negative")
 
-    println!("param dispatch ok")
+    println("param dispatch ok")
 }

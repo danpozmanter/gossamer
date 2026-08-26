@@ -17,8 +17,8 @@ struct Counts {
 
 fn main() -> Result<(), errors::Error> {
     let text = "{\"small\":255,\"medium\":-1,\"big\":9000000000}"
-    let c = from_json::<Counts>(&text)?
-    println!("small={} medium={} big={}", c.small, c.medium, c.big)
+    let c = from_json::<Counts>(text)?
+    println("small={} medium={} big={}", c.small, c.medium, c.big)
     Ok(())
 }
 "#;
@@ -64,12 +64,12 @@ use std::fs
 
 fn main() -> Result<(), errors::Error> {{
     let payload: Vec<u8> = [72, 105, 0, 65, 66, 67, 10].to_vec()
-    fs::write(&"{tmp}", &payload)?
-    let back = fs::read(&"{tmp}")?
-    println!("len={{}}", back.len())
-    println!("byte2={{}}", back[2])
-    println!("byte3={{}}", back[3])
-    println!("byte6={{}}", back[6])
+    fs::write("{tmp}", payload)?
+    let back = fs::read("{tmp}")?
+    println("len={{}}", back.len())
+    println("byte2={{}}", back[2])
+    println("byte3={{}}", back[3])
+    println("byte6={{}}", back[6])
     Ok(())
 }}
 "#,
@@ -118,12 +118,12 @@ struct AppCfg {
 
 fn main() -> Result<(), errors::Error> {
     let yaml = "name: gossamer\nport: 8080\ndebug: true\n"
-    let cfg = from_yaml::<AppCfg>(&yaml)?
-    println!("{} {} {}", cfg.name, cfg.port, cfg.debug)
+    let cfg = from_yaml::<AppCfg>(yaml)?
+    println("{} {} {}", cfg.name, cfg.port, cfg.debug)
 
     let back = to_yaml::<AppCfg>(cfg)?
-    let again = from_yaml::<AppCfg>(&back)?
-    println!("{} {}", again.name, again.port)
+    let again = from_yaml::<AppCfg>(back)?
+    println("{} {}", again.name, again.port)
     Ok(())
 }
 "#;
@@ -168,18 +168,18 @@ fn main() {
     let mut m = sync::Map::new()
     sync::Map::insert(m, "alpha", "1")
     sync::Map::insert(m, "beta", "2")
-    println!("len={}", sync::Map::len(m))
+    println("len={}", sync::Map::len(m))
     match sync::Map::get(m, "beta") {
-        Some(v) => println!("beta={}", v),
-        None => println!("beta missing"),
+        Some(v) => println("beta={}", v),
+        None => println("beta missing"),
     }
     match sync::Map::get(m, "nope") {
-        Some(_) => println!("nope unexpected"),
-        None => println!("nope=None"),
+        Some(_) => println("nope unexpected"),
+        None => println("nope=None"),
     }
     sync::Map::remove(m, "alpha")
-    println!("contains alpha: {}", sync::Map::contains_key(m, "alpha"))
-    println!("after-delete len={}", sync::Map::len(m))
+    println("contains alpha: {}", sync::Map::contains_key(m, "alpha"))
+    println("after-delete len={}", sync::Map::len(m))
 }
 "#;
     let dir = fresh_dir("sync_map");
@@ -224,7 +224,7 @@ fn lcg(s: &mut i64) -> i64 {
 fn main() {
     let mut state: i64 = 42
     let n = lcg(&mut state)
-    println!("{}", n)
+    println("{}", n)
 }
 "#;
     let dir = fresh_dir("deref_assign_mut_i64");
@@ -254,11 +254,11 @@ fn change(v: &mut Vec<i64>) -> &mut Vec<i64> {
 fn main() {
     let mut a: Vec<i64> = Vec::from([1, 2])
     let b = change(&mut a)
-    println!("a: {:?}", a)
-    println!("b: {:?}", b)
+    println("a: {:?}", a)
+    println("b: {:?}", b)
     b[0] = 2
-    println!("a: {:?}", a)
-    println!("b: {:?}", b)
+    println("a: {:?}", a)
+    println("b: {:?}", b)
 }
 "#;
     let dir = fresh_dir("returned_mut_vec_ref");
@@ -287,7 +287,7 @@ fn main() {
     c.bump()
     c.bump()
     c.bump()
-    println!("{}", c.n)
+    println("{}", c.n)
 }
 "#;
     let dir = fresh_dir("mut_self_compound_assign");
@@ -324,7 +324,7 @@ fn main() {
         }
         s += 1
     }
-    println!("z[1][5][63]={}", z.pieces[1][5][63])
+    println("z[1][5][63]={}", z.pieces[1][5][63])
 }
 "#;
     let dir = fresh_dir("multi_dim_array");
@@ -351,9 +351,9 @@ fn env_args_empty_iter_does_not_segfault() {
 use std::env
 fn main() {
     let args = env::args()
-    println!("len={}", args.len())
+    println("len={}", args.len())
     for a in args {
-        println!("{}", a)
+        println("{}", a)
     }
 }
 "#;
@@ -388,9 +388,9 @@ fn vec_pop_on_typed_storage_shrinks_by_one() {
 fn main() {
     let mut xs: Vec<i64> = Vec::from([10, 20, 30, 40])
     let _ = xs.pop()
-    println!("len={}", xs.len())
-    println!("xs[0]={}", xs[0])
-    println!("xs[2]={}", xs[2])
+    println("len={}", xs.len())
+    println("xs[0]={}", xs[0])
+    println("xs[2]={}", xs[2])
 }
 "#;
     let dir = fresh_dir("vec_pop_typed");
@@ -423,7 +423,7 @@ fn main() {
     m.insert(2, 20)
     m.insert(3, 30)
     let ks = m.keys()
-    println!("len={}", ks.len())
+    println("len={}", ks.len())
 }
 "#;
     let dir = fresh_dir("hashmap_keys_router");
@@ -454,10 +454,10 @@ fn modes() -> Vec<i64> {
 }
 fn main() {
     let xs = cols()
-    println!("len={}", xs.len())
-    for s in xs { println!("{}", s) }
+    println("len={}", xs.len())
+    for s in xs { println("{}", s) }
     let ms = modes()
-    println!("modes={} sum={}", ms.len(), ms[0] + ms[1] + ms[2])
+    println("modes={} sum={}", ms.len(), ms[0] + ms[1] + ms[2])
 }
 "#;
     let dir = fresh_dir("return_array_to_slice");
@@ -493,7 +493,7 @@ fn slide(arr: [i64; 4]) -> i64 {
 fn main() {
     for k in 0..3 {
         let r = slide([1, 2, 3, 4])
-        println!("k={} r={}", k, r)
+        println("k={} r={}", k, r)
     }
 }
 "#;
@@ -529,13 +529,13 @@ fn main() {
     while j > 0 && check_idx(arr, j) {
         j -= 1
     }
-    println!("done j={}", j)
+    println("done j={}", j)
     let mut k: i64 = 0
     while k < 5 || k > 100 {
         k += 1
         if k > 3 { break }
     }
-    println!("k={}", k)
+    println("k={}", k)
 }
 "#;
     let dir = fresh_dir("logical_short_circuit");
@@ -571,7 +571,7 @@ fn main() {
     bs.push(Body { x: 1.0, vx: 2.0, mass: 10.0 })
     bs.push(Body { x: 4.0, vx: 5.0, mass: 20.0 })
     bs[1].x = 9.0
-    println!("{} {} {}", bs[0].x, bs[1].x, bs[1].mass)
+    println("{} {} {}", bs[0].x, bs[1].x, bs[1].mass)
 }
 "#;
     let dir = fresh_dir("vec_struct_index_field");
@@ -602,7 +602,7 @@ fn mut_fixed_struct_array_not_promoted_keeps_layout_across_calls() {
     // passed to a `[T; N]` parameter keeps its inline layout.
     let src = r#"
 struct Body { x: f64, vx: f64, mass: f64 }
-fn total_momentum(b: &[Body; 2]) -> f64 {
+fn total_momentum(b: [Body; 2]) -> f64 {
     let mut p = 0.0
     for i in 0..2 { p += b[i].vx * b[i].mass }
     p
@@ -613,7 +613,7 @@ fn main() {
         Body { x: 2.0, vx: 0.4, mass: 20.0 },
     ]
     bodies[0].vx = 0.5
-    println!("{:.4}", total_momentum(&bodies))
+    println("{:.4}", total_momentum(bodies))
 }
 "#;
     let dir = fresh_dir("mut_fixed_struct_array");
@@ -641,8 +641,8 @@ fn main() {
     let mut xs = Vec::from([3, 1, 2])
     xs.push(4)
     xs.sort()
-    for x in &xs { print!("{} ", x) }
-    println!("")
+    for x in &xs { print("{} ", x) }
+    println("")
 }
 "#;
     let dir = fresh_dir("mut_scalar_array_push");
@@ -683,7 +683,7 @@ fn main() {
         else { 0 }
     })
     for x in &xs {
-        println!("{}={}", x.0.clone(), x.1)
+        println("{}={}", x.0.clone(), x.1)
     }
 }
 "#;
@@ -725,13 +725,13 @@ enum Expr {
     EColumn(String, String),
     ELit(Sv),
 }
-fn show(e: &Expr) {
+fn show(e: Expr) {
     match e {
-        Expr::EColumn(t, c) => println!("Col({}, {})", t.clone(), c.clone()),
+        Expr::EColumn(t, c) => println("Col({}, {})", t.clone(), c.clone()),
         Expr::ELit(v) => match v {
-            Sv::SvInt(n) => println!("Lit(Int({}))", *n),
-            Sv::SvText(s) => println!("Lit(Text({}))", s.clone()),
-            Sv::SvNull => println!("Lit(Null)"),
+            Sv::SvInt(n) => println("Lit(Int({}))", *n),
+            Sv::SvText(s) => println("Lit(Text({}))", s.clone()),
+            Sv::SvNull => println("Lit(Null)"),
         },
     }
 }
@@ -780,7 +780,7 @@ fn main() {
     xs.push(Projection { a: 1, b: 2 })
     xs.push(Projection { a: 3, b: 4 })
     for p in &xs {
-        println!("a={} b={}", p.a, p.b)
+        println("a={} b={}", p.a, p.b)
     }
 }
 "#;
@@ -816,13 +816,13 @@ fn regex_captures_all_option_string_match_reads_real_discriminant() {
 use std::regex
 fn parse_pairs(line: String) -> Vec<Vec<Option<String>>> {
     let re = match regex::compile("(\\w+)=(\\w+)") { Ok(r) => r, Err(_) => { return Vec::from([]) } }
-    regex::captures_all(&re, &line)
+    regex::captures_all(re, line)
 }
 fn main() {
     for row in parse_pairs("addr=localhost port=8080") {
         match row[1] {
             Some(k) => match row[2] {
-                Some(v) => println!("{} = {}", k, v),
+                Some(v) => println("{} = {}", k, v),
                 None => {}
             },
             None => {}
@@ -856,7 +856,7 @@ fn main() {
     let mut m = Map::new()
     m.insert("a", 1)
     m.set("a", 7)
-    println!("{:?}", m.get("a"))
+    println("{:?}", m.get("a"))
 }
 "#;
     let dir = fresh_dir("hashmap_set_rejected");
@@ -876,11 +876,11 @@ fn json_value_set_updates_objects_and_passes_leaves_through() {
     let src = r#"
 use std::encoding::json
 fn main() -> Result<(), String> {
-    let v = json::parse("{\"a\": 1}").map_err(|e| format!("{e}"))?
+    let v = json::parse("{\"a\": 1}").map_err(|e| format("{e}"))?
     let v2 = v.set("b", 2)
-    println!("{}", json::render(&v2))
-    let leaf = json::parse("3").map_err(|e| format!("{e}"))?
-    println!("{}", json::render(&leaf.set("x", 1)))
+    println("{}", json::render(v2))
+    let leaf = json::parse("3").map_err(|e| format("{e}"))?
+    println("{}", json::render(leaf.set("x", 1)))
     Ok(())
 }
 "#;
@@ -911,9 +911,9 @@ use std::sync
 fn main() {
     let wg = sync::WaitGroup::new()
     wg.add(1)
-    go finish(wg)
+    spawn(|| finish(wg))
     wg.wait()
-    println!("done")
+    println("done")
 }
 fn finish(wg: sync::WaitGroup) { wg.done() }
 "#;
@@ -978,14 +978,14 @@ fn vec_insert_result_and_receiver_match_across_tiers() {
     let src = r#"
 fn main() {
     let mut values: Vec<i64> = Vec::from([1, 2, 3])
-    println!("{}", values.insert(1, 9).is_ok())
-    println!("{} {} {} {}", values[0], values[1], values[2], values[3])
-    println!("{}", values.insert(99, 8).is_err())
-    println!("{} {} {} {}", values[0], values[1], values[2], values[3])
+    println("{}", values.insert(1, 9).is_ok())
+    println("{} {} {} {}", values[0], values[1], values[2], values[3])
+    println("{}", values.insert(99, 8).is_err())
+    println("{} {} {} {}", values[0], values[1], values[2], values[3])
     values.swap(0, 3)
-    println!("{} {} {} {}", values[0], values[1], values[2], values[3])
-    println!("{}", values.remove(1).unwrap_or(-1))
-    println!("{}", values.remove(99).is_err())
+    println("{} {} {} {}", values[0], values[1], values[2], values[3])
+    println("{}", values.remove(1).unwrap_or(-1))
+    println("{}", values.remove(99).is_err())
 }
 "#;
     let dir = fresh_dir("vec_insert_result");
@@ -1010,15 +1010,15 @@ fn hashmap_insert_option_matches_across_tiers() {
     let src = r#"
 fn main() {
 	    let mut values: Map<i64, i64> = Map::new()
-    println!("{}", values.insert(4, 10).is_none())
-    println!("{}", values.insert(4, 12).unwrap_or(-1))
-    println!("{}", values.get(4).unwrap_or(-1))
-    println!("{}", values.remove(4).unwrap_or(-1))
-    println!("{}", values.remove(4).is_none())
+    println("{}", values.insert(4, 10).is_none())
+    println("{}", values.insert(4, 12).unwrap_or(-1))
+    println("{}", values.get(4).unwrap_or(-1))
+    println("{}", values.remove(4).unwrap_or(-1))
+    println("{}", values.remove(4).is_none())
     let mut words: Map<String, String> = Map::new()
-    println!("{}", words.insert("key", "first").is_none())
-    println!("{}", words.insert("key", "second").unwrap_or("missing"))
-    println!("{}", words.get("key").unwrap_or("missing"))
+    println("{}", words.insert("key", "first").is_none())
+    println("{}", words.insert("key", "second").unwrap_or("missing"))
+    println("{}", words.get("key").unwrap_or("missing"))
 }
 "#;
     let dir = fresh_dir("hashmap_insert_option");

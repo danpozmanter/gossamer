@@ -8,10 +8,10 @@ enum Shape {
 fn main() {
     let s = Shape::Rect(3.0, 4.0)
     let s2 = s.clone()
-    println!("{}", s == s2)            // true
-    println!("{:?}", s2)               // Rect(3, 4)
+    println("{}", s == s2)            // true
+    println("{:?}", s2)               // Rect(3, 4)
     let c = Shape::Circle(1.5)
-    println!("{}", c.clone() == c)     // true
-    println!("{}", c == Shape::Origin) // false
-    println!("{:?}", Shape::Origin)    // Origin
+    println("{}", c.clone() == c)     // true
+    println("{}", c == Shape::Origin) // false
+    println("{:?}", Shape::Origin)    // Origin
 }

@@ -10,43 +10,43 @@ fn main() {
     let mut pairs: Map<(i64, i64), i64> = Map::new()
     pairs.insert((1, 2), 10)
     pairs.insert((3, 4), 20)
-    for key in pairs.keys() { println!("pair {} {}", key.0, key.1) }
-    println!("pair get {}", pairs.get((3, 4)).unwrap_or(-1))
-    println!("pair contains {}", pairs.contains_key((1, 2)))
+    for key in pairs.keys() { println("pair {} {}", key.0, key.1) }
+    println("pair get {}", pairs.get((3, 4)).unwrap_or(-1))
+    println("pair contains {}", pairs.contains_key((1, 2)))
 
     let mut labelled: Map<(String, i64), i64> = Map::new()
     labelled.insert(("a", 1), 5)
     labelled.insert(("b", 2), 6)
-    for key in labelled.keys() { println!("labelled {} {}", key.0, key.1) }
+    for key in labelled.keys() { println("labelled {} {}", key.0, key.1) }
 
     let mut points: Map<Point, i64> = Map::new()
     points.insert(Point { x: 1, y: 2 }, 7)
     points.insert(Point { x: 3, y: 4 }, 8)
-    for key in points.keys() { println!("point {} {}", key.x, key.y) }
-    println!("point get {}", points.get(Point { x: 3, y: 4 }).unwrap_or(-1))
+    for key in points.keys() { println("point {} {}", key.x, key.y) }
+    println("point get {}", points.get(Point { x: 3, y: 4 }).unwrap_or(-1))
 
     let mut slots: Map<Slot, i64> = Map::new()
     slots.insert(Slot::Empty, 1)
     slots.insert(Slot::Taken(3), 2)
-    println!("slot empty {}", slots.get(Slot::Empty).unwrap_or(-1))
-    println!("slot taken {}", slots.get(Slot::Taken(3)).unwrap_or(-1))
-    println!("slot absent {}", slots.get(Slot::Taken(9)).unwrap_or(-1))
-    println!("slot contains {}", slots.contains_key(Slot::Taken(3)))
-    println!("slot pop {}", slots.pop(Slot::Taken(3)).unwrap_or(-1))
-    println!("slot len {}", slots.len())
+    println("slot empty {}", slots.get(Slot::Empty).unwrap_or(-1))
+    println("slot taken {}", slots.get(Slot::Taken(3)).unwrap_or(-1))
+    println("slot absent {}", slots.get(Slot::Taken(9)).unwrap_or(-1))
+    println("slot contains {}", slots.contains_key(Slot::Taken(3)))
+    println("slot pop {}", slots.pop(Slot::Taken(3)).unwrap_or(-1))
+    println("slot len {}", slots.len())
 
     let mut cells: Map<[i64; 2], i64> = Map::new()
     cells.insert([1, 2], 11)
-    println!("cell get {}", cells.get([1, 2]).unwrap_or(-1))
+    println("cell get {}", cells.get([1, 2]).unwrap_or(-1))
 
     let mut counts: Map<(i64, i64), i64> = Map::new()
     counts.inc((1, 1))
     counts.inc((1, 1), 4)
-    println!("count {}", counts.get_or((1, 1), -1))
-    println!("or_insert fresh {}", counts.or_insert((9, 9), 42))
-    println!("removed {}", counts.remove((1, 1)).unwrap_or(-1))
-    println!("count len {}", counts.len())
+    println("count {}", counts.get_or((1, 1), -1))
+    println("or_insert fresh {}", counts.or_insert((9, 9), 42))
+    println("removed {}", counts.remove((1, 1)).unwrap_or(-1))
+    println("count len {}", counts.len())
 
     let seen = #{ (1, 2), (3, 4) }
-    println!("set len {} contains {}", seen.len(), seen.contains((1, 2)))
+    println("set len {} contains {}", seen.len(), seen.contains((1, 2)))
 }

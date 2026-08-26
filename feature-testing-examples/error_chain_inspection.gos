@@ -19,26 +19,26 @@ fn high_level() -> Result<i64, errors::Error> {
 fn main() {
     let result = high_level()
     match result {
-        Ok(v) => println!("unexpected success: {}", v)
+        Ok(v) => println("unexpected success: {}", v)
         Err(e) => {
-            println!("top message: {}", e.message())
+            println("top message: {}", e.message())
 
             let mut cursor = e.cause()
             while let Some(inner) = cursor {
-                println!("  caused by: {}", inner.message())
+                println("  caused by: {}", inner.message())
                 cursor = inner.cause()
             }
 
-            if errors::is(&e, "disk full") {
-                println!("chain contains 'disk full'")
+            if errors::is(e, "disk full") {
+                println("chain contains 'disk full'")
             }
 
-            if errors::is(&e, "write config") {
-                println!("chain contains 'write config'")
+            if errors::is(e, "write config") {
+                println("chain contains 'write config'")
             }
 
-            if errors::is(&e, "start server") {
-                println!("chain contains 'start server'")
+            if errors::is(e, "start server") {
+                println("chain contains 'start server'")
             }
         }
     }
@@ -48,8 +48,8 @@ fn main() {
     let e2 = errors::new("second failure")
     let combined = errors::join(Vec::from([e1, e2]))
     match combined {
-        Some(e) => println!("combined message: {}", e.message())
-        None => println!("no errors to join")
+        Some(e) => println("combined message: {}", e.message())
+        None => println("no errors to join")
     }
 }
 

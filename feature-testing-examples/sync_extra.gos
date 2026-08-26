@@ -42,7 +42,7 @@ fn worker(b: sync::Barrier, c: sync::AtomicI64, wg: WaitGroup) {
 fn run_init(o: sync::Once) {
     let mut i = 0
     while i < 3 {
-        sync::Once::call(o, || println!("init"))
+        sync::Once::call(o, || println("init"))
         i += 1
     }
 }
@@ -51,26 +51,26 @@ fn main() {
     // --- qualified free-call atomic spelling, single goroutine ---
     let a = sync::AtomicI64::new(0)
     sync::AtomicI64::store(a, 42)
-    println!("atomic load = {}", sync::AtomicI64::load(a))
+    println("atomic load = {}", sync::AtomicI64::load(a))
     let prev = sync::AtomicI64::fetch_add(a, 8)
-    println!("atomic prev = {}", prev)
-    println!("atomic load = {}", sync::AtomicI64::load(a))
+    println("atomic prev = {}", prev)
+    println("atomic load = {}", sync::AtomicI64::load(a))
 
     // --- Barrier rendezvous across two goroutines (main + worker) ---
     let b = sync::Barrier::new(2)
     let c = sync::AtomicI64::new(0)
     let wg = WaitGroup::new()
     wg.add(1)
-    go worker(b, c, wg)
+    spawn(|| worker(b, c, wg))
     let mut round = 0
     while round < 3 {
         sync::Barrier::wait(b)
-        println!("round {} -> {}", round, sync::AtomicI64::load(c))
+        println("round {} -> {}", round, sync::AtomicI64::load(c))
         sync::Barrier::wait(b)
         round += 1
     }
     wg.wait()
-    println!("barrier final = {}", sync::AtomicI64::load(c))
+    println("barrier final = {}", sync::AtomicI64::load(c))
 
     // --- Once fires its body exactly once ---
     let o = sync::Once::new()

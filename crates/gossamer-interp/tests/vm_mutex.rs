@@ -51,7 +51,7 @@ fn tick() {
     let h2 = spawn(|| bump(m))
     let _ = h1.join()
     let _ = h2.join()
-    println!("{}", COUNTER)
+    println("{}", COUNTER)
 }
 "#;
 
@@ -59,9 +59,10 @@ fn tick() {
 fn mutex_serializes_concurrent_compound_update() {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", MUTEX_COUNTER_SRC.to_string());
-    let (sf, parse_diags) = parse_source_file(MUTEX_COUNTER_SRC, file);
+    let (mut sf, parse_diags) = parse_source_file(MUTEX_COUNTER_SRC, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     assert!(type_diags.is_empty(), "typecheck: {type_diags:?}");

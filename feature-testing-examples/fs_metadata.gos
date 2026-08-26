@@ -10,13 +10,13 @@ use std::fs
 use std::path
 
 fn main() {
-    let dir = path::join(&env::temp_dir(), &"gossamer-fs-metadata-demo")
-    let _ = fs::create_dir_all(&dir)
-    let file = path::join(&dir, &"probe.txt")
-    let _ = fs::write(&file, "hello, gossamer\n".as_bytes())
+    let dir = path::join(env::temp_dir(), "gossamer-fs-metadata-demo")
+    let _ = fs::create_dir_all(dir)
+    let file = path::join(dir, "probe.txt")
+    let _ = fs::write(file, "hello, gossamer\n".as_bytes())
 
-    let m = fs::metadata(&file).unwrap()
-    println!(
+    let m = fs::metadata(file).unwrap()
+    println(
         "file: size={} is_file={} is_dir={} is_symlink={} readonly={}"
         m.size, m.is_file, m.is_dir, m.is_symlink, m.readonly
     )
@@ -26,11 +26,11 @@ fn main() {
     assert(!m.is_dir, "file not dir")
     assert(m.modified_unix_ms > 0, "modified timestamp present")
 
-    let d = fs::metadata(&dir).unwrap()
-    println!("dir: is_file={} is_dir={}", d.is_file, d.is_dir)
+    let d = fs::metadata(dir).unwrap()
+    println("dir: is_file={} is_dir={}", d.is_file, d.is_dir)
     assert(d.is_dir, "dir is_dir true")
     assert(!d.is_file, "dir not file")
 
-    let _ = fs::remove_dir_all(&dir)
-    println!("ok")
+    let _ = fs::remove_dir_all(dir)
+    println("ok")
 }

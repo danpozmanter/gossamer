@@ -5,20 +5,20 @@
 use std::strconv
 
 fn main() {
-    println!("{}", strconv::format_i64_radix(255, 16))
-    println!("{}", strconv::format_i64_radix(10, 2))
-    println!("{}", strconv::format_i64_radix(-42, 16))
-    println!("{}", strconv::format_i64_radix(35, 36))
+    println("{}", strconv::format_i64_radix(255, 16))
+    println("{}", strconv::format_i64_radix(10, 2))
+    println("{}", strconv::format_i64_radix(-42, 16))
+    println("{}", strconv::format_i64_radix(35, 36))
 
-    println!("{}", match strconv::parse_i64_radix("ff", 16) { Ok(n) => n, Err(_) => -1 })
-    println!("{}", match strconv::parse_i64_radix("1010", 2) { Ok(n) => n, Err(_) => -1 })
-    println!("{}", match strconv::parse_i64_radix("-2a", 16) { Ok(n) => n, Err(_) => -1 })
-    println!("{}", match strconv::parse_i64_radix("zz", 16) { Ok(n) => n, Err(_) => -1 })
+    println("{}", match strconv::parse_i64_radix("ff", 16) { Ok(n) => n, Err(_) => -1 })
+    println("{}", match strconv::parse_i64_radix("1010", 2) { Ok(n) => n, Err(_) => -1 })
+    println("{}", match strconv::parse_i64_radix("-2a", 16) { Ok(n) => n, Err(_) => -1 })
+    println("{}", match strconv::parse_i64_radix("zz", 16) { Ok(n) => n, Err(_) => -1 })
 
     let q = strconv::quote("a\tb\"c\"\n")
-    println!("{}", q)
-    println!("{}", match strconv::unquote(q) { Ok(s) => s == "a\tb\"c\"\n", Err(_) => false })
-    println!("{}", match strconv::unquote("not quoted") { Ok(_) => false, Err(_) => true })
+    println("{}", q)
+    println("{}", match strconv::unquote(q) { Ok(s) => s == "a\tb\"c\"\n", Err(_) => false })
+    println("{}", match strconv::unquote("not quoted") { Ok(_) => false, Err(_) => true })
 }
 
 #[cfg(test)]

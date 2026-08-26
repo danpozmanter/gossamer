@@ -8,7 +8,7 @@ fn build(out: &mut String, n: i64) {
     let mut i = 0
     while i < n {
         *out += "k"
-        *out += format!("{}", i)
+        *out += format("{}", i)
         *out += ","
         i += 1
     }
@@ -26,5 +26,5 @@ fn main() {
         sum += s.byte_at(j)
         j += 1
     }
-    println!("len={} sum={}", len, sum)
+    println("len={} sum={}", len, sum)
 }

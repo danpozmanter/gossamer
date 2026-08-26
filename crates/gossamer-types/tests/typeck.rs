@@ -16,9 +16,10 @@ struct Checked {
 fn run(source: &str) -> Checked {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse errors: {parse_diags:?}");
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let unresolved: Vec<_> = resolve_diags
         .iter()
         .filter(|d| {
@@ -257,7 +258,7 @@ fn a_byte_vector_is_rejected_by_the_text_write() {
          fn main() { match fs::File::create(\"x.dat\") {\n\
          Ok(f) => { let data: Vec<u8> = #[1]\n\
          let _ = f.write(data) }\n\
-         Err(e) => println!(\"{}\", e)\n\
+         Err(e) => println(\"{}\", e)\n\
          } }\n",
     );
     assert!(has_code(&d, "GT0001"), "{d:?}");
@@ -271,7 +272,7 @@ fn a_method_the_file_handle_lacks_is_rejected() {
         "use std::fs\n\
          fn main() { match fs::File::create(\"x.dat\") {\n\
          Ok(f) => { let _ = f.zonk() }\n\
-         Err(e) => println!(\"{}\", e)\n\
+         Err(e) => println(\"{}\", e)\n\
          } }\n",
     );
     assert!(has_code(&d, "GT0002"), "{d:?}");
@@ -356,7 +357,7 @@ fn an_iterator_parameter_rejects_a_differently_typed_iterator() {
 
 #[test]
 fn formatting_a_range_reports_the_iterator_remedy() {
-    let checked = run("fn main() { println!(\"{}\", 10..) }\n");
+    let checked = run("fn main() { println(\"{}\", 10..) }\n");
     let diagnostic = checked
         .diagnostics
         .iter()
@@ -374,7 +375,7 @@ fn formatting_a_range_reports_the_iterator_remedy() {
 
 #[test]
 fn formatting_a_runtime_handle_names_the_handle() {
-    let checked = run("use std::sync\nfn main() { println!(\"{}\", sync::Map::new()) }\n");
+    let checked = run("use std::sync\nfn main() { println(\"{}\", sync::Map::new()) }\n");
     let diagnostic = checked
         .diagnostics
         .iter()
@@ -393,7 +394,7 @@ fn formatting_a_runtime_handle_names_the_handle() {
 
 #[test]
 fn formatting_a_function_value_is_rejected() {
-    let checked = run("fn f(x: i64) -> i64 { x }\nfn main() { println!(\"{}\", f) }\n");
+    let checked = run("fn f(x: i64) -> i64 { x }\nfn main() { println(\"{}\", f) }\n");
     assert!(
         checked.diagnostics.iter().any(|diagnostic| matches!(
             &diagnostic.error,
@@ -447,7 +448,7 @@ fn obvious_concrete_mismatch_is_reported() {
 #[test]
 fn function_argument_rejects_plain_tuple_for_tuple_struct() {
     let checked = run("struct RGB(i64, i64, i64)\n\
-         fn print_color(color: RGB) { println!(\"{}\", color) }\n\
+         fn print_color(color: RGB) { println(\"{}\", color) }\n\
          fn main() { let three = (1, 500, -200)\n print_color(three) }\n");
     assert!(
         checked.diagnostics.iter().any(|d| matches!(
@@ -511,7 +512,7 @@ fn function_boundaries_preserve_nominal_struct_identity() {
 #[test]
 fn string_values_coerce_to_borrowed_str_only_at_non_escaping_boundaries() {
     let checked = run("static GREETING: &str = \"hello\"\n\
-         fn take(value: &str) {}\n\
+         fn take(value: str) {}\n\
          fn main() { take(\"text\") }\n");
     assert!(
         checked.diagnostics.is_empty(),
@@ -598,7 +599,7 @@ fn methods_and_enum_constructors_check_declared_payload_types() {
          struct B(i64)\n\
          trait Takes { fn take(&self, value: A)\n }\n\
          impl Takes for A { fn take(&self, value: A) {} }\n\
-         fn call<T: Takes>(value: &T) { value.take(B(2)) }\n\
+         fn call<T: Takes>(value: T) { value.take(B(2)) }\n\
          fn main() {}\n");
     assert!(
         trait_method
@@ -829,7 +830,7 @@ fn mutable_reference_mismatch_renders_resolved_referent_type() {
 fn return_reference_mismatch_renders_public_referent_type() {
     let checked = run("fn main() {\n\
          let value = no_dangle()\n\
-         println!(\"{}\", value)\n\
+         println(\"{}\", value)\n\
          }\n\
          fn no_dangle() -> String {\n\
          let s = String::from(\"hello\")\n\
@@ -997,9 +998,10 @@ fn example_programs_typecheck_without_false_positives() {
         let source = std::fs::read_to_string(&path).expect("read example");
         let mut map = SourceMap::new();
         let file = map.add_file(&path, source.clone());
-        let (sf, parse_diags) = parse_source_file(&source, file);
+        let (mut sf, parse_diags) = parse_source_file(&source, file);
         assert!(parse_diags.is_empty(), "{path}: {parse_diags:?}");
         let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+        let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
         let mut tcx = TyCtxt::new();
         let (_table, diagnostics) = typecheck_source_file(&sf, &resolutions, &mut tcx);
         assert!(
@@ -1208,9 +1210,9 @@ fn a_signature_diagnostic_is_reported_once_per_source_position() {
 
 #[test]
 fn distinct_spans_each_keep_their_own_diagnostic() {
-    let checked = run(
-        "fn f(x: [i64]) -> i64 { 0 }\nfn g(y: [f64]) -> i64 { 0 }\nfn main() { let _ = f([1]) + g([1.0]) }\n",
-    );
+    // A parameter names the view directly, so the unsized-by-value error
+    // is raised where a slice would have to be stored: a struct field.
+    let checked = run("struct A { xs: [i64] }\nstruct B { ys: [f64] }\nfn main() { let _ = 1 }\n");
     let unsized_count = checked
         .diagnostics
         .iter()
@@ -1459,7 +1461,7 @@ fn closure_param_kind_of(checked: &Checked, closure: &gossamer_ast::Expr) -> TyK
 #[test]
 fn map_err_method_closure_param_pins_to_err_payload_type() {
     let checked = run("fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
-         fn main() { let r = fail().map_err(|e| format!(\"w: {e}\")) }\n");
+         fn main() { let r = fail().map_err(|e| format(\"w: {e}\")) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 0);
     assert!(
@@ -1486,7 +1488,7 @@ fn map_err_method_closure_param_pins_to_err_payload_type() {
 #[test]
 fn option_map_method_closure_param_pins_to_payload_type() {
     let checked = run("fn main() { let o: Option<String> = Some(\"x\")\n\
-         let m = o.map(|s| format!(\"<{s}>\")) }\n");
+         let m = o.map(|s| format(\"<{s}>\")) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 1);
     assert!(
@@ -1530,7 +1532,7 @@ fn vec_rejects_methods_without_lowering() {
 fn iter_map_free_fn_closure_param_pins_to_elem_type() {
     let checked = run("use std::iter\n\
          fn main() { let xs: Vec<String> = Vec::from([\"a\"])\n\
-         let ys = iter::map(|s| format!(\"[{s}]\"), xs) }\n");
+         let ys = iter::map(|s| format(\"[{s}]\"), xs) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 1);
     assert!(
@@ -1548,7 +1550,7 @@ fn iter_map_free_fn_closure_param_pins_to_elem_type() {
 fn piped_iter_map_closure_param_pins_to_elem_type() {
     let checked = run("use std::iter\n\
          fn main() { let xs: Vec<String> = Vec::from([\"a\"])\n\
-         let ys = xs |> |v| iter::map(|s| format!(\"({s})\"), v) }\n");
+         let ys = xs |> |v| iter::map(|s| format(\"({s})\"), v) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 1);
     assert!(
@@ -1566,7 +1568,7 @@ fn piped_iter_map_closure_param_pins_to_elem_type() {
 fn piped_result_default_with_closure_param_pins_to_err_type() {
     let checked = run("use std::result\n\
          fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
-         fn main() { let v = fail() |> |v| result::unwrap_or_else(|e| println!(\"{e}\"), v) }\n");
+         fn main() { let v = fail() |> |v| result::unwrap_or_else(|e| println(\"{e}\"), v) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 0);
     assert!(
@@ -1593,7 +1595,7 @@ fn result_rejects_option_only_methods() {
 fn raw_stdlib_result_helpers_support_question_mark() {
     let checked = run("use std::errors\n\
          fn load(path: String) -> Result<i64, errors::Error> {\n\
-             let (size, is_file, is_dir, is_symlink, readonly, modified) = __gos_fs_metadata_raw(path)?\n\
+             let size, is_file, is_dir, is_symlink, readonly, modified = __gos_fs_metadata_raw(path)?\n\
              Ok(size)\n\
          }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
@@ -1611,9 +1613,10 @@ fn unknown_std_combinator_with_closure_errors_loudly() {
                   let ys = iter::mystery(|x| x, xs) }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse errors: {parse_diags:?}");
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (_, diagnostics) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     assert!(
@@ -1699,9 +1702,10 @@ fn bool_and_char_casts_pass_the_whitelist() {
 fn diagnostics_for(source: &str) -> Vec<gossamer_types::TypeDiagnostic> {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse errors: {parse_diags:?}");
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (_, diagnostics) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     diagnostics
@@ -1744,7 +1748,7 @@ fn json_encode_of_an_enum_errors_with_gt0016() {
     // encoding it (instead of the unwrapped Value) is rejected.
     let source = "use std::encoding::json\n\
                   fn main() { let v = json::parse(\"{}\")\n\
-                  let _ = json::encode(&v) }\n";
+                  let _ = json::encode(v) }\n";
     let diagnostics = diagnostics_for(source);
     assert!(
         diagnostics.iter().any(
@@ -1760,10 +1764,10 @@ fn json_encode_of_value_scalar_and_struct_typechecks_clean() {
     let source = "use std::encoding::json\n\
                   struct P { x: i64 }\n\
                   fn main() {\n\
-                  let _ = json::encode(&42)\n\
-                  let _ = json::encode(&P { x: 1 })\n\
+                  let _ = json::encode(42)\n\
+                  let _ = json::encode(P { x: 1 })\n\
                   let v = json::parse(\"{}\").unwrap()\n\
-                  let _ = json::encode(&v) }\n";
+                  let _ = json::encode(v) }\n";
     let diagnostics = diagnostics_for(source);
     assert!(
         !diagnostics
@@ -1815,7 +1819,7 @@ fn has_code(diags: &[gossamer_types::TypeDiagnostic], code: &str) -> bool {
 #[test]
 fn index_on_scalar_is_rejected() {
     // 0.18.0: compiled tier read through the i64 as a pointer (SIGSEGV).
-    let d = diagnostics_for("fn main() { let x = 5\n let y = x[0]\n println!(\"{}\", y) }\n");
+    let d = diagnostics_for("fn main() { let x = 5\n let y = x[0]\n println(\"{}\", y) }\n");
     assert!(has_code(&d, "GT0021"), "{d:?}");
 }
 
@@ -1827,14 +1831,14 @@ fn index_on_a_lazy_iterator_is_rejected() {
 
 #[test]
 fn formatting_a_lazy_iterator_is_rejected() {
-    let d = diagnostics_for("fn main() { let xs = 0..3\n println!(\"{}\", xs) }\n");
+    let d = diagnostics_for("fn main() { let xs = 0..3\n println(\"{}\", xs) }\n");
     assert!(has_code(&d, "GT0041"), "{d:?}");
 }
 
 #[test]
 fn lazy_iterator_step_by_is_accepted() {
     let d = diagnostics_for(
-        "use std::iter\nfn main() { let xs = iter::range(0, 9) |> |v| iter::step_by(2, v)\n let _ = xs }\n",
+        "use std::iter\nfn main() { let xs = iter::range(0, 9) |> |v| iter::step_by(v, 2)\n let _ = xs }\n",
     );
     assert!(d.is_empty(), "{d:?}");
 }
@@ -1861,7 +1865,7 @@ fn iterator_parameters_cannot_be_reused_after_consuming_methods_or_for_loops() {
 #[test]
 fn reusing_pipe_consumed_lazy_iterator_is_rejected() {
     let d = diagnostics_for(
-        "use std::iter\nfn main() { let xs = 0..3\n let out = xs |> |v| iter::take(1, v)\n let _ = xs\n let _ = out }\n",
+        "use std::iter\nfn main() { let xs = 0..3\n let out = xs |> |v| iter::take(v, 1)\n let _ = xs\n let _ = out }\n",
     );
     assert!(has_code(&d, "GT0042"), "{d:?}");
 }
@@ -1956,21 +1960,21 @@ fn rebinding_a_consumed_iterator_name_starts_a_fresh_binding() {
 #[test]
 fn index_on_vec_and_string_is_accepted() {
     let d = diagnostics_for(
-        "fn main() { let xs = [1, 2, 3]\n let s = \"hi\"\n println!(\"{} {}\", xs[0], s.byte_at(0)) }\n",
+        "fn main() { let xs = [1, 2, 3]\n let s = \"hi\"\n println(\"{} {}\", xs[0], s.byte_at(0)) }\n",
     );
     assert!(!has_code(&d, "GT0021"), "{d:?}");
 }
 
 #[test]
 fn reasonable_fixed_array_is_accepted() {
-    let d = diagnostics_for("fn main() { let a: [i64; 16] = [0; 16]\n println!(\"{}\", a[0]) }\n");
+    let d = diagnostics_for("fn main() { let a: [i64; 16] = [0; 16]\n println(\"{}\", a[0]) }\n");
     assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn benchmark_sized_fixed_array_is_accepted() {
     let d = diagnostics_for(
-        "fn main() { let a: [f64; 40000] = [0.0; 40000]\n println!(\"{}\", a[0]) }\n",
+        "fn main() { let a: [f64; 40000] = [0.0; 40000]\n println(\"{}\", a[0]) }\n",
     );
     assert!(d.is_empty(), "{d:?}");
 }
@@ -1994,20 +1998,20 @@ fn owned_slice_repeat_is_rejected_as_unsized() {
 #[test]
 fn call_of_scalar_value_is_rejected() {
     // 0.18.0: compiled tier emitted a call through a non-function symbol.
-    let d = diagnostics_for("fn main() { let x = 5\n let y = x(3)\n println!(\"{}\", y) }\n");
+    let d = diagnostics_for("fn main() { let x = 5\n let y = x(3)\n println(\"{}\", y) }\n");
     assert!(has_code(&d, "GT0022"), "{d:?}");
 }
 
 #[test]
 fn qualified_associated_call_is_not_flagged_as_non_callable() {
     // `String::new()` types its callee as `String`; it must not trip GT0022.
-    let d = diagnostics_for("fn main() { let s = String::new()\n println!(\"{}\", s) }\n");
+    let d = diagnostics_for("fn main() { let s = String::new()\n println(\"{}\", s) }\n");
     assert!(!has_code(&d, "GT0022"), "{d:?}");
 }
 
 #[test]
 fn constructor_calls_are_not_flagged_as_non_callable() {
-    let d = diagnostics_for("fn main() { let o = Some(5)\n let r = Ok(1)\n println!(\"ok\") }\n");
+    let d = diagnostics_for("fn main() { let o = Some(5)\n let r = Ok(1)\n println(\"ok\") }\n");
     assert!(!has_code(&d, "GT0022"), "{d:?}");
 }
 
@@ -2028,11 +2032,11 @@ fn named_struct_associated_function_is_not_checked_as_constructor() {
 #[test]
 fn struct_destructuring_requires_the_nominal_name() {
     let d = diagnostics_for(
-        "struct Point { x: i64, y: i64 }\nfn main() { let p = Point { x: 1, y: 2 }\n let (x, y) = p }\n",
+        "struct Point { x: i64, y: i64 }\nfn main() { let p = Point { x: 1, y: 2 }\n let x, y = p }\n",
     );
     assert!(has_code(&d, "GT0033"), "{d:?}");
 
-    let d = diagnostics_for("fn main() { let pair = (1, 2)\n let (x, y) = pair }\n");
+    let d = diagnostics_for("fn main() { let pair = (1, 2)\n let x, y = pair }\n");
     assert!(!has_code(&d, "GT0033"), "{d:?}");
 }
 
@@ -2130,21 +2134,21 @@ fn named_struct_literal_fields_are_checked() {
 #[test]
 fn out_of_range_tuple_index_is_rejected() {
     // 0.18.0: compiled tier read out-of-object memory (garbage / leak).
-    let d = diagnostics_for("fn main() { let t = (1, 2)\n let x = t.5\n println!(\"{}\", x) }\n");
+    let d = diagnostics_for("fn main() { let t = (1, 2)\n let x = t.5\n println(\"{}\", x) }\n");
     assert!(has_code(&d, "GT0023"), "{d:?}");
 }
 
 #[test]
 fn positional_index_on_struct_is_rejected() {
     let d = diagnostics_for(
-        "struct P { x: i64, y: i64 }\nfn main() { let p = P { x: 1, y: 2 }\n let v = p.0\n println!(\"{}\", v) }\n",
+        "struct P { x: i64, y: i64 }\nfn main() { let p = P { x: 1, y: 2 }\n let v = p.0\n println(\"{}\", v) }\n",
     );
     assert!(has_code(&d, "GT0023"), "{d:?}");
 }
 
 #[test]
 fn in_range_tuple_index_is_accepted() {
-    let d = diagnostics_for("fn main() { let t = (1, 2, 3)\n println!(\"{} {}\", t.0, t.2) }\n");
+    let d = diagnostics_for("fn main() { let t = (1, 2, 3)\n println(\"{} {}\", t.0, t.2) }\n");
     assert!(!has_code(&d, "GT0023"), "{d:?}");
 }
 
@@ -2153,7 +2157,7 @@ fn method_call_with_wrong_arity_is_rejected() {
     // 0.18.0: VM aborted (GX0003) but the compiled tier zero-filled the
     // missing argument and returned a wrong result (tier divergence).
     let d = diagnostics_for(
-        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", a.add(2)) }\n",
+        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println(\"{}\", a.add(2)) }\n",
     );
     assert!(has_code(&d, "GT0018"), "{d:?}");
 }
@@ -2161,7 +2165,7 @@ fn method_call_with_wrong_arity_is_rejected() {
 #[test]
 fn method_call_with_correct_arity_is_accepted() {
     let d = diagnostics_for(
-        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", a.add(2, 3)) }\n",
+        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println(\"{}\", a.add(2, 3)) }\n",
     );
     assert!(!has_code(&d, "GT0018"), "{d:?}");
 }
@@ -2170,7 +2174,7 @@ fn method_call_with_correct_arity_is_accepted() {
 fn piped_method_call_counts_the_implicit_argument() {
     // `5 |> a.add(2)` desugars to `a.add(2, 5)`: arity is satisfied.
     let d = diagnostics_for(
-        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", 5 |> |v| a.add(2, v)) }\n",
+        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }\n println(\"{}\", 5 |> |v| a.add(2, v)) }\n",
     );
     assert!(!has_code(&d, "GT0018"), "{d:?}");
 }
@@ -2180,7 +2184,7 @@ fn nonexistent_method_on_user_struct_is_rejected() {
     // 0.18.0: a typo passed check; the compiled build failed on an
     // undefined `@A::bogus` symbol.
     let d = diagnostics_for(
-        "struct A { x: i64 }\nfn main() { let a = A { x: 1 }\n let y = a.bogus()\n println!(\"{}\", y) }\n",
+        "struct A { x: i64 }\nfn main() { let a = A { x: 1 }\n let y = a.bogus()\n println(\"{}\", y) }\n",
     );
     assert!(has_code(&d, "GT0002"), "{d:?}");
 }
@@ -2188,7 +2192,7 @@ fn nonexistent_method_on_user_struct_is_rejected() {
 #[test]
 fn real_method_on_user_struct_is_accepted() {
     let d = diagnostics_for(
-        "struct A { x: i64 }\nimpl A { fn get(&self) -> i64 { self.x } }\nfn main() { let a = A { x: 1 }\n println!(\"{}\", a.get()) }\n",
+        "struct A { x: i64 }\nimpl A { fn get(&self) -> i64 { self.x } }\nfn main() { let a = A { x: 1 }\n println(\"{}\", a.get()) }\n",
     );
     assert!(!has_code(&d, "GT0002"), "{d:?}");
 }
@@ -2218,7 +2222,7 @@ fn strings_free_fn_rejects_integer_in_string_slot() {
     // function passed check, then the compiled string shim dereferenced
     // it as a pointer (SIGSEGV the VM masked).
     let d = diagnostics_for(
-        "use std::strings\nfn main() { let r = strings::contains(&\"hello\", 5)\nprintln!(\"{}\", r) }\n",
+        "use std::strings\nfn main() { let r = strings::contains(\"hello\", 5)\nprintln(\"{}\", r) }\n",
     );
     assert!(
         d.iter().any(
@@ -2235,7 +2239,7 @@ fn strings_free_fn_rejects_misordered_integer_argument() {
     // `splitn(text, n, sep)`: an integer landing in the `sep` slot is a
     // mis-ordered call that the compiled tier would crash on.
     let d = diagnostics_for(
-        "use std::strings\nfn main() { let p = strings::splitn(&\"a,b\", 2, 5)\nprintln!(\"{}\", p.len()) }\n",
+        "use std::strings\nfn main() { let p = strings::splitn(\"a,b\", 2, 5)\nprintln(\"{}\", p.len()) }\n",
     );
     assert!(
         d.iter()
@@ -2248,7 +2252,7 @@ fn strings_free_fn_rejects_misordered_integer_argument() {
 fn strings_free_fn_rejects_float_in_string_slot() {
     // An unsuffixed float literal uses the standard `f64` diagnostic spelling.
     let d = diagnostics_for(
-        "use std::strings\nfn main() { let r = strings::contains(&\"hi\", 1.5)\nprintln!(\"{}\", r) }\n",
+        "use std::strings\nfn main() { let r = strings::contains(\"hi\", 1.5)\nprintln(\"{}\", r) }\n",
     );
     assert!(
         d.iter().any(
@@ -2263,7 +2267,7 @@ fn strings_free_fn_rejects_float_in_string_slot() {
 #[test]
 fn user_fn_rejects_float_in_string_parameter() {
     let d = diagnostics_for(
-        "fn f(s: &String) -> i64 { s.len() }\nfn main() { println!(\"{}\", f(1.5)) }\n",
+        "fn f(s: String) -> i64 { s.len() }\nfn main() { println(\"{}\", f(1.5)) }\n",
     );
     assert!(
         d.iter().any(
@@ -2279,7 +2283,7 @@ fn string_method_rejects_integer_in_string_slot() {
     // The same crash via method form: `s.contains(5)` dispatches to the
     // string shim with the receiver as the implicit first argument.
     let d = diagnostics_for(
-        "fn main() { let s = \"hi\"\nlet r = s.contains(5)\nprintln!(\"{}\", r) }\n",
+        "fn main() { let s = \"hi\"\nlet r = s.contains(5)\nprintln(\"{}\", r) }\n",
     );
     assert!(
         d.iter().any(
@@ -2296,10 +2300,10 @@ fn string_method_accepts_string_and_char_patterns() {
     let d = diagnostics_for(
         "fn main() {\n\
          let s = \"hello world\"\n\
-         let _ = s.contains(&\"world\")\n\
+         let _ = s.contains(\"world\")\n\
          let _ = s.contains('w')\n\
-         let _ = s.replace(&\"o\", &\"0\")\n\
-         let _ = s.splitn(2, &\" \")\n\
+         let _ = s.replace(\"o\", \"0\")\n\
+         let _ = s.splitn(2, \" \")\n\
          }\n",
     );
     assert!(
@@ -2413,11 +2417,11 @@ fn strings_free_fn_accepts_string_and_char_patterns() {
     let d = diagnostics_for(
         "use std::strings\nfn main() {\n\
          let s = \"hello\"\n\
-         let _ = strings::contains(&s, &\"ell\")\n\
-         let _ = strings::contains(&s, 'e')\n\
-         let _ = strings::replace(&s, &\"l\", &\"L\")\n\
-         let _ = strings::pad_left(&\"7\", 4, '0')\n\
-         let _ = strings::repeat(&\"ab\", 3)\n\
+         let _ = strings::contains(s, \"ell\")\n\
+         let _ = strings::contains(s, 'e')\n\
+         let _ = strings::replace(s, \"l\", \"L\")\n\
+         let _ = strings::pad_left(\"7\", 4, '0')\n\
+         let _ = strings::repeat(\"ab\", 3)\n\
          }\n",
     );
     assert!(
@@ -2436,12 +2440,12 @@ fn strings_free_fn_accepts_inferred_borrowed_text_values() {
          let r = metrics::Registry::new()\n\
          r.register(c)\n\
          let text = r.render()\n\
-         let _ = strings::contains(&text, \"requests_total\")\n\
+         let _ = strings::contains(text, \"requests_total\")\n\
          let tracer = trace::Tracer::new()\n\
          let span = tracer.start_span(\"checkout\")\n\
          let ended = span.end()\n\
          let json = ended.to_otlp_json()\n\
-         let _ = strings::contains(&json, \"checkout\")\n\
+         let _ = strings::contains(json, \"checkout\")\n\
          }\n",
     );
     assert!(
@@ -2681,9 +2685,9 @@ fn question_mark_requires_result_or_option_context() {
     );
 
     let valid = diagnostics_for(
-        "use std::errors\n\
-         fn parse_one() -> Result<u8, errors::Error> {\n\
-         let value: u8 = \"12\".parse()?\n\
+        "use std::{errors, fs}\n\
+         fn read_one() -> Result<String, errors::Error> {\n\
+         let value = fs::read_to_string(\"input\")?\n\
          Ok(value)\n\
          }\n",
     );
@@ -2962,7 +2966,7 @@ fn unary_neg_with_impl_is_accepted() {
     let d = diagnostics_for(
         "struct P { x: i64 }\n\
          impl Neg for P { fn neg(self) -> P { P { x: 0 - self.x } } }\n\
-         fn main() { let a = P { x: 1 }\nlet n = -a\nprintln!(\"{}\", n.x) }\n",
+         fn main() { let a = P { x: 1 }\nlet n = -a\nprintln(\"{}\", n.x) }\n",
     );
     assert!(!has_code(&d, "GT0003"), "{d:?}");
 }
@@ -2996,7 +3000,7 @@ fn compound_assign_with_impl_is_accepted() {
         "struct V { x: f64 }\n\
          impl Add for V { fn add(self, o: V) -> V { V { x: self.x + o.x } } }\n\
          impl Mul for V { fn mul(self, s: f64) -> V { V { x: self.x * s } } }\n\
-         fn main() { let mut v = V { x: 1.0 }\nv += V { x: 2.0 }\nv *= 2.0\nprintln!(\"{}\", v.x) }\n",
+         fn main() { let mut v = V { x: 1.0 }\nv += V { x: 2.0 }\nv *= 2.0\nprintln(\"{}\", v.x) }\n",
     );
     assert!(!has_code(&d, "GT0003"), "{d:?}");
 }
@@ -3021,7 +3025,7 @@ fn generic_impl_operator_is_accepted() {
     let d = diagnostics_for(
         "struct Wrap<T> { v: T }\n\
          impl<T> Add for Wrap<T> { fn add(self, o: Wrap<T>) -> Wrap<T> { Wrap { v: self.v + o.v } } }\n\
-         fn main() { let a = Wrap { v: 3 }\nlet b = Wrap { v: 4 }\nprintln!(\"{}\", (a + b).v) }\n",
+         fn main() { let a = Wrap { v: 3 }\nlet b = Wrap { v: 4 }\nprintln(\"{}\", (a + b).v) }\n",
     );
     assert!(!has_code(&d, "GT0003"), "{d:?}");
 }
@@ -3030,7 +3034,7 @@ fn generic_impl_operator_is_accepted() {
 fn index_on_struct_without_impl_is_rejected() {
     let d = diagnostics_for(
         "struct P { x: i64 }\n\
-         fn main() { let a = P { x: 1 }\nprintln!(\"{}\", a[0]) }\n",
+         fn main() { let a = P { x: 1 }\nprintln(\"{}\", a[0]) }\n",
     );
     assert!(has_code(&d, "GT0021"), "{d:?}");
 }
@@ -3040,7 +3044,7 @@ fn index_on_struct_with_impl_is_accepted() {
     let d = diagnostics_for(
         "struct P { x: i64 }\n\
          impl Index for P { fn index(self, i: i64) -> i64 { self.x + i } }\n\
-         fn main() { let a = P { x: 1 }\nprintln!(\"{}\", a[0]) }\n",
+         fn main() { let a = P { x: 1 }\nprintln(\"{}\", a[0]) }\n",
     );
     assert!(!has_code(&d, "GT0021"), "{d:?}");
 }
@@ -3054,7 +3058,7 @@ fn flag_set_parse_supports_question_mark() {
          fn main() -> Result<(), errors::Error> {\n\
          let mut fs = flag::Set::new(\"demo\")\n\
          let rest = fs.parse(env::args())?\n\
-         println!(\"{}\", rest.len())\n\
+         println(\"{}\", rest.len())\n\
          Ok(())\n\
          }\n",
     );
@@ -3075,9 +3079,9 @@ fn validate_handles_keep_methods_across_function_return() {
          }\n\
          fn main() {\n\
          let errs = errors()\n\
-         println!(\"{} {}\", errs.len(), errs.collect())\n\
+         println(\"{} {}\", errs.len(), errs.collect())\n\
          let fe = field_error()\n\
-         println!(\"{} {} {}\", fe.path(), fe.message(), fe.code())\n\
+         println(\"{} {} {}\", fe.path(), fe.message(), fe.code())\n\
          }\n",
     );
     assert!(!has_code(&d, "GT0002"), "{d:?}");
@@ -3112,7 +3116,7 @@ fn constant_repeat_literal_can_flow_into_vec_of_fixed_arrays() {
          row[3] = 9\n\
          rows.push(row)\n\
          let shaped: Vec<i64> = Vec::from([0; 4])\n\
-         println!(\"{} {}\", rows[0][3], shaped.len())\n\
+         println(\"{} {}\", rows[0][3], shaped.len())\n\
          }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
@@ -3125,7 +3129,7 @@ fn std_iter_skip_while_full_import_and_methods_typecheck() {
          let a = skip_while(|x: i64| x < 3, xs)\n\
          let b = xs.iter().skip_while(|x: i64| x < 3)\n\
          let c = (1..5).skip_while(|x: i64| x < 3).collect()\n\
-         println!(\"{} {} {}\", a.count(), b.count(), c.len())\n\
+         println(\"{} {} {}\", a.count(), b.count(), c.len())\n\
          }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
@@ -3141,7 +3145,7 @@ fn fast_string_and_path_std_apis_typecheck() {
          let slash: i64 = byte_at(text, 1)\n\
          let part: String = substring(text, 2, n)\n\
          let parts: Vec<String> = components(text)\n\
-         println!(\"{} {} {} {}\", n, slash, part, parts.len())\n\
+         println(\"{} {} {} {}\", n, slash, part, parts.len())\n\
          }\n",
     );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
@@ -3169,7 +3173,7 @@ fn phase1_runtime_collection_shapes_accept_i64_paths() {
          mixed_sorted.insert(1, \"one\")\n\
          let mut string_sorted: BTreeMap<String, String> = BTreeMap::new()\n\
          string_sorted.insert(\"a\", \"b\")\n\
-         println!(\"{} {} {} {} {} {} {}\", front, top, low, sorted.len(), int_sorted.len(), mixed_sorted.len(), string_sorted.len())\n\
+         println(\"{} {} {} {} {} {} {}\", front, top, low, sorted.len(), int_sorted.len(), mixed_sorted.len(), string_sorted.len())\n\
          }\n",
     );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
@@ -3186,7 +3190,7 @@ fn slot_backed_collections_reject_elements_they_cannot_hold() {
             "max heap unsigned annotation",
             "use std::collections::MaxHeap\n\
              fn main() { let mut h: MaxHeap<u64> = MaxHeap::new()\n\
-             println!(\"{}\", h.len()) }\n",
+             println(\"{}\", h.len()) }\n",
             "MaxHeap",
             "u64",
         ),
@@ -3194,7 +3198,7 @@ fn slot_backed_collections_reject_elements_they_cannot_hold() {
             "max heap map annotation",
             "use std::collections::{MaxHeap, Map}\n\
              fn main() { let mut h: MaxHeap<Map<String, i64>> = MaxHeap::new()\n\
-             println!(\"{}\", h.len()) }\n",
+             println(\"{}\", h.len()) }\n",
             "MaxHeap",
             "Map<String, i64>",
         ),
@@ -3202,7 +3206,7 @@ fn slot_backed_collections_reject_elements_they_cannot_hold() {
             "min heap set annotation",
             "use std::collections::{MinHeap, Set}\n\
              fn main() { let mut h: MinHeap<Set<i64>> = MinHeap::new()\n\
-             println!(\"{}\", h.len()) }\n",
+             println(\"{}\", h.len()) }\n",
             "MinHeap",
             "Set<i64>",
         ),
@@ -3225,13 +3229,13 @@ fn slot_backed_collections_reject_elements_they_cannot_hold() {
          q.push_back(\"a\") }\n",
         "use std::collections::Queue\n\
          fn main() { let mut q = Queue::from([\"a\"])\n\
-         println!(\"{}\", q.len()) }\n",
+         println(\"{}\", q.len()) }\n",
         "use std::collections::Stack\n\
          fn main() { let mut s: Stack<(i64, i64)> = Stack::new()\n\
-         println!(\"{}\", s.len()) }\n",
+         println(\"{}\", s.len()) }\n",
         "use std::collections::MaxHeap\n\
          fn main() { let mut h: MaxHeap<String> = MaxHeap::new()\n\
-         println!(\"{}\", h.len()) }\n",
+         println(\"{}\", h.len()) }\n",
     ] {
         let diagnostics = diagnostics_for(source);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
@@ -3260,7 +3264,7 @@ fn slot_backed_collections_hold_any_scalar_element() {
          let mut lo: MinHeap<i16> = MinHeap::new()\n\
          lo.push(3 as i16)\n\
          let least: Option<i16> = lo.pop()\n\
-         println!(\"{:?} {:?} {:?} {:?} {:?}\", head, top, flag, most, least)\n\
+         println(\"{:?} {:?} {:?} {:?} {:?}\", head, top, flag, most, least)\n\
          }\n",
     );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
@@ -3333,8 +3337,8 @@ fn where_clause_bound_resolves_a_trait_method_on_a_parameter() {
     let checked = run("trait Shape { fn area(&self) -> f64 }\n\
          struct Sq { s: f64 }\n\
          impl Shape for Sq { fn area(&self) -> f64 { self.s * self.s } }\n\
-         fn total<T>(x: &T) -> f64 where T: Shape { x.area() }\n\
-         fn main() { let _ = total(&Sq { s: 3.0 }) }\n");
+         fn total<T>(x: T) -> f64 where T: Shape { x.area() }\n\
+         fn main() { let _ = total(Sq { s: 3.0 }) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -3345,8 +3349,8 @@ fn where_clause_carries_several_predicates_and_several_bounds() {
          struct P { v: i64 }\n\
          impl A for P { fn a(&self) -> i64 { self.v } }\n\
          impl B for P { fn b(&self) -> i64 { self.v } }\n\
-         fn both<T, U>(x: &T, y: &U) -> i64 where T: A + B, U: A { x.a() + x.b() + y.a() }\n\
-         fn main() { let _ = both(&P { v: 1 }, &P { v: 2 }) }\n");
+         fn both<T, U>(x: T, y: U) -> i64 where T: A + B, U: A { x.a() + x.b() + y.a() }\n\
+         fn main() { let _ = both(P { v: 1 }, P { v: 2 }) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -3359,9 +3363,9 @@ fn impl_level_and_method_level_bounds_index_their_own_parameters() {
          impl B for P { fn b(&self) -> i64 { self.v } }\n\
          struct W<T> { value: T }\n\
          impl<T: A> W<T> {\n\
-             fn mixed<U: B>(&self, other: &U) -> i64 { self.value.a() + other.b() }\n\
+             fn mixed<U: B>(&self, other: U) -> i64 { self.value.a() + other.b() }\n\
          }\n\
-         fn main() { let w = W { value: P { v: 1 } }; let _ = w.mixed(&P { v: 2 }) }\n");
+         fn main() { let w = W { value: P { v: 1 } }; let _ = w.mixed(P { v: 2 }) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -3379,7 +3383,7 @@ fn impl_level_bound_alone_still_resolves_its_method() {
 #[test]
 fn method_off_every_bound_is_still_reported_under_a_where_clause() {
     let checked = run("trait A { fn a(&self) -> i64 }\n\
-         fn f<T>(x: &T) -> i64 where T: A { x.zzz() }\n");
+         fn f<T>(x: T) -> i64 where T: A { x.zzz() }\n");
     assert!(
         checked
             .diagnostics
@@ -3397,8 +3401,8 @@ fn multi_bound_parameter_resolves_methods_from_both_traits() {
          struct Item { n: String, s: i64 }\n\
          impl Named for Item { fn name(&self) -> String { self.n } }\n\
          impl Sized2 for Item { fn size(&self) -> i64 { self.s } }\n\
-         fn describe<T: Named + Sized2>(x: &T) -> String { format!(\"{} {}\", x.name(), x.size()) }\n\
-         fn main() { let _ = describe(&Item { n: \"a\", s: 1 }) }\n");
+         fn describe<T: Named + Sized2>(x: T) -> String { format(\"{} {}\", x.name(), x.size()) }\n\
+         fn main() { let _ = describe(Item { n: \"a\", s: 1 }) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -3408,8 +3412,8 @@ fn multi_bound_reports_the_violated_bound_at_the_call_site() {
          trait Weighed { fn size(&self) -> i64 }\n\
          struct Item { n: String }\n\
          impl Named for Item { fn name(&self) -> String { self.n } }\n\
-         fn describe<T: Named + Weighed>(x: &T) -> String { x.name() }\n\
-         fn main() { let _ = describe(&Item { n: \"a\" }) }\n");
+         fn describe<T: Named + Weighed>(x: T) -> String { x.name() }\n\
+         fn main() { let _ = describe(Item { n: \"a\" }) }\n");
     assert!(
         checked.diagnostics.iter().any(|d| matches!(
             &d.error,
@@ -3436,7 +3440,7 @@ fn unknown_trait_in_a_struct_bound_is_reported() {
 
 #[test]
 fn unknown_trait_in_a_where_clause_is_reported() {
-    let checked = run("fn f<T>(x: &T) -> i64 where T: Hashabel { 0 }\n");
+    let checked = run("fn f<T>(x: T) -> i64 where T: Hashabel { 0 }\n");
     assert!(
         checked.diagnostics.iter().any(|d| matches!(
             &d.error,
@@ -3582,13 +3586,13 @@ fn explicit_const_generic_argument_matching_the_argument_checks_clean() {
 #[test]
 fn struct_variant_fields_bind_by_value_through_a_reference_scrutinee() {
     let checked = run("enum Shape { Circle(f64), Rect { w: f64, h: f64 } }\n\
-         fn area(s: &Shape) -> f64 {\n\
+         fn area(s: Shape) -> f64 {\n\
              match s {\n\
                  Shape::Circle(r) => 3.14 * r * r,\n\
                  Shape::Rect { w, h } => w * h,\n\
              }\n\
          }\n\
-         fn main() { let _ = area(&Shape::Circle(1.0)) }\n");
+         fn main() { let _ = area(Shape::Circle(1.0)) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -3652,10 +3656,10 @@ fn bound_method_in_a_generic_impl_checks_clean_at_its_declared_return() {
          impl Shape for Sq { fn area(&self) -> f64 { self.s }\n fn name(&self) -> String { \"sq\" } }\n\
          struct Wrapper<T> { value: T }\n\
          impl<T: Shape> Wrapper<T> {\n\
-             fn report(&self) -> String { format!(\"{}={}\", self.value.name(), self.value.area()) }\n\
+             fn report(&self) -> String { format(\"{}={}\", self.value.name(), self.value.area()) }\n\
              fn doubled(&self) -> f64 { self.value.area() * 2.0 }\n\
          }\n\
-         fn main() { let w = Wrapper { value: Sq { s: 3.0 } }; println!(\"{} {}\", w.report(), w.doubled()) }\n",
+         fn main() { let w = Wrapper { value: Sq { s: 3.0 } }; println(\"{} {}\", w.report(), w.doubled()) }\n",
     );
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
@@ -3672,8 +3676,8 @@ fn tuple_rest_pattern_binds_its_suffix_from_the_end() {
 #[test]
 fn struct_pattern_scalar_fields_bind_by_value_through_a_reference() {
     let checked = run("struct P { x: i64, y: i64 }\n\
-         fn f(p: &P) -> i64 { match p { P { x, y } => x + y } }\n\
-         fn main() { let _ = f(&P { x: 1, y: 2 }) }\n");
+         fn f(p: P) -> i64 { match p { P { x, y } => x + y } }\n\
+         fn main() { let _ = f(P { x: 1, y: 2 }) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -3717,8 +3721,8 @@ fn assoc_type_projects_through_a_bound() {
          struct Label { text: String }\n\
          impl Holder for Label { type Item = String\n\
              fn get(&self) -> Self::Item { self.text } }\n\
-         fn shout<T: Holder>(h: &T) -> T::Item { h.get() }\n\
-         fn main() { println!(\"{}\", shout(&Label { text: \"x\" }).to_uppercase()) }\n",
+         fn shout<T: Holder>(h: T) -> T::Item { h.get() }\n\
+         fn main() { println(\"{}\", shout(Label { text: \"x\" }).to_uppercase()) }\n",
     );
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
@@ -3729,8 +3733,8 @@ fn assoc_type_default_applies_when_the_impl_omits_it() {
         "trait Counted { type Count = i64\n    fn amount(&self) -> Self::Count }\n\
          struct Tally { hits: i64 }\n\
          impl Counted for Tally { fn amount(&self) -> Self::Count { self.hits } }\n\
-         fn total<T: Counted>(c: &T) -> T::Count { c.amount() }\n\
-         fn main() { let n: i64 = total(&Tally { hits: 1 })\n    println!(\"{}\", n) }\n",
+         fn total<T: Counted>(c: T) -> T::Count { c.amount() }\n\
+         fn main() { let n: i64 = total(Tally { hits: 1 })\n    println(\"{}\", n) }\n",
     );
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
@@ -3743,7 +3747,7 @@ fn assoc_type_equality_constraint_pins_an_ambiguous_projection() {
          impl Source for A { type Item = i64\n    fn take(&self) -> Self::Item { self.v } }\n\
          impl Source for B { type Item = String\n    fn take(&self) -> Self::Item { self.s } }\n";
     let ambiguous = run(&format!(
-        "{source}fn pick<T: Source>(x: &T) -> T::Item {{ x.take() }}\n"
+        "{source}fn pick<T: Source>(x: T) -> T::Item {{ x.take() }}\n"
     ));
     assert!(
         ambiguous.diagnostics.iter().any(
@@ -3753,7 +3757,7 @@ fn assoc_type_equality_constraint_pins_an_ambiguous_projection() {
         ambiguous.diagnostics
     );
     let pinned = run(&format!(
-        "{source}fn pick<T: Source<Item = i64>>(x: &T) -> T::Item {{ x.take() + 1 }}\n"
+        "{source}fn pick<T: Source<Item = i64>>(x: T) -> T::Item {{ x.take() + 1 }}\n"
     ));
     assert!(pinned.diagnostics.is_empty(), "{:?}", pinned.diagnostics);
 }
@@ -3779,7 +3783,7 @@ fn impl_omitting_a_required_assoc_item_is_reported() {
 #[test]
 fn impl_defining_an_item_outside_the_trait_is_reported() {
     let checked = run("struct Point { id: i64 }\n\
-         impl Display for Point { fn to_string(&self) -> String { \"p\" }\n\
+         impl Display for Point { fn fmt(&self) -> String { \"p\" }\n\
              fn show(&self) -> String { \"s\" } }\n");
     assert!(
         checked.diagnostics.iter().any(|d| matches!(
@@ -3813,8 +3817,8 @@ fn impl_defining_only_the_traits_own_items_is_accepted() {
 #[test]
 fn a_trait_implemented_twice_for_one_type_is_reported() {
     let checked = run("struct Point { id: i64 }\n\
-         impl Display for Point { fn to_string(&self) -> String { \"a\" } }\n\
-         impl Display for Point { fn to_string(&self) -> String { \"b\" } }\n");
+         impl Display for Point { fn fmt(&self) -> String { \"a\" } }\n\
+         impl Display for Point { fn fmt(&self) -> String { \"b\" } }\n");
     assert!(
         checked.diagnostics.iter().any(|d| matches!(
             &d.error,
@@ -3848,7 +3852,7 @@ fn an_impl_competing_with_a_derive_is_reported() {
 fn two_modules_declaring_one_name_implement_distinct_pairs() {
     let checked = run("mod a {\n\
              pub struct Point { pub x: i64 }\n\
-             impl Display for Point { pub fn to_string(&self) -> String { \"a\" } }\n\
+             impl Display for Point { pub fn fmt(&self) -> String { \"a\" } }\n\
          }\n\
          mod b {\n\
              #[derive(Debug)]\n\
@@ -3883,7 +3887,7 @@ fn a_body_answering_a_value_without_a_declared_return_is_reported() {
 
 #[test]
 fn a_body_answering_a_unit_needs_no_declared_return() {
-    let checked = run("fn shout(a: i64) { println!(\"{}\", a) }\n");
+    let checked = run("fn shout(a: i64) { println(\"{}\", a) }\n");
     assert!(
         !checked
             .diagnostics
@@ -3899,7 +3903,7 @@ fn unknown_assoc_item_names_what_the_bound_declares() {
     let checked = run("trait Holder { type Item }\n\
          struct A {}\n\
          impl Holder for A { type Item = i64 }\n\
-         fn pick<T: Holder>(x: &T) -> T::Nope { 1 }\n");
+         fn pick<T: Holder>(x: T) -> T::Nope { 1 }\n");
     assert!(
         checked.diagnostics.iter().any(|d| matches!(
             &d.error,
@@ -3918,7 +3922,7 @@ fn assoc_item_is_reachable_through_a_supertrait() {
          struct S { v: i64 }\n\
          impl Base for S { type Item = i64\n    const MAX: i64 = 6 }\n\
          impl Ext for S { fn get(&self) -> Self::Item { self.v } }\n\
-         fn top<T: Ext>(x: &T) -> i64 { T::MAX }\n");
+         fn top<T: Ext>(x: T) -> i64 { T::MAX }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -3950,8 +3954,8 @@ fn a_trait_impl_on_a_module_local_type_satisfies_a_bound() {
              pub struct Dog { pub n: i64 }\n\
              impl super::Speak for Dog { fn speak(&self) -> i64 { self.n } }\n\
          }\n\
-         fn announce<T: Speak>(x: &T) -> i64 { x.speak() }\n\
-         fn main() { let d = animals::Dog { n: 1 }\n    let _ = announce(&d) }\n");
+         fn announce<T: Speak>(x: T) -> i64 { x.speak() }\n\
+         fn main() { let d = animals::Dog { n: 1 }\n    let _ = announce(d) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
@@ -4088,9 +4092,9 @@ fn builtin_receiver_methods_reject_wrong_argument_count() {
 #[test]
 fn handle_receiver_methods_reject_wrong_argument_count() {
     for (setup, src) in [
-        ("let (tx, rx) = channel()", "tx.send()"),
-        ("let (tx, rx) = channel()", "tx.close(1)"),
-        ("let (tx, rx) = channel()", "rx.recv(1)"),
+        ("let tx, rx = channel()", "tx.send()"),
+        ("let tx, rx = channel()", "tx.close(1)"),
+        ("let tx, rx = channel()", "rx.recv(1)"),
         ("let e = errors::new(\"x\")", "e.message(1)"),
         ("let e = errors::new(\"x\")", "e.is()"),
     ] {
@@ -4105,7 +4109,7 @@ fn handle_receiver_methods_reject_wrong_argument_count() {
     }
     let clean = "use std::errors\nuse std::sync::channel\n\
          fn main() {\n\
-         let (tx, rx) = channel()\n\
+         let tx, rx = channel()\n\
          tx.send(1)\n\
          tx.close()\n\
          let _ = rx.recv()\n\
@@ -4229,7 +4233,7 @@ fn a_conversion_with_no_target_is_rejected() {
 #[test]
 fn a_conversion_the_use_site_targets_still_resolves() {
     for source in [
-        "type Id = new i64\nfn main() { let a: Id = 5.into()\n let _b: i64 = a.into() }\n",
+        "newtype Id = i64\nfn main() { let a: Id = 5.into()\n let _b: i64 = a.into() }\n",
         "struct P { a: i64 }\n         impl From<(i64, i64)> for P { fn from(t: (i64, i64)) -> P { P { a: t.0 } } }\n         fn main() { let p: P = (1, 2).into()\n let _ = p.a }\n",
         "fn take(v: Vec<i64>) -> i64 { v[0] }\nfn main() { let _ = take([1, 2].into()) }\n",
     ] {
@@ -4422,7 +4426,7 @@ fn a_closure_reference_pattern_parameter_over_a_value_type_is_reported() {
 #[test]
 fn a_reference_typed_parameter_keeps_its_referent() {
     let d = diagnostics_for(
-        "fn total(m: &Map<String, i64>) -> i64 { m.len() }\nfn main() { let m = {\"a\": 1}\n let _ = total(&m) }\n",
+        "fn total(m: Map<String, i64>) -> i64 { m.len() }\nfn main() { let m = {\"a\": 1}\n let _ = total(m) }\n",
     );
     assert!(d.is_empty(), "a reference parameter is the spelling: {d:?}");
 }
@@ -4442,7 +4446,7 @@ fn json_value_method_form_types_from_the_same_table_as_the_free_form() {
 #[test]
 fn json_value_accessor_methods_typecheck_clean() {
     let d = diagnostics_for(
-        "use std::encoding::json\nfn main() { let v = json::parse(\"{}\").unwrap()\n let n: Option<i64> = v.as_i64()\n let s: Option<String> = v.as_str()\n let k: Option<json::Value> = v.get(\"a\")\n let l: i64 = v.len()\n let z: bool = v.is_null()\n println!(\"{:?} {:?} {:?} {} {}\", n, s, k, l, z) }\n",
+        "use std::encoding::json\nfn main() { let v = json::parse(\"{}\").unwrap()\n let n: Option<i64> = v.as_i64()\n let s: Option<String> = v.as_str()\n let k: Option<json::Value> = v.get(\"a\")\n let l: i64 = v.len()\n let z: bool = v.is_null()\n println(\"{:?} {:?} {:?} {} {}\", n, s, k, l, z) }\n",
     );
     assert!(d.is_empty(), "the json accessor surface types: {d:?}");
 }

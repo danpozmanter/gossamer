@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GR0021]: A std free function was called with its data argument in the slot - here
+--- framed ---
+error[GR0021]: A std free function was called with its data argument in the slot
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

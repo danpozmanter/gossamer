@@ -71,22 +71,22 @@ fn main() {
     let circ = Circle { radius: 5.0 }
     let tri = Triangle { a: 3.0, b: 4.0, c: 5.0 }
 
-    println!("{}: area={:.2} perimeter={:.2}", rect.name(), rect.area(), rect.perimeter())
-    println!("{}: area={:.2} perimeter={:.2}", circ.name(), circ.area(), circ.perimeter())
-    println!("{}: area={:.2} perimeter={:.2}", tri.name(), tri.area(), tri.perimeter())
+    println("{}: area={:.2} perimeter={:.2}", rect.name(), rect.area(), rect.perimeter())
+    println("{}: area={:.2} perimeter={:.2}", circ.name(), circ.area(), circ.perimeter())
+    println("{}: area={:.2} perimeter={:.2}", tri.name(), tri.area(), tri.perimeter())
 
     // Direct method access
     let r2 = Rectangle { width: 10.0, height: 2.0 }
-    println!("r2 area = {:.0}", r2.area())
-    println!("r2 perimeter = {:.0}", r2.perimeter())
+    println("r2 area = {:.0}", r2.area())
+    println("r2 perimeter = {:.0}", r2.perimeter())
 
     let c2 = Circle { radius: 1.0 }
-    println!("unit circle area approx 3.14: {}", c2.area() > 3.0 && c2.area() < 3.2)
+    println("unit circle area approx 3.14: {}", c2.area() > 3.0 && c2.area() < 3.2)
 
     // 3-4-5 right triangle: area = 6, perimeter = 12
     let t2 = Triangle { a: 3.0, b: 4.0, c: 5.0 }
-    println!("3-4-5 area approx 6: {}", t2.area() > 5.9 && t2.area() < 6.1)
-    println!("3-4-5 perimeter = {:.0}", t2.perimeter())
+    println("3-4-5 area approx 6: {}", t2.area() > 5.9 && t2.area() < 6.1)
+    println("3-4-5 perimeter = {:.0}", t2.perimeter())
 }
 
 #[cfg(test)]

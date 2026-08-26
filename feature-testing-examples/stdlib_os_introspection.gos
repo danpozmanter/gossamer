@@ -8,8 +8,8 @@ use std::os
 fn main() {
     let fam = os::family()
     let arch = os::arch()
-    println!("family={}", fam)
-    println!("arch={}", arch)
-    println!("family_nonempty={}", fam.len() > 0)
-    println!("arch_nonempty={}", arch.len() > 0)
+    println("family={}", fam)
+    println("arch={}", arch)
+    println("family_nonempty={}", fam.len() > 0)
+    println("arch_nonempty={}", arch.len() > 0)
 }

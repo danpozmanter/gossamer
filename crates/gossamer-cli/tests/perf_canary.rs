@@ -60,7 +60,7 @@ fn main() {
         }
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#;
 

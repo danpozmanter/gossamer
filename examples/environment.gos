@@ -8,24 +8,24 @@
 
 use std::{env, iter}
 
-fn report_env(name: &String) {
+fn report_env(name: String) {
     match env::var(name) {
-        Some(v) => println!("  {name} = {v}")
-        None => println!("  {name} (unset)")
+        Some(v) => println("  {name} = {v}")
+        None => println("  {name} (unset)")
     }
 }
 
-println!("argv:")
+println("argv:")
 let args = env::args()
 for i in 0..args.len() {
-    println!("  argv[{i}] = {}", args[i])
+    println("  argv[{i}] = {}", args[i])
 }
 
-println!("\nenvironment (selected):")
+println("\nenvironment (selected):")
 let env_vars = #["PATH", "HOME", "USER", "GOSSAMER_DEBUG"]
-env_vars |> |v| iter::for_each(|name| report_env(&name), v)
+env_vars |> |v| iter::for_each(v, |name| report_env(name))
 
 match env::current_dir() {
-    Ok(dir) => println!("\ncwd: {dir}")
-    Err(e) => println!("\ncwd error: {e}")
+    Ok(dir) => println("\ncwd: {dir}")
+    Err(e) => println("\ncwd error: {e}")
 }

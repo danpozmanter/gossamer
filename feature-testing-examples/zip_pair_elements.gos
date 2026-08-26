@@ -8,24 +8,24 @@ fn free_forms() {
     let ns = #[1, 2, 3]
     let names = #["one", "two", "three"]
     let reals = #[1.5, 2.5, 3.5]
-    println!("{:?}", iter::zip(ns, names))
-    println!("{:?}", iter::zip(names, ns))
-    println!("{:?}", iter::zip(ns, reals))
-    println!("{:?}", iter::zip(reals, names))
+    println("{:?}", iter::zip(ns, names))
+    println("{:?}", iter::zip(names, ns))
+    println("{:?}", iter::zip(ns, reals))
+    println("{:?}", iter::zip(reals, names))
 }
 
 fn method_forms() {
     let ns = #[1, 2, 3]
     let names = #["one", "two", "three"]
-    println!("{:?}", ns.zip(names))
-    println!("{:?}", ns |> |v| iter::zip(names, v))
-    println!("{:?}", Some(1).zip(Some("x")))
+    println("{:?}", ns.zip(names))
+    println("{:?}", ns |> |v| iter::zip(names, v))
+    println("{:?}", Some(1).zip(Some("x")))
 }
 
 fn lazy_form() {
     let ns = #[1, 2, 3]
     let names = #["one", "two", "three"]
-    println!("{:?}", ns.iter().zip(names.iter()).collect())
+    println("{:?}", ns.iter().zip(names.iter()).collect())
 }
 
 fn traversals() {
@@ -33,13 +33,13 @@ fn traversals() {
     let names = #["one", "two", "three"]
     let tags = #[Tag { id: 7 }, Tag { id: 8 }]
     for (n, name) in iter::zip(ns, names) {
-        println!("{} {}", n, name)
+        println("{} {}", n, name)
     }
     let paired = iter::zip(ns, names)
     for pair in paired {
-        println!("{:?}", pair)
+        println("{:?}", pair)
     }
-    println!("{}", iter::zip(ns, tags).len())
+    println("{}", iter::zip(ns, tags).len())
 }
 
 fn main() {

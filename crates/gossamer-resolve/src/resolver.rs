@@ -77,6 +77,20 @@ struct ItemHome {
 /// the whole front end (autoderive wrappers, format intrinsics), and
 /// their bodies stand in for code the user never spelled - source-level
 /// visibility is not theirs to satisfy.
+/// True when `resolution` names a module. A module lives in the type
+/// namespace, which a single-segment value path falls back to, so a module
+/// and one of its items sharing a name would otherwise resolve to the
+/// module - a name the backends have no function for.
+fn is_module_resolution(resolution: Resolution) -> bool {
+    matches!(
+        resolution,
+        Resolution::Def {
+            kind: DefKind::Mod,
+            ..
+        }
+    )
+}
+
 fn is_compiler_generated(name: &str) -> bool {
     name.starts_with("__")
 }
@@ -760,6 +774,7 @@ impl Resolver {
         let vis = item.visibility;
         match &item.kind {
             ItemKind::Fn(decl) => {
+                self.reject_reserved_call_name(&decl.name.name, "function", item.span);
                 self.register_item_with_module(
                     item.id,
                     &decl.name,
@@ -873,7 +888,10 @@ impl Resolver {
             );
             return;
         }
-        self.register_item(
+        // A module declared inside another one belongs to its parent's
+        // scope, so two sibling modules may each declare a `mod tests`
+        // exactly as they may each declare a `fn helper`.
+        self.register_item_with_module(
             item.id,
             &decl.name,
             DefKind::Mod,
@@ -1751,7 +1769,6 @@ impl Resolver {
             ExprKind::Continue { label } => {
                 self.check_loop_target("continue", label.as_ref(), expr.span);
             }
-            ExprKind::MacroCall(_) => {}
             ExprKind::Tuple(elems) | ExprKind::MapLiteral(elems) | ExprKind::SetLiteral(elems) => {
                 self.resolve_exprs(elems);
             }
@@ -1765,7 +1782,7 @@ impl Resolver {
                 self.resolve_optional_expr(start.as_deref());
                 self.resolve_optional_expr(end.as_deref());
             }
-            ExprKind::Try(inner) | ExprKind::Go(inner) => self.resolve_expr(inner),
+            ExprKind::Try(inner) => self.resolve_expr(inner),
             ExprKind::Select(arms) => {
                 for arm in arms {
                     self.resolve_select_arm(arm);
@@ -2166,6 +2183,7 @@ impl Resolver {
             self.scopes.lookup_type(lookup_name).map(|b| b.resolution)
         } else {
             self.lookup_value_or_type(lookup_name)
+                .filter(|resolution| !is_module_resolution(*resolution))
         };
         let resolution = resolution
             .or_else(|| self.synthesized_lookup(lookup_name))
@@ -2381,7 +2399,7 @@ impl Resolver {
                 self.collect_item_nested(item);
                 self.resolve_item(item);
             }
-            StmtKind::Defer(inner) | StmtKind::Go(inner) => self.resolve_expr(inner),
+            StmtKind::Defer(inner) => self.resolve_expr(inner),
         }
     }
 
@@ -2483,6 +2501,21 @@ impl Resolver {
         self.scopes.pop();
     }
 
+    /// Rejects a declaration under a compiler-known call name: the parser
+    /// expands the call where it is written, so the declaration could
+    /// never be reached.
+    fn reject_reserved_call_name(&mut self, name: &str, kind: &'static str, span: Span) {
+        if gossamer_parse::builtin_macros::is_reserved_call_name(name) {
+            self.emit(
+                ResolveError::ReservedCallName {
+                    name: name.to_string(),
+                    kind,
+                },
+                span,
+            );
+        }
+    }
+
     fn bind_pattern(&mut self, pattern: &Pattern) {
         match &pattern.kind {
             PatternKind::Wildcard
@@ -2493,6 +2526,7 @@ impl Resolver {
             PatternKind::Ident {
                 name, subpattern, ..
             } => {
+                self.reject_reserved_call_name(&name.name, "binding", pattern.span);
                 self.scopes
                     .top_mut()
                     .shadow_value(&name.name, Binding::local(pattern.id));

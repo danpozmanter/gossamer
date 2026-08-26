@@ -1,0 +1,65 @@
+// Enum representation control.
+//
+// A plain `enum` stores its discriminant in the smallest byte-aligned
+// integer that holds every variant. `packed` asks for the smallest number
+// of bits instead, and either form may name its own width with `: uN`. The
+// choice is a storage decision: what a program observes - the variant a
+// value names, how two of them compare and order, what a pattern matches,
+// and what serialization writes - is the same either way, on every tier.
+
+packed enum Direction { North, South, East, West }
+
+enum Level: u16 { Debug, Info, Warn, Error }
+
+packed enum Bit: u1 { Off, On }
+
+packed enum Nibble: u4 { Zero, One, Two, Three, Four, Five, Six, Seven }
+
+enum Wide { A, B, C }
+
+fn describe(d: Direction) -> String {
+    match d {
+        Direction::North => "north"
+        Direction::South => "south"
+        Direction::East => "east"
+        Direction::West => "west"
+    }
+}
+
+fn main() {
+    let d = Direction::East
+    println("{}", describe(d))
+    println("{}", d)
+    println("{:?}", d)
+    println("{}", d == Direction::East)
+    println("{}", d == Direction::North)
+    println("{}", matches(d, Direction::East))
+
+    let levels = #[Level::Error, Level::Debug, Level::Warn]
+    println("{}", levels)
+    let mut sorted = levels
+    sorted.sort()
+    println("{}", sorted)
+
+    println("{}", Bit::On)
+    println("{}", Bit::Off == Bit::Off)
+    println("{}", Nibble::Seven)
+    println("{}", Nibble::Zero < Nibble::Seven)
+
+    let mixed = #[Direction::West, Direction::North]
+    println("{}", mixed)
+    for one in mixed {
+        println("walk {}", describe(one))
+    }
+
+    let mut counts: Map<Direction, i64> = Map::new()
+    counts.inc(Direction::East)
+    counts.inc(Direction::East)
+    counts.inc(Direction::West)
+    println("{}", counts.get(Direction::East))
+    println("{}", counts.get(Direction::West))
+
+    println("{}", Wide::C)
+    let pair = (Direction::South, Level::Info)
+    println("{}", pair)
+}

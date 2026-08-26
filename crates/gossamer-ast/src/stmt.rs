@@ -58,6 +58,4 @@ pub enum StmtKind {
     Item(Box<Item>),
     /// `defer { block }` statement.
     Defer(Box<Expr>),
-    /// `go expr` statement.
-    Go(Box<Expr>),
 }

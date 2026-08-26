@@ -44,7 +44,7 @@ literal `--`. Put `gos run` options before `FILE`.
 
 `gos run file.gos [ARGS...]` and `gos build file.gos` accept a file with no
 `fn main`: bare statements at the top of the entry file become the
-body of an implicit `fn main()`. So a one-line `println!("Hello
+body of an implicit `fn main()`. So a one-line `println("Hello
 World")` file runs as-is. See
 [Top-level statements](language/top_level_statements.md). A project's
 entry file is `src/main.gos` by convention, or whatever

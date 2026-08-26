@@ -116,9 +116,6 @@ fn is_known_type_name(name: &str) -> bool {
             | "MinHeap"
             | "Option"
             | "Result"
-            | "Box"
-            | "Arc"
-            | "Rc"
             | "Weak"
             | "Sender"
             | "Receiver"
@@ -196,13 +193,16 @@ fn continuation_indent(input: &str) -> String {
 }
 
 /// Every Gossamer keyword, completed when the cursor word is unqualified.
-/// Mirrors `gossamer_lex::Keyword`; the enum exposes no all-variants
-/// iterator, so the set is listed here and kept in step with the lexer.
+/// Every word a completion offers: `gossamer_lex::Keyword` (which exposes
+/// no all-variants iterator, so the set is listed here and kept in step
+/// with the lexer) plus the contextual words that open a construct
+/// without being reserved.
 const KEYWORDS: &[&str] = &[
-    "as", "async", "await", "break", "const", "continue", "crate", "defer", "else", "enum",
-    "extern", "false", "fn", "for", "go", "if", "impl", "in", "let", "loop", "match", "mod", "mut",
-    "package", "pub", "return", "select", "self", "static", "struct", "super", "trait", "true",
-    "type", "unsafe", "use", "where", "while", "yield",
+    "arena", "as", "async", "await", "break", "cohort", "comptime", "const", "continue", "crate",
+    "defer", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop",
+    "match", "mod", "mut", "newtype", "packed", "package", "pub", "return", "select", "self",
+    "spawn", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where",
+    "while", "yield",
 ];
 
 impl Completer for GosReplHelper {
@@ -679,8 +679,8 @@ mod repl_helper_tests {
 
     #[test]
     fn qualified_path_completes_member() {
-        let (start, cands) = complete_at("println!(strings::jo", 20, &HashMap::new(), &[]);
-        assert_eq!(start, 9);
+        let (start, cands) = complete_at("println(strings::jo", 19, &HashMap::new(), &[]);
+        assert_eq!(start, 8);
         assert!(
             cands.iter().any(|c| c == "strings::join"),
             "expected strings::join in {cands:?}"

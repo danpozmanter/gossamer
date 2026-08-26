@@ -23,7 +23,7 @@ fn write_file(dir: &Path, name: &str, body: &str) -> PathBuf {
 #[test]
 fn run_hello_without_main() {
     let dir = scratch("hello");
-    let path = write_file(&dir, "hello.gos", "println!(\"Hello World\")\n");
+    let path = write_file(&dir, "hello.gos", "println(\"Hello World\")\n");
     let out = gos().arg("run").arg(&path).output().unwrap();
     assert!(
         out.status.success(),
@@ -36,7 +36,7 @@ fn run_hello_without_main() {
 #[test]
 fn run_question_propagation_without_main() {
     let dir = scratch("question");
-    let src = "use std::strconv\nlet n = strconv::parse_i64(&\"41\")?\nprintln!(\"{}\", n + 1)\n";
+    let src = "use std::strconv\nlet n = strconv::parse_i64(\"41\")?\nprintln(\"{}\", n + 1)\n";
     let path = write_file(&dir, "q.gos", src);
     let out = gos().arg("run").arg(&path).output().unwrap();
     assert!(
@@ -50,7 +50,7 @@ fn run_question_propagation_without_main() {
 #[test]
 fn mixing_with_explicit_main_is_rejected() {
     let dir = scratch("mix");
-    let path = write_file(&dir, "mix.gos", "println!(\"hi\")\nfn main() { }\n");
+    let path = write_file(&dir, "mix.gos", "println(\"hi\")\nfn main() { }\n");
     let out = gos().arg("check").arg(&path).output().unwrap();
     assert!(!out.status.success(), "mixing should fail to check");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -70,7 +70,7 @@ fn manifest_entry_selects_top_level_file() {
         "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\nentry = \"src/app.gos\"\n",
     );
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("src").join("app.gos"), "println!(\"from app\")\n").unwrap();
+    std::fs::write(dir.join("src").join("app.gos"), "println(\"from app\")\n").unwrap();
     let out = gos()
         .arg("run")
         .arg(".")

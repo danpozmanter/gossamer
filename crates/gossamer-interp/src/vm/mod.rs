@@ -1889,9 +1889,9 @@ fn hir_block_has_slice_pattern(block: &gossamer_hir::HirBlock) -> bool {
         gossamer_hir::HirStmtKind::Let { init, .. } => {
             init.as_ref().is_some_and(hir_expr_has_slice_pattern)
         }
-        gossamer_hir::HirStmtKind::Expr { expr, .. }
-        | gossamer_hir::HirStmtKind::Defer(expr)
-        | gossamer_hir::HirStmtKind::Go(expr) => hir_expr_has_slice_pattern(expr),
+        gossamer_hir::HirStmtKind::Expr { expr, .. } | gossamer_hir::HirStmtKind::Defer(expr) => {
+            hir_expr_has_slice_pattern(expr)
+        }
         gossamer_hir::HirStmtKind::Item(item) => match &item.kind {
             HirItemKind::Fn(decl) => decl
                 .body
@@ -1980,7 +1980,6 @@ fn hir_expr_has_slice_pattern(expr: &gossamer_hir::HirExpr) -> bool {
                 hir_expr_has_slice_pattern(value) || hir_expr_has_slice_pattern(count)
             }
         },
-        K::Go(inner) => hir_expr_has_slice_pattern(inner),
         K::Range { start, end, .. } => {
             start.as_deref().is_some_and(hir_expr_has_slice_pattern)
                 || end.as_deref().is_some_and(hir_expr_has_slice_pattern)
@@ -2007,9 +2006,9 @@ fn hir_expr_has_slice_pattern(expr: &gossamer_hir::HirExpr) -> bool {
 fn hir_block_has_loop(block: &gossamer_hir::HirBlock) -> bool {
     block.stmts.iter().any(|stmt| match &stmt.kind {
         gossamer_hir::HirStmtKind::Let { init, .. } => init.as_ref().is_some_and(hir_expr_has_loop),
-        gossamer_hir::HirStmtKind::Expr { expr, .. }
-        | gossamer_hir::HirStmtKind::Defer(expr)
-        | gossamer_hir::HirStmtKind::Go(expr) => hir_expr_has_loop(expr),
+        gossamer_hir::HirStmtKind::Expr { expr, .. } | gossamer_hir::HirStmtKind::Defer(expr) => {
+            hir_expr_has_loop(expr)
+        }
         gossamer_hir::HirStmtKind::Item(item) => match &item.kind {
             HirItemKind::Fn(decl) => decl
                 .body
@@ -2059,7 +2058,6 @@ fn hir_expr_has_loop(expr: &gossamer_hir::HirExpr) -> bool {
                 hir_expr_has_loop(value) || hir_expr_has_loop(count)
             }
         },
-        K::Go(inner) => hir_expr_has_loop(inner),
         K::Range { start, end, .. } => {
             start.as_deref().is_some_and(hir_expr_has_loop)
                 || end.as_deref().is_some_and(hir_expr_has_loop)
@@ -2086,9 +2084,9 @@ fn hir_block_calls_name(block: &gossamer_hir::HirBlock, name: &str) -> bool {
         gossamer_hir::HirStmtKind::Let { init, .. } => init
             .as_ref()
             .is_some_and(|expr| hir_expr_calls_name(expr, name)),
-        gossamer_hir::HirStmtKind::Expr { expr, .. }
-        | gossamer_hir::HirStmtKind::Defer(expr)
-        | gossamer_hir::HirStmtKind::Go(expr) => hir_expr_calls_name(expr, name),
+        gossamer_hir::HirStmtKind::Expr { expr, .. } | gossamer_hir::HirStmtKind::Defer(expr) => {
+            hir_expr_calls_name(expr, name)
+        }
         gossamer_hir::HirStmtKind::Item(_) => false,
     }) || block
         .tail
@@ -2166,7 +2164,6 @@ fn hir_expr_calls_name(expr: &gossamer_hir::HirExpr, name: &str) -> bool {
                 hir_expr_calls_name(value, name) || hir_expr_calls_name(count, name)
             }
         },
-        K::Go(inner) => hir_expr_calls_name(inner, name),
         K::Range { start, end, .. } => {
             start
                 .as_deref()
@@ -2195,9 +2192,9 @@ fn hir_expr_calls_name(expr: &gossamer_hir::HirExpr, name: &str) -> bool {
 }
 
 /// Conservative scan for any goroutine-spawn site reachable from the
-/// loaded program. `go expr` lowers to `Op::Spawn` / `Op::SpawnMethod`;
-/// the `spawn(f)` JoinHandle builtin appears as a call referencing the
-/// `spawn` global. A spawn-free program hands its MIR to no child Vm, so
+/// loaded program: the `spawn(f)` JoinHandle builtin appears as a call
+/// referencing the `spawn` global. A spawn-free program hands its MIR to
+/// no child Vm, so
 /// the deferred JIT can free it early. Erring toward "spawns" only
 /// forfeits a goroutine tier-up optimization, never correctness.
 fn program_has_spawn_sites(globals: &rustc_hash::FxHashMap<&'static str, Global>) -> bool {
@@ -2207,12 +2204,7 @@ fn program_has_spawn_sites(globals: &rustc_hash::FxHashMap<&'static str, Global>
 }
 
 fn chunk_has_spawn(chunk: &crate::bytecode::FnChunk) -> bool {
-    use crate::bytecode::Op;
-    chunk
-        .instrs
-        .iter()
-        .any(|op| matches!(op, Op::Spawn { .. } | Op::SpawnMethod { .. }))
-        || chunk.globals.iter().any(|name| &**name == "spawn")
+    chunk.globals.iter().any(|name| &**name == "spawn")
         || chunk
             .closure_protos
             .iter()
@@ -2508,9 +2500,10 @@ mod tests {
     fn hir_for_jit_admission(source: &str) -> HirProgram {
         let mut map = gossamer_lex::SourceMap::new();
         let file = map.add_file("jit-admission.gos", source.to_string());
-        let (sf, parse_diagnostics) = gossamer_parse::parse_source_file(source, file);
+        let (mut sf, parse_diagnostics) = gossamer_parse::parse_source_file(source, file);
         assert!(parse_diagnostics.is_empty(), "parse: {parse_diagnostics:?}");
         let (resolutions, resolve_diagnostics) = gossamer_resolve::resolve_source_file(&sf);
+        let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
         assert!(
             resolve_diagnostics.is_empty(),
             "resolve: {resolve_diagnostics:?}"

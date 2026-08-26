@@ -113,7 +113,7 @@ fn mutable_reference_parameters_require_visible_mutable_arguments() {
         ),
         (
             "goroutine bare mutable argument",
-            "fn change(v: &mut Vec<i64>) { v[0] = 0 }\nfn main() { let mut a: Vec<i64> = [1]\n go change(a) }",
+            "fn change(v: &mut Vec<i64>) { v[0] = 0 }\nfn main() { let mut a: Vec<i64> = [1]\n spawn(|| change(a)) }",
         ),
     ];
 
@@ -166,11 +166,11 @@ fn lexical_references_protect_their_source_places() {
     for (name, source) in [
         (
             "shared reference blocks source mutation",
-            "fn main() { let mut values = [1, 2]\n let view = &values\n values[0] = 9\n println!(\"{}\", view[0]) }",
+            "fn main() { let mut values = [1, 2]\n let view = &values\n values[0] = 9\n println(\"{}\", view[0]) }",
         ),
         (
             "mutable reference blocks source reads",
-            "fn main() { let mut values = [1, 2]\n let view = &mut values\n println!(\"{}\", values[0])\n view[0] = 9 }",
+            "fn main() { let mut values = [1, 2]\n let view = &mut values\n println(\"{}\", values[0])\n view[0] = 9 }",
         ),
     ] {
         assert_rejected(name, source, ExpectedError::BorrowedPlaceConflict);
@@ -178,7 +178,7 @@ fn lexical_references_protect_their_source_places() {
 
     assert_rejected(
         "shared reference blocks mutable reference",
-        "fn main() { let mut values = [1, 2]\n let view = &values\n let writable = &mut values\n println!(\"{} {}\", view[0], writable[0]) }",
+        "fn main() { let mut values = [1, 2]\n let view = &values\n let writable = &mut values\n println(\"{} {}\", view[0], writable[0]) }",
         ExpectedError::MutableReferenceConflict,
     );
 
@@ -205,11 +205,11 @@ fn references_are_call_scoped_and_cannot_enter_owned_or_concurrent_storage() {
         ),
         (
             "reference inferred into channel storage",
-            "fn main() { let (tx, rx) = channel()\n let value = 1\n tx.send(&value)\n let _ = rx }",
+            "fn main() { let tx, rx = channel()\n let value = 1\n let view = &value\n tx.send(view)\n let _ = rx }",
         ),
         (
-            "reference crosses go boundary",
-            "fn see(value: &i64) {}\nfn main() { let value = 1\n go see(&value) }",
+            "reference crosses a spawn boundary",
+            "fn see(value: i64) {}\nfn main() { let value = 1\n let view = &value\n spawn(|| see(view)) }",
         ),
         (
             "closure captures reference binding",
@@ -221,7 +221,7 @@ fn references_are_call_scoped_and_cannot_enter_owned_or_concurrent_storage() {
         ),
         (
             "named reference borrows temporary",
-            "fn main() { let bad = &[1, 2, 3]\n println!(\"{}\", bad.len()) }",
+            "fn main() { let bad = &[1, 2, 3]\n println(\"{}\", bad.len()) }",
         ),
     ] {
         assert_rejected(name, source, ExpectedError::ReferenceEscape);
@@ -229,7 +229,7 @@ fn references_are_call_scoped_and_cannot_enter_owned_or_concurrent_storage() {
 
     assert_accepted(
         "temporary and named-place slices are valid for one call",
-        "fn sum(values: &[i64]) -> i64 { values[0] + values[1] }\nfn main() { let values = [3, 4]\n let a = sum(&values)\n let b = sum(&[5, 6])\n println!(\"{} {}\", a, b) }",
+        "fn sum(values: [i64]) -> i64 { values[0] + values[1] }\nfn main() { let values = [3, 4]\n let a = sum(values)\n let b = sum([5, 6])\n println(\"{} {}\", a, b) }",
     );
 }
 
@@ -242,7 +242,7 @@ fn mutable_call_arguments_reject_obvious_overlapping_aliases() {
         ),
         (
             "call borrow overlaps named mutable reference",
-            "fn change(value: &mut i64) { *value = 0 }\nfn main() { let mut value = 1\n let reference = &mut value\n change(&mut value)\n println!(\"{}\", reference) }",
+            "fn change(value: &mut i64) { *value = 0 }\nfn main() { let mut value = 1\n let reference = &mut value\n change(&mut value)\n println(\"{}\", reference) }",
         ),
         (
             "method arguments share one mutable root",
@@ -258,12 +258,13 @@ fn mutable_call_arguments_reject_obvious_overlapping_aliases() {
 fn check(source: &str) -> Vec<TypeDiagnostic> {
     let mut map = SourceMap::new();
     let file = map.add_file("mutability-regression.gos".to_string(), source.to_string());
-    let (parsed, parse_diagnostics) = parse_source_file(source, file);
+    let (mut parsed, parse_diagnostics) = parse_source_file(source, file);
     assert!(
         parse_diagnostics.is_empty(),
         "test case must parse before mutability is checked: {parse_diagnostics:#?}\nsource:\n{source}"
     );
     let (resolutions, resolve_diagnostics) = resolve_source_file(&parsed);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut parsed, &resolutions);
     assert!(
         resolve_diagnostics.is_empty(),
         "test case must resolve before mutability is checked: {resolve_diagnostics:#?}\nsource:\n{source}"
@@ -469,9 +470,9 @@ fn immutable_bindings_cannot_reach_mutation_through_calls() {
             ExpectedError::SharedReference,
         ),
         (
-            "qualified user mutable method through shared reference",
-            "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn main() { let counter = Counter { value: 0 }\n Counter::bump(&counter) }",
-            ExpectedError::SharedReference,
+            "qualified user mutable method without a mutable argument",
+            "struct Counter { value: i64 }\nimpl Counter { fn bump(&mut self) { self.value += 1 } }\nfn main() { let counter = Counter { value: 0 }\n Counter::bump(counter) }",
+            ExpectedError::ExplicitMutableArgument,
         ),
         (
             "Vec push on immutable binding",
@@ -593,9 +594,9 @@ fn trait_mutable_receivers_follow_the_same_capability_rules() {
             ExpectedError::ImmutableBinding,
         ),
         (
-            "generic mutable trait method through shared reference",
-            "trait Advance { fn advance(&mut self) }\nfn run<T: Advance>(value: &T) { value.advance() }",
-            ExpectedError::SharedReference,
+            "generic mutable trait method on an immutable binding",
+            "trait Advance { fn advance(&mut self) }\nfn run<T: Advance>(value: T) { value.advance() }",
+            ExpectedError::ImmutableBinding,
         ),
         (
             "generic mutable trait method through immutable value parameter",
@@ -643,7 +644,7 @@ fn implicit_bindings_and_receivers_are_immutable_by_default() {
         ),
         (
             "tuple destructuring binding",
-            "fn main() { let (left, right) = (1, 2)\n left = right }",
+            "fn main() { let left, right = (1, 2)\n left = right }",
             ExpectedError::ImmutableBinding,
         ),
         (
@@ -664,7 +665,7 @@ fn implicit_bindings_and_receivers_are_immutable_by_default() {
         (
             "shared self receiver",
             "struct Counter { value: i64 }\nimpl Counter { fn inspect(&self) { self.value = 2 } }\nfn main() {}",
-            ExpectedError::SharedReference,
+            ExpectedError::ImmutableBinding,
         ),
     ];
 
@@ -682,7 +683,7 @@ fn mutable_places_and_reference_capabilities_remain_usable() {
         ),
         (
             "explicitly mutable implicit bindings",
-            "struct Point { x: i64 }\nfn update(mut value: i64) { value = 2 }\nfn main() { let (mut left, right) = (1, 2)\n left = right\n let point = Point { x: 1 }\n match point { Point { x: mut value } => { value = 2 } } }",
+            "struct Point { x: i64 }\nfn update(mut value: i64) { value = 2 }\nfn main() { let mut left, right = (1, 2)\n left = right\n let point = Point { x: 1 }\n match point { Point { x: mut value } => { value = 2 } } }",
         ),
         (
             "immutable binding holding mutable reference",
@@ -746,11 +747,11 @@ fn mutable_places_and_reference_capabilities_remain_usable() {
         ),
         (
             "scalar aggregate channel transfer remains available",
-            "struct Pair { left: i64, right: i64 }\nfn main() { let value = Pair { left: 1, right: 2 }\n let (tx, rx) = channel::<Pair>(1)\n tx.send(value) }",
+            "struct Pair { left: i64, right: i64 }\nfn main() { let value = Pair { left: 1, right: 2 }\n let tx, rx = channel::<Pair>(1)\n tx.send(value) }",
         ),
         (
             "reference cursor advances through matched recursive child",
-            "enum Node { Link(Node), End }\nfn walk(head: &Node) { let mut cursor = head\n loop { match cursor { Node::Link(next) => cursor = next, Node::End => break } } }",
+            "enum Node { Link(Node), End }\nfn walk(head: Node) { let mut cursor = head\n loop { match cursor { Node::Link(next) => cursor = next, Node::End => break } } }",
         ),
     ];
 
@@ -782,23 +783,23 @@ fn concurrency_rejects_unmarshalable_inline_aggregates() {
     for (name, source) in [
         (
             "struct argument",
-            "struct Wrapped { values: Vec<i64> }\nfn work(value: Wrapped) {}\nfn main() { let value = Wrapped { values: Vec::from([1, 2]) }\n go work(value) }",
+            "struct Wrapped { values: Vec<i64> }\nfn work(value: Wrapped) {}\nfn main() { let value = Wrapped { values: Vec::from([1, 2]) }\n spawn(|| work(value)) }",
         ),
         (
             "scalar struct goroutine argument",
-            "struct Pair { left: i64, right: i64 }\nfn work(value: Pair) {}\nfn main() { let value = Pair { left: 1, right: 2 }\n go work(value) }",
+            "struct Pair { left: i64, right: i64 }\nfn work(value: Pair) {}\nfn main() { let value = Pair { left: 1, right: 2 }\n spawn(|| work(value)) }",
         ),
         (
             "fixed array goroutine argument",
-            "fn work(value: [i64; 2]) {}\nfn main() { let value = [1, 2]\n go work(value) }",
+            "fn work(value: [i64; 2]) {}\nfn main() { let value = [1, 2]\n spawn(|| work(value)) }",
         ),
         (
             "tuple containing Vec argument",
-            "fn work(value: (Vec<i64>, i64)) {}\nfn main() { let value = (Vec::from([1, 2]), 2)\n go work(value) }",
+            "fn work(value: (Vec<i64>, i64)) {}\nfn main() { let value = (Vec::from([1, 2]), 2)\n spawn(|| work(value)) }",
         ),
         (
             "channel struct containing Vec",
-            "struct Wrapped { values: Vec<i64> }\nfn main() { let value = Wrapped { values: Vec::from([1, 2]) }\n let (tx, rx) = channel::<Wrapped>(1)\n tx.send(value) }",
+            "struct Wrapped { values: Vec<i64> }\nfn main() { let value = Wrapped { values: Vec::from([1, 2]) }\n let tx, rx = channel::<Wrapped>(1)\n tx.send(value) }",
         ),
     ] {
         assert_rejected(name, source, ExpectedError::ConcurrentInlineAggregate);

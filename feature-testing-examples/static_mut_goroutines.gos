@@ -23,8 +23,8 @@ fn main() {
     let h2 = spawn(|| bump_n(1000))
     let _ = h2.join()
     match mid {
-        Ok(v) => println!("mid = {}", v)
-        Err(e) => println!("err = {}", e)
+        Ok(v) => println("mid = {}", v)
+        Err(e) => println("err = {}", e)
     }
-    println!("counter = {}", COUNTER)
+    println("counter = {}", COUNTER)
 }

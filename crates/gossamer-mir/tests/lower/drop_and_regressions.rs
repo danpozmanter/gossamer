@@ -84,7 +84,7 @@ fn drop_pass_releases_http_response_content_type_string() {
     let source = r#"
 use std::http
 
-fn ct(url: &String) -> i64 {
+fn ct(url: String) -> i64 {
     match http::get(url, Vec::new()) {
         Ok(r) => {
             let c = r.content_type
@@ -314,7 +314,7 @@ fn rc_calls_on(body: &gossamer_mir::Body, name: &str, local: Local) -> usize {
 }
 
 /// A by-value tuple is a stack slot whose RC-managed elements are owned
-/// per-field: `let (t, n) = make()` (where `make -> (String, i64)`) must
+/// per-field: `let t, n = make()` (where `make -> (String, i64)`) must
 /// retain the extracted `String` at the field-0 copy - the binding holds
 /// a fresh reference - and release it at end of life. Without it every
 /// round of a tuple-returning allocator leaks one element.
@@ -327,7 +327,7 @@ fn make() -> (String, i64) {
 }
 
 fn use_it() -> i64 {
-    let (t, n) = make()
+    let t, n = make()
     n + t.byte_at(0)
 }
 "#;
@@ -363,7 +363,7 @@ fn make() -> (Result<String, errors::Error>, i64) {
 }
 
 fn use_it() -> i64 {
-    let (_r, n) = make()
+    let _r, n = make()
     n
 }
 "#;
@@ -715,9 +715,10 @@ fn main() {
 fn build_with_lift(source: &str) -> (Vec<gossamer_mir::Body>, TyCtxt) {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     assert!(type_diags.is_empty(), "typecheck: {type_diags:?}");
@@ -735,7 +736,7 @@ fn lifted_map_err_closure_param_keeps_string_type() {
     // unresolved and was pinned to i64, so `format!("{e}")` rendered
     // the payload pointer as an integer on the compiled tiers.
     let source = "fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
-                  fn main() { let r = fail().map_err(|e| format!(\"w: {e}\"))\n\
+                  fn main() { let r = fail().map_err(|e| format(\"w: {e}\"))\n\
                   let _ = r }\n";
     let (bodies, tcx) = build_with_lift(source);
     let lifted = bodies
@@ -755,7 +756,7 @@ fn lifted_map_err_closure_param_keeps_string_type() {
 fn lifted_iter_map_closure_param_keeps_string_type() {
     let source = "use std::iter\n\
                   fn main() { let xs: Vec<String> = Vec::from([\"a\", \"b\"])\n\
-                  let ys = iter::map(|s| format!(\"[{s}]\"), xs)\n\
+                  let ys = iter::map(|s| format(\"[{s}]\"), xs)\n\
                   let _ = ys }\n";
     let (bodies, tcx) = build_with_lift(source);
     let lifted = bodies
@@ -859,7 +860,7 @@ fn result_map_err_free_call_lowers_to_runtime_shim() {
     // `@result::map_err` symbol that fails the native link.
     let source = "use std::result\n\
                   fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
-                  fn main() { let r = fail() |> |v| result::map_err(|e| format!(\"p: {e}\"), v)\n\
+                  fn main() { let r = fail() |> |v| result::map_err(|e| format(\"p: {e}\"), v)\n\
                   let _ = r }\n";
     let (bodies, _) = build_with_lift(source);
     let calls_shim = bodies
@@ -968,7 +969,7 @@ fn build(depth: i64) -> Node {
     Node::Pair(build(depth - 1), build(depth - 1))
 }
 
-fn count(n: &Node) -> i64 {
+fn count(n: Node) -> i64 {
     match n {
         Node::Leaf(_) => 1,
         Node::Pair(l, r) => 1 + count(l) + count(r),
@@ -979,7 +980,7 @@ fn main() {
     let mut total = 0
     for _ in 0..3 {
         let tree = build(4)
-        total += count(&tree)
+        total += count(tree)
     }
 }
 ";
@@ -1019,7 +1020,7 @@ fn build(depth: i64) -> Node {
     Node::Pair(build(depth - 1), build(depth - 1))
 }
 
-fn count(n: &Node) -> i64 {
+fn count(n: Node) -> i64 {
     match n {
         Node::Leaf(_) => 1,
         Node::Pair(l, r) => 1 + count(l) + count(r),
@@ -1030,7 +1031,7 @@ fn main() {
     let mut total = 0
     for _ in 0..3 {
         let tree = build(4)
-        total += count(&tree)
+        total += count(tree)
     }
 }
 ";
@@ -1093,7 +1094,7 @@ fn build(depth: i64) -> Node {
     Node::Pair(build(depth - 1), build(depth - 1))
 }
 
-fn count(n: &Node) -> i64 {
+fn count(n: Node) -> i64 {
     match n {
         Node::Leaf(_) => 1,
         Node::Pair(l, r) => 1 + count(l) + count(r),
@@ -1104,7 +1105,7 @@ fn main() {
     let mut total = 0
     for _ in 0..3 {
         let tree = build(4)
-        total += count(&tree)
+        total += count(tree)
         runtime::collect_cycles()
     }
 }
@@ -1160,7 +1161,7 @@ fn build(depth: i64) -> Node {
     Node::Pair(build(depth - 1), build(depth - 1))
 }
 
-fn count(n: &Node) -> i64 {
+fn count(n: Node) -> i64 {
     match n {
         Node::Leaf(_) => 1,
         Node::Pair(left, right) => 1 + count(left) + count(right),
@@ -1172,7 +1173,7 @@ fn main() {
     for _ in 0..2 {
         for _ in 0..2 {
             let tree = build(3)
-            total += count(&tree)
+            total += count(tree)
         }
     }
     println(total)
@@ -1207,14 +1208,14 @@ fn nested_nonescaping_block_gets_one_automatic_region() {
     let source = r"
 enum Node { Leaf(i64), Pair(Node, Node) }
 
-fn count(n: &Node) -> i64 {
+fn count(n: Node) -> i64 {
     match n { Node::Leaf(_) => 1, Node::Pair(a, b) => count(a) + count(b) }
 }
 
 fn main() {
     let answer = {
         let tree = Node::Pair(Node::Leaf(1), Node::Leaf(2))
-        count(&tree)
+        count(tree)
     }
     let _ = answer
 }
@@ -1444,7 +1445,7 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     (
         "result::or_else",
         "use std::{errors, result}\nfn main() { let r: Result<i64, errors::Error> = Err(errors::new(\"b\"))\n\
-             let m = r |> |v| result::or_else(|_e| Ok(7), v)\nlet _ = m }",
+             let m = r |> |v| result::or_else(v, |_e| Ok(7))\nlet _ = m }",
         "gos_rt_result_or_else",
     ),
     (
@@ -1474,37 +1475,37 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     (
         "option::and_then",
         "use std::option\nfn main() { let o: Option<i64> = Some(3)\n\
-             let m = o |> |v| option::and_then(|x: i64| if x > 2 { Some(x) } else { None }, v)\nlet _ = m }",
+             let m = o |> |v| option::and_then(v, |x: i64| if x > 2 { Some(x) } else { None })\nlet _ = m }",
         "gos_rt_option_and_then",
     ),
     (
         "option::filter",
         "use std::option\nfn main() { let o: Option<i64> = Some(3)\n\
-             let m = o |> |v| option::filter(|x: i64| x > 2, v)\nlet _ = m }",
+             let m = o |> |v| option::filter(v, |x: i64| x > 2)\nlet _ = m }",
         "gos_rt_option_filter",
     ),
     (
         "option::or",
         "use std::option\nfn main() { let o: Option<i64> = None\n\
-             let m = o |> |v| option::or(Some(8), v)\nlet _ = m }",
+             let m = o |> |v| option::or(v, Some(8))\nlet _ = m }",
         "gos_rt_option_or",
     ),
     (
         "option::or_else",
         "use std::option\nfn main() { let o: Option<i64> = None\n\
-             let m = o |> |v| option::or_else(|| Some(8), v)\nlet _ = m }",
+             let m = o |> |v| option::or_else(v, || Some(8))\nlet _ = m }",
         "gos_rt_option_or_else",
     ),
     (
         "option::unwrap_or_else",
         "use std::option\nfn main() { let o: Option<i64> = None\n\
-             let v = o |> |v| option::unwrap_or_else(|| 6, v)\nlet _ = v }",
+             let v = o |> |v| option::unwrap_or_else(v, || 6)\nlet _ = v }",
         "gos_rt_option_default_with",
     ),
     (
         "option::zip",
         "use std::option\nfn main() { let a: Option<i64> = Some(1)\n\
-             let b: Option<i64> = Some(2)\nlet m = a |> |v| option::zip(b, v)\nlet _ = m }",
+             let b: Option<i64> = Some(2)\nlet m = a |> |v| option::zip(v, b)\nlet _ = m }",
         "gos_rt_option_zip",
     ),
     (
@@ -1527,7 +1528,7 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     ),
     (
         "iter::filter_map",
-        "use std::iter\nfn main() { let xs = #[1, 2] |> |v| iter::filter_map(|x: i64| if x > 1 { Some(x) } else { None }, v)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 2] |> |v| iter::filter_map(v, |x: i64| if x > 1 { Some(x) } else { None })\nlet _ = xs }",
         "gos_rt_iter_filter_map_i64",
     ),
     (
@@ -1552,92 +1553,92 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
     ),
     (
         "iter::step_by",
-        "use std::iter\nfn main() { let xs = #[1, 2, 3] |> |v| iter::step_by(2, v)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 2, 3] |> |v| iter::step_by(v, 2)\nlet _ = xs }",
         "gos_rt_vec_step_by",
     ),
     (
         "iter::flat_map (fixed array literal)",
-        "use std::iter\nfn main() { let xs = [1, 2] |> |v| iter::flat_map(|x: i64| [x, x * 10], v)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = [1, 2] |> |v| iter::flat_map(v, |x: i64| [x, x * 10])\nlet _ = xs }",
         "gos_rt_iter_flat_map_arr_i64",
     ),
     (
         "iter::reduce",
-        "use std::iter\nfn main() { let v = #[1, 2] |> |v| iter::reduce(|a: i64, b: i64| a + b, v)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[1, 2] |> |v| iter::reduce(v, |a: i64, b: i64| a + b)\nlet _ = v }",
         "gos_rt_iter_reduce_i64",
     ),
     (
         "iter::scan",
-        "use std::iter\nfn main() { let xs = #[1, 2] |> |v| iter::scan(0, |a: i64, x: i64| a + x, v)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 2] |> |v| iter::scan(v, 0, |a: i64, x: i64| a + x)\nlet _ = xs }",
         "gos_rt_iter_scan_i64",
     ),
     (
         "iter::product_by",
-        "use std::iter\nfn main() { let v = #[1, 2] |> |v| iter::product_by(|x: i64| x + 1, v)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[1, 2] |> |v| iter::product_by(v, |x: i64| x + 1)\nlet _ = v }",
         "gos_rt_iter_product_by_i64",
     ),
     (
         "iter::position",
-        "use std::iter\nfn main() { let v = #[5, 6] |> |v| iter::position(|x: i64| x == 6, v)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[5, 6] |> |v| iter::position(v, |x: i64| x == 6)\nlet _ = v }",
         "gos_rt_iter_position_i64",
     ),
     (
         "iter::find_map",
-        "use std::iter\nfn main() { let v = #[1, 2] |> |v| iter::find_map(|x: i64| if x > 1 { Some(x) } else { None }, v)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[1, 2] |> |v| iter::find_map(v, |x: i64| if x > 1 { Some(x) } else { None })\nlet _ = v }",
         "gos_rt_iter_find_map_i64",
     ),
     (
         "iter::take_while",
-        "use std::iter\nfn main() { let xs = #[1, 9] |> |v| iter::take_while(|x: i64| x < 5, v)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 9] |> |v| iter::take_while(v, |x: i64| x < 5)\nlet _ = xs }",
         "gos_rt_iter_take_while_i64",
     ),
     (
         "iter::skip_while",
-        "use std::iter\nfn main() { let xs = #[1, 9] |> |v| iter::skip_while(|x: i64| x < 5, v)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[1, 9] |> |v| iter::skip_while(v, |x: i64| x < 5)\nlet _ = xs }",
         "gos_rt_iter_skip_while_i64",
     ),
     (
         "iter::partition",
-        "use std::iter\nfn main() { let (a, b) = #[1, 2] |> |v| iter::partition(|x: i64| x % 2 == 0, v)\nlet _ = a\nlet _ = b }",
+        "use std::iter\nfn main() { let a, b = #[1, 2] |> |v| iter::partition(v, |x: i64| x % 2 == 0)\nlet _ = a\nlet _ = b }",
         "gos_rt_iter_partition_i64",
     ),
     (
         "iter::sort_by",
-        "use std::iter\nfn main() { let xs = #[3, 1] |> |v| iter::sort_by(|a: i64, b: i64| a - b, v)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[3, 1] |> |v| iter::sort_by(v, |a: i64, b: i64| a - b)\nlet _ = xs }",
         "gos_rt_iter_sorted_by_i64",
     ),
     (
         "iter::sort_by_key",
-        "use std::iter\nfn main() { let xs = #[3, 1] |> |v| iter::sort_by_key(|x: i64| 0 - x, v)\nlet _ = xs }",
+        "use std::iter\nfn main() { let xs = #[3, 1] |> |v| iter::sort_by_key(v, |x: i64| 0 - x)\nlet _ = xs }",
         "gos_rt_iter_sorted_by_key_i64",
     ),
     (
         "iter::min_by",
-        "use std::iter\nfn main() { let v = #[3, 1] |> |v| iter::min_by(|a: i64, b: i64| a - b, v)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> |v| iter::min_by(v, |a: i64, b: i64| a - b)\nlet _ = v }",
         "gos_rt_iter_min_by_i64",
     ),
     (
         "iter::max_by",
-        "use std::iter\nfn main() { let v = #[3, 1] |> |v| iter::max_by(|a: i64, b: i64| a - b, v)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> |v| iter::max_by(v, |a: i64, b: i64| a - b)\nlet _ = v }",
         "gos_rt_iter_max_by_i64",
     ),
     (
         "iter::min_by_key",
-        "use std::iter\nfn main() { let v = #[3, 1] |> |v| iter::min_by_key(|x: i64| 0 - x, v)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> |v| iter::min_by_key(v, |x: i64| 0 - x)\nlet _ = v }",
         "gos_rt_iter_min_by_key_i64",
     ),
     (
         "iter::max_by_key",
-        "use std::iter\nfn main() { let v = #[3, 1] |> |v| iter::max_by_key(|x: i64| 0 - x, v)\nlet _ = v }",
+        "use std::iter\nfn main() { let v = #[3, 1] |> |v| iter::max_by_key(v, |x: i64| 0 - x)\nlet _ = v }",
         "gos_rt_iter_max_by_key_i64",
     ),
     (
         "iter::chunk_by",
-        "use std::iter\nfn main() { let m = #[1, 2] |> |v| iter::chunk_by(|x: i64| x % 2, v)\nlet _ = m }",
+        "use std::iter\nfn main() { let m = #[1, 2] |> |v| iter::chunk_by(v, |x: i64| x % 2)\nlet _ = m }",
         "gos_rt_iter_group_by_i64",
     ),
     (
         "iter::count_by",
-        "use std::iter\nfn main() { let m = #[1, 2] |> |v| iter::count_by(|x: i64| x % 2, v)\nlet _ = m }",
+        "use std::iter\nfn main() { let m = #[1, 2] |> |v| iter::count_by(v, |x: i64| x % 2)\nlet _ = m }",
         "gos_rt_iter_count_by_i64",
     ),
 ];
@@ -1693,6 +1694,19 @@ fn const_strings(body: &gossamer_mir::Body) -> Vec<String> {
                 }
             }
         }
+        // An eta-expanded std function reaches its runtime helper from the
+        // lifted closure's own body, where the helper is the block's call
+        // terminator rather than a statement operand.
+        if let gossamer_mir::Terminator::Call { callee, args, .. } = &block.terminator {
+            if let Operand::Const(ConstValue::Str(s)) = callee {
+                out.push(s.clone());
+            }
+            for arg in args {
+                if let Operand::Const(ConstValue::Str(s)) = arg {
+                    out.push(s.clone());
+                }
+            }
+        }
     }
     out
 }
@@ -1703,8 +1717,10 @@ fn std_fn_value_map_err_resolves_to_runtime_symbol() {
                   fn main() { let r: Result<i64, String> = Err(\"boom\")\n\
                   let m = r.map_err(errors::new)\nlet _ = m }";
     let (bodies, _) = build_with_lift(source);
-    let main = bodies.iter().find(|b| b.name == "main").expect("main");
-    let strings = const_strings(main);
+    // The std function named in the callable slot becomes the closure the
+    // call it stands for, so its runtime helper is reached from the lifted
+    // body rather than from `main`.
+    let strings: Vec<String> = bodies.iter().flat_map(const_strings).collect();
     assert!(
         strings.iter().any(|s| s == "gos_rt_error_new"),
         "expected the runtime symbol in MIR: {strings:?}"
@@ -1718,7 +1734,7 @@ fn std_fn_value_map_err_resolves_to_runtime_symbol() {
 #[test]
 fn std_fn_value_iter_map_resolves_to_runtime_symbol() {
     let source = "use std::{iter, strings}\n\
-                  fn main() { let out = #[\"ab\"] |> |v| iter::map(strings::to_uppercase, v)\nlet _ = out }";
+                  fn main() { let out = #[\"ab\"] |> |v| iter::map(v, strings::to_uppercase)\nlet _ = out }";
     let (bodies, _) = build_with_lift(source);
     let strings: Vec<String> = bodies.iter().flat_map(const_strings).collect();
     assert!(
@@ -1868,10 +1884,10 @@ fn intrinsic_index_on(
 #[test]
 fn drop_pass_retains_option_binding_before_releasing_the_moved_temporary() {
     let source = r#"
-fn read_map(m: &Map<String, i64>) -> String {
+fn read_map(m: Map<String, i64>) -> String {
     let found = m.find(|(_, n)| n > 1)
     let kept = m.filter(|(_, n)| n > 1)
-    format!("find {:?} kept {}", found, kept.len())
+    format("find {:?} kept {}", found, kept.len())
 }
 "#;
     let (bodies, _) = build(source);

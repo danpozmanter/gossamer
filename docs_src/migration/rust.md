@@ -16,9 +16,9 @@ concurrency, and which Rust features are intentionally absent.
 | named struct positional shorthand is unavailable | Same. Use keyed fields. |
 | `Option<T>` and `Result<T, E>` | Same core shape. |
 | `?` | Same propagation model. |
-| `async fn` and `.await` | Use `go expr` plus channels or blocking calls. |
-| `std::thread::spawn` | `go fn() { ... }()` |
-| `Box<dyn Trait>` | Prefer generics or an enum. |
+| `async fn` and `.await` | Use `spawn(|| expr)` plus channels or blocking calls. |
+| `std::thread::spawn` | `spawn(|| { ... })` |
+| `dyn Trait` | Prefer generics or an enum. |
 | `cargo build` | `gos build` |
 | `cargo test` | `gos test` |
 | `cargo fmt` | `gos fmt` |
@@ -129,7 +129,7 @@ and references are ordinary aliases.
 ```gos
 let a = #[1, 2, 3]
 let b = a
-println!("{} {}", a.len(), b.len())
+println("{} {}", a.len(), b.len())
 ```
 
 `&mut` still means the callee may write through the reference, but the
@@ -157,7 +157,7 @@ impl Area for Circle {
     fn area(&self) -> f64 { 3.14159 * self.r * self.r }
 }
 
-fn total<T: Area>(xs: &[T]) -> f64 {
+fn total<T: Area>(xs: [T]) -> f64 {
     let mut out = 0.0
     for x in xs {
         out += x.area()
@@ -205,7 +205,7 @@ Gossamer:
 ```gos
 use std::{errors, http}
 
-fn fetch(url: &String) -> Result<String, errors::Error> {
+fn fetch(url: String) -> Result<String, errors::Error> {
     let response = http::get(url, #[])?
     Ok(response.body)
 }
@@ -214,12 +214,12 @@ fn fetch(url: &String) -> Result<String, errors::Error> {
 For fan-out, spawn goroutines and collect through channels:
 
 ```gos
-let (tx, rx) = channel()
+let tx, rx = channel()
 
 for url in urls {
     let tx = tx.clone()
-    go fn() {
-        tx.send(http::get(&url, #[]))
+    spawn(|| {
+        tx.send(http::get(url, #[]))
     }()
 }
 
@@ -250,8 +250,8 @@ let total: i64 = xs.iter()
 use std::iter
 
 let total = xs
-    |> |v| iter::filter(|n: i64| n % 2 == 0, v)
-    |> |v| iter::sum_by(|n: i64| n * n, v)
+    |> |v| iter::filter(v, |n: i64| n % 2 == 0)
+    |> |v| iter::sum_by(v, |n: i64| n * n)
 ```
 
 Mutating collection helpers such as `push`, `sort`, `insert`, and
@@ -288,7 +288,7 @@ impl Amount {
     fn normalize(&self) -> i64 { self.cents }   // private helper
 }
 
-pub(package) fn round_trip(a: &Amount) -> i64 { a.normalize() }
+pub(package) fn round_trip(a: Amount) -> i64 { a.normalize() }
 ```
 
 A `pub` type may keep private methods and private fields, so a struct with any
@@ -310,7 +310,7 @@ Gossamer's `pub(crate)`, and it is the only restricted form: `pub(crate)`,
 | `std::fs::write(path, data)` | `fs::write(path, data)` |
 | `std::env::args()` | `env::args()` |
 | `std::env::var(name).ok()` | `env::var(name)` |
-| `std::process::Command` | `process::run(program, &args)` |
+| `std::process::Command` | `process::run(program, args)` |
 | `std::process::exit(code)` | `process::exit(code)` |
 | `Path::join` | `path::join(base, part)` |
 | `std::sync::Mutex` | `sync::Mutex` |

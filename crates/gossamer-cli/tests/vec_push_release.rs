@@ -172,7 +172,7 @@ fn empty_vec_push_then_index_works_in_all_tiers() {
 fn main() {
     let mut v: Vec<i64> = Vec::from([])
     v.push(42)
-    println!("v[0]={}", v[0])
+    println("v[0]={}", v[0])
 }
 "#;
     assert_three_tier_stdout("empty_vec_push_index", src, "v[0]=42");
@@ -184,31 +184,31 @@ fn core_method_contract_mutators_work_in_all_tiers() {
 fn main() {
     let mut xs: Vec<i64> = [1, 2].to_vec()
     xs.extend([3, 4])
-    println!("len1={}", xs.len())
+    println("len1={}", xs.len())
     xs.truncate(3)
-    println!("len2={}", xs.len())
+    println("len2={}", xs.len())
     xs.clear()
-    println!("len3={}", xs.len())
+    println("len3={}", xs.len())
 
     let mut ys: Vec<i64> = [5].to_vec()
     ys.extend_from_slice([6, 7])
-    println!("y2={}", ys[2])
+    println("y2={}", ys[2])
 
     let mut words: Vec<String> = ["a"].to_vec()
     let more: Vec<String> = ["b"].to_vec()
     words.extend(more)
-    println!("word={}", words[1])
+    println("word={}", words[1])
 
     let mut s = String::from("hello")
     s.truncate(3)
-    println!("s={}", s)
+    println("s={}", s)
     s.clear()
-    println!("slen={}", s.len())
+    println("slen={}", s.len())
 
     let ok = String::from_utf8([104, 105])
-    println!("utf8={}", ok.unwrap())
+    println("utf8={}", ok.unwrap())
     let bad = String::from_utf8([255])
-    println!("bad={}", bad.is_err())
+    println("bad={}", bad.is_err())
 }
 "#;
     assert_three_tier_stdout(
@@ -233,7 +233,7 @@ fn main() {
     for value in values {
         sum += value[0] + value[1]
     }
-    println!("{}", sum)
+    println("{}", sum)
 }
 "#;
     assert_three_tier_stdout("vec_from_nested_fixed_arrays", src, "900");
@@ -250,7 +250,7 @@ fn main() {
     let mut v: Vec<String> = Vec::from([])
     v.push("hello")
     v.push("world")
-    println!("{},{}", v[0], v[1])
+    println("{},{}", v[0], v[1])
 }
 "#;
     assert_three_tier_stdout("vec_push_string_index", src, "hello,world");
@@ -262,12 +262,12 @@ fn vec_push_in_loop_then_render_via_ref_param_works_in_all_tiers() {
     // build a Vec<String> via `push`, then pass it as `&[String]`
     // to a renderer that indexes each element.
     let src = r#"
-fn render(ids: &[String]) -> String {
+fn render(ids: [String]) -> String {
     let mut out = ""
     let mut i: i64 = 0
     let n = ids.len() as i64
     while i < n {
-        out = format!("{}{},", out, ids[i])
+        out = format("{}{},", out, ids[i])
         i += 1
     }
     out
@@ -277,11 +277,11 @@ fn main() {
     let mut v: Vec<String> = Vec::from([])
     let mut i: i64 = 0
     while i < 5 {
-        v.push(format!("item_{}", i))
+        v.push(format("item_{}", i))
         i += 1
     }
-    let rendered = render(&v)
-    println!("{}", rendered)
+    let rendered = render(v)
+    println("{}", rendered)
 }
 "#;
     assert_three_tier_stdout(

@@ -16,7 +16,7 @@ impl Point {
 }
 
 let p = Point::origin()   // qualified path always resolves
-println!("{}", p.norm())
+println("{}", p.norm())
 ```
 
 A method takes `self`, `&self`, or `&mut self`; `&self` reads, `&mut self`

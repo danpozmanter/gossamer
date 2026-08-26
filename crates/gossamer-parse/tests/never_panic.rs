@@ -33,7 +33,7 @@ fn truncated_program_at_every_boundary_is_safe() {
     // Walk the canonical "fn main() {}" string truncating one
     // character at a time. Each prefix should parse cleanly or
     // produce diagnostics - never panic.
-    let full = "fn main() { let x = 1 + 2; println!(\"{}\", x) }";
+    let full = "fn main() { let x = 1 + 2; println(\"{}\", x) }";
     for n in 0..=full.len() {
         // Only respect char boundaries - slicing inside a
         // multi-byte char would itself panic in Rust before the
@@ -181,7 +181,7 @@ fn item_recovery_makes_forward_progress_on_item_start_keywords() {
     ));
     // The exact 173-byte input from the CI fuzz crash.
     parse_does_not_panic(concat!(
-        "pub fn greet(name: &str) ->  2ng() + nam -> String {64 { a * b }\n",
+        "pub fn greet(name: str) ->  2ng() + nam -> String {64 { a * b }\n",
         "use let ing() + nameString {64 {Ha * b }\n",
         "    let 2ng() + nam -> String {64 { a * b }\n",
         "use let ing() + name\n}\n",

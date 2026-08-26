@@ -15,21 +15,21 @@ fn main() {
     for i in 0..3 {
         inserted.insert((i, i), (i * 10, i * 10))
     }
-    println!(
+    println(
         "insert: {:?} {:?} {:?}"
         inserted.get((0, 0))
         inserted.get((1, 1))
         inserted.get((2, 2))
     )
-    println!("absent: {:?}", inserted.get((9, 9)))
-    println!("len: {}", inserted.len())
+    println("absent: {:?}", inserted.get((9, 9)))
+    println("len: {}", inserted.len())
 
     // `or_insert` stores its default, so it is the same question.
     let mut defaulted: Map<(i64, i64), (i64, i64)> = Map::new()
     for i in 0..3 {
         let _ = defaulted.or_insert((i, i), (i + 100, i + 200))
     }
-    println!(
+    println(
         "or_insert: {:?} {:?} {:?}"
         defaulted.get((0, 0))
         defaulted.get((1, 1))
@@ -39,9 +39,9 @@ fn main() {
     // A struct key with a struct value is the same layout question.
     let mut structs: Map<(i64, String), (String, i64)> = Map::new()
     for i in 0..3 {
-        structs.insert((i, format!("k{}", i)), (format!("v{}", i), i))
+        structs.insert((i, format("k{}", i)), (format("v{}", i), i))
     }
-    println!(
+    println(
         "mixed: {:?} {:?}"
         structs.get((0, "k0"))
         structs.get((2, "k2"))

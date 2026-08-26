@@ -24,6 +24,9 @@ pub struct TyCtxt {
     enum_variant_tys: HashMap<gossamer_resolve::DefId, Vec<Vec<Ty>>>,
     /// Declared variant names for each user enum.
     enum_variant_names: HashMap<gossamer_resolve::DefId, Vec<String>>,
+    /// Bits each enum stores its discriminant in, keyed by definition.
+    /// Absent for an enum whose declaration asked for nothing special.
+    enum_repr_bits: HashMap<gossamer_resolve::DefId, u32>,
     /// Concrete non-generic user-enum `Adt` type by name. Lets MIR recover the
     /// enum type from the name its `==` dispatch resolves (operand types are
     /// often still inference vars at lowering time).
@@ -130,7 +133,7 @@ impl TyCtxt {
 
         write!(
             output,
-            "kinds={:?};primitives={:?};struct_fields={:?};enum_variant_tys={:?};enum_variant_names={:?};enum_ty_by_name={:?};struct_fields_inst={:?};def_names={:?};rc_metas={:?};aggr_copy_metas={:?};rc_managed_tys={:?};rc_managed_enum_defs={:?};tuple_struct_defs={:?};inline_enum_defs={:?}",
+            "kinds={:?};primitives={:?};struct_fields={:?};enum_variant_tys={:?};enum_variant_names={:?};enum_repr_bits={:?};enum_ty_by_name={:?};struct_fields_inst={:?};def_names={:?};rc_metas={:?};aggr_copy_metas={:?};rc_managed_tys={:?};rc_managed_enum_defs={:?};tuple_struct_defs={:?};inline_enum_defs={:?}",
             self.kinds,
             self.primitives,
             sorted(
@@ -147,6 +150,11 @@ impl TyCtxt {
                 self.enum_variant_names
                     .iter()
                     .map(|(k, v)| format!("{k:?}:{v:?}"))
+            ),
+            sorted(
+                self.enum_repr_bits
+                    .iter()
+                    .map(|(k, v)| format!("{k:?}:{v}"))
             ),
             sorted(
                 self.enum_ty_by_name
@@ -422,6 +430,18 @@ impl TyCtxt {
         variants: Vec<String>,
     ) {
         self.enum_variant_names.insert(def, variants);
+    }
+
+    /// Records the width `def` stores its discriminant in.
+    pub fn register_enum_repr_bits(&mut self, def: gossamer_resolve::DefId, bits: u32) {
+        self.enum_repr_bits.insert(def, bits);
+    }
+
+    /// The width `def` stores its discriminant in, when the declaration
+    /// asked for one narrower or wider than the default.
+    #[must_use]
+    pub fn enum_repr_bits(&self, def: gossamer_resolve::DefId) -> Option<u32> {
+        self.enum_repr_bits.get(&def).copied()
     }
 
     /// Every enum that has registered variant names, with those names in

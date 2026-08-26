@@ -11,7 +11,7 @@ struct Nested { p: Point, tags: Vec<String>, n: i64 }
 // Called enough times to pass the JIT's admission threshold, so the
 // compiled tiers compile the copy rather than comparing an interpreter run
 // against itself.
-fn accumulate(base: &Point) -> i64 {
+fn accumulate(base: Point) -> i64 {
     let mut total = 0
     for i in 0..2000 {
         let shifted = Point { x: i, ..base }
@@ -25,22 +25,22 @@ fn main() {
 
     // One field overridden, the rest carried across.
     let moved = Point { x: 10, ..base }
-    println!("moved {} {} {}", moved.x, moved.y, moved.label)
+    println("moved {} {} {}", moved.x, moved.y, moved.label)
 
     // The base is still readable, and seeds a second update.
     let other = Point { y: 20, ..base }
-    println!("other {} {} {}", other.x, other.y, other.label)
-    println!("base {} {} {}", base.x, base.y, base.label)
+    println("other {} {} {}", other.x, other.y, other.label)
+    println("base {} {} {}", base.x, base.y, base.label)
 
     // A String field carried by the spread is shared, not consumed.
     let renamed = Point { label: "renamed", ..base }
-    println!("renamed {} {}", renamed.label, base.label)
+    println("renamed {} {}", renamed.label, base.label)
 
     // A spread over a struct whose fields are themselves aggregates.
     let outer = Nested { p: base, tags: #["a", "b"], n: 1 }
     let bumped = Nested { n: 2, ..outer }
-    println!("bumped {} {} {} {}", bumped.n, bumped.p.x, bumped.tags[0], bumped.tags[1])
-    println!("outer {} {}", outer.n, outer.tags.len())
+    println("bumped {} {} {} {}", bumped.n, bumped.p.x, bumped.tags[0], bumped.tags[1])
+    println("outer {} {}", outer.n, outer.tags.len())
 
-    println!("accumulate {}", accumulate(&base))
+    println("accumulate {}", accumulate(base))
 }

@@ -137,7 +137,7 @@ struct App { }
 impl http::Handler for App {
     fn serve(&self, r: http::Request) -> http::Response {
         let q = &r.query
-        let line = format!(
+        let line = format(
             "qlen={} plen={} starts={} has={} blen={}",
             r.query.len(),
             r.path.len(),
@@ -151,7 +151,7 @@ impl http::Handler for App {
 
 fn run_server() {
     if let Err(e) = http::serve("127.0.0.1:23924", App { }) {
-        eprintln!("serve failed: {}", e)
+        eprintln("serve failed: {}", e)
     }
 }
 
@@ -169,15 +169,15 @@ fn await_ready() -> bool {
 }
 
 fn main() {
-    go run_server()
+    spawn(|| run_server())
     if !await_ready() {
-        println!("server never became ready")
+        println("server never became ready")
         process::exit(0)
     }
     let none: Vec<(String, String)> = Vec::from([])
     match http::get("http://127.0.0.1:23924/echo?k=1&n=2", none) {
-        Ok(r) => println!("status={} body={}", r.status, r.body),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => println("status={} body={}", r.status, r.body),
+        Err(e) => println("error: {}", e),
     }
     process::exit(0)
 }
@@ -211,13 +211,13 @@ impl http::Handler for App {
 
 fn run_server() {
     if let Err(e) = http::serve("127.0.0.1:23921", App { }) {
-        eprintln!("serve failed: {e}")
+        eprintln("serve failed: {e}")
     }
 }
 
 // Polls until the server goroutine accepts connections; binding is
 // asynchronous, so readiness is observable only by connecting.
-fn await_ready(url: &String) -> bool {
+fn await_ready(url: String) -> bool {
     let mut tries = 0
     while tries < 1600 {
         if let Ok(_) = http::get(url, Vec::from([])) {
@@ -230,14 +230,14 @@ fn await_ready(url: &String) -> bool {
 }
 
 fn main() {
-    go run_server()
-    if !await_ready(&"http://127.0.0.1:23921/x") {
-        println!("server never became ready")
+    spawn(|| run_server())
+    if !await_ready("http://127.0.0.1:23921/x") {
+        println("server never became ready")
         process::exit(0)
     }
     match http::get("http://127.0.0.1:23921/x", Vec::from([])) {
-        Ok(r) => println!("status={} body={}", r.status, r.body),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => println("status={} body={}", r.status, r.body),
+        Err(e) => println("error: {}", e),
     }
     process::exit(0)
 }
@@ -273,7 +273,7 @@ struct Proxy { }
 
 impl http::Handler for Proxy {
     fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {
-        match http::stream(&r.method, "http://127.0.0.1:23922/data", &r.body, Vec::from([])) {
+        match http::stream(r.method, "http://127.0.0.1:23922/data", r.body, Vec::from([])) {
             Ok(up) => Ok(http::Response::stream(up.status, up.content_type, up)),
             Err(_) => Ok(http::Response::text(502, "bad upstream")),
         }
@@ -282,13 +282,13 @@ impl http::Handler for Proxy {
 
 fn run_upstream() {
     if let Err(e) = http::serve("127.0.0.1:23922", Upstream { }) {
-        eprintln!("serve failed: {e}")
+        eprintln("serve failed: {e}")
     }
 }
 
 fn run_proxy() {
     if let Err(e) = http::serve("127.0.0.1:23923", Proxy { }) {
-        eprintln!("serve failed: {e}")
+        eprintln("serve failed: {e}")
     }
 }
 
@@ -300,7 +300,7 @@ fn run_proxy() {
 // fixtures at the same time, where a goroutine can be slow to reach
 // `bind`; exhausting it reports itself rather than failing a later
 // assertion.
-fn await_status(url: &String, want: i64) -> bool {
+fn await_status(url: String, want: i64) -> bool {
     let mut tries = 0
     while tries < 1600 {
         if let Ok(r) = http::get(url, Vec::from([])) {
@@ -315,19 +315,19 @@ fn await_status(url: &String, want: i64) -> bool {
 }
 
 fn main() {
-    go run_upstream()
-    go run_proxy()
-    if !await_status(&"http://127.0.0.1:23922/data", 200) {
-        println!("upstream never became ready")
+    spawn(|| run_upstream())
+    spawn(|| run_proxy())
+    if !await_status("http://127.0.0.1:23922/data", 200) {
+        println("upstream never became ready")
         process::exit(0)
     }
-    if !await_status(&"http://127.0.0.1:23923/x", 200) {
-        println!("proxy never served the upstream body")
+    if !await_status("http://127.0.0.1:23923/x", 200) {
+        println("proxy never served the upstream body")
         process::exit(0)
     }
     match http::get("http://127.0.0.1:23923/x", Vec::from([])) {
-        Ok(r) => println!("status={} ct={} body={}", r.status, r.content_type, r.body),
-        Err(e) => println!("error: {}", e),
+        Ok(r) => println("status={} ct={} body={}", r.status, r.content_type, r.body),
+        Err(e) => println("error: {}", e),
     }
     process::exit(0)
 }
@@ -339,26 +339,26 @@ fn main() {
 #[test]
 fn release_recursive_enum_walks_full_list() {
     // Catches recursive-enum aggregate-layout regressions: the
-    // `Box<List>` payload must round-trip through pass-by-value
+    // A recursive payload must round-trip through pass-by-value
     // and the `match` arms must dispatch on the discriminant.
     assert_release_stdout_eq(
         "rec_enum",
         r#"
 enum List {
     Nil,
-    Cons(i64, Box<List>),
+    Cons(i64, List),
 }
 
 fn cons(v: i64, rest: List) -> List { List::Cons(v, Box::new(rest)) }
 
-fn length(list: &List) -> i64 {
+fn length(list: List) -> i64 {
     match list {
         List::Nil => 0,
         List::Cons(_, rest) => 1 + length(rest),
     }
 }
 
-fn sum(list: &List) -> i64 {
+fn sum(list: List) -> i64 {
     match list {
         List::Nil => 0,
         List::Cons(v, rest) => *v + sum(rest),
@@ -367,7 +367,7 @@ fn sum(list: &List) -> i64 {
 
 fn main() {
     let xs = cons(1, cons(2, cons(3, cons(4, cons(5, List::Nil)))))
-    println!("len={} sum={}", length(&xs), sum(&xs))
+    println("len={} sum={}", length(xs), sum(xs))
 }
 "#,
         "len=5 sum=15\n",
@@ -392,7 +392,7 @@ fn main() {
         acc = acc + bump(k)
         k = k + 1
     }
-    println!("acc={}", acc)
+    println("acc={}", acc)
 }
 "#,
         "acc=5050\n",
@@ -410,7 +410,7 @@ fn release_channel_send_recv_drains_in_order() {
 use std::sync::channel
 
 fn main() {
-    let (tx, rx) = channel(5)
+    let tx, rx = channel(5)
     let mut k = 0
     while k < 5 {
         tx.send(k * 10)
@@ -424,7 +424,7 @@ fn main() {
         }
         n = n + 1
     }
-    println!("sum={}", sum)
+    println("sum={}", sum)
 }
 "#,
         "sum=100\n",
@@ -446,13 +446,13 @@ fn main() {
     wg.add(3)
     let mut k = 0
     while k < 3 {
-        go {
+        spawn(|| {
             wg.done()
-        }
+        })
         k = k + 1
     }
     wg.wait()
-    println!("done")
+    println("done")
 }
 "#,
         "done\n",
@@ -476,7 +476,7 @@ fn main() {
     for w in words {
         tally.inc(w)
     }
-    println!("apple={} banana={} cherry={}",
+    println("apple={} banana={} cherry={}",
         tally.get_or("apple", 0),
         tally.get_or("banana", 0),
         tally.get_or("cherry", 0))
@@ -504,10 +504,10 @@ fn main() {
     m.insert("b", 2)
     let mut sum: i64 = 0
     for (k, v) in m.iter() {
-        println!("{}={}", k, v)
+        println("{}={}", k, v)
         sum = sum + v
     }
-    println!("sum={}", sum)
+    println("sum={}", sum)
 }
 "#,
         "a=1\nb=2\nc=3\nsum=6\n",
@@ -531,7 +531,7 @@ fn main() {
     m.insert("b", 2)
     let entries = m.iter().collect()
     for (i, entry) in entries.iter().enumerate() {
-        println!("{}:{}={}", i, entry.0, entry.1)
+        println("{}:{}={}", i, entry.0, entry.1)
     }
 }
 "#,
@@ -558,7 +558,7 @@ fn classify(n: i64) -> String {
 
 fn main() {
     for n in [-5, 0, 3, 42] {
-        println!("{}={}", n, classify(n))
+        println("{}={}", n, classify(n))
     }
 }
 "#,
@@ -595,8 +595,8 @@ impl Shape for Rect {
 fn main() {
     let c = Circle { radius: 2.0 }
     let r = Rect { w: 3.0, h: 4.0 }
-    println!("{} area={:.4}", c.name(), c.area())
-    println!("{} area={:.4}", r.name(), r.area())
+    println("{} area={:.4}", c.name(), c.area())
+    println("{} area={:.4}", r.name(), r.area())
 }
 "#,
         "circle area=12.5664\nrect area=12.0000\n",
@@ -623,7 +623,7 @@ impl Counter {
 
 fn main() {
     let c = Counter::new().inc(3).double().inc(1).double()
-    println!("got={}", c.get())
+    println("got={}", c.get())
 }
 "#,
         "got=14\n",
@@ -643,8 +643,8 @@ fn fib(n: i64) -> i64 {
 }
 
 fn main() {
-    println!("fib(20)={}", fib(20))
-    println!("fib(25)={}", fib(25))
+    println("fib(20)={}", fib(20))
+    println("fib(25)={}", fib(25))
 }
 "#,
         "fib(20)=6765\nfib(25)=75025\n",
@@ -670,7 +670,7 @@ fn main() {
     for x in v.iter() {
         sum = sum + *x
     }
-    println!("len={} sum={}", v.len(), sum)
+    println("len={} sum={}", v.len(), sum)
 }
 "#,
         "len=1000 sum=499500\n",
@@ -681,7 +681,7 @@ fn main() {
 fn release_string_split_trim_parse_totals() {
     // Splits a comma list, trims each piece, parses each into
     // i64, accumulates. Catches the str.split / str.trim /
-    // str.parse trio in release plus Result<i64,_> match in a
+    // str.to_i64 trio in release plus Option<i64> match in a
     // hot path.
     assert_release_stdout_eq(
         "split_trim_parse",
@@ -692,14 +692,14 @@ fn main() {
     let mut count: i64 = 0
     for piece in line.split(',') {
         let trimmed = piece.trim()
-        let n: i64 = match trimmed.parse() {
-            Ok(v) => v,
-            Err(_) => 0,
+        let n: i64 = match trimmed.to_i64() {
+            Some(v) => v,
+            None => 0,
         }
         sum = sum + n
         count = count + 1
     }
-    println!("count={} sum={}", count, sum)
+    println("count={} sum={}", count, sum)
 }
 "#,
         "count=5 sum=15\n",
@@ -716,10 +716,10 @@ fn release_nested_format_macro_handles_precision() {
         r#"
 fn main() {
     let pi = 3.14159265358979
-    let nested = format!("[{}]", format!("{:.4}", pi))
-    println!("{}", nested)
-    let multi = format!("a={:.2} b={:.4}", pi, pi * 2.0)
-    println!("{}", multi)
+    let nested = format("[{}]", format("{:.4}", pi))
+    println("{}", nested)
+    let multi = format("a={:.2} b={:.4}", pi, pi * 2.0)
+    println("{}", multi)
 }
 "#,
         "[3.1416]\na=3.14 b=6.2832\n",
@@ -739,11 +739,11 @@ fn main() {
     let neg_zero: f64 = -0.0
     let inf: f64 = 1.0 / zero
     let neg_inf: f64 = -1.0 / zero
-    println!("zero==neg_zero: {}", zero == neg_zero)
-    println!("inf>0: {}", inf > 0.0)
-    println!("neg_inf<0: {}", neg_inf < 0.0)
+    println("zero==neg_zero: {}", zero == neg_zero)
+    println("inf>0: {}", inf > 0.0)
+    println("neg_inf<0: {}", neg_inf < 0.0)
     let nan: f64 = inf - inf
-    println!("nan==nan: {}", nan == nan)
+    println("nan==nan: {}", nan == nan)
 }
 "#,
         "zero==neg_zero: true\ninf>0: true\nneg_inf<0: true\nnan==nan: false\n",
@@ -770,7 +770,7 @@ fn main() {
     let mut iter_sum: i64 = 0
     for x in v.iter() { iter_sum = iter_sum + *x }
 
-    println!("excl={} incl={} iter={}", excl, incl, iter_sum)
+    println("excl={} incl={} iter={}", excl, incl, iter_sum)
 }
 "#,
         "excl=10 incl=15 iter=100\n",
@@ -806,14 +806,14 @@ fn main() {
     let mut k = 0
     while k < 100 {
         wg.add(1)
-        go {
+        spawn(|| {
             counter.fetch_add(1)
             wg.done()
-        }
+        })
         k = k + 1
     }
     wg.wait()
-    println!("counter={}", counter.load())
+    println("counter={}", counter.load())
 }
 "#,
         "counter=100\n",
@@ -834,7 +834,7 @@ fn release_owned_string_push_str_holds_value() {
 fn main() {
     let mut b: String = String::new()
     b.push_str("hi")
-    println!("b={}", b)
+    println("b={}", b)
 }
 "#,
         "b=hi\n",
@@ -857,11 +857,11 @@ use std::errors
 
 fn main() {
     let raw: String = "oops"
-    let r: Result<i64, _> = raw.parse()
+    let r: Result<i64, errors::Error> = raw.to_i64().ok_or(errors::new("bad"))
     let mapped = r.map_err(|_| errors::new("custom"))
     match mapped {
-        Ok(n) => println!("ok {}", n),
-        Err(e) => println!("err {}", e.message()),
+        Ok(n) => println("ok {}", n),
+        Err(e) => println("err {}", e.message()),
     }
 }
 "#,
@@ -882,8 +882,8 @@ fn release_eprintln_goes_to_stderr() {
         "eprintln_to_stderr",
         r#"
 fn main() {
-    println!("on-stdout")
-    eprintln!("on-stderr-{}", 42)
+    println("on-stdout")
+    eprintln("on-stderr-{}", 42)
 }
 "#,
     );
@@ -905,9 +905,9 @@ fn release_u64_values_print_like_the_vm() {
         r#"
 fn main() {
     let n: u64 = 18446744073709551615u64
-    println!("{}", n)
+    println("{}", n)
     let c = (0 - 1) as u64
-    println!("{}", c)
+    println("{}", c)
 }
 "#,
         "18446744073709551615\n18446744073709551615\n",
@@ -938,11 +938,11 @@ fn classify(x: i64) -> &str {
 }
 
 fn main() {
-    println!("{}", classify(1))
-    println!("{}", classify(2))
-    println!("{}", classify(3))
-    println!("{}", classify(10))
-    println!("{}", classify(0))
+    println("{}", classify(1))
+    println("{}", classify(2))
+    println("{}", classify(3))
+    println("{}", classify(10))
+    println("{}", classify(0))
 }
 "#,
         "small\nsmall\nmid\nbig\nmid\n",
@@ -962,7 +962,7 @@ fn release_iter_enumerate_yields_index_value_pairs() {
 fn main() {
     let v = [10, 20, 30, 40]
     for (idx, x) in v.iter().enumerate() {
-        println!("idx={} x={}", idx, *x)
+        println("idx={} x={}", idx, *x)
     }
 }
 "#,
@@ -995,13 +995,13 @@ fn pick(o: Option<i64>) -> &str {
 }
 
 fn main() {
-    println!("{}", classify(Ok(1)))
-    println!("{}", classify(Ok(2)))
-    println!("{}", classify(Ok(99)))
-    println!("{}", classify(Err(0)))
-    println!("{}", pick(Some(10)))
-    println!("{}", pick(Some(20)))
-    println!("{}", pick(None))
+    println("{}", classify(Ok(1)))
+    println("{}", classify(Ok(2)))
+    println("{}", classify(Ok(99)))
+    println("{}", classify(Err(0)))
+    println("{}", pick(Some(10)))
+    println("{}", pick(Some(20)))
+    println("{}", pick(None))
 }
 "#,
         "one\ntwo\nother-ok\nerr\nten\ntwenty\nnone\n",
@@ -1023,8 +1023,8 @@ fn main() {
     for b in body {
         sum += b as i64
     }
-    println!("sum: {}", sum)
-    println!("idx: {} {} {}", body[0], body[1], body[3])
+    println("sum: {}", sum)
+    println("idx: {} {} {}", body[0], body[1], body[3])
 }
 "#,
         "sum: 464\nidx: 200 200 4\n",
@@ -1048,22 +1048,22 @@ use std::path
 
 fn main() -> Result<(), errors::Error> {
     let payload: Vec<u8> = [0, 255, 1, 254].to_vec()
-    let tmp = path::join(&env::temp_dir(), &"gos_rel_byte_sum_probe.bin")
-    fs::write(&tmp, &payload)?
-    let mut bytes = fs::read(&tmp)?
-    fs::remove_file(&tmp)?
+    let tmp = path::join(env::temp_dir(), "gos_rel_byte_sum_probe.bin")
+    fs::write(tmp, payload)?
+    let mut bytes = fs::read(tmp)?
+    fs::remove_file(tmp)?
     let mut total: i64 = 0
     for b in bytes {
         total += b as i64
     }
-    println!("total: {}", total)
+    println("total: {}", total)
     bytes[2] = 9
     let mut sum = 0
     for b in bytes {
         sum += b as i64
     }
-    println!("sum: {}", sum)
-    println!("idx: {} {} {} {}", bytes[0], bytes[1], bytes[2], bytes[3])
+    println("sum: {}", sum)
+    println("idx: {} {} {} {}", bytes[0], bytes[1], bytes[2], bytes[3])
     Ok(())
 }
 "#,
@@ -1076,28 +1076,28 @@ fn release_narrow_casts_mask_and_float_casts_saturate() {
     // `as` is the single masking point for narrow int types
     // (`300 as u8` == 44, `200 as i8` == -56); release arithmetic
     // wraps at the declared width (`200u8 + 200u8` == 144); and
-    // float -> int saturates at i64 width with no narrow mask
-    // (`300.7 as u8` == 300, `1e20 as i64` == i64::MAX). All match
-    // the bytecode VM.
+    // float -> int saturates at the TARGET's own range
+    // (`300.7 as u8` == 255, `-1.5 as u8` == 0, `1e20 as i64` ==
+    // i64::MAX). All match the bytecode VM.
     assert_release_stdout_eq(
         "narrow_casts",
         r#"
 fn main() {
     let x = 300
-    println!("{}", x as u8)
+    println("{}", x as u8)
     let y = 200
-    println!("{}", y as i8)
+    println("{}", y as i8)
     let z: u8 = 200
-    println!("{}", z + z)
+    println("{}", z + z)
     let f = 300.7
-    println!("{}", f as u8)
+    println("{}", f as u8)
     let g = -1.5
-    println!("{}", g as u8)
+    println("{}", g as u8)
     let h = 1e20
-    println!("{}", h as i64)
+    println("{}", h as i64)
 }
 "#,
-        "44\n-56\n144\n300\n-1\n9223372036854775807\n",
+        "44\n-56\n144\n255\n0\n9223372036854775807\n",
     );
 }
 
@@ -1119,28 +1119,28 @@ use std::path
 
 fn main() -> Result<(), errors::Error> {
     let payload: Vec<u8> = [9, 3, 7, 3, 1].to_vec()
-    let tmp = path::join(&env::temp_dir(), &"gos_rel_packed_helpers.bin")
-    fs::write(&tmp, &payload)?
-    let mut bytes = fs::read(&tmp)?
-    fs::remove_file(&tmp)?
+    let tmp = path::join(env::temp_dir(), "gos_rel_packed_helpers.bin")
+    fs::write(tmp, payload)?
+    let mut bytes = fs::read(tmp)?
+    fs::remove_file(tmp)?
     if let Some(f) = bytes.first() {
-        println!("first = {}", f)
+        println("first = {}", f)
     }
     if let Some(l) = bytes.last() {
-        println!("last = {}", l)
+        println("last = {}", l)
     }
-    if let Some(i) = bytes.index_of(&7) {
-        println!("index_of 7 = {}", i)
+    if let Some(i) = bytes.index_of(7) {
+        println("index_of 7 = {}", i)
     }
-    println!("count_of 3 = {}", bytes.count_of(&3))
-    println!("contains 9 = {}", bytes.contains(&9))
-    println!("contains 8 = {}", bytes.contains(&8))
+    println("count_of 3 = {}", bytes.count_of(3))
+    println("contains 9 = {}", bytes.contains(9))
+    println("contains 8 = {}", bytes.contains(8))
     let r = bytes.iter().rev().collect()
-    println!("rev = {} {} {} {} {}", r[0], r[1], r[2], r[3], r[4])
+    println("rev = {} {} {} {} {}", r[0], r[1], r[2], r[3], r[4])
     if let Some(p) = bytes.pop() {
-        println!("pop = {}", p)
+        println("pop = {}", p)
     }
-    println!("len after pop = {}", bytes.len())
+    println("len after pop = {}", bytes.len())
     Ok(())
 }
 "#,
@@ -1179,8 +1179,8 @@ use std::errors
 
 fn main() {
     let e = errors::wrap(errors::wrap(errors::new("root"), "mid"), "outer")
-    println!("{}", e)
-    println!("msg={} is_root={}", e.message(), errors::is(&e, "root"))
+    println("{}", e)
+    println("msg={} is_root={}", e.message(), errors::is(e, "root"))
 }
 "#,
         "outer: mid: root\nmsg=outer is_root=true\n",
@@ -1225,7 +1225,7 @@ fn release_rejects_i128_with_gt0014() {
         r#"
 fn main() {
     let n: i128 = 1
-    println!("{}", n)
+    println("{}", n)
 }
 "#,
         "GT0014",
@@ -1246,7 +1246,7 @@ use std::strings
 fn main() {
     let r: Result<i64, String> = Err("x")
     let m = r.map_err(strings::repeat)
-    if let Err(e) = m { println!("{}", e) }
+    if let Err(e) = m { println("{}", e) }
 }
 "#,
         "GT0001",
@@ -1263,7 +1263,7 @@ fn release_accepts_a_std_fn_of_matching_arity_as_a_value() {
 use std::math
 
 fn main() {
-    println!("{:?}", #[1.0, -2.0].map(math::abs))
+    println("{:?}", #[1.0, -2.0].map(math::abs))
 }
 "#,
         "#[1.0, 2.0]\n",
@@ -1271,27 +1271,26 @@ fn main() {
 }
 
 #[test]
-fn release_rejects_swapped_option_combinator_with_gt0029() {
-    // `option::and_then` is data-last (closure first, Option last);
-    // with the arguments swapped the runtime reads the closure as the
-    // data value and silently returns `None`, so the checker must
-    // reject the call instead.
+fn release_rejects_swapped_option_combinator_with_gr0021() {
+    // Every std free function takes its data first; written the other way
+    // round the runtime reads the closure as the data value and silently
+    // answers `None`, so the checker rejects the call instead.
     assert_release_build_rejects(
         "reject_swapped_option_combinator",
         r#"
 use std::option
 
 fn main() {
-    let a = option::and_then(Some(5), |x: i64| Some(x * 2))
-    println!("{:?}", a)
+    let a = option::and_then(|x: i64| Some(x * 2), Some(5))
+    println("{:?}", a)
 }
 "#,
-        "GT0029",
+        "GR0021",
     );
 }
 
 #[test]
-fn release_rejects_swapped_result_combinator_with_gt0029() {
+fn release_rejects_swapped_result_combinator_with_gr0021() {
     assert_release_build_rejects(
         "reject_swapped_result_combinator",
         r#"
@@ -1299,11 +1298,11 @@ use std::result
 
 fn main() {
     let r: Result<i64, String> = Ok(5)
-    let m = result::map(r, |x: i64| x * 2)
-    println!("{:?}", m)
+    let m = result::map(|x: i64| x * 2, r)
+    println("{:?}", m)
 }
 "#,
-        "GT0029",
+        "GR0021",
     );
 }
 
@@ -1321,7 +1320,7 @@ use std::iter
 fn main() {
     let xs = [1, 2, 3]
     let n = iter::count(|x: i64| x > 1, xs)
-    println!("{}", n)
+    println("{}", n)
 }
 "#,
         "GT0018",
@@ -1340,7 +1339,7 @@ use std::encoding::json
 
 fn main() {
     let v = json::Value::string("x")
-    println!("{}", json::render(&v))
+    println("{}", json::render(v))
 }
 "#,
         "GR0001",
@@ -1359,7 +1358,7 @@ use std::process
 
 fn main() {
     let c = process::Command::new("echo")
-    println!("{:?}", c)
+    println("{:?}", c)
 }
 "#,
         "GR0001",

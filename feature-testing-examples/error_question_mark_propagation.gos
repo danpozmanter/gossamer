@@ -3,9 +3,9 @@
 // to verify automatic unwrapping and early-return semantics.
 
 fn parse_positive(s: String) -> Result<i64, String> {
-    let n = s.parse::<i64>().map_err(|_| "not a number")?
+    let n = s.to_i64().ok_or("not a number")?
     if n <= 0 {
-        Err(format!("{} is not positive", n))
+        Err(format("{} is not positive", n))
     } else {
         Ok(n)
     }
@@ -28,40 +28,40 @@ fn sum_positives(inputs: Vec<String>) -> Result<i64, String> {
 fn main() {
     // Happy path
     match double_positive("21") {
-        Ok(v) => println!("double(21) = {}", v)
-        Err(e) => println!("error: {}", e)
+        Ok(v) => println("double(21) = {}", v)
+        Err(e) => println("error: {}", e)
     }
 
     // Not a number
     match double_positive("abc") {
-        Ok(v) => println!("unexpected {}", v)
-        Err(e) => println!("not a number: {}", e)
+        Ok(v) => println("unexpected {}", v)
+        Err(e) => println("not a number: {}", e)
     }
 
     // Non-positive
     match double_positive("-5") {
-        Ok(v) => println!("unexpected {}", v)
-        Err(e) => println!("non-positive: {}", e)
+        Ok(v) => println("unexpected {}", v)
+        Err(e) => println("non-positive: {}", e)
     }
 
     // Zero
     match parse_positive("0") {
-        Ok(v) => println!("unexpected {}", v)
-        Err(e) => println!("zero rejected: {}", e)
+        Ok(v) => println("unexpected {}", v)
+        Err(e) => println("zero rejected: {}", e)
     }
 
     // Sum success
     let words: Vec<String> = Vec::from(["1", "2", "3"])
     match sum_positives(words) {
-        Ok(s) => println!("sum = {}", s)
-        Err(e) => println!("sum error: {}", e)
+        Ok(s) => println("sum = {}", s)
+        Err(e) => println("sum error: {}", e)
     }
 
     // Sum with bad element
     let bad: Vec<String> = Vec::from(["1", "bad", "3"])
     match sum_positives(bad) {
-        Ok(s) => println!("unexpected sum {}", s)
-        Err(e) => println!("sum stopped at: {}", e)
+        Ok(s) => println("unexpected sum {}", s)
+        Err(e) => println("sum stopped at: {}", e)
     }
 }
 
@@ -73,7 +73,7 @@ mod tests {
     fn parse_positive_ok() {
         let r = super::parse_positive("42")
         match r {
-            Ok(v) => { let _ = testing::check_eq(&v, &42, "parse_positive 42")
+            Ok(v) => { let _ = testing::check_eq(v, 42, "parse_positive 42")
             }
             Err(e) => { let _ = testing::check(false, e)
             }

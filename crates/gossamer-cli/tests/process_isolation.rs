@@ -35,21 +35,21 @@ const PANICKING_GOROUTINE: &str = r#"
 use std::time
 
 fn boom() {
-    panic!("intentional goroutine crash")
+    panic("intentional goroutine crash")
 }
 
 fn main() {
-    go boom()
+    spawn(|| boom())
     time::sleep(200)
-    println!("MAIN_SURVIVED")
+    println("MAIN_SURVIVED")
 }
 "#;
 
 // A panic on the main goroutine must stay fatal, just like Rust's `fn main`.
 const PANICKING_MAIN: &str = r#"
 fn main() {
-    println!("BEFORE_PANIC")
-    panic!("fatal main crash")
+    println("BEFORE_PANIC")
+    panic("fatal main crash")
 }
 "#;
 

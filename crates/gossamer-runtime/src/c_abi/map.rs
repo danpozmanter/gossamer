@@ -1592,6 +1592,40 @@ unsafe fn map_or_insert_str_i64_impl(
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::StrI64(FxHashMap::default());
         }
+        // A string-valued map stores its values as bytes, not as the word
+        // every other value kind is stored as, so it answers through its own
+        // entry: the caller's `default` is a `String` pointer whose bytes the
+        // map copies, and the result is a fresh `String` holding the stored
+        // text - the same shape `get_or` hands back.
+        if let MapStorage::StrStr(inner) = &mut *storage {
+            let default_bytes: &[u8] = if default == 0 {
+                b""
+            } else {
+                unsafe { crate::c_abi::gos_str_arg_bytes(default as usize as *const c_char) }
+            };
+            let stored = if let Some(v) = inner.get(key_bytes) {
+                alloc_cstring(v)
+            } else {
+                let value = crate::c_abi::string::boxed_bytes(default_bytes);
+                inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), value);
+                map.len_cache += 1;
+                alloc_cstring(default_bytes)
+            };
+            drop(storage);
+            if typed_key {
+                unsafe { crate::c_abi::string::consume_moved_string_typed(key.cast_mut()) };
+            } else {
+                unsafe { crate::c_abi::string::consume_moved_string(key.cast_mut()) };
+            }
+            if default != 0 {
+                unsafe {
+                    crate::c_abi::string::consume_moved_string_typed(
+                        default as usize as *mut c_char,
+                    );
+                }
+            }
+            return stored as usize as i64;
+        }
         let MapStorage::StrI64(inner) = &mut *storage else {
             return default;
         };
@@ -1664,6 +1698,31 @@ pub unsafe extern "C" fn gos_rt_map_or_insert_i64_i64(
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::I64I64(FxHashMap::default());
+        }
+        // See `map_or_insert_str_i64_impl`: a string-valued map stores bytes
+        // rather than the value word, so it answers through its own entry.
+        if let MapStorage::I64Str(inner) = &mut *storage {
+            let default_bytes: &[u8] = if default == 0 {
+                b""
+            } else {
+                unsafe { crate::c_abi::gos_str_arg_bytes(default as usize as *const c_char) }
+            };
+            let stored = if let Some(v) = inner.get(&key) {
+                alloc_cstring(v)
+            } else {
+                inner.insert(key, crate::c_abi::string::boxed_bytes(default_bytes));
+                map.len_cache += 1;
+                alloc_cstring(default_bytes)
+            };
+            drop(storage);
+            if default != 0 {
+                unsafe {
+                    crate::c_abi::string::consume_moved_string_typed(
+                        default as usize as *mut c_char,
+                    );
+                }
+            }
+            return stored as usize as i64;
         }
         let MapStorage::I64I64(inner) = &mut *storage else {
             return default;

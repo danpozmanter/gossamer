@@ -6,34 +6,34 @@ use std::path
 
 fn main() {
     match env::home_dir() {
-        Some(h) => println!("home_nonempty={}", h.len() > 0)
-        None => println!("home_nonempty=false")
+        Some(h) => println("home_nonempty={}", h.len() > 0)
+        None => println("home_nonempty=false")
     }
 
-    let dir = path::join(&env::temp_dir(), &"gossamer-alias-demo")
-    let _ = fs::remove_dir_all(&dir)
-    let nested = path::join(&dir, &"a")
-    match fs::create_dir_all(&nested) {
-        Ok(_) => println!("mkdir_all_ok=true")
-        Err(e) => println!("mkdir_all_err={}", e)
+    let dir = path::join(env::temp_dir(), "gossamer-alias-demo")
+    let _ = fs::remove_dir_all(dir)
+    let nested = path::join(dir, "a")
+    match fs::create_dir_all(nested) {
+        Ok(_) => println("mkdir_all_ok=true")
+        Err(e) => println("mkdir_all_err={}", e)
     }
 
-    let file = path::join(&dir, &"data.bin")
-    let _ = fs::write(&file, "abc".as_bytes())
-    let bytes = fs::read(&file).unwrap()
-    println!("read_file_len={}", bytes.len())
+    let file = path::join(dir, "data.bin")
+    let _ = fs::write(file, "abc".as_bytes())
+    let bytes = fs::read(file).unwrap()
+    println("read_file_len={}", bytes.len())
 
-    match env::set_current_dir(&dir) {
-        Ok(_) => println!("set_cwd_ok=true")
-        Err(e) => println!("set_cwd_err={}", e)
+    match env::set_current_dir(dir) {
+        Ok(_) => println("set_cwd_ok=true")
+        Err(e) => println("set_cwd_err={}", e)
     }
 
     // `create_dir_all` and `write` above put exactly `a` and `data.bin`
     // under `dir`, and the walk yields them in sorted order.
-    let _ = path::walk(&dir, |entry| {
-        println!("walk_entry={}", entry.name)
+    let _ = path::walk(dir, |entry| {
+        println("walk_entry={}", entry.name)
         Ok(())
     })
 
-    let _ = fs::remove_dir_all(&dir)
+    let _ = fs::remove_dir_all(dir)
 }

@@ -228,12 +228,12 @@ mod entry_main_tests {
 
     #[test]
     fn no_try_means_false() {
-        assert!(!body_uses_try(&parse("println!(\"hi\")\n").top_level_stmts));
+        assert!(!body_uses_try(&parse("println(\"hi\")\n").top_level_stmts));
     }
 
     #[test]
     fn synthesizes_unit_main_from_statements() {
-        let mut sf = parse("println!(\"hi\")\n");
+        let mut sf = parse("println(\"hi\")\n");
         let diags = synthesize_entry_main(&mut sf);
         assert!(diags.is_empty());
         assert!(sf.top_level_stmts.is_empty(), "statements moved into main");
@@ -252,7 +252,7 @@ mod entry_main_tests {
 
     #[test]
     fn mixing_statements_with_explicit_main_errors() {
-        let mut sf = parse("println!(\"hi\")\nfn main() { }\n");
+        let mut sf = parse("println(\"hi\")\nfn main() { }\n");
         let diags = synthesize_entry_main(&mut sf);
         assert_eq!(diags.len(), 1, "one conflict diagnostic");
         assert!(matches!(diags[0].error, ParseError::MixedEntryForms));

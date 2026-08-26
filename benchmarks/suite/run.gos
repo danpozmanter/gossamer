@@ -69,12 +69,12 @@ struct Options {
 
 /// Ends the run with `message` on standard error.
 fn fail(message: String) {
-    eprintln!("run: {}", message)
+    eprintln("run: {}", message)
     process::exit(1)
 }
 
 /// Runs `command`, ending the run when it fails.
-fn must_run(command: &Vec<String>) -> String {
+fn must_run(command: Vec<String>) -> String {
     let program = command[0]
     let mut arguments = #[]
     for (index, part) in command.iter().enumerate() {
@@ -82,10 +82,10 @@ fn must_run(command: &Vec<String>) -> String {
             arguments.push(part)
         }
     }
-    match process::run(&program, &arguments) {
+    match process::run(program, arguments) {
         Ok(result) => {
             if result.code != 0 {
-                fail(format!(
+                fail(format(
                     "{} exited {}: {}"
                     command.join(" ")
                     result.code
@@ -95,14 +95,14 @@ fn must_run(command: &Vec<String>) -> String {
             result.stdout
         }
         Err(e) => {
-            fail(format!("{}: {}", command.join(" "), e))
+            fail(format("{}: {}", command.join(" "), e))
             ""
         }
     }
 }
 
 /// The first line of `text` whose start matches `prefix`, or "".
-fn line_with(text: &String, prefix: String) -> String {
+fn line_with(text: String, prefix: String) -> String {
     for line in text.lines() {
         if line.starts_with(prefix) {
             return line
@@ -112,7 +112,7 @@ fn line_with(text: &String, prefix: String) -> String {
 }
 
 fn host_metadata() -> Host {
-    let cpuinfo = fs::read_to_string(&"/proc/cpuinfo").unwrap_or("")
+    let cpuinfo = fs::read_to_string("/proc/cpuinfo").unwrap_or("")
     let mut cpu_model = "unknown"
     for line in cpuinfo.lines() {
         if line.to_lowercase().starts_with("model name") {
@@ -122,8 +122,8 @@ fn host_metadata() -> Host {
             break
         }
     }
-    let meminfo = fs::read_to_string(&"/proc/meminfo").unwrap_or("")
-    let total = line_with(&meminfo, "MemTotal:")
+    let meminfo = fs::read_to_string("/proc/meminfo").unwrap_or("")
+    let total = line_with(meminfo, "MemTotal:")
     let memory_bytes = if total.is_empty() {
         None
     } else {
@@ -133,7 +133,7 @@ fn host_metadata() -> Host {
     Host {
         os: "Linux"
         arch: os::arch()
-        kernel: fs::read_to_string(&"/proc/sys/kernel/osrelease").unwrap_or("unknown").trim()
+        kernel: fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or("unknown").trim()
         cpu_count: max(1, thread::num_cpus())
         cpu_model: cpu_model
         memory_bytes: memory_bytes
@@ -141,7 +141,7 @@ fn host_metadata() -> Host {
 }
 
 /// Builds through `command` and answers how long the build took.
-fn compile_command(command: &Vec<String>) -> i64 {
+fn compile_command(command: Vec<String>) -> i64 {
     let started = time::monotonic_nanos()
     let _ = must_run(command)
     time::monotonic_nanos() - started
@@ -149,16 +149,16 @@ fn compile_command(command: &Vec<String>) -> i64 {
 
 /// One measured run: the child's elapsed nanoseconds and its peak RSS
 /// in KiB, with the output checked against `expected` first.
-fn measured_run(command: &Vec<String>, expected: &String, rss_path: &String) -> (i64, i64) {
+fn measured_run(command: Vec<String>, expected: String, rss_path: String) -> (i64, i64) {
     let mut wrapped = #["/usr/bin/time", "-f", "%M", "-o", *rss_path]
     for part in command {
         wrapped.push(part)
     }
     let started = time::monotonic_nanos()
-    let output = must_run(&wrapped)
+    let output = must_run(wrapped)
     let elapsed = time::monotonic_nanos() - started
     if output != *expected {
-        fail(format!(
+        fail(format(
             "output mismatch for {}: expected {}, found {}"
             command.join(" ")
             expected
@@ -184,12 +184,12 @@ fn median(xs: Vec<i64>) -> i64 {
 fn result_for(
     workload: String
     tier: String
-    command: &Vec<String>
-    expected: &String
+    command: Vec<String>
+    expected: String
     runs: i64
     compile_ns: i64
-    binary: &String
-    scratch: &String
+    binary: String
+    scratch: String
 ) -> Sample {
     // A warm-up run the samples do not count, so the first sample is
     // not the one that paged the binary in.
@@ -198,8 +198,8 @@ fn result_for(
     let mut peak_rss = 0
     let mut index = 0
     while index < runs {
-        let rss_path = path::join(scratch, &format!("rss-{}-{}.txt", tier, index))
-        let (elapsed, rss) = measured_run(command, expected, &rss_path)
+        let rss_path = path::join(scratch, format("rss-{}-{}.txt", tier, index))
+        let elapsed, rss = measured_run(command, expected, rss_path)
         samples.push(elapsed)
         peak_rss = max(peak_rss, rss)
         index += 1
@@ -224,15 +224,15 @@ fn result_for(
 
 /// Reports the current run against `baseline_path`, ending the run when
 /// a row regressed or the baseline cannot be compared at all.
-fn compare(current: &Document, baseline_path: &String) {
+fn compare(current: Document, baseline_path: String) {
     if !fs::is_file(baseline_path) {
-        fail(format!("benchmark baseline is missing: {}", baseline_path))
+        fail(format("benchmark baseline is missing: {}", baseline_path))
     }
     let text = fs::read_to_string(baseline_path).unwrap_or("")
-    let baseline = match from_json::<Document>(&text) {
+    let baseline = match from_json::<Document>(text) {
         Ok(baseline) => baseline
         Err(e) => {
-            fail(format!("reading {}: {}", baseline_path, e))
+            fail(format("reading {}: {}", baseline_path, e))
             return
         }
     }
@@ -244,21 +244,21 @@ fn compare(current: &Document, baseline_path: &String) {
     }
     let mut old: Map<String, Sample> = Map::new()
     for row in baseline.results {
-        old.insert(format!("{}/{}", row.workload, row.tier), row)
+        old.insert(format("{}/{}", row.workload, row.tier), row)
     }
     let mut failures = #[]
     for row in current.results {
-        let key = format!("{}/{}", row.workload, row.tier)
-        let Some(prior) = old.get(&key) else {
-            failures.push(format!("missing baseline row: {}", key))
+        let key = format("{}/{}", row.workload, row.tier)
+        let Some(prior) = old.get(key) else {
+            failures.push(format("missing baseline row: {}", key))
             continue
         }
         let time_ratio = row.median_ns as f64 / max(1, prior.median_ns) as f64
         let rss_ratio = row.peak_rss_kib as f64 / max(1, prior.peak_rss_kib) as f64
         let status = if time_ratio >= 1.10 || rss_ratio >= 1.10 { "warning" } else { "ok" }
-        println!("{}: time {:.3}x, RSS {:.3}x [{}]", key, time_ratio, rss_ratio, status)
+        println("{}: time {:.3}x, RSS {:.3}x [{}]", key, time_ratio, rss_ratio, status)
         if time_ratio >= 1.25 || rss_ratio >= 1.25 {
-            failures.push(format!("regression: {}", key))
+            failures.push(format("regression: {}", key))
         }
     }
     if !failures.is_empty() {
@@ -270,11 +270,11 @@ fn compare(current: &Document, baseline_path: &String) {
 /// or "" when it is on none.
 fn on_path(name: String) -> String {
     if name.contains("/") {
-        return if fs::is_file(&name) { name } else { "" }
+        return if fs::is_file(name) { name } else { "" }
     }
-    for directory in env::var(&"PATH").unwrap_or("").split(":") {
-        let candidate = path::join(&directory, &name)
-        if fs::is_file(&candidate) {
+    for directory in env::var("PATH").unwrap_or("").split(":") {
+        let candidate = path::join(directory, name)
+        if fs::is_file(candidate) {
             return candidate
         }
     }
@@ -301,18 +301,18 @@ fn parse_options() -> Options {
             "--output" => options.output = value
             "--compare" => options.compare = value
             _ => {
-                eprintln!("run: unknown argument {}", flag)
+                eprintln("run: unknown argument {}", flag)
                 process::exit(2)
             }
         }
         index += 2
     }
     if options.output.is_empty() {
-        eprintln!("run: --output is required")
+        eprintln("run: --output is required")
         process::exit(2)
     }
     if options.runs < 3 {
-        eprintln!("run: --runs must be at least 3")
+        eprintln("run: --runs must be at least 3")
         process::exit(2)
     }
     options
@@ -320,65 +320,65 @@ fn parse_options() -> Options {
 
 fn main() {
     let options = parse_options()
-    if !fs::is_dir(&"/proc") || !fs::is_file(&"/usr/bin/time") {
-        eprintln!("run: v1 runner requires Linux and /usr/bin/time")
+    if !fs::is_dir("/proc") || !fs::is_file("/usr/bin/time") {
+        eprintln("run: v1 runner requires Linux and /usr/bin/time")
         process::exit(2)
     }
-    let gos = match fs::canonicalize(&options.gos) {
+    let gos = match fs::canonicalize(options.gos) {
         Ok(resolved) => resolved
         Err(_) => {
-            eprintln!("run: gos binary does not exist: {}", options.gos)
+            eprintln("run: gos binary does not exist: {}", options.gos)
             process::exit(2)
         }
     }
     let go_binary_path = on_path(options.go_command)
     if go_binary_path.is_empty() {
-        eprintln!("run: Go executable not found: {}", options.go_command)
+        eprintln("run: Go executable not found: {}", options.go_command)
         process::exit(2)
     }
 
-    let root = path::parent(&env::program_name()).unwrap_or("benchmarks/suite")
-    let scratch = match fs::temp_dir(&"gossamer-suite-") {
+    let root = path::parent(env::program_name()).unwrap_or("benchmarks/suite")
+    let scratch = match fs::temp_dir("gossamer-suite-") {
         Ok(scratch) => scratch
         Err(e) => {
-            fail(format!("creating a scratch directory: {}", e))
+            fail(format("creating a scratch directory: {}", e))
             return
         }
     }
 
     let mut results = #[]
     for workload in WORKLOADS {
-        let directory = path::join(&root, &workload)
-        let expected = match fs::read_to_string(&path::join(&directory, &"expected.txt")) {
+        let directory = path::join(root, workload)
+        let expected = match fs::read_to_string(path::join(directory, "expected.txt")) {
             Ok(expected) => expected
             Err(e) => {
-                fail(format!("reading the expected output for {}: {}", workload, e))
+                fail(format("reading the expected output for {}: {}", workload, e))
                 return
             }
         }
-        let source = path::join(&directory, &"main.gos")
-        let build_dir = path::join(&scratch, &workload)
-        let debug_dir = path::join(&build_dir, &"debug")
-        let release_dir = path::join(&build_dir, &"release")
-        let _ = fs::create_dir_all(&debug_dir)
-        let _ = fs::create_dir_all(&release_dir)
+        let source = path::join(directory, "main.gos")
+        let build_dir = path::join(scratch, workload)
+        let debug_dir = path::join(build_dir, "debug")
+        let release_dir = path::join(build_dir, "release")
+        let _ = fs::create_dir_all(debug_dir)
+        let _ = fs::create_dir_all(release_dir)
 
-        let go_binary = path::join(&build_dir, &"go-main")
-        let go_compile = compile_command(&#[
+        let go_binary = path::join(build_dir, "go-main")
+        let go_compile = compile_command(#[
             go_binary_path
             "build"
             "-trimpath"
             "-o"
             go_binary
-            path::join(&directory, &"main.go")
+            path::join(directory, "main.go")
         ])
-        let debug_compile = compile_command(&#[gos, "build", "--out-dir", debug_dir, source])
+        let debug_compile = compile_command(#[gos, "build", "--out-dir", debug_dir, source])
         let release_compile =
-            compile_command(&#[gos, "build", "--release", "--out-dir", release_dir, source])
-        let debug_binary = path::join(&debug_dir, &"main")
-        let release_binary = path::join(&release_dir, &"main")
-        if !fs::is_file(&debug_binary) || !fs::is_file(&release_binary) {
-            fail(format!("native output missing for {}", workload))
+            compile_command(#[gos, "build", "--release", "--out-dir", release_dir, source])
+        let debug_binary = path::join(debug_dir, "main")
+        let release_binary = path::join(release_dir, "main")
+        if !fs::is_file(debug_binary) || !fs::is_file(release_binary) {
+            fail(format("native output missing for {}", workload))
         }
 
         let tiers = #[
@@ -389,25 +389,25 @@ fn main() {
             ("go-release", #[go_binary], go_compile, go_binary)
         ]
         for (tier, command, compile_ns, binary) in tiers {
-            println!("measuring {}/{}", workload, tier)
+            println("measuring {}/{}", workload, tier)
             results.push(result_for(
                 workload
                 tier
-                &command
-                &expected
+                command
+                expected
                 options.runs
                 compile_ns
-                &binary
-                &scratch
+                binary
+                scratch
             ))
         }
     }
 
     let mut toolchains: Map<String, String> = Map::new()
-    toolchains.insert("gos", must_run(&#[gos, "--version"]).trim())
-    toolchains.insert("go", must_run(&#[go_binary_path, "version"]).trim())
-    toolchains.insert("rustc", must_run(&#["rustc", "--version"]).trim())
-    toolchains.insert("llvm", env::var(&"GOS_LLC").unwrap_or("system/default"))
+    toolchains.insert("gos", must_run(#[gos, "--version"]).trim())
+    toolchains.insert("go", must_run(#[go_binary_path, "version"]).trim())
+    toolchains.insert("rustc", must_run(#["rustc", "--version"]).trim())
+    toolchains.insert("llvm", env::var("GOS_LLC").unwrap_or("system/default"))
 
     let document = Document {
         schema_version: 1
@@ -420,27 +420,27 @@ fn main() {
     let encoded = match to_json::<Document>(document) {
         Ok(encoded) => encoded
         Err(e) => {
-            fail(format!("encoding the report: {}", e))
+            fail(format("encoding the report: {}", e))
             return
         }
     }
-    let pretty = match json::parse(&encoded) {
+    let pretty = match json::parse(encoded) {
         Ok(value) => json::encode_pretty(value)
         Err(e) => {
-            fail(format!("rendering the report: {}", e))
+            fail(format("rendering the report: {}", e))
             return
         }
     }
-    if let Some(parent) = path::parent(&options.output) {
-        let _ = fs::create_dir_all(&parent)
+    if let Some(parent) = path::parent(options.output) {
+        let _ = fs::create_dir_all(parent)
     }
-    if let Err(e) = fs::write(&options.output, &format!("{}\n", pretty).as_bytes()) {
-        fail(format!("writing {}: {}", options.output, e))
+    if let Err(e) = fs::write(options.output, format("{}\n", pretty).as_bytes()) {
+        fail(format("writing {}: {}", options.output, e))
     }
-    println!("wrote {}", options.output)
-    let _ = fs::remove_dir_all(&scratch)
+    println("wrote {}", options.output)
+    let _ = fs::remove_dir_all(scratch)
 
     if !options.compare.is_empty() {
-        compare(&document, &options.compare)
+        compare(document, options.compare)
     }
 }

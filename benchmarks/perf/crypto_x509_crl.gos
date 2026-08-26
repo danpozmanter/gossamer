@@ -17,13 +17,13 @@ fn bench_crls_pem() -> String {
 #[bench]
 fn bench_crypto_x509_crl_verify_observed() -> i64 {
     match crypto::x509::verify_server_certificate_with_crls(
-        bench_chain_pem(),
-        bench_roots_pem(),
-        "localhost",
-        bench_crls_pem(),
+        bench_chain_pem()
+        bench_roots_pem()
+        "localhost"
+        bench_crls_pem()
     ) {
-        Ok(_) => 1,
-        Err(_) => 0,
+        Ok(_) => 1
+        Err(_) => 0
     }
 }
 

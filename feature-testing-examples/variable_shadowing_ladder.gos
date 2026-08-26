@@ -5,32 +5,32 @@
 
 fn main() {
     let x = 1
-    println!("outer x = {}", x)
+    println("outer x = {}", x)
 
     {
         let x = x + 10
-        println!("block x = {}", x)
+        println("block x = {}", x)
 
         if x > 5 {
             let x = x * 2
-            println!("if x = {}", x)
+            println("if x = {}", x)
         }
 
         let x = match x {
             n if n > 15 => n - 5
             n => n + 5
         }
-        println!("match x = {}", x)
+        println("match x = {}", x)
 
         let mut x = x
         for i in 0..3 {
             let x = x + i
-            println!("loop shadow x = {}", x)
+            println("loop shadow x = {}", x)
         }
-        println!("post-loop block x = {}", x)
+        println("post-loop block x = {}", x)
     }
 
-    println!("outer x still = {}", x)
+    println("outer x still = {}", x)
 
     let y = 100
     let y = if y > 50 {
@@ -39,14 +39,14 @@ fn main() {
     } else {
         y
     }
-    println!("if-expression y = {}", y)
+    println("if-expression y = {}", y)
 
     let mut z = 0
     for i in 0..5 {
         let z = z + i
-        println!("for-shadow z = {}", z)
+        println("for-shadow z = {}", z)
     }
-    println!("post-for z = {}", z)
+    println("post-for z = {}", z)
 }
 
 #[cfg(test)]
@@ -57,7 +57,7 @@ mod tests {
     fn shadow_basic() {
         let x = 1
         let x = x + 10
-        let _ = testing::check_eq(&x, &11, "shadow adds 10")
+        let _ = testing::check_eq(x, 11, "shadow adds 10")
     }
 
     #[test]
@@ -69,7 +69,7 @@ mod tests {
         } else {
             x
         }
-        let _ = testing::check_eq(&doubled, &22, "shadow in if doubles")
+        let _ = testing::check_eq(doubled, 22, "shadow in if doubles")
     }
 
     #[test]
@@ -80,9 +80,9 @@ mod tests {
             let inner = x + i
             vals.push(inner)
         }
-        let _ = testing::check_eq(&x, &16, "outer x unchanged")
-        let _ = testing::check_eq(&vals[0], &16, "loop i=0")
-        let _ = testing::check_eq(&vals[2], &18, "loop i=2")
+        let _ = testing::check_eq(x, 16, "outer x unchanged")
+        let _ = testing::check_eq(vals[0], 16, "loop i=0")
+        let _ = testing::check_eq(vals[2], 18, "loop i=2")
     }
 
     #[test]
@@ -92,6 +92,6 @@ mod tests {
             n if n > 15 => n - 5
             n => n + 5
         }
-        let _ = testing::check_eq(&x, &16, "match shadow: 11+5=16")
+        let _ = testing::check_eq(x, 16, "match shadow: 11+5=16")
     }
 }

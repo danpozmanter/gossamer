@@ -2434,7 +2434,6 @@ fn is_consuming_call(name: &str) -> bool {
         || name.starts_with("gos_rt_omap_insert")
         || name.starts_with("gos_rt_ovec_insert")
         || name.starts_with("gos_rt_chan_send")
-        || name == "gos_rt_go_spawn_closure"
 }
 
 /// Picks the retain/release runtime helper for a heap value by its type. Vecs
@@ -4381,6 +4380,27 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
         }
     }
 
+    // Heap slots that own what is written into them: an `gos_rc_alloc`
+    // result carries a child descriptor, so its release reclaims the
+    // children and a store into it needs no aliasing suppression.
+    let owning_rc_slots: std::collections::HashSet<Local> = {
+        let mut slots = std::collections::HashSet::new();
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::CallIntrinsic { name, .. },
+                } = &stmt.kind
+                    && matches!(*name, "gos_rc_alloc" | "gos_rc_alloc_tagged")
+                    && place.projection.is_empty()
+                {
+                    slots.insert(place.local);
+                }
+            }
+        }
+        slots
+    };
+
     // Aliasing summary: a local that is the source of a bare `Copy`, or
     // the value element (arg1..) of a consuming container/channel/closure
     // call, may outlive this frame, so the per-iteration reuse free must
@@ -4400,11 +4420,12 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                     aliased[p.local.0 as usize] = true;
                 }
                 // `gos_store(slot, offset, value)` writes `value` into a heap
-                // slot - a closure environment is built this way, and the
-                // closure reads the container through that slot for as long
-                // as it lives. The slot is a second holder the frame cannot
-                // see, so the per-iteration reuse free must not reclaim what
-                // it points at.
+                // slot the frame cannot see through, so the per-iteration
+                // reuse free must not reclaim what it points at - unless the
+                // slot belongs to an object that owns its children. An RC
+                // allocation carries a descriptor whose release walks those
+                // slots, so its store is balanced and the source local goes
+                // back to being reclaimed by its own frame.
                 if let StatementKind::Assign {
                     rvalue: Rvalue::CallIntrinsic { name, args },
                     ..
@@ -4413,6 +4434,15 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                     && let Some(Operand::Copy(p)) = args.get(2)
                     && p.projection.is_empty()
                     && (p.local.0 as usize) < aliased.len()
+                    && !args
+                        .first()
+                        .and_then(|slot| match slot {
+                            Operand::Copy(place) if place.projection.is_empty() => {
+                                Some(place.local)
+                            }
+                            _ => None,
+                        })
+                        .is_some_and(|slot| owning_rc_slots.contains(&slot))
                 {
                     aliased[p.local.0 as usize] = true;
                 }
@@ -5470,13 +5500,10 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 Terminator::Call {
                     destination, args, ..
                 } if destination.projection.is_empty() => {
-                    // Skip the drop-before-overwrite when the call READS the
-                    // destination as an argument (`cur = heap::pop(cur)`, the
-                    // functional re-bind collections): freeing `cur` before the
-                    // call that consumes it is a use-after-free. Such a call
-                    // clones its input and returns a fresh value, so the prior
-                    // binding is simply left to the at-return free / a leak of
-                    // the intermediate - never a double-free.
+                    // A call that READS its own destination (`xs = f(xs)`)
+                    // still needs the old value live when it runs, so the
+                    // drop-before-overwrite is skipped there; the prior
+                    // binding is reclaimed by the at-return free instead.
                     let self_read = args.iter().any(|a| {
                         matches!(a, Operand::Copy(p)
                             if p.projection.is_empty() && p.local == destination.local)

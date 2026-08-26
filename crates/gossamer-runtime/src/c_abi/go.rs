@@ -19,184 +19,8 @@
 // Scheduler - every `go fn(args)` lands on the M:N pool
 // ---------------------------------------------------------------
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_go_spawn(
-    func: Option<unsafe extern "C" fn(*mut u8)>,
-    env: *mut u8,
-) {
-    ffi_entry!((), {
-        let Some(f) = func else { return };
-        let env_addr = env as usize;
-        spawn_task(Box::new(move || {
-            let env = env_addr as *mut u8;
-            unsafe { f(env) };
-        }));
-    });
-}
-
 fn spawn_task(task: Box<dyn FnOnce() + Send + 'static>) {
     crate::sched_global::spawn(task);
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_go_spawn_call_0(fn_addr: usize) {
-    ffi_entry!((), {
-        if fn_addr == 0 {
-            return;
-        }
-        super::fn_registry::verify(
-            fn_addr,
-            super::fn_registry::FnKind::GoSpawnEntry { arity: 0 },
-        );
-        spawn_task(Box::new(move || {
-            // SAFETY: the caller promises `fn_addr` is the address of
-            // a goroutine entry function emitted by native codegen. `go`
-            // statements discard the callee result, and codegen emits these
-            // entries as `extern "C" fn(...)` returning void. The typed
-            // registry verify above rejects mismatched arities.
-            type Fn0 = unsafe extern "C" fn();
-            let f: Fn0 = unsafe { std::mem::transmute(fn_addr) };
-            unsafe { f() };
-        }));
-    });
-}
-
-/// Spawns a goroutine on the work-stealing scheduler (or, if no
-/// scheduler is installed, an OS thread) that calls a one-argument
-/// function with a single i64 payload. All Gossamer scalar types
-/// fit in an i64 slot; floats are passed by bitcast.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_go_spawn_call_1(fn_addr: usize, arg0: i64) {
-    ffi_entry!((), {
-        if fn_addr == 0 {
-            return;
-        }
-        super::fn_registry::verify(
-            fn_addr,
-            super::fn_registry::FnKind::GoSpawnEntry { arity: 1 },
-        );
-        spawn_task(Box::new(move || {
-            type Fn1 = unsafe extern "C" fn(i64);
-            let f: Fn1 = unsafe { std::mem::transmute(fn_addr) };
-            unsafe { f(arg0) };
-        }));
-    });
-}
-
-/// Two-arg version.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_go_spawn_call_2(fn_addr: usize, arg0: i64, arg1: i64) {
-    ffi_entry!((), {
-        if fn_addr == 0 {
-            return;
-        }
-        super::fn_registry::verify(
-            fn_addr,
-            super::fn_registry::FnKind::GoSpawnEntry { arity: 2 },
-        );
-        spawn_task(Box::new(move || {
-            type Fn2 = unsafe extern "C" fn(i64, i64);
-            let f: Fn2 = unsafe { std::mem::transmute(fn_addr) };
-            unsafe { f(arg0, arg1) };
-        }));
-    });
-}
-
-/// Three-arg version. Required for fan-out patterns (buf, idx, wg).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_go_spawn_call_3(fn_addr: usize, arg0: i64, arg1: i64, arg2: i64) {
-    ffi_entry!((), {
-        if fn_addr == 0 {
-            return;
-        }
-        super::fn_registry::verify(
-            fn_addr,
-            super::fn_registry::FnKind::GoSpawnEntry { arity: 3 },
-        );
-        spawn_task(Box::new(move || {
-            type Fn3 = unsafe extern "C" fn(i64, i64, i64);
-            let f: Fn3 = unsafe { std::mem::transmute(fn_addr) };
-            unsafe { f(arg0, arg1, arg2) };
-        }));
-    });
-}
-
-/// Four-arg version. Common fasta worker shape (buf, start, count, wg).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_go_spawn_call_4(
-    fn_addr: usize,
-    arg0: i64,
-    arg1: i64,
-    arg2: i64,
-    arg3: i64,
-) {
-    ffi_entry!((), {
-        if fn_addr == 0 {
-            return;
-        }
-        super::fn_registry::verify(
-            fn_addr,
-            super::fn_registry::FnKind::GoSpawnEntry { arity: 4 },
-        );
-        spawn_task(Box::new(move || {
-            type Fn4 = unsafe extern "C" fn(i64, i64, i64, i64);
-            let f: Fn4 = unsafe { std::mem::transmute(fn_addr) };
-            unsafe { f(arg0, arg1, arg2, arg3) };
-        }));
-    });
-}
-
-/// Five-arg version. Used by fasta_mt's IUB worker.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_go_spawn_call_5(
-    fn_addr: usize,
-    arg0: i64,
-    arg1: i64,
-    arg2: i64,
-    arg3: i64,
-    arg4: i64,
-) {
-    ffi_entry!((), {
-        if fn_addr == 0 {
-            return;
-        }
-        super::fn_registry::verify(
-            fn_addr,
-            super::fn_registry::FnKind::GoSpawnEntry { arity: 5 },
-        );
-        spawn_task(Box::new(move || {
-            type Fn5 = unsafe extern "C" fn(i64, i64, i64, i64, i64);
-            let f: Fn5 = unsafe { std::mem::transmute(fn_addr) };
-            unsafe { f(arg0, arg1, arg2, arg3, arg4) };
-        }));
-    });
-}
-
-/// Six-arg version, headroom for future fan-out shapes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_go_spawn_call_6(
-    fn_addr: usize,
-    arg0: i64,
-    arg1: i64,
-    arg2: i64,
-    arg3: i64,
-    arg4: i64,
-    arg5: i64,
-) {
-    ffi_entry!((), {
-        if fn_addr == 0 {
-            return;
-        }
-        super::fn_registry::verify(
-            fn_addr,
-            super::fn_registry::FnKind::GoSpawnEntry { arity: 6 },
-        );
-        spawn_task(Box::new(move || {
-            type Fn6 = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64);
-            let f: Fn6 = unsafe { std::mem::transmute(fn_addr) };
-            unsafe { f(arg0, arg1, arg2, arg3, arg4, arg5) };
-        }));
-    });
 }
 
 // ---------------------------------------------------------------
@@ -223,6 +47,22 @@ fn deliver_outcome(ch_addr: usize, disc: i64, payload: i64) {
     // buffer matching the channel's element width.
     unsafe {
         super::chan::gos_rt_chan_send(ch, bytes.as_ptr());
+    }
+}
+
+/// The child's share of the one-shot handle channel. Declared first in
+/// the spawned body so it drops last: every other guard has already
+/// delivered its outcome by the time this releases, whichever path the
+/// body left by.
+struct ChildChanRef {
+    ch_addr: usize,
+}
+
+impl Drop for ChildChanRef {
+    fn drop(&mut self) {
+        // SAFETY: the child held this reference for the whole body, and
+        // nothing on the child touches the channel after this point.
+        unsafe { super::chan::chan_release(self.ch_addr as *mut super::chan::GosChan) };
     }
 }
 
@@ -398,6 +238,14 @@ pub unsafe extern "C" fn gos_rt_spawn_ex(
         // pointer. Capacity 1 lets the worker deposit the outcome
         // without waiting for the joiner to arrive.
         let ch = unsafe { super::chan::gos_rt_chan_new(8, 1) };
+        if ch.is_null() {
+            return std::ptr::null_mut();
+        }
+        // Two parties reach the handle: the value this returns, released
+        // by the drop the codegen emits at its last use, and the child,
+        // which releases as it leaves.
+        // SAFETY: `ch` is the channel just constructed above.
+        unsafe { super::chan::chan_retain(&*ch) };
         let ch_addr = ch as usize;
         // The cohort is read on the spawning goroutine, before the task
         // is queued, so the child's slot is reserved in call order and a
@@ -416,6 +264,7 @@ pub unsafe extern "C" fn gos_rt_spawn_ex(
             // `Err` instead). The scope restores the flag on the unwind too.
             let _joinable = gossamer_coro::JoinableScope::enter(true);
             super::cohort::enter_child(cohort);
+            let _chan_ref = ChildChanRef { ch_addr };
             let mut guard = SpawnOutcomeGuard {
                 ch_addr,
                 armed: true,

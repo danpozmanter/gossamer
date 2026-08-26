@@ -11,7 +11,7 @@ use std::env
 use std::fs
 use std::path
 
-fn writable(path: &String) -> bool {
+fn writable(path: String) -> bool {
     match fs::permissions(path) {
         Ok(mode) => mode & 0o200 != 0
         Err(_) => false
@@ -19,62 +19,62 @@ fn writable(path: &String) -> bool {
 }
 
 fn main() {
-    let base = path::join(&env::temp_dir(), &"gossamer_parity_modes")
-    let _ = fs::remove_dir_all(&base)
+    let base = path::join(env::temp_dir(), "gossamer_parity_modes")
+    let _ = fs::remove_dir_all(base)
 
-    let nested = path::join(&base, &"a/b")
-    match fs::create_dir_all_mode(&nested, 0o777) {
-        Ok(_) => println!("create_dir_all_mode: ok")
-        Err(_) => println!("create_dir_all_mode: err")
+    let nested = path::join(base, "a/b")
+    match fs::create_dir_all_mode(nested, 0o777) {
+        Ok(_) => println("create_dir_all_mode: ok")
+        Err(_) => println("create_dir_all_mode: err")
     }
-    println!("nested is_dir: {}", fs::is_dir(&nested))
-    println!("nested mode: {:o}", fs::permissions(&nested).unwrap_or(0))
-    println!("nested writable: {}", writable(&nested))
+    println("nested is_dir: {}", fs::is_dir(nested))
+    println("nested mode: {:o}", fs::permissions(nested).unwrap_or(0))
+    println("nested writable: {}", writable(nested))
 
-    let leaf = path::join(&base, &"c")
-    match fs::create_dir_mode(&leaf, 0o750) {
-        Ok(_) => println!("create_dir_mode: ok")
-        Err(_) => println!("create_dir_mode: err")
+    let leaf = path::join(base, "c")
+    match fs::create_dir_mode(leaf, 0o750) {
+        Ok(_) => println("create_dir_mode: ok")
+        Err(_) => println("create_dir_mode: err")
     }
-    println!("leaf mode: {:o}", fs::permissions(&leaf).unwrap_or(0))
+    println("leaf mode: {:o}", fs::permissions(leaf).unwrap_or(0))
 
     // A directory that already exists is not created twice.
-    match fs::create_dir_mode(&leaf, 0o700) {
-        Ok(_) => println!("create_dir_mode twice: ok")
-        Err(_) => println!("create_dir_mode twice: err")
+    match fs::create_dir_mode(leaf, 0o700) {
+        Ok(_) => println("create_dir_mode twice: ok")
+        Err(_) => println("create_dir_mode twice: err")
     }
-    println!("leaf mode after: {:o}", fs::permissions(&leaf).unwrap_or(0))
+    println("leaf mode after: {:o}", fs::permissions(leaf).unwrap_or(0))
 
-    let file = path::join(&base, &"secret.txt")
-    match fs::write_mode(&file, &"hello", 0o600) {
-        Ok(_) => println!("write_mode: ok")
-        Err(_) => println!("write_mode: err")
+    let file = path::join(base, "secret.txt")
+    match fs::write_mode(file, "hello", 0o600) {
+        Ok(_) => println("write_mode: ok")
+        Err(_) => println("write_mode: err")
     }
-    println!("file contents: {}", fs::read_to_string(&file).unwrap_or("missing"))
-    println!("file mode: {:o}", fs::permissions(&file).unwrap_or(0))
-    println!("file writable: {}", writable(&file))
+    println("file contents: {}", fs::read_to_string(file).unwrap_or("missing"))
+    println("file mode: {:o}", fs::permissions(file).unwrap_or(0))
+    println("file writable: {}", writable(file))
 
-    match fs::set_permissions(&file, 0o444) {
-        Ok(_) => println!("set_permissions: ok")
-        Err(_) => println!("set_permissions: err")
+    match fs::set_permissions(file, 0o444) {
+        Ok(_) => println("set_permissions: ok")
+        Err(_) => println("set_permissions: err")
     }
-    println!("file mode after: {:o}", fs::permissions(&file).unwrap_or(0))
-    println!("file writable after: {}", writable(&file))
+    println("file mode after: {:o}", fs::permissions(file).unwrap_or(0))
+    println("file writable after: {}", writable(file))
 
     // Restored so the tree can be removed on a host where a read-only
     // file cannot be deleted.
-    let _ = fs::set_permissions(&file, 0o644)
+    let _ = fs::set_permissions(file, 0o644)
 
-    match fs::permissions(&path::join(&base, &"nope")) {
-        Ok(_) => println!("missing path: ok")
-        Err(e) => println!("missing path: {}", e)
+    match fs::permissions(path::join(base, "nope")) {
+        Ok(_) => println("missing path: ok")
+        Err(e) => println("missing path: {}", e)
     }
 
-    match fs::set_permissions(&path::join(&base, &"nope"), 0o644) {
-        Ok(_) => println!("set on missing: ok")
-        Err(e) => println!("set on missing: {}", e)
+    match fs::set_permissions(path::join(base, "nope"), 0o644) {
+        Ok(_) => println("set on missing: ok")
+        Err(e) => println("set on missing: {}", e)
     }
 
-    let _ = fs::remove_dir_all(&base)
-    println!("base gone: {}", !fs::exists(&base))
+    let _ = fs::remove_dir_all(base)
+    println("base gone: {}", !fs::exists(base))
 }

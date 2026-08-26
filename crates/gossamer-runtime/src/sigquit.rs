@@ -41,14 +41,65 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 
+/// A Gossamer string constant in the program image, decoded on demand.
+///
+/// A codegen prologue names its frame with pointers into the module's
+/// read-only string pool, which outlive every frame that records them.
+#[derive(Clone, Copy)]
+pub struct ImageStr(*const std::ffi::c_char);
+
+// SAFETY: the pointee is a read-only string constant in the program
+// image, so it is valid on every thread for the process lifetime.
+unsafe impl Send for ImageStr {}
+// SAFETY: as above - the pointee is immutable for the process lifetime.
+unsafe impl Sync for ImageStr {}
+
+impl ImageStr {
+    /// Wraps a pointer to a Gossamer string constant in the program image.
+    ///
+    /// # Safety
+    /// `ptr` is null, or points at a string constant in the program image
+    /// that stays mapped and unmodified for the process lifetime.
+    #[must_use]
+    pub const unsafe fn new(ptr: *const std::ffi::c_char) -> Self {
+        Self(ptr)
+    }
+
+    /// Whether the constant is absent or empty.
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self.as_str().is_empty()
+    }
+
+    /// Decodes the constant's text. Invalid UTF-8 reads as `""`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        // SAFETY: the constructor's contract makes the pointee a live
+        // program-image string constant for the process lifetime.
+        unsafe { crate::c_abi::gos_str_arg_text(self.0) }
+    }
+}
+
+impl std::fmt::Display for ImageStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::fmt::Debug for ImageStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
 /// One frame on a goroutine's call stack. Pushed on every function
 /// entry by [`stack_push`] and popped on return by [`stack_pop`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Frame {
     /// Symbolicated function name (e.g. `main::handle_request`).
-    pub function: String,
+    pub function: ImageStr,
     /// Source file path. Empty if no debug info is available.
-    pub file: String,
+    pub file: ImageStr,
     /// 1-based source line of the most recent statement executed
     /// in this frame. Updated by [`set_position`] at MIR-statement
     /// granularity.
@@ -165,8 +216,10 @@ pub fn set_active_gid(gid: u32) {
         let mut g = registry().infos.lock();
         if let Some(info) = g.get_mut(&old) {
             if let Some(top) = frames.last() {
-                info.function.clone_from(&top.function);
-                info.file.clone_from(&top.file);
+                info.function.clear();
+                info.function.push_str(top.function.as_str());
+                info.file.clear();
+                info.file.push_str(top.file.as_str());
                 info.line = top.line;
             }
             info.frames = frames;
@@ -199,10 +252,10 @@ pub fn active_gid() -> Option<u32> {
 /// only this thread's `LOCAL_FRAMES`. The compiled tier emits no
 /// such call - it recovers traces by unwinding the real machine
 /// stack ([`render_native_panic_trace`]).
-pub fn stack_push(function: impl Into<String>, file: impl Into<String>, line: u32) {
+pub fn stack_push(function: ImageStr, file: ImageStr, line: u32) {
     let frame = Frame {
-        function: function.into(),
-        file: file.into(),
+        function,
+        file,
         line,
     };
     FRAMES_RECORDED.store(true, Ordering::Relaxed);
@@ -255,12 +308,10 @@ pub fn set_active_line(line: u32) {
 pub fn set_position(gid: u32, file: impl Into<String>, line: u32) {
     let mut g = registry().infos.lock();
     if let Some(info) = g.get_mut(&gid) {
-        let file = file.into();
         if let Some(top) = info.frames.last_mut() {
-            top.file.clone_from(&file);
             top.line = line;
         }
-        info.file = file;
+        info.file = file.into();
         info.line = line;
     }
 }
@@ -355,10 +406,10 @@ pub fn render_active_panic_trace() -> String {
     let mut out = String::new();
     for frame in frames.iter().rev() {
         out.push_str("    at ");
-        out.push_str(&frame.function);
+        out.push_str(frame.function.as_str());
         if !frame.file.is_empty() {
             out.push_str(" (");
-            out.push_str(&frame.file);
+            out.push_str(frame.file.as_str());
             out.push(':');
             out.push_str(&frame.line.to_string());
             out.push(')');

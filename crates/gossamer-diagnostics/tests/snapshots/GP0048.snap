@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0048]: `go` was written. Every goroutine is a `spawn` attached to the - here
+--- framed ---
+error[GP0048]: `go` was written. Every goroutine is a `spawn` attached to the
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

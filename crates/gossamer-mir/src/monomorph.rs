@@ -422,6 +422,16 @@ fn specialise_methods_step(
             if substs.is_empty() || substs.types().iter().any(|t| ty_contains_param(tcx, *t)) {
                 continue;
             }
+            // A method on a generic type may carry type parameters of its
+            // own (`impl<T> Gen<T> { fn m<U: Named>(&self, tag: U) }`).
+            // The receiver's substitution names `T` and says nothing about
+            // `U`, so the rest is read off the argument types - otherwise
+            // `U`'s slot would take `T`'s argument, or stay rigid, and
+            // either way the parameter is read as the wrong shape.
+            let Some(substs) = complete_method_substs(&bodies[base_idx], body, args, &substs, tcx)
+            else {
+                continue;
+            };
             let spec_name = method_mangled_name(name, &substs);
             rewrites.push((bi, blk, spec_name.clone()));
             if emitted.insert(spec_name.clone()) {
@@ -604,6 +614,53 @@ fn peel_ref(tcx: &TyCtxt, ty: Ty) -> Ty {
 /// with the type the call actually passes, so `cmd.arg(1)` reads `T = i64`.
 /// `None` when the method declares no parameters of its own, or when a
 /// parameter's instantiation is not concrete at this site.
+/// Extends `base` (the receiver's own substitution) with the method's own
+/// type parameters, read off the argument types at the call site. Answers
+/// `base` unchanged when the method declares none, and `None` when a
+/// parameter the body uses cannot be resolved - the call then keeps the
+/// template, which is what it did before.
+fn complete_method_substs(
+    template: &Body,
+    caller: &Body,
+    args: &[Operand],
+    base: &Substs,
+    tcx: &TyCtxt,
+) -> Option<Substs> {
+    let mut resolved: Vec<Option<Ty>> = base.types().iter().map(|t| Some(*t)).collect();
+    let mut highest = resolved.len();
+    for local in &template.locals {
+        if let TyKind::Param { idx, .. } = tcx.kind_of(peel_ref(tcx, local.ty)) {
+            highest = highest.max(idx.0 as usize + 1);
+        }
+    }
+    if highest <= resolved.len() {
+        return Some(base.clone());
+    }
+    resolved.resize(highest, None);
+    for (index, arg) in args.iter().enumerate() {
+        let Some(decl) = template.locals.get(index + 1) else {
+            break;
+        };
+        let TyKind::Param { idx, .. } = tcx.kind_of(peel_ref(tcx, decl.ty)) else {
+            continue;
+        };
+        let param = idx.0 as usize;
+        if param < resolved.len() && resolved[param].is_some() {
+            continue;
+        }
+        let Operand::Copy(place) = arg else {
+            return None;
+        };
+        let actual = peel_ref(tcx, caller.locals.get(place.local.0 as usize)?.ty);
+        if ty_contains_param(tcx, actual) {
+            return None;
+        }
+        resolved[param] = Some(actual);
+    }
+    let types: Option<Vec<Ty>> = resolved.into_iter().collect();
+    Some(Substs::from_types(types?))
+}
+
 fn method_param_substs(
     template: &Body,
     caller: &Body,

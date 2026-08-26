@@ -5,59 +5,59 @@
 fn main() {
     // Basic ASCII operations
     let s = "hello, world"
-    println!("len = {}", s.len())
-    println!("contains 'world' = {}", s.contains("world"))
-    println!("starts_with 'hello' = {}", s.starts_with("hello"))
-    println!("ends_with 'world' = {}", s.ends_with("world"))
+    println("len = {}", s.len())
+    println("contains 'world' = {}", s.contains("world"))
+    println("starts_with 'hello' = {}", s.starts_with("hello"))
+    println("ends_with 'world' = {}", s.ends_with("world"))
 
     // Split
     let csv = "one,two,three,four"
     let parts = csv.split(",")
-    println!("parts[0] = {}", parts[0])
-    println!("parts[3] = {}", parts[3])
-    println!("parts len = {}", parts.len())
+    println("parts[0] = {}", parts[0])
+    println("parts[3] = {}", parts[3])
+    println("parts len = {}", parts.len())
 
     // Find / index
     let hay = "foo bar baz"
     let pos = hay.find("bar")
     match pos {
-        Some(i) => println!("'bar' at {}", i)
-        None => println!("not found")
+        Some(i) => println("'bar' at {}", i)
+        None => println("not found")
     }
 
     let missing = hay.find("qux")
     match missing {
-        Some(_) => println!("unexpected")
-        None => println!("'qux' not found")
+        Some(_) => println("unexpected")
+        None => println("'qux' not found")
     }
 
     // Trim
     let padded = "  spaces  "
-    println!("trimmed = '{}'", padded.trim())
+    println("trimmed = '{}'", padded.trim())
 
     // Replace
     let text = "the cat sat on the mat"
     let replaced = text.replace("at", "og")
-    println!("replace 'at' with 'og' = {}", replaced)
+    println("replace 'at' with 'og' = {}", replaced)
 
     // to_upper / to_lower
     let mixed = "Hello World"
-    println!("upper = {}", mixed.to_uppercase())
-    println!("lower = {}", mixed.to_lowercase())
+    println("upper = {}", mixed.to_uppercase())
+    println("lower = {}", mixed.to_lowercase())
 
     // as_bytes length vs char semantics
     let ascii_str = "abcdef"
     let bytes = ascii_str.as_bytes()
-    println!("bytes len = {}", bytes.len())
-    println!("bytes[0] = {}", bytes[0])
-    println!("bytes[5] = {}", bytes[5])
+    println("bytes len = {}", bytes.len())
+    println("bytes[0] = {}", bytes[0])
+    println("bytes[5] = {}", bytes[5])
 
     // String concatenation via format!
     let a = "foo"
     let b = "bar"
-    let combined = format!("{}{}", a, b)
-    println!("combined = {}", combined)
-    println!("combined len = {}", combined.len())
+    let combined = format("{}{}", a, b)
+    println("combined = {}", combined)
+    println("combined len = {}", combined.len())
 }
 
 #[cfg(test)]
@@ -67,16 +67,16 @@ mod tests {
     #[test]
     fn split_produces_correct_parts() {
         let parts = "a,b,c".split(",")
-        let _ = testing::check_eq(&parts.len(), &3, "split len")
-        let _ = testing::check_eq(&parts[0], &"a", "parts[0]")
-        let _ = testing::check_eq(&parts[2], &"c", "parts[2]")
+        let _ = testing::check_eq(parts.len(), 3, "split len")
+        let _ = testing::check_eq(parts[0], "a", "parts[0]")
+        let _ = testing::check_eq(parts[2], "c", "parts[2]")
     }
 
     #[test]
     fn find_returns_byte_offset() {
         let s = "hello world"
         match s.find("world") {
-            Some(i) => { let _ = testing::check_eq(&i, &6, "find offset")
+            Some(i) => { let _ = testing::check_eq(i, 6, "find offset")
             }
             None => { let _ = testing::check(false, "expected Some")
             }
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn trim_strips_whitespace() {
         let s = "  hello  ".trim()
-        let _ = testing::check_eq(&s, &"hello", "trimmed")
+        let _ = testing::check_eq(s, "hello", "trimmed")
     }
 
     #[test]

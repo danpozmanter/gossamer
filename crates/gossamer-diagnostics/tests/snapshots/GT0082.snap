@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0082]: A reference was passed where the parameter takes the value. A - here
+--- framed ---
+error[GT0082]: A reference was passed where the parameter takes the value. A
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

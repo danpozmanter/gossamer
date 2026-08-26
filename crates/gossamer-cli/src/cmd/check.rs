@@ -121,7 +121,14 @@ pub(crate) fn run(
         emit_diag(diag, &map, render_opts, message_format);
     }
     if fix {
-        let applied = apply_suggestions(file, &user_source, &source, &outcome.diagnostics)?;
+        let applied = apply_suggestions(
+            file,
+            file_id,
+            &map,
+            &user_source,
+            &source,
+            &outcome.diagnostics,
+        )?;
         println!("fix: {applied} edit(s) applied to {}", file.display());
     }
     // The editor and `gos lint` both run the default lint registry, so
@@ -208,7 +215,7 @@ fn emit_diag(
 /// Applies the machine-applicable rewrites for `file` and returns how
 /// many landed: first the suggestions the diagnostics carry, then the
 /// lint fixes `gos lint --fix` would apply, each verified against a
-/// re-check.
+/// re-check of the whole unit.
 ///
 /// The two sources are applied in rounds rather than merged. A lint fix
 /// is derived from what the source means, and a source that still holds
@@ -216,55 +223,101 @@ fn emit_diag(
 /// makes its intended binding look unused, so a merged pass would rename
 /// the binding and the use apart.
 ///
-/// A suggestion also has to address the file on disk. The checked text is
-/// the author's source plus the project bundle, the synthesized
-/// autoderive tail, and any comptime splices, so the applicable region is
-/// the longest common prefix of the two; a span reaching past it is left
+/// A suggestion addresses the file its bytes were written in. The
+/// checked text is the project bundle plus the synthesized autoderive
+/// tail and any comptime splices, so a span is first bounded to the
+/// bundle - the longest common prefix of the two texts - and then
+/// resolved through the unit's provenance to a sibling module's own
+/// offsets, exactly as the diagnostic that carried it was rendered. A
+/// span the bundle does not cover, or one straddling two files, is left
 /// for the author.
 fn apply_suggestions(
     file: &Path,
+    unit: gossamer_lex::FileId,
+    map: &gossamer_lex::SourceMap,
     user_source: &str,
     checked_source: &str,
     diagnostics: &[gossamer_diagnostics::Diagnostic],
 ) -> Result<usize> {
+    use std::collections::BTreeMap;
+
     let safe_len = common_prefix_len(user_source, checked_source).min(user_source.len());
-    let mut current = crate::paths::read_source(file)?;
-    let original = current.clone();
     let mut applied = 0usize;
 
-    let suggested: Vec<gossamer_lint::Fix> = diagnostics
-        .iter()
-        .flat_map(|diag| &diag.suggestions)
-        .filter(|s| (s.location.span.end as usize) <= safe_len)
-        .map(|s| gossamer_lint::Fix {
-            span: s.location.span,
-            replacement: s.replacement.clone(),
-            lint_id: "diagnostic",
-        })
-        .collect();
-    if !suggested.is_empty() {
-        let candidate = gossamer_lint::apply_fixes(&current, &suggested);
-        if candidate != current && recheck(file, &candidate) < diagnostics.len() {
-            current = candidate;
-            applied += suggested.len();
+    let mut by_file: BTreeMap<PathBuf, Vec<gossamer_lint::Fix>> = BTreeMap::new();
+    for suggestion in diagnostics.iter().flat_map(|diag| &diag.suggestions) {
+        let span = suggestion.location.span;
+        if span.end as usize > safe_len {
+            continue;
+        }
+        let (start_file, start) = map.origin_of(unit, span.start);
+        // The last byte says which file a non-empty span ends in; an
+        // insertion has no bytes and sits where it starts.
+        let (end_file, end) = if span.end > span.start {
+            let (end_file, last) = map.origin_of(unit, span.end - 1);
+            (end_file, last + 1)
+        } else {
+            (start_file, start)
+        };
+        if start_file != end_file {
+            continue;
+        }
+        by_file
+            .entry(PathBuf::from(map.file_name(start_file)))
+            .or_default()
+            .push(gossamer_lint::Fix {
+                span: gossamer_lex::Span::new(start_file, start, end),
+                replacement: suggestion.replacement.clone(),
+                lint_id: "diagnostic",
+            });
+    }
+    if !by_file.is_empty() {
+        let originals = by_file
+            .keys()
+            .map(|path| Ok((path.clone(), crate::paths::read_source(path)?)))
+            .collect::<Result<Vec<(PathBuf, String)>>>()?;
+        let mut candidates = Vec::with_capacity(originals.len());
+        let mut edits = 0usize;
+        for (path, original) in &originals {
+            let candidate = gossamer_lint::apply_fixes(original, &by_file[path]);
+            if candidate != *original {
+                edits += by_file[path].len();
+            }
+            candidates.push((path.clone(), candidate));
+        }
+        if edits > 0 {
+            write_all(&candidates)?;
+            if recheck(file) < diagnostics.len() {
+                applied += edits;
+            } else {
+                write_all(&originals)?;
+            }
         }
     }
 
+    let current = crate::paths::read_source(file)?;
     let lint_fixes = lint_fixes_for(file, &current);
     if !lint_fixes.is_empty() {
         let candidate = gossamer_lint::apply_fixes(&current, &lint_fixes);
-        let baseline = recheck(file, &current);
-        if candidate != current && recheck(file, &candidate) <= baseline {
-            current = candidate;
-            applied += lint_fixes.len();
+        if candidate != current {
+            let baseline = recheck(file);
+            fs::write(file, &candidate).map_err(|e| friendly_io_error(e, file))?;
+            if recheck(file) <= baseline {
+                applied += lint_fixes.len();
+            } else {
+                fs::write(file, &current).map_err(|e| friendly_io_error(e, file))?;
+            }
         }
     }
-
-    if current == original {
-        return Ok(0);
-    }
-    fs::write(file, current).map_err(|e| friendly_io_error(e, file))?;
     Ok(applied)
+}
+
+/// Writes each `(path, text)` pair back to disk.
+fn write_all(texts: &[(PathBuf, String)]) -> Result<()> {
+    for (path, text) in texts {
+        fs::write(path, text).map_err(|e| friendly_io_error(e, path))?;
+    }
+    Ok(())
 }
 
 /// Auto-applicable lint edits for `source` read as `file`'s text, under
@@ -281,9 +334,18 @@ fn lint_fixes_for(file: &Path, source: &str) -> Vec<gossamer_lint::Fix> {
     gossamer_lint::fixes(&sf, &registry, source)
 }
 
-/// Error count the front-end gate reports for `candidate` as `file`'s text.
-fn recheck(file: &Path, candidate: &str) -> usize {
-    let augmented = gossamer_parse::autoderive::augment_source(candidate);
+/// Error count the front-end gate reports for the unit `file` assembles
+/// from disk as it now stands.
+///
+/// The unit is re-bundled rather than re-read as one file: a rewrite in a
+/// sibling module is only proven by checking the entry with that module
+/// in place, and an entry checked alone reports every sibling's name as
+/// unresolved.
+fn recheck(file: &Path) -> usize {
+    let Ok(unit) = crate::paths::read_entry_unit(file) else {
+        return usize::MAX;
+    };
+    let augmented = gossamer_parse::autoderive::augment_source(&unit.source);
     let Ok(folded) = crate::comptime_fold::fold_comptime(augmented, &file.to_string_lossy()) else {
         return usize::MAX;
     };

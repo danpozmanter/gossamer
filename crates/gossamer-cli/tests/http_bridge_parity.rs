@@ -25,20 +25,20 @@ use std::http::static_files
 
 fn main() {
     let encoded = chunked::encode("payload")
-    println!("CHUNKED_LEN={}", encoded.len())
+    println("CHUNKED_LEN={}", encoded.len())
 
-    println!("SSE_EVENT={}", sse::encode_event("tick", "v", "1"))
-    println!("SSE_COMMENT={}", sse::encode_comment("ka"))
-    println!("SSE_RETRY={}", sse::encode_retry(1500))
+    println("SSE_EVENT={}", sse::encode_event("tick", "v", "1"))
+    println("SSE_COMMENT={}", sse::encode_comment("ka"))
+    println("SSE_RETRY={}", sse::encode_retry(1500))
 
-    println!("GZIP_YES={}", middleware::accepts_gzip("gzip, deflate"))
-    println!("GZIP_NO={}", middleware::accepts_gzip("deflate"))
+    println("GZIP_YES={}", middleware::accepts_gzip("gzip, deflate"))
+    println("GZIP_NO={}", middleware::accepts_gzip("deflate"))
 
-    println!("WS_ACCEPT={}", websocket::accept_key("dGhlIHNhbXBsZSBub25jZQ=="))
+    println("WS_ACCEPT={}", websocket::accept_key("dGhlIHNhbXBsZSBub25jZQ=="))
 
-    println!("MIME_HTML={}", static_files::mime_for_path("/x.html"))
-    println!("MIME_PNG={}", static_files::mime_for_path("/x.png"))
-    println!("MIME_UNK={}", static_files::mime_for_path("/x.zzz"))
+    println("MIME_HTML={}", static_files::mime_for_path("/x.html"))
+    println("MIME_PNG={}", static_files::mime_for_path("/x.png"))
+    println("MIME_UNK={}", static_files::mime_for_path("/x.zzz"))
 }
 "#;
 

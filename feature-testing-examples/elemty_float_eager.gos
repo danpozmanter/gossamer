@@ -7,12 +7,12 @@ use std::iter
 fn main() {
     let xs: Vec<f64> = #[1.5, 2.5, 3.0]
     let ns: Vec<i64> = #[1, 2, 3]
-    println!("fold-ff {}", iter::fold(0.0, |a: f64, x: f64| a + x, xs))
-    println!("fold-fi {}", iter::fold(0.5, |a: f64, x: i64| a + (x as f64), ns))
-    println!("fold-if {}", iter::fold(10, |a: i64, x: f64| a + (x as i64), xs))
-    println!("sumby-ff {}", iter::sum_by(|x: f64| x * 2.0, xs))
-    println!("sumby-fi {}", iter::sum_by(|x: f64| x as i64, xs))
-    println!("sumby-if {}", iter::sum_by(|x: i64| x as f64, ns))
-    println!("all {}", iter::all(|x: f64| x > 1.0, xs))
-    println!("any {}", iter::any(|x: f64| x > 2.9, xs))
+    println("fold-ff {}", iter::fold(xs, 0.0, |a: f64, x: f64| a + x))
+    println("fold-fi {}", iter::fold(ns, 0.5, |a: f64, x: i64| a + (x as f64)))
+    println("fold-if {}", iter::fold(xs, 10, |a: i64, x: f64| a + (x as i64)))
+    println("sumby-ff {}", iter::sum_by(xs, |x: f64| x * 2.0))
+    println("sumby-fi {}", iter::sum_by(xs, |x: f64| x as i64))
+    println("sumby-if {}", iter::sum_by(ns, |x: i64| x as f64))
+    println("all {}", iter::all(xs, |x: f64| x > 1.0))
+    println("any {}", iter::any(xs, |x: f64| x > 2.9))
 }

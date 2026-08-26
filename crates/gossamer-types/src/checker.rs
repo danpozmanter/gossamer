@@ -492,6 +492,11 @@ struct DeferredStructural {
     ty: Ty,
     span: Span,
     kind: DeferredStructuralKind,
+    /// The variable standing in for the use's result while the operand's
+    /// type was unknown. Once the operand resolves, the element or field
+    /// type it names is unified with this variable, so the node the caller
+    /// already recorded ends up carrying a grounded type.
+    result: Option<Ty>,
 }
 
 struct DeferredMutatingReceiver {
@@ -2368,6 +2373,31 @@ impl<'a> TypeChecker<'a> {
             return;
         }
 
+        // A sequence reaches a `[T]` view parameter as itself: the view is
+        // what the parameter names, and no sigil at the call site says
+        // anything the parameter's own type does not.
+        if let Some(TyKind::Ref {
+            mutability: Mutbl::Not,
+            inner: expected_inner,
+        }) = &lhs_kind
+            && let expected_inner = self.infer.resolve(self.tcx, *expected_inner)
+            && let Some(TyKind::Slice(expected_elem)) = self.tcx.kind(expected_inner).cloned()
+            && let Some(
+                TyKind::Slice(found_elem)
+                | TyKind::Vec(found_elem)
+                | TyKind::Array {
+                    elem: found_elem, ..
+                },
+            ) = &rhs_kind
+        {
+            let found_elem = *found_elem;
+            let result = self.infer.unify(self.tcx, expected_elem, found_elem);
+            if let Err(err) = result {
+                self.report_unify(err, expected_elem, found_elem, span);
+            }
+            return;
+        }
+
         // Function items carry only a DefId in their TyKind; their signature
         // lives in `fn_sigs`. Materialize that signature before unification so
         // a named function can coerce to a compatible `fn`/`Fn` parameter but
@@ -2769,6 +2799,10 @@ impl<'a> TypeChecker<'a> {
     /// Registers an enum's `DefId -> name` so `render_ty` / `adt_dispatch_name`
     /// recover "Shape" instead of the "adt#N" placeholder - needed for `==` /
     /// `{:?}` dispatch on enum values whose type resolves to the Adt.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pass per fact an enum declaration records"
+    )]
     fn register_enum(
         &mut self,
         item_id: NodeId,
@@ -2888,9 +2922,29 @@ impl<'a> TypeChecker<'a> {
             self.tcx.register_enum_variant_tys(def, variant_tys);
         }
         self.leave_generic_scope(payload_scope);
-        // The heap representation stores the discriminant in a one-byte
-        // header field.
-        if decl.variants.len() > 256 {
+        // The width the declaration settles on, so layout reads one answer
+        // rather than re-deriving it per back-end.
+        if let Some(def) = self.resolutions.definition_of(item_id) {
+            let bits = decl.repr.bits(decl.variants.len());
+            if bits != gossamer_ast::EnumRepr::natural_bits(false, decl.variants.len()) {
+                self.tcx.register_enum_repr_bits(def, bits);
+            }
+        }
+        // A declared width has to hold every variant, and the natural width
+        // caps the rest: the heap representation stores the discriminant in a
+        // one-byte header field.
+        if let Some(bits) = decl.repr.declared_bits {
+            if !gossamer_ast::EnumRepr::fits(bits, decl.variants.len()) {
+                self.emit(
+                    TypeError::EnumReprTooNarrow {
+                        name: decl.name.name.clone(),
+                        bits,
+                        count: decl.variants.len(),
+                    },
+                    span,
+                );
+            }
+        } else if decl.variants.len() > 256 {
             self.emit(
                 TypeError::TooManyVariants {
                     name: decl.name.name.clone(),
@@ -2904,7 +2958,9 @@ impl<'a> TypeChecker<'a> {
     /// Rejects `#[derive(...)]` names that synthesize nothing. Gossamer's
     /// value-type structs / enums compare, order, hash, and copy by value
     /// automatically, so the meaningful derives are exactly `Debug`, `Default`,
-    /// `PartialEq`, `Eq`, `PartialOrd`, and `Ord`. Every other name is either
+    /// `PartialEq`, `Eq`, `PartialOrd`, and `Ord` - each of which still does
+    /// work for a generic type, whose rendering and comparison depend on the
+    /// arguments an instantiation supplies. Every other name is either
     /// automatic (`Clone` - `let b = a` copies, `Hash`, `Copy`, `Display`,
     /// serde) or implemented with `impl Trait for T` (`From`, operators).
     /// Records `#[must_use]` on a function, struct, or enum declaration so
@@ -4267,17 +4323,16 @@ impl<'a> TypeChecker<'a> {
             }
             FnParam::Receiver(recv) => {
                 // Bind `self` to the enclosing `impl`'s `Self` type so
-                // `self.field` accesses resolve; fall back to a fresh
-                // var only outside an impl context (defensive). `&self`
-                // / `&mut self` wrap it in a reference so the type
-                // matches the receiver form.
+                // `self.field` accesses resolve; fall back to a fresh var
+                // only outside an impl context (defensive). `self` and
+                // `&self` name the same value - a receiver is reached
+                // without copying either way - so only `&mut self`, which
+                // writes back, carries a reference in the type.
                 let ty = match self.current_self_ty {
                     Some(self_ty) => match recv {
-                        gossamer_ast::Receiver::Owned => self_ty,
-                        gossamer_ast::Receiver::RefShared => self.tcx.intern(TyKind::Ref {
-                            mutability: Mutbl::Not,
-                            inner: self_ty,
-                        }),
+                        gossamer_ast::Receiver::Owned | gossamer_ast::Receiver::RefShared => {
+                            self_ty
+                        }
                         gossamer_ast::Receiver::RefMut => self.tcx.intern(TyKind::Ref {
                             mutability: Mutbl::Mut,
                             inner: self_ty,
@@ -4438,9 +4493,17 @@ impl<'a> TypeChecker<'a> {
                 if let ExprKind::Path(path) = &callee.kind
                     && let Some(last) = path.segments.last()
                 {
+                    // The prelude `spawn`, not a module's own (`exec::spawn`).
                     if last.name.name == "spawn"
+                        && path.segments.len() == 1
                         && let Some(arg) = args.first()
                     {
+                        // An aggregate written inline at the spawned call has
+                        // no owner on either side of the boundary. A reference
+                        // the closure body creates and consumes never crosses
+                        // it, so only a captured one is rejected, which
+                        // `reject_unshareable_goroutine_captures` covers.
+                        self.reject_spawn_inline_aggregate_args(arg);
                         self.reject_unshareable_goroutine_captures(arg);
                     }
                     // The guarded slot is one word that every tier reads
@@ -4837,14 +4900,8 @@ impl<'a> TypeChecker<'a> {
                 let inner_ty = self.check_expr_expecting(inner, inner_expectation);
                 self.check_question_mark(inner_ty, inner.span)
             }
-            ExprKind::Go(inner) => {
-                self.check_expr(inner);
-                self.reject_go_inline_aggregate_args(inner);
-                self.reject_unshareable_goroutine_captures(inner);
-                self.fresh()
-            }
             ExprKind::Select(arms) => self.check_select(arms),
-            ExprKind::MacroCall(_) | ExprKind::Error => self.fresh(),
+            ExprKind::Error => self.fresh(),
         }
     }
 
@@ -4987,12 +5044,14 @@ impl<'a> TypeChecker<'a> {
                 self.fresh()
             }),
             TyKind::Var(_) => {
+                let result = self.fresh();
                 self.deferred_structural.push(DeferredStructural {
                     ty: resolved,
                     span,
                     kind: DeferredStructuralKind::TupleField(u64::from(idx)),
+                    result: Some(result),
                 });
-                self.fresh()
+                result
             }
             other => {
                 if !is_soft_for_structural_use(&other) {
@@ -5034,12 +5093,21 @@ impl<'a> TypeChecker<'a> {
                     return self.tcx.char_ty();
                 }
                 TyKind::Var(_) => {
+                    let result = self.fresh();
+                    if std::env::var_os("GOS_DBG_IDX").is_some() {
+                        eprintln!(
+                            "[idx] deferred base={:?} result={:?}",
+                            self.tcx.kind_of(cur),
+                            self.tcx.kind_of(result)
+                        );
+                    }
                     self.deferred_structural.push(DeferredStructural {
                         ty: cur,
                         span,
                         kind: DeferredStructuralKind::Index,
+                        result: Some(result),
                     });
-                    return self.fresh();
+                    return result;
                 }
                 other => {
                     // `a[i]` on a user struct / enum routes to its `index` impl
@@ -5449,6 +5517,10 @@ impl<'a> TypeChecker<'a> {
             && last == "parse"
             && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
         {
+            // The free form is the same operation as the method, so it takes
+            // the same one parse surface.
+            let suggestion = self.string_parse_replacement(expected);
+            self.emit(TypeError::StringParseRetired { suggestion }, callee.span);
             let generics = path
                 .segments
                 .last()
@@ -6117,6 +6189,7 @@ impl<'a> TypeChecker<'a> {
                 ty: resolved_callee,
                 span: callee.span,
                 kind: DeferredStructuralKind::Call,
+                result: None,
             });
         } else if is_definitely_not_callable_value(&callee_kind) && !qualified_path_callee {
             let ty = self.render_public_ty(resolved_callee);
@@ -6237,8 +6310,42 @@ impl<'a> TypeChecker<'a> {
                 }
                 (p, arg_ty)
             }
-            (Some((p, Mutbl::Not)), None) => (p, arg_ty),
-            (None, Some((a, _))) => (param, a),
+            // A `[T]` view parameter keeps its reference here: the sequence
+            // reaching it is an array, a `Vec`, or another view, and the
+            // unsizing that accepts all three is decided against the view.
+            (Some((p, Mutbl::Not)), None) => {
+                if matches!(self.tcx.kind(p), Some(TyKind::Slice(_))) {
+                    (param, arg_ty)
+                } else {
+                    (p, arg_ty)
+                }
+            }
+            // A reference reaching a value parameter is the value it names,
+            // but nothing at the call says so: the compiled tiers hand the
+            // callee the address while the bytecode VM hands it the value.
+            // The deref is written.
+            (None, Some((a, _))) => {
+                if !matches!(
+                    self.tcx.kind(param),
+                    Some(TyKind::Error | TyKind::Var(_) | TyKind::Param { .. })
+                ) && !matches!(self.tcx.kind(arg_ty), Some(TyKind::Error))
+                    && !matches!(
+                        arg.kind,
+                        ExprKind::Unary {
+                            op: UnaryOp::RefMut,
+                            ..
+                        }
+                    )
+                {
+                    self.emit(
+                        TypeError::ReferenceArgumentNeedsDeref {
+                            argument: Self::place_display(arg),
+                        },
+                        arg.span,
+                    );
+                }
+                (param, a)
+            }
             _ => (param, arg_ty),
         };
         // Render an unsuffixed float literal as its default source type in a
@@ -7905,7 +8012,9 @@ impl<'a> TypeChecker<'a> {
         if matches!(module, ["strings"] | ["std", "strings"]) {
             return None;
         }
-        let shape = crate::stdlib_signatures::function_shape_for_path(module, name)?;
+        // Arguments reach the checker in the order every pass below the
+        // front end uses, which the rotation in `normalize` produced.
+        let shape = crate::stdlib_signatures::internal_shape_for_path(module, name)?;
         if shape.params.len() != n_args {
             return None;
         }
@@ -7972,7 +8081,7 @@ impl<'a> TypeChecker<'a> {
         if matches!(module, ["slog"] | ["std", "slog"]) {
             return;
         }
-        let Some(shape) = crate::stdlib_signatures::function_shape_for_path(module, name) else {
+        let Some(shape) = crate::stdlib_signatures::internal_shape_for_path(module, name) else {
             return;
         };
         if shape.params.len() != arg_tys.len() {
@@ -8625,6 +8734,7 @@ impl<'a> TypeChecker<'a> {
                     ty: resolved,
                     span: receiver_span,
                     kind: DeferredStructuralKind::Downgrade,
+                    result: None,
                 });
             }
             return None;
@@ -10266,6 +10376,9 @@ impl<'a> TypeChecker<'a> {
             PlaceMut::SharedReference => {
                 self.emit(TypeError::AssignThroughSharedReference { name }, span);
             }
+            PlaceMut::NotAReference => {
+                self.emit(TypeError::DerefWriteToNonReference { name }, span);
+            }
             PlaceMut::Writable | PlaceMut::Unknown => {}
         }
     }
@@ -11085,11 +11198,17 @@ impl<'a> TypeChecker<'a> {
                 let e = self.tcx.dyn_error_ty();
                 self.result_adt_ty(s, e)
             }
-            // `s.parse()` -> `Result<T, errors::Error>`: the value type T is
-            // inferred from the binding, but the error pins to the concrete
-            // error type so `{}` Display of an `Err` lowers correctly on the
-            // compiled tier (an unresolved error var rendered a garbage char).
-            "parse" => self.string_parse_ret("String::parse", generics, expected, span),
+            // One string reaches one parse: `to_i64` / `to_f64` / `to_bool`
+            // are the strict, full-string forms, and each answers an
+            // `Option<T>`. `parse` was a second surface with a second carrier
+            // type for the same operation, so it reports with the rewrite and
+            // still types as it did, leaving the rest of the body diagnosed on
+            // its own terms.
+            "parse" => {
+                let suggestion = self.string_parse_replacement(expected);
+                self.emit(TypeError::StringParseRetired { suggestion }, span);
+                self.string_parse_ret("String::parse", generics, expected, span)
+            }
             _ if is_string_method(method) => self.fresh(),
             _ => {
                 let string_ty = self.tcx.string_ty();
@@ -11105,6 +11224,26 @@ impl<'a> TypeChecker<'a> {
             AstGenericArg::Type(ty) => Some(self.type_from_ast(ty)),
             AstGenericArg::Const(_) => None,
         })
+    }
+
+    /// The `to_T()` spelling that replaces a `parse()` at this site, chosen
+    /// from the type the surrounding code expects.
+    fn string_parse_replacement(&mut self, expected: Expectation) -> String {
+        let payload = self.expectation_target(expected).and_then(|target| {
+            let resolved = self.infer.resolve(self.tcx, target);
+            match self.tcx.kind(resolved) {
+                Some(TyKind::Adt { def, substs }) if def.local == RESULT_DEF_LOCAL => {
+                    substs.types().first().copied()
+                }
+                _ => Some(resolved),
+            }
+        });
+        match payload.map(|ty| self.tcx.kind_of(ty)) {
+            Some(TyKind::Float(_)) => "to_f64",
+            Some(TyKind::Bool) => "to_bool",
+            _ => "to_i64",
+        }
+        .to_string()
     }
 
     fn string_parse_ret(
@@ -11231,6 +11370,21 @@ impl<'a> TypeChecker<'a> {
                         let ty = self.render_public_ty(resolved);
                         self.emit(TypeError::NotIndexable { ty }, d.span);
                     }
+                    if let Some(result) = d.result {
+                        let element = match &kind {
+                            TyKind::Array { elem, .. }
+                            | TyKind::Slice(elem)
+                            | TyKind::Vec(elem) => Some(*elem),
+                            TyKind::String => Some(self.tcx.char_ty()),
+                            _ => None,
+                        };
+                        if std::env::var_os("GOS_DBG_IDX").is_some() {
+                            eprintln!("[idx] resolve kind={kind:?} element={element:?}");
+                        }
+                        if let Some(element) = element {
+                            self.unify(result, element, d.span);
+                        }
+                    }
                 }
                 DeferredStructuralKind::Call => {
                     if is_definitely_not_callable_value(&kind) {
@@ -11243,6 +11397,9 @@ impl<'a> TypeChecker<'a> {
                         if idx as usize >= elems.len() {
                             let ty = self.render_public_ty(resolved);
                             self.emit(TypeError::NoTupleField { ty, index: idx }, d.span);
+                        } else if let Some(result) = d.result {
+                            let field = elems[idx as usize];
+                            self.unify(result, field, d.span);
                         }
                     }
                     other => {
@@ -12953,6 +13110,10 @@ impl<'a> TypeChecker<'a> {
                     TypeError::AssignThroughSharedReference { name: root.clone() },
                     operand.span,
                 ),
+                PlaceMut::NotAReference => self.emit(
+                    TypeError::DerefWriteToNonReference { name: root.clone() },
+                    operand.span,
+                ),
                 PlaceMut::Writable | PlaceMut::Unknown => {}
             }
             Mutbl::Mut
@@ -13489,6 +13650,7 @@ impl<'a> TypeChecker<'a> {
             } => match self.expr_ref_mutbl(operand) {
                 Some(Mutbl::Mut) => PlaceMut::Writable,
                 Some(Mutbl::Not) => PlaceMut::SharedReference,
+                None if self.operand_is_concrete_non_reference(operand) => PlaceMut::NotAReference,
                 None => PlaceMut::Unknown,
             },
             _ => PlaceMut::Unknown,
@@ -13686,8 +13848,31 @@ impl<'a> TypeChecker<'a> {
             PlaceMut::SharedReference => {
                 self.emit(TypeError::AssignThroughSharedReference { name }, place.span);
             }
+            PlaceMut::NotAReference => {
+                self.emit(TypeError::DerefWriteToNonReference { name }, place.span);
+            }
             PlaceMut::Writable | PlaceMut::Unknown => {}
         }
+    }
+
+    /// True when `operand`'s type is known and is not a reference, so a
+    /// `*operand` write names no place at all.
+    fn operand_is_concrete_non_reference(&self, operand: &Expr) -> bool {
+        let Some(ty) = self.table.get(operand.id) else {
+            return false;
+        };
+        let resolved = self.infer.resolve(self.tcx, ty);
+        matches!(
+            self.tcx.kind(resolved),
+            Some(
+                TyKind::Int(_)
+                    | TyKind::Float(_)
+                    | TyKind::Bool
+                    | TyKind::Char
+                    | TyKind::String
+                    | TyKind::Unit
+            )
+        )
     }
 
     /// Types one destructuring-assignment target. A tuple recurses
@@ -13725,10 +13910,12 @@ impl<'a> TypeChecker<'a> {
         ty
     }
 
-    /// Type-checks `(a, b.c, xs[i]) = rhs`, whose targets are the elements of
-    /// the left-hand tuple. The tuple of element types is the expectation the
+    /// Type-checks `a, b.c, xs[i] = rhs`, whose targets are the elements of
+    /// the left-hand list. The tuple of element types is the expectation the
     /// right-hand side is checked against, so a literal there is shaped by
-    /// the destination exactly as in a scalar assignment.
+    /// the destination exactly as in a scalar assignment. A compound operator
+    /// pairs with the same element types, since each place is combined with
+    /// its own element.
     fn check_destructuring_assign(&mut self, place: &Expr, value: &Expr) -> Ty {
         let place_ty = self.check_assign_target(place);
         let value_ty = self.check_expr_expecting(value, Expectation::HasType(place_ty));
@@ -13738,17 +13925,7 @@ impl<'a> TypeChecker<'a> {
 
     fn check_assign(&mut self, place: &Expr, value: &Expr, op: gossamer_ast::AssignOp) -> Ty {
         if matches!(place.kind, ExprKind::Tuple(_)) {
-            if matches!(op, gossamer_ast::AssignOp::Assign) {
-                return self.check_destructuring_assign(place, value);
-            }
-            self.emit(
-                TypeError::CompoundDestructuringAssign {
-                    op: op.as_str().to_string(),
-                },
-                place.span,
-            );
-            let _ = self.check_expr(value);
-            return self.tcx.unit();
+            return self.check_destructuring_assign(place, value);
         }
         if !place.is_place() {
             self.emit(
@@ -14253,6 +14430,14 @@ impl<'a> TypeChecker<'a> {
                         break Some(elem);
                     }
                     TyKind::String => break Some(self.tcx.char_ty()),
+                    // A map walked directly yields the same `(key, value)`
+                    // pair its `iter()` cursor does, so a bare `for (k, v) in
+                    // m` binds the map's own key and value types.
+                    TyKind::HashMap { key, value, .. } => {
+                        let key = self.infer.resolve(self.tcx, key);
+                        let value = self.infer.resolve(self.tcx, value);
+                        break Some(self.tcx.intern(TyKind::Tuple(vec![key, value])));
+                    }
                     TyKind::Tuple(elems) => {
                         let Some(elem) = elems.first().copied() else {
                             break None;
@@ -14480,19 +14665,6 @@ impl<'a> TypeChecker<'a> {
             StmtKind::Defer(inner) => {
                 self.check_expr(inner);
             }
-            StmtKind::Go(inner) => {
-                self.check_expr(inner);
-                if expr_tree_has_reference(inner, &self.table, self.tcx) {
-                    self.emit(
-                        TypeError::ReferenceEscapeUnsupported {
-                            context: "cross a `go` concurrency boundary".to_string(),
-                        },
-                        inner.span,
-                    );
-                }
-                self.reject_go_inline_aggregate_args(inner);
-                self.reject_unshareable_goroutine_captures(inner);
-            }
         }
     }
 
@@ -14521,6 +14693,17 @@ impl<'a> TypeChecker<'a> {
                 self.emit(error, init.span);
             } else {
                 self.unify(binding_ty, init_ty, init.span);
+            }
+            // A target list says how many elements it expects, so its arity is
+            // checked against a tuple value: `let a, b, c = pair` would
+            // otherwise bind past the end of the pair. A sequence value keeps
+            // its own element-wise binding, which names no arity to check.
+            if matches!(pattern.kind, PatternKind::Tuple(_)) {
+                let resolved = self.infer.resolve(self.tcx, binding_ty);
+                if matches!(self.tcx.kind(resolved), Some(TyKind::Tuple(_))) {
+                    let pattern_ty = self.type_of_pattern(pattern);
+                    self.unify(pattern_ty, resolved, pattern.span);
+                }
             }
             self.check_local_reference_storage(pattern, binding_ty, init);
             self.check_reference_pattern(pattern, init_ty);
@@ -14836,6 +15019,17 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
+    /// Rejects an aggregate written inline at a spawned call.
+    ///
+    /// The argument is a closure, so the call it wraps is one level in: a
+    /// `spawn(|| f(Pair { .. }))` puts the aggregate where the boundary is.
+    fn reject_spawn_inline_aggregate_args(&mut self, arg: &Expr) {
+        let ExprKind::Closure { body, .. } = &arg.kind else {
+            return self.reject_go_inline_aggregate_args(arg);
+        };
+        self.reject_go_inline_aggregate_args(body);
+    }
+
     fn reject_go_inline_aggregate_args(&mut self, expr: &Expr) {
         let ExprKind::Call { args, .. } = &expr.kind else {
             return;
@@ -14857,7 +15051,7 @@ impl<'a> TypeChecker<'a> {
                 self.emit(
                     TypeError::ConcurrentAggregateUnsupported {
                         ty,
-                        boundary: "cross a `go` boundary",
+                        boundary: "cross a goroutine boundary",
                     },
                     arg.span,
                 );
@@ -16119,16 +16313,35 @@ impl<'a> TypeChecker<'a> {
                     .unwrap_or_else(|| self.fresh());
                 return self.reverse_ty(elem);
             }
-            // `Box<T>` / `Arc<T>` / `Rc<T>` are transparent in a fully
-            // GC'd language - every value is heap-shared already, so
-            // these wrappers carry no runtime distinction. Keep the
-            // surface accepting the spelling (Rust users expect to be
-            // able to write `Box<List>` for a recursive enum payload)
-            // by unwrapping to the inner type at type-check time.
+            // `Box<T>` / `Arc<T>` / `Rc<T>` name no distinction the language
+            // draws: every value is already heap-shared and reference-counted,
+            // so the wrapper reads as a choice a writer has to make and there
+            // is none. The spelling reports with the rewrite that strips it,
+            // and still checks as the inner type so the rest of the program
+            // is diagnosed on its own terms.
             "Box" | "Arc" | "Rc" => {
                 let substs = self.substs_from_ast(path);
                 let tys = substs.types();
-                if let Some(inner) = tys.first().copied() {
+                let inner = tys.first().copied();
+                let inner_text = inner.map_or_else(
+                    || "T".to_string(),
+                    |ty| {
+                        let rendered = self.render_public_ty(ty);
+                        if rendered.is_empty() {
+                            "T".to_string()
+                        } else {
+                            rendered
+                        }
+                    },
+                );
+                self.emit(
+                    TypeError::TransparentWrapper {
+                        wrapper: head_name.to_string(),
+                        inner: inner_text,
+                    },
+                    span,
+                );
+                if let Some(inner) = inner {
                     return inner;
                 }
                 return self.fresh();
@@ -17645,6 +17858,9 @@ enum PlaceMut {
     ImmutableBinding,
     /// Reached through a shared `&T` reference.
     SharedReference,
+    /// Dereferenced from a binding whose type is not a reference, so the
+    /// place the write would name does not exist.
+    NotAReference,
     /// Not statically determinable; not checked.
     Unknown,
 }
@@ -17910,60 +18126,6 @@ fn pattern_binding_names(pattern: &Pattern, out: &mut Vec<String>) {
     }
 }
 
-fn expr_tree_has_reference(expr: &Expr, table: &TypeTable, tcx: &TyCtxt) -> bool {
-    struct Finder<'a> {
-        table: &'a TypeTable,
-        tcx: &'a TyCtxt,
-        found: bool,
-    }
-
-    fn contains(tcx: &TyCtxt, ty: Ty) -> bool {
-        match tcx.kind_of(ty) {
-            TyKind::Ref { .. } => true,
-            TyKind::Array { elem, .. }
-            | TyKind::Slice(elem)
-            | TyKind::Vec(elem)
-            | TyKind::Iterator(elem)
-            | TyKind::Range(elem)
-            | TyKind::Sender(elem)
-            | TyKind::Receiver(elem)
-            | TyKind::JoinHandle(elem) => contains(tcx, *elem),
-            TyKind::Tuple(items) => items.iter().any(|item| contains(tcx, *item)),
-            TyKind::HashMap { key, value, .. } => contains(tcx, *key) || contains(tcx, *value),
-            TyKind::Adt { substs, .. } | TyKind::FnDef { substs, .. } => {
-                substs.types().iter().any(|item| contains(tcx, *item))
-            }
-            TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
-                contains(tcx, sig.output) || sig.inputs.iter().any(|item| contains(tcx, *item))
-            }
-            _ => false,
-        }
-    }
-
-    impl gossamer_ast::visitor::Visitor for Finder<'_> {
-        fn visit_expr(&mut self, expr: &Expr) {
-            if self.found {
-                return;
-            }
-            self.found = self
-                .table
-                .get(expr.id)
-                .is_some_and(|ty| contains(self.tcx, ty));
-            if !self.found {
-                gossamer_ast::visitor::walk_expr(self, expr);
-            }
-        }
-    }
-
-    let mut finder = Finder {
-        table,
-        tcx,
-        found: false,
-    };
-    gossamer_ast::visitor::Visitor::visit_expr(&mut finder, expr);
-    finder.found
-}
-
 /// A closure that a goroutine will run: its parameters and its body.
 struct GoroutineBody<'a> {
     params: &'a [ClosureParam],
@@ -17972,7 +18134,7 @@ struct GoroutineBody<'a> {
 
 /// Every closure whose body a `spawn` / `go` expression will run.
 ///
-/// `spawn(|| work())` and `go fn() { .. }()` name the closure directly;
+/// `spawn(|| work())` names the closure directly;
 /// `go f(closure)` hands one to a call, whose own body runs in the spawning
 /// goroutine, so only the closure arguments are collected.
 fn goroutine_bodies(expr: &Expr) -> Vec<GoroutineBody<'_>> {
@@ -18545,34 +18707,13 @@ pub fn is_free_call_only_traversal(name: &str) -> bool {
     FREE_CALL_ONLY_TRAVERSALS.contains(&name)
 }
 
-/// Traversals with a data-last free call and no receiver form. `Vec`
-/// already declines them, and nothing binds `xs.filter_map(..)` on any
-/// tier: accepting one in method position passes `gos check` and then
-/// fails as an unbound name at run time, or as an undefined symbol in a
-/// native build. Every receiver declines them the way `Vec` does; the
-/// free call is how they are written.
+/// Traversals with a data-last free call and no receiver form.
 ///
-/// `sort_by` and `sort_by_key` sit here for the receivers this list gates -
-/// `Iterator`, `Range`, and `Set` - which hold no ordered buffer a sort could
-/// reorder. `Vec`, an array, and a slice reach them through the slice surface
-/// instead, where they sort the receiver in place.
-const FREE_CALL_ONLY_TRAVERSALS: &[&str] = &[
-    "chunk_by",
-    "count_by",
-    "filter_map",
-    "find_map",
-    "flat_map",
-    "max_by",
-    "min_by",
-    "partition",
-    "product_by",
-    "reduce",
-    "scan",
-    "sort_by",
-    "sort_by_key",
-    "sum_by",
-    "unzip",
-];
+/// `sort_by` and `sort_by_key` are the only two, and only for the receivers
+/// this list gates - `Iterator`, `Range`, and `Set` - which hold no ordered
+/// buffer a sort could reorder. `Vec`, an array, and a slice reach them
+/// through the slice surface instead, where they sort the receiver in place.
+const FREE_CALL_ONLY_TRAVERSALS: &[&str] = &["sort_by", "sort_by_key"];
 
 /// Whether a `Set` / `BTreeSet` receiver answers `name`.
 #[must_use]

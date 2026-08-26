@@ -39,8 +39,8 @@ impl Echo {
 }
 
 fn serve_echo() {
-    if let Err(e) = websocket::serve(&ADDR, Echo { }) {
-        eprintln!("ws serve failed: {e}")
+    if let Err(e) = websocket::serve(ADDR, Echo { }) {
+        eprintln("ws serve failed: {e}")
     }
 }
 
@@ -49,7 +49,7 @@ fn serve_echo() {
 fn await_ready() {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(ws) = websocket::connect(&URL) {
+        if let Ok(ws) = websocket::connect(URL) {
             let _ = websocket::close(ws)
             return
         }
@@ -59,29 +59,29 @@ fn await_ready() {
 }
 
 fn main() {
-    go serve_echo()
+    spawn(|| serve_echo())
     await_ready()
 
-    let ws = match websocket::connect(&URL) {
+    let ws = match websocket::connect(URL) {
         Ok(h) => h
         Err(e) => {
-            println!("connect error: {e}")
+            println("connect error: {e}")
             process::exit(1)
         }
     }
-    if let Err(e) = websocket::send_text(ws, &"hello-ws") {
-        println!("send error: {e}")
+    if let Err(e) = websocket::send_text(ws, "hello-ws") {
+        println("send error: {e}")
         process::exit(1)
     }
     match websocket::recv(ws) {
         Ok(echo) => {
             if echo == "hello-ws" {
-                println!("ws echo: ok")
+                println("ws echo: ok")
             } else {
-                println!("ws echo: MISMATCH {echo}")
+                println("ws echo: MISMATCH {echo}")
             }
         }
-        Err(e) => println!("recv error: {e}")
+        Err(e) => println("recv error: {e}")
     }
     let _ = websocket::close(ws)
     process::exit(0)

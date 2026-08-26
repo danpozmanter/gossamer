@@ -251,8 +251,8 @@ fn math_abs_and_sqrt() {
         r#"
 use std::math
 fn main() {
-    println!("{}", math::abs(-3.0))
-    println!("{}", math::sqrt(9.0))
+    println("{}", math::abs(-3.0))
+    println("{}", math::sqrt(9.0))
 }
 "#,
         "3\n3",
@@ -270,7 +270,7 @@ fn main() {
     let c = math::cos(0.0)
     let f = math::floor(2.7)
     let cl = math::ceil(2.1)
-    println!("{} {} {} {}", s, c, f, cl)
+    println("{} {} {} {}", s, c, f, cl)
 }
 "#,
         "0 1 2 3",
@@ -284,8 +284,8 @@ fn math_min_max() {
         r#"
 use std::math
 fn main() {
-    println!("{}", math::min(3.0, 5.0))
-    println!("{}", math::max(3.0, 5.0))
+    println("{}", math::min(3.0, 5.0))
+    println("{}", math::max(3.0, 5.0))
 }
 "#,
         "3\n5",
@@ -302,9 +302,9 @@ fn math_bits_count_ones_and_len() {
         r#"
 use std::math
 fn main() {
-    println!("{}", math::bits::count_ones(255))
-    println!("{}", math::bits::len(8))
-    println!("{}", math::bits::leading_zeros(1))
+    println("{}", math::bits::count_ones(255))
+    println("{}", math::bits::len(8))
+    println("{}", math::bits::leading_zeros(1))
 }
 "#,
         "8\n4\n63",
@@ -321,13 +321,13 @@ fn unicode_predicates() {
         r#"
 use std::unicode
 fn main() {
-    println!("{}", unicode::is_letter('a'))
-    println!("{}", unicode::is_digit('5'))
-    println!("{}", unicode::is_space(' '))
-    println!("{}", unicode::is_upper('A'))
-    println!("{}", unicode::is_lower('z'))
-    println!("{}", unicode::to_upper('a'))
-    println!("{}", unicode::to_lower('A'))
+    println("{}", unicode::is_letter('a'))
+    println("{}", unicode::is_digit('5'))
+    println("{}", unicode::is_space(' '))
+    println("{}", unicode::is_upper('A'))
+    println("{}", unicode::is_lower('z'))
+    println("{}", unicode::to_upper('a'))
+    println("{}", unicode::to_lower('A'))
 }
 "#,
         "true\ntrue\ntrue\ntrue\ntrue\nA\na",
@@ -344,9 +344,9 @@ fn utf8_is_valid_and_rune_count() {
         r#"
 use std::utf8
 fn main() {
-    println!("{}", utf8::valid_string("hello"))
-    println!("{}", utf8::rune_count_in_string("café"))
-    println!("{}", utf8::rune_len('€'))
+    println("{}", utf8::valid_string("hello"))
+    println("{}", utf8::rune_count_in_string("café"))
+    println("{}", utf8::rune_len('€'))
 }
 "#,
         "true\n4\n3",
@@ -363,9 +363,9 @@ fn strings_contains_and_split_whitespace() {
         r#"
 use std::strings
 fn main() {
-    println!("{}", strings::contains("café", "é"))
+    println("{}", strings::contains("café", "é"))
     let fs = strings::split_whitespace("  hello   world  ")
-    println!("{}", fs.len())
+    println("{}", fs.len())
 }
 "#,
         "true\n2",
@@ -379,8 +379,8 @@ fn strings_equal_fold() {
         r#"
 use std::strings
 fn main() {
-    println!("{}", strings::equal_fold("Hello", "hello"))
-    println!("{}", strings::equal_fold("Go", "Python"))
+    println("{}", strings::equal_fold("Hello", "hello"))
+    println("{}", strings::equal_fold("Go", "Python"))
 }
 "#,
         "true\nfalse",
@@ -398,10 +398,10 @@ fn iter_take_skip_chain() {
 use std::iter
 fn main() {
     let xs = [1, 2, 3, 4, 5]
-    let first = iter::take(3, xs)
-    let rest = iter::skip(3, xs)
+    let first = iter::take(xs, 3)
+    let rest = iter::skip(xs, 3)
     let merged = iter::chain(first, rest)
-    println!("{}", merged.len())
+    println("{}", merged.len())
 }
 "#,
         "5",
@@ -416,10 +416,10 @@ fn iter_map_filter_fold() {
 use std::iter
 fn main() {
     let xs = [1, 2, 3, 4, 5]
-    let doubled = iter::map(|x: i64| x * 2, xs)
-    let evens = iter::filter(|x: i64| x % 4 == 0, doubled)
-    let total = iter::fold(0, |acc: i64, x: i64| acc + x, evens)
-    println!("{}", total)
+    let doubled = iter::map(xs, |x: i64| x * 2)
+    let evens = iter::filter(doubled, |x: i64| x % 4 == 0)
+    let total = iter::fold(evens, 0, |acc: i64, x: i64| acc + x)
+    println("{}", total)
 }
 "#,
         "12",
@@ -434,8 +434,8 @@ fn iter_any_all() {
 use std::iter
 fn main() {
     let xs = [2, 4, 6, 8]
-    println!("{}", iter::all(|x: i64| x % 2 == 0, xs))
-    println!("{}", iter::any(|x: i64| x > 5, xs))
+    println("{}", iter::all(xs, |x: i64| x % 2 == 0))
+    println("{}", iter::any(xs, |x: i64| x > 5))
 }
 "#,
         "true\ntrue",
@@ -450,9 +450,9 @@ fn iter_enumerate_zip() {
 use std::iter
 fn main() {
     let pairs = iter::zip([1, 2, 3], [4, 5, 6])
-    println!("{}", pairs.len())
+    println("{}", pairs.len())
     let indexed = iter::enumerate([10, 20, 30])
-    println!("{}", indexed.count())
+    println("{}", indexed.count())
 }
 "#,
         "3\n3",
@@ -471,7 +471,7 @@ fn main() {
         Vec::from([3]),
         Vec::from([4, 5]),
     ]))
-    println!("{}", xs.len())
+    println("{}", xs.len())
 }
 "#,
         "5",
@@ -486,10 +486,10 @@ fn iter_count_sum_reversed() {
 use std::iter
 fn main() {
     let xs = [10, 20, 30]
-    println!("{}", iter::count(xs))
-    println!("{}", iter::sum(xs))
+    println("{}", iter::count(xs))
+    println("{}", iter::sum(xs))
     let r = iter::rev(xs)
-    println!("{}", r[0])
+    println("{}", r[0])
 }
 "#,
         "3\n60\n30",
@@ -507,8 +507,8 @@ fn encoding_csv_read_write() {
 use std::encoding
 fn main() {
     let rows = encoding::csv::read("a,b,c\n1,2,3\n").unwrap_or(Vec::from([Vec::from([])]))
-    println!("{}", rows.len())
-    println!("{}", rows[1][2])
+    println("{}", rows.len())
+    println("{}", rows[1][2])
 }
 "#,
         "2\n3",
@@ -528,8 +528,8 @@ fn main() {
     let n = 72623859790382856
     let buf = encoding::binary::put_u64_be(Vec::from([0; 8]), n)
     match encoding::binary::get_u64_be(buf) {
-        Ok(back) => println!("{}", back == n),
-        Err(e) => println!("err: {}", e),
+        Ok(back) => println("{}", back == n),
+        Err(e) => println("err: {}", e),
     }
 }
 "#,
@@ -549,8 +549,8 @@ use std::encoding
 fn main() {
     let result = encoding::yaml::parse("hello: world\ncount: 42")
     match result {
-        Ok(v) => println!("ok"),
-        Err(e) => println!("err: {}", e),
+        Ok(v) => println("ok"),
+        Err(e) => println("err: {}", e),
     }
 }
 "#,
@@ -569,7 +569,7 @@ fn crypto_sha256_hex() {
 use std::crypto
 fn main() {
     let h = crypto::sha256::hex("hello")
-    println!("{}", h.len())
+    println("{}", h.len())
 }
 "#,
         "64",
@@ -584,8 +584,8 @@ fn crypto_rand_bytes() {
 use std::crypto
 fn main() {
     match crypto::rand::bytes(16) {
-        Ok(b) => println!("{}", b.len()),
-        Err(e) => println!("err: {}", e),
+        Ok(b) => println("{}", b.len()),
+        Err(e) => println("err: {}", e),
     }
 }
 "#,
@@ -607,11 +607,11 @@ fn main() {
     match compress::gzip::encode(data, 6) {
         Ok(enc) => {
             match compress::gzip::decode(enc) {
-                Ok(dec) => println!("{}", dec.len()),
-                Err(e) => println!("decode err: {}", e),
+                Ok(dec) => println("{}", dec.len()),
+                Err(e) => println("decode err: {}", e),
             }
         }
-        Err(e) => println!("encode err: {}", e),
+        Err(e) => println("encode err: {}", e),
     }
 }
 "#,
@@ -630,11 +630,11 @@ fn main() {
     match compress::flate::compress(data, 6) {
         Ok(enc) => {
             match compress::flate::decompress(enc) {
-                Ok(dec) => println!("{}", dec.len()),
-                Err(e) => println!("decompress err: {}", e),
+                Ok(dec) => println("{}", dec.len()),
+                Err(e) => println("decompress err: {}", e),
             }
         }
-        Err(e) => println!("compress err: {}", e),
+        Err(e) => println("compress err: {}", e),
     }
 }
 "#,
@@ -653,11 +653,11 @@ fn main() {
     match compress::zlib::compress(data, 6) {
         Ok(enc) => {
             match compress::zlib::decompress(enc) {
-                Ok(dec) => println!("{}", dec.len()),
-                Err(e) => println!("decompress err: {}", e),
+                Ok(dec) => println("{}", dec.len()),
+                Err(e) => println("decompress err: {}", e),
             }
         }
-        Err(e) => println!("compress err: {}", e),
+        Err(e) => println("compress err: {}", e),
     }
 }
 "#,
@@ -677,9 +677,9 @@ use std::hash
 fn main() {
     let h1 = hash::fnv::hash_string("hello")
     let h2 = hash::fnv::hash_string("hello")
-    println!("{}", h1 == h2)
+    println("{}", h1 == h2)
     let h3 = hash::fnv::hash_string("world")
-    println!("{}", h1 == h3)
+    println("{}", h1 == h3)
 }
 "#,
         "true\nfalse",
@@ -694,7 +694,7 @@ fn hash_fnv_hash64_bytes() {
 use std::hash
 fn main() {
     let h = hash::fnv::hash64(Vec::from([]))
-    println!("{}", h != 0)
+    println("{}", h != 0)
 }
 "#,
         "true",
@@ -716,13 +716,13 @@ fn main() {
         Ok(zip_bytes) => {
             match archive::zip::read(zip_bytes) {
                 Ok(entries) => {
-                    println!("{}", entries.len())
-                    println!("{}", entries[0].data.len())
+                    println("{}", entries.len())
+                    println("{}", entries[0].data.len())
                 }
-                Err(e) => println!("read err: {}", e),
+                Err(e) => println("read err: {}", e),
             }
         }
-        Err(e) => println!("write err: {}", e),
+        Err(e) => println("write err: {}", e),
     }
 }
 "#,
@@ -742,13 +742,13 @@ fn main() {
         Ok(tar_bytes) => {
             match archive::tar::read(tar_bytes) {
                 Ok(entries) => {
-                    println!("{}", entries.len())
-                    println!("{}", entries[0].data.len())
+                    println("{}", entries.len())
+                    println("{}", entries[0].data.len())
                 }
-                Err(e) => println!("read err: {}", e),
+                Err(e) => println("read err: {}", e),
             }
         }
-        Err(e) => println!("write err: {}", e),
+        Err(e) => println("write err: {}", e),
     }
 }
 "#,
@@ -769,10 +769,10 @@ fn main() {
     let a = sync::AtomicU64::new(0)
     sync::AtomicU64::store(a, 42)
     let v = sync::AtomicU64::load(a)
-    println!("{}", v)
+    println("{}", v)
     let prev = sync::AtomicU64::fetch_add(a, 8)
-    println!("{}", prev)
-    println!("{}", sync::AtomicU64::load(a))
+    println("{}", prev)
+    println("{}", sync::AtomicU64::load(a))
 }
 "#,
         "42\n42\n50",
@@ -788,7 +788,7 @@ use std::sync
 fn main() {
     let b = sync::Barrier::new(1)
     sync::Barrier::wait(b)
-    println!("done")
+    println("done")
 }
 "#,
         "done",
@@ -806,8 +806,8 @@ fn crypto_sha512_hex() {
 use std::crypto
 fn main() {
     let h = crypto::sha512::hex("abc")
-    println!("{}", h.len())
-    println!("{}", h.starts_with("dd"))
+    println("{}", h.len())
+    println("{}", h.starts_with("dd"))
 }
 "#,
         "128\ntrue",
@@ -822,8 +822,8 @@ fn crypto_blake3_hex() {
 use std::crypto
 fn main() {
     let h = crypto::blake3::hex("")
-    println!("{}", h.len())
-    println!("{}", h.starts_with("af"))
+    println("{}", h.len())
+    println("{}", h.starts_with("af"))
 }
 "#,
         "64\ntrue",
@@ -845,17 +845,17 @@ fn main() {
                     match crypto::aead::aes_256_gcm_seal(key, nonce, pt, Vec::from([])) {
                         Ok(ct) => {
                             match crypto::aead::aes_256_gcm_open(key, nonce, ct, Vec::from([])) {
-                                Ok(dec) => println!("{}", dec.len()),
-                                Err(e) => println!("open err: {}", e)
+                                Ok(dec) => println("{}", dec.len()),
+                                Err(e) => println("open err: {}", e)
                             }
                         }
-                        Err(e) => println!("seal err: {}", e)
+                        Err(e) => println("seal err: {}", e)
                     }
                 }
-                Err(e) => println!("nonce err: {}", e)
+                Err(e) => println("nonce err: {}", e)
             }
         }
-        Err(e) => println!("key err: {}", e)
+        Err(e) => println("key err: {}", e)
     }
 }
 "#,
@@ -878,14 +878,14 @@ fn main() {
             match crypto::ed25519::sign(secret, msg) {
                 Ok(sig) => {
                     match crypto::ed25519::verify(public, msg, sig) {
-                        Ok(_) => println!("verified"),
-                        Err(e) => println!("verify err: {}", e)
+                        Ok(_) => println("verified"),
+                        Err(e) => println("verify err: {}", e)
                     }
                 }
-                Err(e) => println!("sign err: {}", e)
+                Err(e) => println("sign err: {}", e)
             }
         }
-        Err(e) => println!("keypair err: {}", e)
+        Err(e) => println("keypair err: {}", e)
     }
 }
 "#,
@@ -906,7 +906,7 @@ fn main() {
         1,
         32,
     )
-    println!("{}", key.len())
+    println("{}", key.len())
 }
 "#,
         "32",
@@ -921,8 +921,8 @@ fn crypto_x509_crl_verifier_rejects_missing_crl_on_vm_and_native() {
 use std::crypto
 fn main() {
     match crypto::x509::verify_server_certificate_with_crls("", "", "localhost", "") {
-        Ok(_) => println!("accepted"),
-        Err(_) => println!("rejected"),
+        Ok(_) => println("accepted"),
+        Err(_) => println("rejected"),
     }
 }
 "#,
@@ -1069,7 +1069,7 @@ fn main() {{
     let expired_crl = accepted({valid_chain:?}, {roots:?}, "localhost", {expired_crls:?})
     let unknown_status = accepted({valid_chain:?}, {roots:?}, "localhost", {root_only_crl:?})
     let malformed = accepted("not pem", {roots:?}, "localhost", {current_crls:?})
-    println!("{{}} {{}} {{}} {{}} {{}} {{}}", good, revoked, wrong_host, expired_crl, unknown_status, malformed)
+    println("{{}} {{}} {{}} {{}} {{}} {{}}", good, revoked, wrong_host, expired_crl, unknown_status, malformed)
 }}
 "#,
         valid_chain = fixtures.valid_chain,
@@ -1115,7 +1115,7 @@ use std::hash
 fn main() {
     // 0x0D4A_1185 = 222957957
     let c = hash::crc32::checksum_string("hello world")
-    println!("{}", c == 222957957)
+    println("{}", c == 222957957)
 }
 "#,
         "true",
@@ -1130,7 +1130,7 @@ fn hash_adler32_known_value() {
 use std::hash
 fn main() {
     let c = hash::adler32::checksum_string("Wikipedia")
-    println!("{}", c == 300286872)
+    println("{}", c == 300286872)
 }
 "#,
         "true",
@@ -1151,9 +1151,9 @@ fn main() {
     match encoding::json::parse(src) {
         Ok(v) => {
             let out = encoding::json::encode(v)
-            println!("{}", encoding::json::valid(out))
+            println("{}", encoding::json::valid(out))
         }
-        Err(e) => println!("err: {}", e)
+        Err(e) => println("err: {}", e)
     }
 }
 "#,
@@ -1168,8 +1168,8 @@ fn json_valid_rejects_bad() {
         r#"
 use std::encoding
 fn main() {
-    println!("{}", encoding::json::valid("not json"))
-    println!("{}", encoding::json::valid("42"))
+    println("{}", encoding::json::valid("not json"))
+    println("{}", encoding::json::valid("42"))
 }
 "#,
         "false\ntrue",
@@ -1187,7 +1187,7 @@ fn time_now_returns_positive() {
 use std::time
 fn main() {
     let ms = time::now()
-    println!("{}", ms > 0)
+    println("{}", ms > 0)
 }
 "#,
         "true",
@@ -1204,13 +1204,13 @@ fn main() {
     let ms = 0
     match time::format_rfc3339(ms) {
         Ok(s) => {
-            println!("{}", s.starts_with("1970"))
+            println("{}", s.starts_with("1970"))
             match time::parse_rfc3339(s) {
-                Ok(back) => println!("{}", back == 0),
-                Err(e) => println!("parse err: {}", e)
+                Ok(back) => println("{}", back == 0),
+                Err(e) => println("parse err: {}", e)
             }
         }
-        Err(e) => println!("format err: {}", e)
+        Err(e) => println("format err: {}", e)
     }
 }
 "#,
@@ -1228,13 +1228,13 @@ fn net_ip_parse_and_check() {
         r#"
 use std::net
 fn main() {
-    println!("{}", net::ip::is_valid("192.168.1.1"))
-    println!("{}", net::ip::is_valid("not-an-ip"))
-    println!("{}", net::ip::is_v4("10.0.0.1"))
-    println!("{}", net::ip::is_v6("::1"))
+    println("{}", net::ip::is_valid("192.168.1.1"))
+    println("{}", net::ip::is_valid("not-an-ip"))
+    println("{}", net::ip::is_v4("10.0.0.1"))
+    println("{}", net::ip::is_v6("::1"))
     match net::ip::parse("127.0.0.1") {
-        Ok(ip) => println!("{}", net::ip::is_loopback(ip)),
-        Err(e) => println!("err: {}", e)
+        Ok(ip) => println("{}", net::ip::is_loopback(ip)),
+        Err(e) => println("err: {}", e)
     }
 }
 "#,
@@ -1253,7 +1253,7 @@ fn thread_num_cpus_positive() {
 use std::thread
 fn main() {
     let n = thread::num_cpus()
-    println!("{}", n > 0)
+    println("{}", n > 0)
 }
 "#,
         "true",
@@ -1271,9 +1271,9 @@ fn html_escape_unescape() {
 use std::html
 fn main() {
     let escaped = html::escape("<b>Hello & 'World'</b>")
-    println!("{}", escaped)
+    println("{}", escaped)
     let back = html::unescape(escaped)
-    println!("{}", back)
+    println("{}", back)
 }
 "#,
         "&lt;b&gt;Hello &amp; &#39;World&#39;&lt;&#x2F;b&gt;\n<b>Hello & 'World'</b>",
@@ -1291,11 +1291,11 @@ fn encoding_base32_roundtrip() {
 use std::encoding
 fn main() {
     let enc = encoding::base32::encode_string("foobar")
-    println!("{}", enc)
+    println("{}", enc)
     let dec = encoding::base32::decode_string(enc)
     match dec {
-        Ok(s) => println!("{}", s),
-        Err(e) => println!("err: {}", e),
+        Ok(s) => println("{}", s),
+        Err(e) => println("err: {}", e),
     }
 }
 "#,
@@ -1316,8 +1316,8 @@ fn main() {
     let enc = encoding::ascii85::encode(Vec::from([104, 101, 108, 108, 111]))
     let dec = encoding::ascii85::decode(enc)
     match dec {
-        Ok(bytes) => println!("{}", bytes.len()),
-        Err(e) => println!("err: {}", e),
+        Ok(bytes) => println("{}", bytes.len()),
+        Err(e) => println("err: {}", e),
     }
 }
 "#,
@@ -1336,7 +1336,7 @@ fn encoding_xml_escape() {
 use std::encoding
 fn main() {
     let s = encoding::xml::escape("<hello & world>")
-    println!("{}", s)
+    println("{}", s)
 }
 "#,
         "&lt;hello &amp; world&gt;",
@@ -1357,9 +1357,9 @@ fn main() {
         Ok(node) => {
             let re_encoded = encoding::xml::encode(node)
             let has_root = strings::contains(re_encoded, "root")
-            println!("{}", has_root)
+            println("{}", has_root)
         }
-        Err(e) => println!("err: {}", e),
+        Err(e) => println("err: {}", e),
     }
 }
 "#,
@@ -1378,7 +1378,7 @@ fn crypto_insecure_md5_hex() {
 use std::crypto
 fn main() {
     let h = crypto::insecure::md5_hex("")
-    println!("{}", h)
+    println("{}", h)
 }
 "#,
         "d41d8cd98f00b204e9800998ecf8427e",
@@ -1393,7 +1393,7 @@ fn crypto_insecure_sha1_hex() {
 use std::crypto
 fn main() {
     let h = crypto::insecure::sha1_hex("abc")
-    println!("{}", h)
+    println("{}", h)
 }
 "#,
         "a9993e364706816aba3e25717850c26c9cd0d89d",
@@ -1416,11 +1416,11 @@ fn main() {
         Ok(compressed) => {
             let dec = compress::bzip2::decompress(compressed)
             match dec {
-                Ok(bytes) => println!("{}", bytes.len()),
-                Err(e) => println!("dec err: {}", e),
+                Ok(bytes) => println("{}", bytes.len()),
+                Err(e) => println("dec err: {}", e),
             }
         }
-        Err(e) => println!("enc err: {}", e),
+        Err(e) => println("enc err: {}", e),
     }
 }
 "#,
@@ -1441,9 +1441,9 @@ fn main() {
     let a = math::big::int_from_i64(1000000000)
     let b = math::big::int_from_i64(1000000000)
     let c = math::big::int_mul(a, b)
-    println!("{}", c)
+    println("{}", c)
     let d = math::big::int_add(c, math::big::int_from_i64(1))
-    println!("{}", d)
+    println("{}", d)
 }
 "#,
         "1000000000000000000\n1000000000000000001",
@@ -1458,7 +1458,7 @@ fn math_big_factorial() {
 use std::math
 fn main() {
     let f = math::big::factorial(20)
-    println!("{}", f)
+    println("{}", f)
 }
 "#,
         "2432902008176640000",
@@ -1476,7 +1476,7 @@ fn main() {
     let exp = math::big::uint_from_u64(10)
     let modulus = math::big::uint_from_u64(1000)
     let result = math::big::uint_pow_mod(base, exp, modulus)
-    println!("{}", result)
+    println("{}", result)
 }
 "#,
         "24",

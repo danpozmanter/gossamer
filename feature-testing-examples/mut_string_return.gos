@@ -8,18 +8,18 @@ fn take_mut(s: &mut String) -> String {
     *s
 }
 
-fn take_shared(s: &String) -> String {
+fn take_shared(s: String) -> String {
     *s
 }
 
 fn main() {
     let mut a = "hello world"
     let b = take_mut(&mut a)
-    println!("{}", b)
+    println("{}", b)
 
     let c = "shared value"
-    let d = take_shared(&c)
-    println!("{}", d)
+    let d = take_shared(c)
+    println("{}", d)
 
     // In a loop: exercises repeated deref-return without leaking or
     // double-freeing the shared referent.
@@ -31,5 +31,5 @@ fn main() {
         total += r.len()
         i += 1
     }
-    println!("total: {}", total)
+    println("total: {}", total)
 }

@@ -8,8 +8,8 @@
 use std::sync::channel
 
 fn main() {
-    let (tx1, rx1) = channel::unbounded()
-    let (tx2, rx2) = channel::unbounded()
+    let tx1, rx1 = channel::unbounded()
+    let tx2, rx2 = channel::unbounded()
 
     // 1. Nothing buffered yet: the default arm fires.
     let a = select {
@@ -17,7 +17,7 @@ fn main() {
         w = rx2.recv() => w
         default => -1
     }
-    println!("a = {}", a)
+    println("a = {}", a)
 
     // 2. Only rx1 has a value: the recv arm beats default.
     tx1.send(10)
@@ -26,7 +26,7 @@ fn main() {
         w = rx2.recv() => w
         default => -1
     }
-    println!("b = {}", b)
+    println("b = {}", b)
 
     // 3. rx1 is drained, rx2 has a value: that recv arm wins.
     tx2.send(20)
@@ -35,16 +35,16 @@ fn main() {
         w = rx2.recv() => w
         default => -1
     }
-    println!("c = {}", c)
+    println("c = {}", c)
 
     // 4. A send arm on an unbounded channel is always ready.
-    let (tx3, rx3) = channel::unbounded()
+    let tx3, rx3 = channel::unbounded()
     select {
-        tx3.send(99) => println!("sent")
-        default => println!("not sent")
+        tx3.send(99) => println("sent")
+        default => println("not sent")
     }
     if let Some(got) = rx3.recv() {
-        println!("got = {}", got)
+        println("got = {}", got)
     }
 }
 
@@ -55,7 +55,7 @@ mod tests {
 
     #[test]
     fn default_arm_fires_when_nothing_ready() {
-        let (_tx, rx) = channel()
+        let _tx, rx = channel()
         let chosen = select {
             v = rx.recv() => v
             default => -1
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn ready_recv_arm_beats_default() {
-        let (tx, rx) = channel::unbounded()
+        let tx, rx = channel::unbounded()
         tx.send(7)
         let chosen = select {
             v = rx.recv() => v

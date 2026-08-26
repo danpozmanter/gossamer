@@ -41,8 +41,8 @@ impl http::Handler for App {
 }
 
 fn serve() {
-    if let Err(e) = http::serve_tls(&ADDR, &SRV_CERT, &SRV_KEY, App { }) {
-        eprintln!("serve_tls failed: {e}")
+    if let Err(e) = http::serve_tls(ADDR, SRV_CERT, SRV_KEY, App { }) {
+        eprintln("serve_tls failed: {e}")
     }
 }
 
@@ -52,7 +52,7 @@ fn serve() {
 fn await_ready() {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(s) = net::TcpStream::connect(&ADDR) {
+        if let Ok(s) = net::TcpStream::connect(ADDR) {
             let _ = s.close()
             return
         }
@@ -62,7 +62,7 @@ fn await_ready() {
 }
 
 fn insecure_ok() -> bool {
-    let stream = match net::TcpStream::connect(&ADDR) {
+    let stream = match net::TcpStream::connect(ADDR) {
         Ok(s) => s
         Err(_) => return false
     }
@@ -78,7 +78,7 @@ fn insecure_ok() -> bool {
 }
 
 fn default_rejected() -> bool {
-    let stream = match net::TcpStream::connect(&ADDR) {
+    let stream = match net::TcpStream::connect(ADDR) {
         Ok(s) => s
         Err(_) => return false
     }
@@ -96,11 +96,11 @@ fn default_rejected() -> bool {
 }
 
 fn ca_ok() -> bool {
-    let stream = match net::TcpStream::connect(&ADDR) {
+    let stream = match net::TcpStream::connect(ADDR) {
         Ok(s) => s
         Err(_) => return false
     }
-    let tls = match stream.start_tls_ca("localhost", &CA_CERT) {
+    let tls = match stream.start_tls_ca("localhost", CA_CERT) {
         Ok(t) => t
         Err(_) => return false
     }
@@ -112,10 +112,10 @@ fn ca_ok() -> bool {
 }
 
 fn main() {
-    go serve()
+    spawn(|| serve())
     await_ready()
-    println!("insecure: {}", if insecure_ok() { "ok" } else { "FAIL" })
-    println!("default-verify: {}", if default_rejected() { "rejected" } else { "FAIL" })
-    println!("custom-ca: {}", if ca_ok() { "ok" } else { "FAIL" })
+    println("insecure: {}", if insecure_ok() { "ok" } else { "FAIL" })
+    println("default-verify: {}", if default_rejected() { "rejected" } else { "FAIL" })
+    println("custom-ca: {}", if ca_ok() { "ok" } else { "FAIL" })
     process::exit(0)
 }

@@ -29,15 +29,15 @@ fn exclusive_open(n: i64) -> String {
 }
 
 fn main() {
-    println!("{}", classify(-5))
-    println!("{}", classify(0))
-    println!("{}", classify(7))
+    println("{}", classify(-5))
+    println("{}", classify(0))
+    println("{}", classify(7))
 
-    println!("{}", band(10))
-    println!("{}", band(128))
-    println!("{}", band(240))
+    println("{}", band(10))
+    println("{}", band(128))
+    println("{}", band(240))
 
-    println!("{}", exclusive_open(-3))
-    println!("{}", exclusive_open(4))
-    println!("{}", exclusive_open(50))
+    println("{}", exclusive_open(-3))
+    println("{}", exclusive_open(4))
+    println("{}", exclusive_open(50))
 }

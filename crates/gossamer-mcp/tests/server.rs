@@ -194,7 +194,7 @@ fn nav_fixture(name: &str) -> String {
     let path = dir.join(format!("{name}.gos"));
     std::fs::write(
         &path,
-        "fn double(x: i64) -> i64 { x * 2 }\nfn main() { println!(\"{}\", double(21)) }\n",
+        "fn double(x: i64) -> i64 { x * 2 }\nfn main() { println(\"{}\", double(21)) }\n",
     )
     .unwrap();
     path.to_string_lossy().replace('\\', "\\\\")

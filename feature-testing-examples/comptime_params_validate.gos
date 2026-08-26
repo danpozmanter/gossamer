@@ -20,14 +20,16 @@ comptime fn squares_sum(n: i64) -> i64 {
 fn main() {
     let x = 7
     // `BASE * 2 + 5` is folded to 205 at the call site.
-    println!("{}", scale(BASE * 2 + 5, x))
+    println("{}", scale(BASE * 2 + 5, x))
     // A comptime-fn result used as the comptime argument also folds.
-    println!("{}", scale(squares_sum(10), x))
+    println("{}", scale(squares_sum(10), x))
 
-    // P4: `regex!` / `sql!` validate at build time and fold to the
-    // original string on success. Malformed input would fail the build.
-    let pattern = regex!("^\\d{4}-\\d{2}-\\d{2}$")
-    let query = sql!("SELECT id, name FROM users WHERE active = 1")
-    println!("{}", pattern)
-    println!("{}", query)
+    // P4: a literal handed to `regex::compile` / `sql::statement` is
+    // validated while the program is compiled, so a malformed one fails
+    // the build rather than the run. `regex::compile` answers the
+    // compiled pattern and `sql::statement` the statement it checked.
+    let pattern = regex::compile("^\\d{4}-\\d{2}-\\d{2}$")
+    println("{}", pattern.is_ok())
+    let query = sql::statement("SELECT id, name FROM users WHERE active = 1")
+    println("{}", query)
 }

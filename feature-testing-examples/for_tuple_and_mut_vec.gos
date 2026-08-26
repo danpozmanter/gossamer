@@ -3,9 +3,9 @@ fn main() {
     for i in &mut v {
         *i += 1
     }
-    println!("vec {} {}", v[0], v[1])
+    println("vec {} {}", v[0], v[1])
 
     for i in (0, 1) {
-        println!("tuple {}", i)
+        println("tuple {}", i)
     }
 }

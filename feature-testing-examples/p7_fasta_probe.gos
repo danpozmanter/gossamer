@@ -1,6 +1,6 @@
 // Phase 7A: Vec<(i64,f64)> scalar-projection get (table[j].1 / table[j].0)
 // and U8Vec.set_byte on the Terminator::Call route (heap_u8_set inline).
-fn cumulative(table: &Vec<(i64, f64)>) -> Vec<(i64, f64)> {
+fn cumulative(table: Vec<(i64, f64)>) -> Vec<(i64, f64)> {
     let mut out: Vec<(i64, f64)> = Vec::from([])
     let mut cp = 0.0
     for i in 0..table.len() {
@@ -10,7 +10,7 @@ fn cumulative(table: &Vec<(i64, f64)>) -> Vec<(i64, f64)> {
     out
 }
 
-fn pick(table: &Vec<(i64, f64)>, buf: U8Vec, count: i64) -> i64 {
+fn pick(table: Vec<(i64, f64)>, buf: U8Vec, count: i64) -> i64 {
     let mut sum = 0
     let mut state: i64 = 42
     for i in 0..count {
@@ -25,7 +25,7 @@ fn pick(table: &Vec<(i64, f64)>, buf: U8Vec, count: i64) -> i64 {
 }
 
 fn main() {
-    let t = cumulative(&Vec::from([(65, 0.3), (67, 0.2), (71, 0.2), (84, 0.3)]))
+    let t = cumulative(Vec::from([(65, 0.3), (67, 0.2), (71, 0.2), (84, 0.3)]))
     let buf = U8Vec::new(16)
-    println!("{}", pick(&t, buf, 5000))
+    println("{}", pick(t, buf, 5000))
 }

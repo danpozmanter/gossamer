@@ -15,7 +15,7 @@
 enum V { Null, B(bool), I(i64), F(f64), T(String), L(Vec<u8>) }
 struct Sel { binds: Vec<V> }
 
-fn copy_vals(xs: &[V]) -> Vec<V> {
+fn copy_vals(xs: [V]) -> Vec<V> {
     let mut out: Vec<V> = Vec::from([])
     for x in xs { out.push(x) }
     out
@@ -23,19 +23,19 @@ fn copy_vals(xs: &[V]) -> Vec<V> {
 
 impl Sel {
     fn where_eq(&self, v: V) -> Sel {
-        let mut b = copy_vals(&self.binds)
+        let mut b = copy_vals(self.binds)
         b.push(v)
         Sel { binds: b }
     }
     fn params(&self) -> Vec<V> {
-        copy_vals(&self.binds)
+        copy_vals(self.binds)
     }
 }
 
 fn churn() -> i64 {
     let mut n = 0
     for i in 0..2000 {
-        let s = format!("churn-{}", i)
+        let s = format("churn-{}", i)
         n += s.len()
     }
     n
@@ -47,13 +47,13 @@ fn main() {
     let _ = churn()
     for v in &binds {
         match v {
-            V::Null => println!("null")
-            V::B(_) => println!("bool")
-            V::I(n) => println!("int {}", n)
-            V::F(_) => println!("float")
-            V::T(s) => println!("text {}", s)
-            V::L(b) => println!("blob {}", b.len())
+            V::Null => println("null")
+            V::B(_) => println("bool")
+            V::I(n) => println("int {}", n)
+            V::F(_) => println("float")
+            V::T(s) => println("text {}", s)
+            V::L(b) => println("blob {}", b.len())
         }
     }
-    println!("done")
+    println("done")
 }

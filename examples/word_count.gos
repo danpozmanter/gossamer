@@ -17,7 +17,7 @@ struct Stats {
     words: i64
 }
 
-fn analyse(text: &String) -> Stats {
+fn analyse(text: String) -> Stats {
     let mut chars: i64 = 0
     let mut words: i64 = 0
     let mut in_token = false
@@ -42,6 +42,6 @@ let inputs = #[
     ""
 ]
 for s in inputs {
-    let stats = analyse(&s)
-    println!("chars={}, words={}: {}", stats.chars, stats.words, s)
+    let stats = analyse(s)
+    println("chars={}, words={}: {}", stats.chars, stats.words, s)
 }

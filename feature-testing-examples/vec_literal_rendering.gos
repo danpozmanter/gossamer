@@ -12,44 +12,44 @@ struct Coords { path: Vec<i64>, corner: [i64; 2] }
 struct Tag { name: String }
 
 impl Display for Tag {
-    fn to_string(&self) -> String {
-        format!("<{}>", self.name)
+    fn fmt(&self) -> String {
+        format("<{}>", self.name)
     }
 }
 
 fn main() {
     let owned = #[1, 2]
     let fixed = [1, 2]
-    println!("display: {} {}", owned, fixed)
-    println!("debug: {:?} {:?}", owned, fixed)
+    println("display: {} {}", owned, fixed)
+    println("debug: {:?} {:?}", owned, fixed)
 
-    println!("nested vec: {:?}", #[#[1, 2]])
-    println!("nested array: {:?}", #[[1, 2]])
-    println!("array of vec: {:?}", [#[1, 2]])
-    println!("deep: {:?}", #[#[#[1]]])
+    println("nested vec: {:?}", #[#[1, 2]])
+    println("nested array: {:?}", #[[1, 2]])
+    println("array of vec: {:?}", [#[1, 2]])
+    println("deep: {:?}", #[#[#[1]]])
 
-    println!("in map: {:?}", { "k": #[1, 2] })
-    println!("in tuple: {:?}", (#[1], [2]))
-    println!("in option: {:?}", Some(#[1, 2]))
-    println!("in result: {:?}", Ok(#[3]))
+    println("in map: {:?}", { "k": #[1, 2] })
+    println("in tuple: {:?}", (#[1], [2]))
+    println("in option: {:?}", Some(#[1, 2]))
+    println("in result: {:?}", Ok(#[3]))
 
     let coords = Coords { path: #[1, 2], corner: [3, 4] }
-    println!("struct display: {}", coords)
-    println!("struct debug: {:?}", coords)
+    println("struct display: {}", coords)
+    println("struct debug: {:?}", coords)
 
     // A value whose own type supplies the rendering walks a separate
     // path; the spelling of the sequence around it is the same one.
     let tagged = #[Tag { name: "a" }, Tag { name: "b" }]
-    println!("of rendered: {}", tagged)
-    println!("array of rendered: {}", [Tag { name: "c" }])
-    println!("nested rendered: {}", #[#[Tag { name: "d" }]])
+    println("of rendered: {}", tagged)
+    println("array of rendered: {}", [Tag { name: "c" }])
+    println("nested rendered: {}", #[#[Tag { name: "d" }]])
 
-    println!("empty: {:?}", Vec::from([]))
+    println("empty: {:?}", Vec::from([]))
 
     // The same text a format site builds, built by the method that
     // answers it, and by the join that renders the elements alone.
-    println!("to_string: {} {}", owned.to_string(), fixed.to_string())
-    println!("nested to_string: {}", #[#[1, 2]].to_string())
-    println!("join: {}", #[#[1, 2], #[3]].join(" | "))
-    println!("join arrays: {}", #[[1, 2], [3, 4]].join(" | "))
+    println("to_string: {} {}", owned.to_string(), fixed.to_string())
+    println("nested to_string: {}", #[#[1, 2]].to_string())
+    println("join: {}", #[#[1, 2], #[3]].join(" | "))
+    println("join arrays: {}", #[[1, 2], [3, 4]].join(" | "))
 }

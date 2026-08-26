@@ -5,41 +5,41 @@
 use std::encoding
 
 fn main() {
-    let arr = match encoding::json::parse(&"[1, 2, 3]") {
+    let arr = match encoding::json::parse("[1, 2, 3]") {
         Ok(v) => v
-        Err(e) => { println!("parse err: {}", e)
+        Err(e) => { println("parse err: {}", e)
             return }
     }
-    println!("--- json pretty array ---")
-    println!("{}", encoding::json::encode_pretty(&arr))
+    println("--- json pretty array ---")
+    println("{}", encoding::json::encode_pretty(arr))
 
-    let obj = match encoding::json::parse(&"{\"x\": 42}") {
+    let obj = match encoding::json::parse("{\"x\": 42}") {
         Ok(v) => v
-        Err(e) => { println!("parse err: {}", e)
+        Err(e) => { println("parse err: {}", e)
             return }
     }
-    println!("--- json pretty object ---")
-    println!("{}", encoding::json::encode_pretty(&obj))
+    println("--- json pretty object ---")
+    println("{}", encoding::json::encode_pretty(obj))
 
-    println!("--- yaml encode array ---")
-    match encoding::yaml::encode(&arr) {
-        Ok(s) => print!("{}", s)
-        Err(e) => println!("yaml err: {}", e)
+    println("--- yaml encode array ---")
+    match encoding::yaml::encode(arr) {
+        Ok(s) => print("{}", s)
+        Err(e) => println("yaml err: {}", e)
     }
 
-    println!("--- yaml encode object ---")
-    match encoding::yaml::encode(&obj) {
-        Ok(s) => print!("{}", s)
-        Err(e) => println!("yaml err: {}", e)
+    println("--- yaml encode object ---")
+    match encoding::yaml::encode(obj) {
+        Ok(s) => print("{}", s)
+        Err(e) => println("yaml err: {}", e)
     }
 
-    println!("--- yaml parse_all ---")
-    match encoding::yaml::parse_all(&"a: 1\n---\nb: 2\n") {
+    println("--- yaml parse_all ---")
+    match encoding::yaml::parse_all("a: 1\n---\nb: 2\n") {
         Ok(docs) => {
-            println!("count: {}", docs.len())
-            println!("doc0: {}", encoding::json::encode(&docs[0]))
-            println!("doc1: {}", encoding::json::encode(&docs[1]))
+            println("count: {}", docs.len())
+            println("doc0: {}", encoding::json::encode(docs[0]))
+            println("doc1: {}", encoding::json::encode(docs[1]))
         }
-        Err(e) => println!("parse_all err: {}", e)
+        Err(e) => println("parse_all err: {}", e)
     }
 }

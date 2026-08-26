@@ -119,7 +119,7 @@ use std::{errors, fs}
 
 fn run() -> Result<(), errors::Error> {
     let data = fs::read("config.toml")?
-    println!("{}", data.len())
+    println("{}", data.len())
     Ok(())
 }
 ```
@@ -134,13 +134,13 @@ explicit:
 
 ```gos
 trait Writer {
-    fn write(&mut self, data: &[u8]) -> Result<i64, errors::Error>
+    fn write(&mut self, data: [u8]) -> Result<i64, errors::Error>
 }
 
 struct Buffer { data: [u8] }
 
 impl Writer for Buffer {
-    fn write(&mut self, data: &[u8]) -> Result<i64, errors::Error> {
+    fn write(&mut self, data: [u8]) -> Result<i64, errors::Error> {
         for b in data {
             self.data.push(b)
         }
@@ -159,9 +159,9 @@ Channels are created with `channel::<T>()`. `channel()` and
 `channel::unbounded()` is explicitly unbounded.
 
 ```gos
-let (tx, rx) = channel::<i64>()
+let tx, rx = channel::<i64>()
 
-go fn() {
+spawn(|| {
     defer tx.close()
     for n in 0..3 {
         tx.send(n)
@@ -169,7 +169,7 @@ go fn() {
 }()
 
 while let Some(n) = rx.recv() {
-    println!("{n}")
+    println("{n}")
 }
 ```
 
@@ -177,9 +177,9 @@ while let Some(n) = rx.recv() {
 
 ```gos
 select {
-    v = rx.recv() => println!("got {v}")
-    tx.send(42) => println!("sent")
-    default => println!("would block")
+    v = rx.recv() => println("got {v}")
+    tx.send(42) => println("sent")
+    default => println("would block")
 }
 ```
 
@@ -208,7 +208,7 @@ impl http::Handler for App {
 
 fn main() {
     if let Err(e) = http::serve("127.0.0.1:8080", App { }) {
-        eprintln!("serve failed: {e}")
+        eprintln("serve failed: {e}")
     }
 }
 ```
@@ -227,7 +227,7 @@ use std::database::sql
 
 fn count_users() -> Result<i64, sql::Error> {
     let mut db = sql::open("sqlite", "file:app.db")?
-    let mut rows = db.query("select id from users", &[])?
+    let mut rows = db.query("select id from users", [])?
     defer rows.close()
 
     let mut count = 0
@@ -251,8 +251,8 @@ data argument last:
 use std::iter
 
 let total = #[1, 2, 3, 4, 5]
-    |> |v| iter::filter(|n: i64| n % 2 == 0, v)
-    |> |v| iter::sum_by(|n: i64| n * n, v)
+    |> |v| iter::filter(v, |n: i64| n % 2 == 0)
+    |> |v| iter::sum_by(v, |n: i64| n * n)
 ```
 
 The same pipe-friendly shape exists for `std::option` and
@@ -289,7 +289,7 @@ impl Amount {
     fn normalize(&self) -> i64 { self.cents }   // private helper
 }
 
-pub(package) fn round_trip(a: &Amount) -> i64 { a.normalize() }
+pub(package) fn round_trip(a: Amount) -> i64 { a.normalize() }
 ```
 
 A `pub` type may keep private methods and private fields, so a struct with any
@@ -312,9 +312,9 @@ Go package's exported surface is exported to everyone.
 | `os.WriteFile(path, data, 0644)` | `fs::write(path, data)` |
 | `os.Getenv("NAME")` | `env::var("NAME")` |
 | `os.Args` | `env::args()` |
-| `exec.Command(name, args...).Run()` | `process::run(name, &args)` |
-| `strings.TrimSpace(s)` | `strings::trim(&s)` |
-| `strconv.Atoi(s)` | `strconv::parse_i64(&s)` |
+| `exec.Command(name, args...).Run()` | `process::run(name, args)` |
+| `strings.TrimSpace(s)` | `strings::trim(s)` |
+| `strconv.Atoi(s)` | `strconv::parse_i64(s)` |
 | `time.Sleep(d)` | `time::sleep(ms)` |
 | `sync.WaitGroup` | `sync::WaitGroup` |
 | `net/http` server | `std::http` |

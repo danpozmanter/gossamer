@@ -6,27 +6,27 @@ use std::iter
 
 fn main() {
     let xs: Vec<i64> = Vec::from([3, 1, 4, 1, 5, 9, 2, 6])
-    println!("{:?}", xs.iter().map(|x| x * 2).collect())
-    println!("{:?}", xs.iter().filter(|x| x > 3).collect())
-    println!("{}", xs.iter().sum())
-    println!("{:?} {:?}", xs.iter().max(), xs.iter().min())
-    println!("{} {}", xs.iter().count(), xs.iter().count(|x| x > 3))
-    println!("{:?} {:?}", xs.iter().max_by_key(|x| 10 - x), xs.iter().min_by_key(|x| 10 - x))
-    println!("{}", xs.iter().fold(100, |acc, x| acc + x))
-    println!("{} {}", xs.iter().any(|x| x == 9), xs.iter().all(|x| x > 0))
-    println!("{:?} {:?}", xs.iter().find(|x| x > 4), xs.iter().position(|x| x == 9))
+    println("{:?}", xs.iter().map(|x| x * 2).collect())
+    println("{:?}", xs.iter().filter(|x| x > 3).collect())
+    println("{}", xs.iter().sum())
+    println("{:?} {:?}", xs.iter().max(), xs.iter().min())
+    println("{} {}", xs.iter().count(), xs.iter().count(|x| x > 3))
+    println("{:?} {:?}", xs.iter().max_by_key(|x| 10 - x), xs.iter().min_by_key(|x| 10 - x))
+    println("{}", xs.iter().fold(100, |acc, x| acc + x))
+    println("{} {}", xs.iter().any(|x| x == 9), xs.iter().all(|x| x > 0))
+    println("{:?} {:?}", xs.iter().find(|x| x > 4), xs.iter().position(|x| x == 9))
     let fs: Vec<f64> = Vec::from([1.5, 2.5, 3.0])
-    println!("{} {:?}", fs.iter().sum(), fs.iter().map(|f| f * 2.0).collect())
-    println!("{:?}", (2..10).filter(|k| k % 3 == 0) |> iter::collect)
-    println!("{}", (1..5).map(|i| i * i).sum())
-    println!("{}", xs.iter().filter(|x| x > 2).map(|x| x * 10).collect().join(","))
+    println("{} {:?}", fs.iter().sum(), fs.iter().map(|f| f * 2.0).collect())
+    println("{:?}", (2..10).filter(|k| k % 3 == 0) |> iter::collect)
+    println("{}", (1..5).map(|i| i * i).sum())
+    println("{}", xs.iter().filter(|x| x > 2).map(|x| x * 10).collect().join(","))
     let sieve = [true; 10]
-    println!("{:?}", (2..10).filter(|k| sieve[k]).take(3) |> iter::collect)
+    println("{:?}", (2..10).filter(|k| sieve[k]).take(3) |> iter::collect)
 
     let s = "hello"
-    println!("{}", s[1] as char)
+    println("{}", s[1] as char)
     let mut out = ""
-    for i in 0..s.len() { out += format!("{}", s[i] as char) }
-    println!("{}", out)
-    println!("{}", 65 as char)
+    for i in 0..s.len() { out += format("{}", s[i] as char) }
+    println("{}", out)
+    println("{}", 65 as char)
 }

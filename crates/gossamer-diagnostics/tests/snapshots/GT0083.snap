@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0083]: An assignment wrote through `*x` where `x` is not a reference. `*` - here
+--- framed ---
+error[GT0083]: An assignment wrote through `*x` where `x` is not a reference. `*`
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

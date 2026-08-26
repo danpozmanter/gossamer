@@ -8,20 +8,20 @@
 use std::http
 
 fn main() {
-    let form = http::form::Form::parse(&"user=alice&role=admin&tag=a&tag=b&q=hi+there%21")
-    println!("user={}", http::form::get(&form, &"user"))
-    println!("q={}", http::form::get(&form, &"q"))
-    println!("count={}", http::form::count(&form))
-    println!("tags={}", http::form::get_all(&form, &"tag").len())
-    println!("has_role={}", http::form::has(&form, &"role"))
-    println!("has_x={}", http::form::has(&form, &"nope"))
+    let form = http::form::Form::parse("user=alice&role=admin&tag=a&tag=b&q=hi+there%21")
+    println("user={}", http::form::get(form, "user"))
+    println("q={}", http::form::get(form, "q"))
+    println("count={}", http::form::count(form))
+    println("tags={}", http::form::get_all(form, "tag").len())
+    println("has_role={}", http::form::has(form, "role"))
+    println("has_x={}", http::form::has(form, "nope"))
     // An absent key reads back as the empty string (the get-or-default shape).
-    println!("missing=[{}]", http::form::get(&form, &"missing"))
+    println("missing=[{}]", http::form::get(form, "missing"))
     // get_all returns every value for a repeated key, in order.
-    let tags = http::form::get_all(&form, &"tag")
+    let tags = http::form::get_all(form, "tag")
     let mut joined = ""
     for t in tags {
         joined = joined + "/" + t
     }
-    println!("tag_values={}", joined)
+    println("tag_values={}", joined)
 }

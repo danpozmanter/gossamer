@@ -30,19 +30,19 @@ fn tmp_dir(tag: &str) -> PathBuf {
 const SOURCE: &str = r#"
 struct Point { x: i64, y: i64 }
 
-fn area(p: &Point) -> i64 { p.x * p.y }
+fn area(p: Point) -> i64 { p.x * p.y }
 
 fn main() {
     let mut total = 0
     for i in 0..8 {
         let p = Point { x: i, y: i + 1 }
-        total += area(&p)
+        total += area(p)
     }
     let names = #["alpha", "beta", "gamma"]
     for n in names {
         total += n.len()
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#;
 

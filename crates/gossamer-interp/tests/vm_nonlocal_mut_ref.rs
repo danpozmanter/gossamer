@@ -25,9 +25,10 @@ fn capture_writer(text: &str) {
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("nonlocal_mut_ref.gos", source.to_string());
-    let (sf, parse_diags) = parse_with_autoderive(source, file);
+    let (mut sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -53,7 +54,7 @@ fn main() {
     setfield(&mut h.n)
     let mut arr = [1, 2, 3]
     setfield(&mut arr[1])
-    println!("{} {} {} {}", h.vals.len(), h.vals[2], h.n, arr[1])
+    println("{} {} {} {}", h.vals.len(), h.vals[2], h.n, arr[1])
 }
 "#;
     assert_eq!(run_main(src), "3 30 999 999\n");
@@ -66,7 +67,7 @@ fn setit(p: &mut i64) { *p = 555 }
 fn main() {
     let mut x = 1
     setit(&mut x)
-    println!("{}", x)
+    println("{}", x)
 }
 "#;
     assert_eq!(run_main(src), "555\n");
@@ -79,7 +80,7 @@ fn main() {
     let b = true as i64
     let c = 65 as u8 as char
     let n = 'A' as i64
-    println!("{} {} {}", b, c, n)
+    println("{} {} {}", b, c, n)
 }
 "#;
     assert_eq!(run_main(src), "1 A 65\n");

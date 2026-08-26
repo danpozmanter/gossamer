@@ -15,12 +15,13 @@ use gossamer_types::{TyCtxt, TypeDiagnostic, typecheck_source_file};
 fn diagnostics(source: &str) -> Vec<TypeDiagnostic> {
     let mut map = SourceMap::new();
     let file = map.add_file("goroutine-sharing.gos".to_string(), source.to_string());
-    let (parsed, parse_errors) = parse_source_file(source, file);
+    let (mut parsed, parse_errors) = parse_source_file(source, file);
     assert!(
         parse_errors.is_empty(),
         "unexpected parse errors: {parse_errors:?}"
     );
     let (resolutions, _resolve_errors) = resolve_source_file(&parsed);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut parsed, &resolutions);
     let mut tcx = TyCtxt::new();
     let (_table, diagnostics) = typecheck_source_file(&parsed, &resolutions, &mut tcx);
     diagnostics
@@ -77,7 +78,7 @@ fn count(registry: Registry) -> i64 {
 
 fn main() {
     let registry = Registry { names: #["a"] }
-    go fn() { let _ = count(registry) }()
+    spawn(|| { let _ = count(registry) })
 }
 "#;
     let codes = codes(source);
@@ -125,7 +126,7 @@ use std::sync::channel
 
 fn main() {
     let limit = 10
-    let (tx, rx) = channel()
+    let tx, rx = channel()
     let _ = cohort {
         spawn(|| {
             tx.send(limit)

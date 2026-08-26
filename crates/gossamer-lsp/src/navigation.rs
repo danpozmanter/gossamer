@@ -421,7 +421,6 @@ impl Walker {
                     self.visit_select_arm(arm);
                 }
             }
-            ExprKind::Go(inner) => self.visit_expr(inner),
             ExprKind::Return(inner) => {
                 if let Some(inner) = inner {
                     self.visit_expr(inner);
@@ -432,10 +431,7 @@ impl Walker {
                     self.visit_expr(value);
                 }
             }
-            ExprKind::Literal(_)
-            | ExprKind::Continue { .. }
-            | ExprKind::MacroCall(_)
-            | ExprKind::Error => {}
+            ExprKind::Literal(_) | ExprKind::Continue { .. } | ExprKind::Error => {}
         }
     }
 
@@ -459,7 +455,7 @@ impl Walker {
                     self.visit_expr(init);
                 }
             }
-            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => {
                 self.visit_expr(expr);
             }
             StmtKind::Item(item) => self.visit_item(item),
@@ -1034,7 +1030,6 @@ impl DefinitionIndex {
                     self.collect_expr_locals(&arm.body);
                 }
             }
-            ExprKind::Go(inner) => self.collect_expr_locals(inner),
             ExprKind::Return(inner) => {
                 if let Some(inner) = inner {
                     self.collect_expr_locals(inner);
@@ -1048,7 +1043,6 @@ impl DefinitionIndex {
             ExprKind::Path(_)
             | ExprKind::Literal(_)
             | ExprKind::Continue { .. }
-            | ExprKind::MacroCall(_)
             | ExprKind::Error => {}
         }
     }
@@ -1062,7 +1056,7 @@ impl DefinitionIndex {
                         self.collect_expr_locals(init);
                     }
                 }
-                StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+                StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => {
                     self.collect_expr_locals(expr);
                 }
                 StmtKind::Item(_) => {}

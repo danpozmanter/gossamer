@@ -6,29 +6,29 @@
 
 use std::errors
 
-fn parse(text: &String) -> Result<i64, errors::Error> {
+fn parse(text: String) -> Result<i64, errors::Error> {
     match text.to_i64() {
         Some(n) => Ok(n)
         None => Err(errors::new("not a number"))
     }
 }
 
-fn wrapped(text: &String) -> Result<i64, errors::Error> {
+fn wrapped(text: String) -> Result<i64, errors::Error> {
     match parse(text) {
         Ok(n) => Ok(n)
         Err(e) => Err(errors::wrap(e, "while reading a field"))
     }
 }
 
-fn doubled(xs: &Vec<i64>) -> Vec<i64> {
+fn doubled(xs: Vec<i64>) -> Vec<i64> {
     xs.map(|x| x * 2)
 }
 
-fn filtered_sum(xs: &Vec<i64>) -> i64 {
+fn filtered_sum(xs: Vec<i64>) -> i64 {
     xs.iter().map(|x| x + 1).filter(|x| x > 2).sum()
 }
 
-fn longest(names: &Vec<String>) -> i64 {
+fn longest(names: Vec<String>) -> i64 {
     let mut best = 0
     for name in names {
         if name.len() > best {
@@ -42,13 +42,13 @@ fn labels(count: i64) -> Vec<String> {
     let mut out: Vec<String> = #[]
     let mut i = 0
     while i < count {
-        out.push(format!("row{}", i))
+        out.push(format("row{}", i))
         i += 1
     }
     out
 }
 
-fn first_at_least(xs: &Vec<i64>, floor: i64) -> Option<i64> {
+fn first_at_least(xs: Vec<i64>, floor: i64) -> Option<i64> {
     let mut i = 0
     while i < xs.len() {
         if xs[i] >= floor {
@@ -71,26 +71,26 @@ fn main() {
     let mut acc = 0
     let mut i = 0
     while i < 2000 {
-        acc += parse(&text).unwrap_or(0)
-        acc += doubled(&numbers).len()
-        acc += filtered_sum(&numbers)
-        acc += longest(&names)
+        acc += parse(text).unwrap_or(0)
+        acc += doubled(numbers).len()
+        acc += filtered_sum(numbers)
+        acc += longest(names)
         acc += labels(2).len()
-        acc += first_at_least(&numbers, 3).unwrap_or(0)
+        acc += first_at_least(numbers, 3).unwrap_or(0)
         i += 1
     }
-    println!("acc={}", acc)
+    println("acc={}", acc)
 
-    println!("{:?}", parse(&text))
-    println!("{:?}", parse(&"x"))
-    match wrapped(&"x") {
-        Ok(n) => println!("ok={}", n)
-        Err(e) => println!("err={}", e)
+    println("{:?}", parse(text))
+    println("{:?}", parse("x"))
+    match wrapped("x") {
+        Ok(n) => println("ok={}", n)
+        Err(e) => println("err={}", e)
     }
-    println!("{:?}", doubled(&numbers))
-    println!("{}", filtered_sum(&numbers))
-    println!("{}", longest(&names))
-    println!("{:?}", labels(3))
-    println!("{:?} {:?}", first_at_least(&numbers, 3), first_at_least(&numbers, 9))
-    println!("{:?} {:?}", ratio(3, 2), ratio(1, 0))
+    println("{:?}", doubled(numbers))
+    println("{}", filtered_sum(numbers))
+    println("{}", longest(names))
+    println("{:?}", labels(3))
+    println("{:?} {:?}", first_at_least(numbers, 3), first_at_least(numbers, 9))
+    println("{:?} {:?}", ratio(3, 2), ratio(1, 0))
 }

@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0051]: `regex!` or `sql!` was written. Both moved into their modules: - here
+--- framed ---
+error[GP0051]: `regex!` or `sql!` was written. Both moved into their modules:
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

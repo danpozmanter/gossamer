@@ -57,7 +57,7 @@ The register-based bytecode VM in `gossamer-interp` is the sole
    `select`, `defer`, or-patterns, goroutines, custom iterators - is
    lowered to native bytecode; nothing is interpreted from HIR.
 
-Struct values are `Rc<Vec<(Ident, Value)>>`. Field assignment runs
+Struct values are `Vec<(Ident, Value)>`. Field assignment runs
 through a copy-on-write helper that allocates a fresh `Rc` so alias
 bindings never observe each other's mutations.
 
@@ -94,7 +94,7 @@ differential.
 
 `gossamer-runtime::sched` is the work-stealing M:N scheduler.
 Every Gossamer binary links it through `libgossamer_runtime.a`, so
-`go expr` in compiled code (and the bytecode VM) lands on the same
+`spawn(|| expr)` in compiled code (and the bytecode VM) lands on the same
 shared pool. The pool size defaults to `num_cpus()`, overridable
 via `GOSSAMER_MAX_PROCS=N` or `runtime::set_max_procs(n)` from
 user code.
@@ -119,7 +119,7 @@ A `MultiScheduler` owns:
 
 ## Goroutines
 
-`go expr(args)` is a real stackful coroutine. Construction:
+`spawn(|| expr(args))` is a real stackful coroutine. Construction:
 
 1. `gossamer_runtime::sched_global::spawn(closure)` allocates a
    1 MiB `corosensei::Coroutine` stack (override:
@@ -251,11 +251,11 @@ Graceful shutdown is driven by:
 
 - `GOSSAMER_HTTP_MAX_REQUESTS=N` - env var, stop after N requests.
 - `gossamer_interp::set_http_max_requests(N)` - safe-Rust test hook.
-- `config.shutdown: Arc<AtomicBool>` - for in-process callers.
+- `config.shutdown: AtomicBool` - for in-process callers.
 
 ## Panic recovery
 
-`panic!(msg)` in user code returns `RuntimeError::Panic(msg)` from
+`panic(msg)` in user code returns `RuntimeError::Panic(msg)` from
 the evaluator. The native HTTP server catches that per-request,
 logs it, and returns a 500. A panic inside a goroutine body
 unwinds the coroutine's stack and propagates to the worker M's

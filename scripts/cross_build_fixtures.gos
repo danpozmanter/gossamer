@@ -20,7 +20,7 @@ const FIXTURE_LIST: String = "scripts/cross_fixtures.txt"
 
 /// The toolchain this build runs, from `GOS_BIN` or the dev tree.
 fn gos_binary() -> String {
-    match env::var(&"GOS_BIN") {
+    match env::var("GOS_BIN") {
         Some(binary) => binary
         None => {
             if os::family() == "windows" {
@@ -41,10 +41,10 @@ fn gos_binary() -> String {
 fn repo_root() -> String {
     let mut directory = env::current_dir().unwrap_or(".")
     loop {
-        if fs::is_file(&path::join(&directory, &FIXTURE_LIST)) {
+        if fs::is_file(path::join(directory, FIXTURE_LIST)) {
             return directory
         }
-        match path::parent(&directory) {
+        match path::parent(directory) {
             Some(parent) => directory = parent
             None => return "."
         }
@@ -52,7 +52,7 @@ fn repo_root() -> String {
 }
 
 /// The fixture paths in `list`, without its comments and blank lines.
-fn fixtures(list: &String) -> Vec<String> {
+fn fixtures(list: String) -> Vec<String> {
     let mut paths = #[]
     for line in list.lines() {
         let entry = line.trim()
@@ -67,31 +67,31 @@ fn fixtures(list: &String) -> Vec<String> {
 fn main() {
     let args = env::args()
     if args.len() != 2 {
-        eprintln!("usage: gos run scripts/cross_build_fixtures.gos <target-triple> <out-base>")
+        eprintln("usage: gos run scripts/cross_build_fixtures.gos <target-triple> <out-base>")
         process::exit(2)
     }
     let triple = args[0]
-    let out = path::join(&args[1], &triple)
+    let out = path::join(args[1], triple)
     let root = repo_root()
     let gos = gos_binary()
 
-    if let Err(e) = fs::create_dir_all(&out) {
-        eprintln!("cross-build: creating {}: {}", out, e)
+    if let Err(e) = fs::create_dir_all(out) {
+        eprintln("cross-build: creating {}: {}", out, e)
         process::exit(1)
     }
 
-    let list_path = path::join(&root, &FIXTURE_LIST)
-    let list = match fs::read_to_string(&list_path) {
+    let list_path = path::join(root, FIXTURE_LIST)
+    let list = match fs::read_to_string(list_path) {
         Ok(text) => text
         Err(e) => {
-            eprintln!("cross-build: reading {}: {}", list_path, e)
+            eprintln("cross-build: reading {}: {}", list_path, e)
             process::exit(1)
         }
     }
 
-    for src in fixtures(&list) {
-        println!("cross-build {} -> {}", src, triple)
-        let source = path::join(&root, &src)
+    for src in fixtures(list) {
+        println("cross-build {} -> {}", src, triple)
+        let source = path::join(root, src)
         let arguments = #[
             "build"
             "--release"
@@ -101,17 +101,17 @@ fn main() {
             "--out-dir"
             out
         ]
-        match process::run(&gos, &arguments) {
+        match process::run(gos, arguments) {
             Ok(result) => {
-                print!("{}", result.stdout)
-                eprint!("{}", result.stderr)
+                print("{}", result.stdout)
+                eprint("{}", result.stderr)
                 if result.code != 0 {
-                    eprintln!("cross-build: {} failed for {}", triple, src)
+                    eprintln("cross-build: {} failed for {}", triple, src)
                     process::exit(result.code)
                 }
             }
             Err(e) => {
-                eprintln!("cross-build: running {}: {}", gos, e)
+                eprintln("cross-build: running {}: {}", gos, e)
                 process::exit(1)
             }
         }

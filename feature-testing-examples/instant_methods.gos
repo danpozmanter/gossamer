@@ -19,5 +19,5 @@ fn main() {
         qualified_form >= method_form
         "monotonic: qualified form sampled after method form"
     )
-    println!("instant ok")
+    println("instant ok")
 }

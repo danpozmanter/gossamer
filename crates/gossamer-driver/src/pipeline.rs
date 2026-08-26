@@ -338,7 +338,7 @@ mod tests {
     fn release_mir_inlines_small_callees_while_debug_keeps_call_boundaries() {
         let source = r#"
             fn helper(x: i64) -> i64 { x + 1 }
-            fn main() { println!("{}", helper(41)) }
+            fn main() { println("{}", helper(41)) }
         "#;
         let (debug, _) = lower_to_mir_with_tcx(source, "profile.gos", MirProfile::Debug);
         let (release, _) = lower_to_mir_with_tcx(source, "profile.gos", MirProfile::Release);

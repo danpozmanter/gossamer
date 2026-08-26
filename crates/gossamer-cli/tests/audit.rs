@@ -50,7 +50,7 @@ fn project(name: &str) -> PathBuf {
     std::fs::write(dir.join("advisories.json"), FEED).unwrap();
     std::fs::write(
         dir.join("src/main.gos"),
-        "use lib::parse\n\nfn main() {\n    println!(\"{}\", 1)\n}\n",
+        "use lib::parse\n\nfn main() {\n    println(\"{}\", 1)\n}\n",
     )
     .unwrap();
     dir

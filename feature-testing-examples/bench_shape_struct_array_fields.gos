@@ -6,7 +6,7 @@
 
 struct Body { x: f64, vx: f64, mass: f64 }
 
-fn momentum(b: &[Body; 3]) -> f64 {
+fn momentum(b: [Body; 3]) -> f64 {
     let mut p = 0.0
     for i in 0..3 { p += b[i].vx * b[i].mass }
     p
@@ -19,8 +19,8 @@ fn main() {
         Body { x: -3.0, vx: -0.5, mass: 4.0 }
     ]
 
-    bodies[0].vx = -momentum(&bodies) / bodies[0].mass
-    println!("p0={:.9}", momentum(&bodies))
+    bodies[0].vx = -momentum(bodies) / bodies[0].mass
+    println("p0={:.9}", momentum(bodies))
 
     let dt = 0.01
     for _ in 0..10 {
@@ -37,6 +37,6 @@ fn main() {
         for k in 0..3 { bodies[k].x += dt * bodies[k].vx }
     }
 
-    for i in 0..3 { println!("body{} x={:.9} vx={:.9}", i, bodies[i].x, bodies[i].vx) }
-    println!("p1={:.9}", momentum(&bodies))
+    for i in 0..3 { println("body{} x={:.9} vx={:.9}", i, bodies[i].x, bodies[i].vx) }
+    println("p1={:.9}", momentum(bodies))
 }

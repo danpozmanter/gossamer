@@ -17,13 +17,13 @@ fn make_scalar() -> Result<Outer, errors::Error> {
 }
 
 fn make_opt(k: i64) -> Option<C> {
-    Some(C { b: B { a: A { n: k, tag: format!("t{}", k) }, flag: k > 0 }, label: format!("L{}", k) })
+    Some(C { b: B { a: A { n: k, tag: format("t{}", k) }, flag: k > 0 }, label: format("L{}", k) })
 }
 
 fn main() {
     match make_scalar() {
-        Ok(v) => println!("code={}", v.structured_output.code)
-        Err(e) => println!("err {}", e)
+        Ok(v) => println("code={}", v.structured_output.code)
+        Err(e) => println("err {}", e)
     }
 
     let mut sum = 0
@@ -32,13 +32,13 @@ fn main() {
             sum += v.b.a.n
         }
     }
-    println!("sum={}", sum)
+    println("sum={}", sum)
 
     match make_opt(7) {
-        Some(v) => println!(
+        Some(v) => println(
             "n={} tag={} flag={} label={}"
             v.b.a.n, v.b.a.tag, v.b.flag, v.label
         )
-        None => println!("none")
+        None => println("none")
     }
 }

@@ -11,5 +11,5 @@ fn main() {
             }
         }
     }
-    println!("first pair with product 6 = {:?}", found)
+    println("first pair with product 6 = {:?}", found)
 }

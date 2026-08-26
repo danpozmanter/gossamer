@@ -224,7 +224,7 @@ fn multiline_parameters_align_after_generic_types() {
 
 #[test]
 fn println_and_format_macros_never_rewritten() {
-    let source = "fn main() {\n    let name = \"jane\"\n    let msg = format!(\"hello, {name}!\")\n    println!(\"{} -> {}\", name, msg)\n    eprintln!(\"warn: {msg}\")\n}\n";
+    let source = "fn main() {\n    let name = \"jane\"\n    let msg = format(\"hello, {name}!\")\n    println(\"{} -> {}\", name, msg)\n    eprintln(\"warn: {msg}\")\n}\n";
     let out = fmt(source);
     assert_eq!(out, source);
     assert!(!out.contains("__concat"), "macro desugared to __concat");
@@ -238,7 +238,7 @@ fn struct_literals_keep_keyed_forms() {
 
 #[test]
 fn pipe_chains_keep_authored_breaks_and_indent() {
-    let source = "fn main() {\n    let words = \"  Hello  World  \"\n        |> split_words\n        |> |v| filter(|w: String| w.len() > 0, v)\n        |> count\n    println!(\"words: {words}\")\n}\n";
+    let source = "fn main() {\n    let words = \"  Hello  World  \"\n        |> split_words\n        |> |v| filter(|w: String| w.len() > 0, v)\n        |> count\n    println(\"words: {words}\")\n}\n";
     assert_eq!(fmt(source), source);
 }
 
@@ -248,7 +248,7 @@ fn pipe_chains_keep_authored_breaks_and_indent() {
 /// return this file byte-identical.
 #[test]
 fn port_forwarder_fixture_round_trips_byte_identical() {
-    let source = "use std::net\n\n// Local URL forwarder.\n// Listens on 127.0.0.1:8080 and forwards to the upstream below.\nconst UPSTREAM: String = \"127.0.0.1:9090\"  // staging box\n\nfn main() {\n    let listener = net::TcpListener::bind(\"127.0.0.1:8080\")\n    // accept loop: one goroutine per connection\n    loop {\n        let stream = listener.accept()\n        go forward(stream)\n    }\n}\n\nfn forward(stream: net::TcpStream) {\n    /* copy bytes both ways until either side closes */\n    let upstream = net::TcpStream::connect(&UPSTREAM)\n    println!(\"forwarding to {}\", UPSTREAM)\n}\n";
+    let source = "use std::net\n\n// Local URL forwarder.\n// Listens on 127.0.0.1:8080 and forwards to the upstream below.\nconst UPSTREAM: String = \"127.0.0.1:9090\"  // staging box\n\nfn main() {\n    let listener = net::TcpListener::bind(\"127.0.0.1:8080\")\n    // accept loop: one goroutine per connection\n    loop {\n        let stream = listener.accept()\n        spawn(|| forward(stream))\n    }\n}\n\nfn forward(stream: net::TcpStream) {\n    /* copy bytes both ways until either side closes */\n    let upstream = net::TcpStream::connect(UPSTREAM)\n    println(\"forwarding to {}\", UPSTREAM)\n}\n";
     assert_eq!(fmt(source), source);
     assert_eq!(comments(source).len(), 5);
 }
@@ -330,7 +330,7 @@ fn a_triple_quoted_literal_hugging_its_closer_keeps_that_shape() {
 #[test]
 fn a_triple_quoted_literal_in_a_nested_call_follows_its_line() {
     let source =
-        "fn main() {\n    println!(\n        \"{}\",\n        \"\"\"\n  body\n  \"\"\"\n    )\n}\n";
+        "fn main() {\n    println(\n        \"{}\",\n        \"\"\"\n  body\n  \"\"\"\n    )\n}\n";
     let formatted = fmt(source);
     assert!(
         formatted.contains("        \"\"\"\n        body\n        \"\"\""),
@@ -441,7 +441,7 @@ fn a_body_indented_less_than_its_opener_moves_out_to_the_statement() {
 
 #[test]
 fn a_triple_quoted_argument_keeps_its_value_when_the_call_moves() {
-    let source = "fn main() {\nprintln!(\"{}\", \"\"\"\none\n two\n\"\"\")\n}\n";
+    let source = "fn main() {\nprintln(\"{}\", \"\"\"\none\n two\n\"\"\")\n}\n";
     let formatted = fmt(source);
     assert_eq!(triple_body(source), triple_body(&formatted));
     assert_eq!(fmt(&formatted), formatted, "second pass moved the body");

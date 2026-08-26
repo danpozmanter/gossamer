@@ -476,23 +476,26 @@ pub(super) fn lower_intrinsic_call_io_math(
             Ok(true)
         }
         // `__fmt_prec(value, prec)` - emitted by macro expansion for
-        // `{:.N}` specs. Routes through `gos_rt_f64_prec_to_str` so
-        // the result is a String the surrounding `__concat` consumes.
+        // `{:.N}` specs. A number routes through `gos_rt_f64_prec_to_str`
+        // and text through `gos_rt_str_prec_to_str`, so either way the
+        // result is a String the surrounding `__concat` consumes.
         "__fmt_prec" => {
             if args.len() != 2 {
                 bail!("native codegen: __fmt_prec expects exactly two arguments");
             }
+            // The helper is chosen from the argument's own type: a
+            // `String` const or a local whose type is `String` is text.
+            let is_text = match &args[0] {
+                Operand::Const(gossamer_mir::ConstValue::Str(_)) => true,
+                Operand::Copy(place) => matches!(
+                    tcx.kind_of(body.local_ty(place.local)),
+                    gossamer_types::TyKind::String
+                ),
+                _ => false,
+            };
             let value_raw = lower_operand(
                 module, builder, locals, body, tcx, &args[0], None, intrinsics,
             )?;
-            let value_ty = value_type(value_raw, builder);
-            let value = if value_ty == types::F64 {
-                value_raw
-            } else if value_ty == types::F32 {
-                builder.ins().fpromote(types::F64, value_raw)
-            } else {
-                builder.ins().fcvt_from_sint(types::F64, value_raw)
-            };
             let prec_raw = lower_operand(
                 module, builder, locals, body, tcx, &args[1], None, intrinsics,
             )?;
@@ -504,12 +507,20 @@ pub(super) fn lower_intrinsic_call_io_math(
             } else {
                 prec_raw
             };
-            let f = intrinsics.extern_fn(
-                module,
-                "gos_rt_f64_prec_to_str",
-                &[types::F64, types::I64],
-                &[ptr_ty],
-            )?;
+            let (helper, value, arg_ty) = if is_text {
+                ("gos_rt_str_prec_to_str", value_raw, ptr_ty)
+            } else {
+                let value_ty = value_type(value_raw, builder);
+                let widened = if value_ty == types::F64 {
+                    value_raw
+                } else if value_ty == types::F32 {
+                    builder.ins().fpromote(types::F64, value_raw)
+                } else {
+                    builder.ins().fcvt_from_sint(types::F64, value_raw)
+                };
+                ("gos_rt_f64_prec_to_str", widened, types::F64)
+            };
+            let f = intrinsics.extern_fn(module, helper, &[arg_ty, types::I64], &[ptr_ty])?;
             let fref = module.declare_func_in_func(f, builder.func);
             let call = builder.ins().call(fref, &[value, prec]);
             let result = builder.inst_results(call)[0];
@@ -2061,321 +2072,6 @@ pub(super) fn lower_intrinsic_call_io_math(
                 &intrinsics.body_cl_types,
                 destination.local,
                 v,
-            );
-            Ok(true)
-        }
-        "gos_rt_go_spawn_call_0" => {
-            let rt_fn = intrinsics.extern_fn_by_name(module, "gos_rt_go_spawn_call_0")?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let fn_addr = match args.first() {
-                Some(a) => lower_operand(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    a,
-                    Some(ptr_ty),
-                    intrinsics,
-                )?,
-                None => builder.ins().iconst(ptr_ty, 0),
-            };
-            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
-            let _ = builder.ins().call(fref, &[fn_addr]);
-            let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(
-                builder,
-                locals,
-                &intrinsics.body_cl_types,
-                destination.local,
-                unit,
-            );
-            Ok(true)
-        }
-        "gos_rt_go_spawn_call_1" => {
-            let rt_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_go_spawn_call_1",
-                &[types::I64, types::I64],
-                &[],
-            )?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let fn_addr = match args.first() {
-                Some(a) => lower_operand(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    a,
-                    Some(ptr_ty),
-                    intrinsics,
-                )?,
-                None => builder.ins().iconst(ptr_ty, 0),
-            };
-            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
-            let a0 = match args.get(1) {
-                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
-                None => builder.ins().iconst(types::I64, 0),
-            };
-            let a0_i64 = coerce_arg_to(builder, a0, types::I64)?;
-            let _ = builder.ins().call(fref, &[fn_addr, a0_i64]);
-            let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(
-                builder,
-                locals,
-                &intrinsics.body_cl_types,
-                destination.local,
-                unit,
-            );
-            Ok(true)
-        }
-        "gos_rt_go_spawn_call_2" => {
-            let rt_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_go_spawn_call_2",
-                &[types::I64, types::I64, types::I64],
-                &[],
-            )?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let fn_addr = match args.first() {
-                Some(a) => lower_operand(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    a,
-                    Some(ptr_ty),
-                    intrinsics,
-                )?,
-                None => builder.ins().iconst(ptr_ty, 0),
-            };
-            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
-            let a0 = match args.get(1) {
-                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
-                None => builder.ins().iconst(types::I64, 0),
-            };
-            let a1 = match args.get(2) {
-                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
-                None => builder.ins().iconst(types::I64, 0),
-            };
-            let a0_i64 = coerce_arg_to(builder, a0, types::I64)?;
-            let a1_i64 = coerce_arg_to(builder, a1, types::I64)?;
-            let _ = builder.ins().call(fref, &[fn_addr, a0_i64, a1_i64]);
-            let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(
-                builder,
-                locals,
-                &intrinsics.body_cl_types,
-                destination.local,
-                unit,
-            );
-            Ok(true)
-        }
-        "gos_rt_go_spawn_call_3" => {
-            let rt_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_go_spawn_call_3",
-                &[types::I64, types::I64, types::I64, types::I64],
-                &[],
-            )?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let fn_addr = match args.first() {
-                Some(a) => lower_operand(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    a,
-                    Some(ptr_ty),
-                    intrinsics,
-                )?,
-                None => builder.ins().iconst(ptr_ty, 0),
-            };
-            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
-            let a0 = match args.get(1) {
-                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
-                None => builder.ins().iconst(types::I64, 0),
-            };
-            let a1 = match args.get(2) {
-                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
-                None => builder.ins().iconst(types::I64, 0),
-            };
-            let a2 = match args.get(3) {
-                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
-                None => builder.ins().iconst(types::I64, 0),
-            };
-            let a0 = coerce_arg_to(builder, a0, types::I64)?;
-            let a1 = coerce_arg_to(builder, a1, types::I64)?;
-            let a2 = coerce_arg_to(builder, a2, types::I64)?;
-            let _ = builder.ins().call(fref, &[fn_addr, a0, a1, a2]);
-            let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(
-                builder,
-                locals,
-                &intrinsics.body_cl_types,
-                destination.local,
-                unit,
-            );
-            Ok(true)
-        }
-        "gos_rt_go_spawn_call_5" => {
-            let rt_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_go_spawn_call_5",
-                &[
-                    types::I64,
-                    types::I64,
-                    types::I64,
-                    types::I64,
-                    types::I64,
-                    types::I64,
-                ],
-                &[],
-            )?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let fn_addr = match args.first() {
-                Some(a) => lower_operand(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    a,
-                    Some(ptr_ty),
-                    intrinsics,
-                )?,
-                None => builder.ins().iconst(ptr_ty, 0),
-            };
-            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
-            let mut vals = Vec::with_capacity(5);
-            for i in 1..=5 {
-                let v = match args.get(i) {
-                    Some(a) => {
-                        lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?
-                    }
-                    None => builder.ins().iconst(types::I64, 0),
-                };
-                vals.push(coerce_arg_to(builder, v, types::I64)?);
-            }
-            let mut all_args = vec![fn_addr];
-            all_args.extend(vals);
-            let _ = builder.ins().call(fref, &all_args);
-            let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(
-                builder,
-                locals,
-                &intrinsics.body_cl_types,
-                destination.local,
-                unit,
-            );
-            Ok(true)
-        }
-        "gos_rt_go_spawn_call_6" => {
-            let rt_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_go_spawn_call_6",
-                &[
-                    types::I64,
-                    types::I64,
-                    types::I64,
-                    types::I64,
-                    types::I64,
-                    types::I64,
-                    types::I64,
-                ],
-                &[],
-            )?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let fn_addr = match args.first() {
-                Some(a) => lower_operand(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    a,
-                    Some(ptr_ty),
-                    intrinsics,
-                )?,
-                None => builder.ins().iconst(ptr_ty, 0),
-            };
-            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
-            let mut vals = Vec::with_capacity(6);
-            for i in 1..=6 {
-                let v = match args.get(i) {
-                    Some(a) => {
-                        lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?
-                    }
-                    None => builder.ins().iconst(types::I64, 0),
-                };
-                vals.push(coerce_arg_to(builder, v, types::I64)?);
-            }
-            let mut all_args = vec![fn_addr];
-            all_args.extend(vals);
-            let _ = builder.ins().call(fref, &all_args);
-            let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(
-                builder,
-                locals,
-                &intrinsics.body_cl_types,
-                destination.local,
-                unit,
-            );
-            Ok(true)
-        }
-        "gos_rt_go_spawn_call_4" => {
-            let rt_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_go_spawn_call_4",
-                &[types::I64, types::I64, types::I64, types::I64, types::I64],
-                &[],
-            )?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
-            let fn_addr = match args.first() {
-                Some(a) => lower_operand(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    a,
-                    Some(ptr_ty),
-                    intrinsics,
-                )?,
-                None => builder.ins().iconst(ptr_ty, 0),
-            };
-            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
-            let a0 = match args.get(1) {
-                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
-                None => builder.ins().iconst(types::I64, 0),
-            };
-            let a1 = match args.get(2) {
-                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
-                None => builder.ins().iconst(types::I64, 0),
-            };
-            let a2 = match args.get(3) {
-                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
-                None => builder.ins().iconst(types::I64, 0),
-            };
-            let a3 = match args.get(4) {
-                Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
-                None => builder.ins().iconst(types::I64, 0),
-            };
-            let a0 = coerce_arg_to(builder, a0, types::I64)?;
-            let a1 = coerce_arg_to(builder, a1, types::I64)?;
-            let a2 = coerce_arg_to(builder, a2, types::I64)?;
-            let a3 = coerce_arg_to(builder, a3, types::I64)?;
-            let _ = builder.ins().call(fref, &[fn_addr, a0, a1, a2, a3]);
-            let unit = builder.ins().iconst(types::I64, 0);
-            define_var_to(
-                builder,
-                locals,
-                &intrinsics.body_cl_types,
-                destination.local,
-                unit,
             );
             Ok(true)
         }

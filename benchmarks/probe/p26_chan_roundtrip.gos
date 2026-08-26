@@ -6,8 +6,8 @@ fn produce(tx: Sender<i64>) {
 }
 
 fn main() {
-    let (tx, rx) = sync::channel::<i64>()
-    go produce(tx)
+    let tx, rx = sync::channel::<i64>()
+    spawn(|| produce(tx))
     let x = rx.recv().unwrap_or(0i64)
-    println!("{}", x)
+    println("{}", x)
 }

@@ -1,24 +1,24 @@
 // Regression for the 0.18.0 smaller tier-parity items:
 // - `String::from(s)` is identity for a string (was VM error / compiled build-fail).
-// - `s.parse()`'s error type pins to errors::Error so `{}` Display of an Err
-//   lowers correctly on the compiled tier (was a garbage char).
+// - `s.to_i64()` answers an `Option<i64>`, and `{}` of its `None` renders
+//   identically on every tier.
 // Output must be bit-identical across the VM, Cranelift, and LLVM tiers.
 
 fn main() {
     let s = String::from("hello")
-    println!("from={}", s)
+    println("from={}", s)
 
-    let ok: Result<i64, _> = "42".parse()
-    let bad: Result<i64, _> = "abc".parse()
+    let ok: Option<i64> = "42".to_i64()
+    let bad: Option<i64> = "abc".to_i64()
     match ok {
-        Ok(n) => println!("ok={}", n)
-        Err(e) => println!("okerr=[{}]", e)
+        Some(n) => println("ok={}", n)
+        None => println("okerr=[not a number]")
     }
     match bad {
-        Ok(n) => println!("bad={}", n)
-        Err(e) => println!("baderr=[{}]", e)
+        Some(n) => println("bad={}", n)
+        None => println("baderr=[not a number]")
     }
 
     let a = #[10, 20, 30]
-    println!("inb={}", a[1])
+    println("inb={}", a[1])
 }

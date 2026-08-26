@@ -14,23 +14,23 @@ use std::http::static_files
 fn main() {
     let args = env::args()
     if args.len() != 2 {
-        eprintln!("usage: gos run scripts/serve_site.gos <port> <directory>")
+        eprintln("usage: gos run scripts/serve_site.gos <port> <directory>")
         process::exit(2)
     }
     let Some(port) = args[0].to_i64() else {
-        eprintln!("serve_site: {} is not a port number", args[0])
+        eprintln("serve_site: {} is not a port number", args[0])
         process::exit(2)
     }
     let directory = args[1]
-    if !fs::is_dir(&directory) {
-        eprintln!("serve_site: {} is not a directory", directory)
+    if !fs::is_dir(directory) {
+        eprintln("serve_site: {} is not a directory", directory)
         process::exit(2)
     }
 
-    let address = format!("0.0.0.0:{}", port)
-    let server = static_files::FileServer::new(&directory, "")
-    if let Err(e) = http::serve(&address, server) {
-        eprintln!("serve_site: {}", e)
+    let address = format("0.0.0.0:{}", port)
+    let server = static_files::FileServer::new(directory, "")
+    if let Err(e) = http::serve(address, server) {
+        eprintln("serve_site: {}", e)
         process::exit(1)
     }
 }

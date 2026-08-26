@@ -22,7 +22,7 @@ fn refuse(name: String) -> Result<String, errors::Error> {
 // A long job that ends when its cohort is cancelled: the receive
 // reports `None` under cancellation, exactly as a closed channel does.
 fn drain(rx: Receiver<i64>) -> Result<i64, errors::Error> {
-    defer println!("  drain stopped cleanly")
+    defer println("  drain stopped cleanly")
     let mut seen = 0
     while let Some(_job) = rx.recv() {
         seen += 1
@@ -37,40 +37,40 @@ fn fan_out() -> Result<(), errors::Error> {
     cohort {
         let a = spawn(|| fetch("alpha", 20))
         let b = spawn(|| fetch("beta", 10))
-        println!("fetched {} and {}", a.join()??, b.join()??)
+        println("fetched {} and {}", a.join()??, b.join()??)
     }
 }
 
 fn main() {
-    println!("fan-out: {:?}", fan_out())
+    println("fan-out: {:?}", fan_out())
 
     // One child fails: its sibling is cancelled and the block reports
     // the failure. The sibling still runs its own `defer` on the way
     // out - cancellation is an orderly exit, never a kill.
-    let (_tx, rx) = channel(1)
+    let _tx, rx = channel(1)
     let failed = cohort {
         let _worker = spawn(|| drain(rx))
         let _bad = spawn(|| refuse("gamma"))
     }
-    println!("fail-fast: {:?}", failed)
+    println("fail-fast: {:?}", failed)
 
     // Collect every failure instead of stopping at the first.
     let collected = cohort(policy: Policy::CollectAll) {
         let _x = spawn(|| refuse("delta"))
         let _y = spawn(|| refuse("epsilon"))
     }
-    println!("collect-all: {:?}", collected)
+    println("collect-all: {:?}", collected)
 
     // Bound the whole block by a deadline.
     let bounded = cohort(timeout: 50) {
         let _slow = spawn(|| fetch("zeta", 30_000))
     }
-    println!("timeout: {}", bounded.is_err())
+    println("timeout: {}", bounded.is_err())
 
-    // `go` is the detached form: nothing joins it and nothing waits.
-    // Suited to work with no relationship to this block - and note the
-    // program still cannot end with it running, because `main` itself
-    // runs inside a cohort.
-    go fetch("background", 1)
-    println!("detached goroutine started")
+    // A spawn written outside any `cohort { }` block attaches to the
+    // implicit root cohort `main` runs inside, so nothing here is
+    // detached: the program cannot end while it is still running, and a
+    // failure nobody joined is reported on stderr at exit.
+    spawn(|| fetch("background", 1))
+    println("root-cohort goroutine started")
 }

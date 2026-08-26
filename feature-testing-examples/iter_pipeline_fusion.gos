@@ -8,45 +8,45 @@ use std::iter
 fn main() {
     // filter + sum_by (the canonical shape)
     let a = iter::range_inclusive(1, 100)
-        |> |v| iter::filter(|n: i64| n % 2 == 0, v)
-        |> |v| iter::sum_by(|n: i64| n * n, v)
-    println!("filter+sum_by: {a}")
+        |> |v| iter::filter(v, |n: i64| n % 2 == 0)
+        |> |v| iter::sum_by(v, |n: i64| n * n)
+    println("filter+sum_by: {a}")
 
     // bare sum / count / product over ranges
-    println!("sum: {}", iter::range(1, 101) |> iter::sum)
-    println!("count: {}", iter::range(0, 100) |> |v| iter::filter(|n: i64| n % 2 == 0, v) |> iter::count)
-    println!("product: {}", iter::range_inclusive(1, 6) |> iter::product)
-    println!("product_by: {}", iter::range_inclusive(1, 5) |> |v| iter::product_by(|n: i64| n + 1, v))
+    println("sum: {}", iter::range(1, 101) |> iter::sum)
+    println("count: {}", iter::range(0, 100) |> |v| iter::filter(v, |n: i64| n % 2 == 0) |> iter::count)
+    println("product: {}", iter::range_inclusive(1, 6) |> iter::product)
+    println("product_by: {}", iter::range_inclusive(1, 5) |> |v| iter::product_by(v, |n: i64| n + 1))
 
     // fold
-    println!("fold: {}", iter::range_inclusive(1, 20) |> |v| iter::fold(0, |acc: i64, n: i64| acc + n, v))
+    println("fold: {}", iter::range_inclusive(1, 20) |> |v| iter::fold(v, 0, |acc: i64, n: i64| acc + n))
 
     // map, then map + filter
-    println!("map+sum: {}", iter::range(1, 11) |> |v| iter::map(|n: i64| n * n, v) |> iter::sum)
+    println("map+sum: {}", iter::range(1, 11) |> |v| iter::map(v, |n: i64| n * n) |> iter::sum)
     let b = iter::range_inclusive(1, 30)
-        |> |v| iter::map(|n: i64| n + 1, v)
-        |> |v| iter::filter(|n: i64| n % 3 == 0, v)
-        |> |v| iter::sum_by(|n: i64| n, v)
-    println!("map+filter+sum_by: {b}")
+        |> |v| iter::map(v, |n: i64| n + 1)
+        |> |v| iter::filter(v, |n: i64| n % 3 == 0)
+        |> |v| iter::sum_by(v, |n: i64| n)
+    println("map+filter+sum_by: {b}")
 
     // short-circuiting any / all
-    println!("any-hit: {}", iter::range(1, 50) |> |v| iter::any(|n: i64| n == 42, v))
-    println!("any-miss: {}", iter::range(1, 10) |> |v| iter::any(|n: i64| n == 42, v))
-    println!("all-true: {}", iter::range_inclusive(2, 20) |> |v| iter::all(|n: i64| n > 1, v))
-    println!("all-false: {}", iter::range_inclusive(0, 20) |> |v| iter::all(|n: i64| n > 1, v))
+    println("any-hit: {}", iter::range(1, 50) |> |v| iter::any(v, |n: i64| n == 42))
+    println("any-miss: {}", iter::range(1, 10) |> |v| iter::any(v, |n: i64| n == 42))
+    println("all-true: {}", iter::range_inclusive(2, 20) |> |v| iter::all(v, |n: i64| n > 1))
+    println("all-false: {}", iter::range_inclusive(0, 20) |> |v| iter::all(v, |n: i64| n > 1))
 
     // two filters, and an empty range
-    println!("two-filter: {}", iter::range(1, 100) |> |v| iter::filter(|n: i64| n % 2 == 0, v) |> |v| iter::filter(|n: i64| n % 3 == 0, v) |> iter::sum)
-    println!("empty: {}", iter::range(10, 10) |> iter::sum)
+    println("two-filter: {}", iter::range(1, 100) |> |v| iter::filter(v, |n: i64| n % 2 == 0) |> |v| iter::filter(v, |n: i64| n % 3 == 0) |> iter::sum)
+    println("empty: {}", iter::range(10, 10) |> iter::sum)
 
     // a captured variable inside a stage closure
     let step = 7
-    println!("capture: {}", iter::range(1, 40) |> |v| iter::filter(|n: i64| n % step == 0, v) |> iter::sum)
+    println("capture: {}", iter::range(1, 40) |> |v| iter::filter(v, |n: i64| n % step == 0) |> iter::sum)
 
     // for_each drives side effects in element order
     let mut acc = 0
-    iter::range_inclusive(1, 5) |> |v| iter::for_each(|n: i64| acc += n, v)
-    println!("for_each: {acc}")
+    iter::range_inclusive(1, 5) |> |v| iter::for_each(v, |n: i64| acc += n)
+    println("for_each: {acc}")
 }
 
 #[cfg(test)]
@@ -57,15 +57,15 @@ mod fusion_tests {
     #[test]
     fn filter_sum_by_matches_reference() {
         let got = iter::range_inclusive(1, 10)
-            |> |v| iter::filter(|n: i64| n % 2 == 0, v)
-            |> |v| iter::sum_by(|n: i64| n * n, v)
+            |> |v| iter::filter(v, |n: i64| n % 2 == 0)
+            |> |v| iter::sum_by(v, |n: i64| n * n)
         // 2^2 + 4^2 + 6^2 + 8^2 + 10^2
-        let _ = testing::check_eq(&got, &220, "sum of even squares 1..=10")
+        let _ = testing::check_eq(got, 220, "sum of even squares 1..=10")
     }
 
     #[test]
     fn empty_range_reduces_to_identity() {
-        let _ = testing::check_eq(&(iter::range(5, 5) |> iter::sum), &0, "empty sum")
-        let _ = testing::check_eq(&(iter::range(5, 5) |> iter::product), &1, "empty product")
+        let _ = testing::check_eq((iter::range(5, 5) |> iter::sum), 0, "empty sum")
+        let _ = testing::check_eq((iter::range(5, 5) |> iter::product), 1, "empty product")
     }
 }

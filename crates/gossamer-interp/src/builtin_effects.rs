@@ -88,7 +88,7 @@ pub fn builtin_effects(name: &str) -> BuiltinEffects {
             .union(BuiltinEffects::NONDETERMINISTIC);
     }
     if has_prefix(name, &["channel::", "sync::", "thread::"])
-        || matches!(name, "go" | "spawn" | "select" | "sleep" | "time::sleep")
+        || matches!(name, "spawn" | "select" | "sleep" | "time::sleep")
     {
         effects = effects.union(BuiltinEffects::SCHEDULER_AWARE);
     }

@@ -28,20 +28,20 @@ fn main() {
     // The source binding's last read precedes the upgrade.
     let a = Node { v: 7 }
     let wa = a.downgrade()
-    println!("a={}", a.v)
+    println("a={}", a.v)
     match wa.upgrade() {
-        Some(p) => println!("case1={}", p.v)
-        None => println!("case1=NONE")
+        Some(p) => println("case1={}", p.v)
+        None => println("case1=NONE")
     }
 
     // The downgrade is the binding's only read, and the weak is passed on.
     let b = Node { v: 7 }
     let wb = b.downgrade()
-    println!("case2={}", probe(wb))
+    println("case2={}", probe(wb))
 
     // No binding at all: downgrade and upgrade in one expression.
     let c = Node { v: 7 }
-    println!(
+    println(
         "case3={}"
         if let Some(p) = c.downgrade().upgrade() { p.v } else { -1 }
     )
@@ -50,8 +50,8 @@ fn main() {
     let d = Labelled { v: 11, tag: "eleven" }
     let wd = d.downgrade()
     match wd.upgrade() {
-        Some(p) => println!("labelled={} {}", p.v, p.tag)
-        None => println!("labelled=NONE")
+        Some(p) => println("labelled={} {}", p.v, p.tag)
+        None => println("labelled=NONE")
     }
 
     // Writing the source after the downgrade leaves the weak observing the
@@ -60,8 +60,8 @@ fn main() {
     let we = e.downgrade()
     e.v = 9
     match we.upgrade() {
-        Some(p) => println!("mutated={} {}", p.v, e.v)
-        None => println!("mutated=NONE")
+        Some(p) => println("mutated={} {}", p.v, e.v)
+        None => println("mutated=NONE")
     }
 
     // Repeated downgrades at one site: each overwrites the previous pin, so
@@ -71,7 +71,7 @@ fn main() {
         let n = Node { v: i }
         total += probe(n.downgrade())
     }
-    println!("loop_total={}", total)
+    println("loop_total={}", total)
 
-    println!("escaped={}", probe(escaped_weak()))
+    println("escaped={}", probe(escaped_weak()))
 }

@@ -9,7 +9,7 @@ enum Expr {
     Add(Expr, Expr)
 }
 
-fn eval(e: &Expr) -> i64 {
+fn eval(e: Expr) -> i64 {
     match e {
         Lit(n) => *n
         Add(a, b) => eval(a) + eval(b)
@@ -22,7 +22,7 @@ enum Colour {
     Blue
 }
 
-fn code(c: &Colour) -> i64 {
+fn code(c: Colour) -> i64 {
     match c {
         Red => 1
         Green => 2
@@ -32,15 +32,15 @@ fn code(c: &Colour) -> i64 {
 
 fn main() {
     let e = Add(Lit(2), Add(Lit(3), Lit(4)))
-    println!("{}", e |> |x| eval(&x))
+    println("{}", e |> |x| eval(x))
 
-    let by_ref = |x: &Expr| eval(x)
-    println!("{}", by_ref(&e))
+    let by_ref = |x: Expr| eval(x)
+    println("{}", by_ref(e))
 
-    let doubled = |x: Expr| eval(&x) * 2
-    println!("{}", doubled(e))
+    let doubled = |x: Expr| eval(x) * 2
+    println("{}", doubled(e))
 
     // A payload-free enum lowers to a bare discriminant word.
     let c = Green
-    println!("{}", c |> |x| code(&x))
+    println("{}", c |> |x| code(x))
 }

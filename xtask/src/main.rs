@@ -430,7 +430,7 @@ const fn public_api_kind(kind: StdItemKind) -> &'static str {
         StdItemKind::Function => "function",
         StdItemKind::Type => "type",
         StdItemKind::Trait => "trait",
-        StdItemKind::Macro => "macro",
+        StdItemKind::Builtin => "builtin",
         StdItemKind::Const => "const",
     }
 }
@@ -683,7 +683,7 @@ fn kind_label(kind: StdItemKind) -> &'static str {
         StdItemKind::Function => "fn",
         StdItemKind::Type => "type",
         StdItemKind::Trait => "trait",
-        StdItemKind::Macro => "macro",
+        StdItemKind::Builtin => "builtin",
         StdItemKind::Const => "const",
     }
 }
@@ -696,7 +696,7 @@ fn kind_rank(kind: StdItemKind) -> u8 {
         StdItemKind::Type => 0,
         StdItemKind::Trait => 1,
         StdItemKind::Function => 2,
-        StdItemKind::Macro => 3,
+        StdItemKind::Builtin => 3,
         StdItemKind::Const => 4,
     }
 }
@@ -928,12 +928,6 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "Format macros require a literal template so placeholders can be checked at compile time.",
     ),
     (
-        "GP0025",
-        "Parser",
-        "formatting macro used as a pipe step",
-        "A macro takes its arguments as written, so the piped value has no slot of its own. Write the step as a closure: `value |> |v| println!(\"{}\", v)`.",
-    ),
-    (
         "GP0026",
         "Parser",
         "inclusive range missing upper bound",
@@ -1024,6 +1018,120 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "A `|>` step that writes its own arguments leaves the piped value no slot. Write it as a closure whose parameter is that slot: `x |> |v| f(a, v)`.",
     ),
     (
+        "GP0042",
+        "Parser",
+        "targets written as a parenthesised tuple",
+        "A binding and an assignment both list their targets without parentheses: `let a, b = value` and `a, b = x, y`. Parentheses group a pattern that sits beside others - a `match` arm, a `for` binding, a parameter, or a nested element of the list.",
+    ),
+    (
+        "GP0043",
+        "Parser",
+        "`mod` declaration ended in `;`",
+        "A statement ends at its newline, and a trailing semicolon is invalid everywhere else in the language. Write `mod name`.",
+    ),
+    (
+        "GP0044",
+        "Parser",
+        "callable type written as something other than `Fn`",
+        "The language has one callable type, `Fn(args) -> ret`. There is no raw function-pointer shape and no `FnMut` / `FnOnce` distinction to draw.",
+    ),
+    (
+        "GP0045",
+        "Parser",
+        "argument label bound with `=`",
+        "Every keyed form in the language binds with `:` - a struct field, a map entry, a `cohort` header setting. Write `name: value`.",
+    ),
+    (
+        "GP0046",
+        "Parser",
+        "`unsafe` grants nothing",
+        "No operation is withheld outside an `unsafe` block or from a safe `fn`. The keyword stays reserved for a future raw-FFI story.",
+    ),
+    (
+        "GP0047",
+        "Parser",
+        "opaque alias written `type X = new T`",
+        "`new` reads as allocation to a reader arriving from any other language. Write `newtype X = T`.",
+    ),
+    (
+        "GP0048",
+        "Parser",
+        "`go` is retired",
+        "Every goroutine is a `spawn` attached to the enclosing cohort, and `main` is an implicit root cohort. `go` evaluated its operands at the spawn site, so `--fix` hoists a computed operand into a temporary.",
+    ),
+    (
+        "GP0049",
+        "Parser",
+        "compiler-known call written with a `!`",
+        "The set of compiler-known names is closed and recognised at the `(`, so there is nothing a sigil disambiguates. Write `println(..)`, `format(..)`, `matches(..)`.",
+    ),
+    (
+        "GP0050",
+        "Parser",
+        "enum representation is not an unsigned width",
+        "A discriminant is a count, so its store is unsigned. Write `enum Name : u8 { .. }`, with a width between 1 and 64 bits.",
+    ),
+    (
+        "GP0051",
+        "Parser",
+        "`regex!` / `sql!` moved into their modules",
+        "Write `regex::compile(\"…\")` and `sql::statement(\"…\")`. A literal argument is still validated while the program is compiled.",
+    ),
+    (
+        "GT0079",
+        "Types",
+        "pointer wrapper written",
+        "Every value is heap-shared and reference-counted already, so `Box<T>` / `Rc<T>` / `Arc<T>` name no choice the writer has to make. Write the inner type.",
+    ),
+    (
+        "GT0080",
+        "Types",
+        "`String::parse` called",
+        "The parse surface is `to_i64`, `to_f64`, and `to_bool`: each parses the whole string and answers an `Option<T>`. Add `.ok_or(..)` where a `Result` is wanted.",
+    ),
+    (
+        "GT0081",
+        "Types",
+        "enum representation too narrow for its variants",
+        "A declared width is exact - it is what the discriminant is stored in - so it is never widened silently. Write a width that holds every variant, or drop it.",
+    ),
+    (
+        "GT0082",
+        "Types",
+        "reference passed where a value is taken",
+        "A parameter that is not `&mut` takes the value, and a reference names one rather than being one, so the compiled tiers would hand the callee the address. Write `*x`.",
+    ),
+    (
+        "GT0083",
+        "Types",
+        "write through a value that is not a reference",
+        "`*` reaches the place a reference names, and a value has no such place, so the write would reach nothing. Write the binding directly, or make the parameter `&mut T` and pass `&mut` at the call site.",
+    ),
+    (
+        "GP0052",
+        "Parser",
+        "build-time validated call without a literal",
+        "`sql::statement` was handed something other than a literal. The statement is checked while the program is compiled, so it has to be there to check; a statement built at run time is an ordinary `String` and needs no wrapper.",
+    ),
+    (
+        "GP0053",
+        "Parser",
+        "`Display` rendering declared as `to_string`",
+        "Both rendering contracts declare one method that answers a `String`, so both are written `fn fmt`; the `impl` header is what decides which channel a value reaches, `{}` taking `Display` and `{:?}` taking `Debug`. `x.to_string()` still renders through `Display`.",
+    ),
+    (
+        "GP0054",
+        "Parser",
+        "shared reference in parameter position",
+        "An argument is passed without copying whatever its type, and a callee cannot write to the caller's variable unless the parameter says `&mut`, so `f(m: &Map)` and `f(m: Map)` have the same cost and the same guarantee. A sequence view is written `[T]`, and `&mut [T]` is the form that writes through. `--fix` drops the `&`.",
+    ),
+    (
+        "GP0055",
+        "Parser",
+        "shared reference on a call argument",
+        "No parameter is a shared reference, so the sigil changes nothing: an argument is passed without copying either way, and a callee writes to the caller's variable only through a `&mut` parameter, which is spelled `&mut` at the call too. `--fix` drops the `&`.",
+    ),
+    (
         "GR0001",
         "Resolve",
         "unresolved name",
@@ -1074,8 +1182,26 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
     (
         "GR0018",
         "Resolver",
-        "standard library macro named as a value path",
-        "A path named one of the standard library's macros - `println`, `format`, `panic`, and the rest of the fixed set. A macro expands where it is written and the runtime binds no callable for it, so the path has nothing to call or pass as a value. Write it as `name!(..)`; a macro needs no import.",
+        "compiler-known call named as a value path",
+        "A path named one of the compiler-known calls - `println`, `format`, `panic`, and the rest of the fixed set. Each expands where it is written and the runtime binds no callable for it, so the path has nothing to call or pass as a value. Write it as `name(..)`; it needs no import.",
+    ),
+    (
+        "GR0019",
+        "Resolver",
+        "two dependency packages under one module name",
+        "Two dependency packages are reached under one module name. A `-` is not part of an identifier, so a package name carrying one is reached from source as the same name with `_` in its place, which two packages can share. Give one of them a name of its own in `[dependencies]`, or import each through `use \"id\" as name`.",
+    ),
+    (
+        "GR0020",
+        "Resolver",
+        "declaration under a compiler-known call name",
+        "A `fn` or a binding was declared under one of the compiler-known call names - `println`, `format`, `matches`, and the rest of the fixed set. Each expands where it is written, so the declaration could never be reached. Give it a name of its own.",
+    ),
+    (
+        "GR0021",
+        "Resolve",
+        "std free call written data-last",
+        "A std free function was called with its data argument in the slot it occupied before every module took its data first. The call still means what it did, so nothing else in the body is affected; write the data argument first, which is what makes `iter::map(xs, f)` read as the `xs.map(f)` it stands for.",
     ),
     (
         "GT0001",

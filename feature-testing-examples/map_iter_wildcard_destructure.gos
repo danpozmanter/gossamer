@@ -11,9 +11,9 @@ struct Rec { label: String, weight: i64 }
 
 fn main() {
     let mut m: Map<i64, Rec> = Map::new()
-    m.insert(1, Rec { label: format!("a"), weight: 10 })
-    m.insert(2, Rec { label: format!("b"), weight: 20 })
-    m.insert(3, Rec { label: format!("c"), weight: 30 })
+    m.insert(1, Rec { label: format("a"), weight: 10 })
+    m.insert(2, Rec { label: format("b"), weight: 20 })
+    m.insert(3, Rec { label: format("c"), weight: 30 })
 
     // `(_, v)` over struct values: value binds as a box ref, `v.weight` derefs.
     let mut value_sum = 0
@@ -35,14 +35,14 @@ fn main() {
 
     // String-keyed map, `(_, v)`.
     let mut sm: Map<String, i64> = Map::new()
-    sm.insert(format!("x"), 5)
-    sm.insert(format!("y"), 7)
+    sm.insert(format("x"), 5)
+    sm.insert(format("y"), 7)
     let mut str_value_sum = 0
     for (_, v) in sm.iter() {
         str_value_sum += v
     }
 
-    println!(
+    println(
         "value_sum={} key_sum={} count={} str_value_sum={}"
         value_sum, key_sum, count, str_value_sum
     )

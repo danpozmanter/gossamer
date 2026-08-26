@@ -1608,20 +1608,27 @@ impl Vm {
                             let mut number = itoa::Buffer::new();
                             let rendered = number.format(value);
                             let total = width.saturating_sub(rendered.len());
-                            let (left, right) = match align {
-                                1 => (0, total),
-                                2 => (total / 2, total - total / 2),
-                                _ => (total, 0),
-                            };
                             let mut out = String::with_capacity(
                                 prefix.len()
                                     + rendered.len()
                                     + total.saturating_mul(fill.len_utf8()),
                             );
                             out.push_str(prefix);
-                            out.extend(std::iter::repeat_n(fill, left));
-                            out.push_str(rendered);
-                            out.extend(std::iter::repeat_n(fill, right));
+                            if align == gossamer_ast::PAD_ALIGN_SIGN_AWARE_ZERO {
+                                let split = gossamer_ast::sign_aware_prefix_len(rendered);
+                                out.push_str(&rendered[..split]);
+                                out.extend(std::iter::repeat_n('0', total));
+                                out.push_str(&rendered[split..]);
+                            } else {
+                                let (left, right) = match align {
+                                    1 => (0, total),
+                                    2 => (total / 2, total - total / 2),
+                                    _ => (total, 0),
+                                };
+                                out.extend(std::iter::repeat_n(fill, left));
+                                out.push_str(rendered);
+                                out.extend(std::iter::repeat_n(fill, right));
+                            }
                             registers[*dst as usize] = Value::String(out.into());
                         }
                         crate::bytecode::WideOp::MapIncAt {
@@ -4541,45 +4548,6 @@ impl Vm {
                     let has = map.lock().contains_key(&key);
                     registers[dst_v as usize] = Value::Bool(has);
                 },
-                Op::Spawn { callee, args, argc } => {
-                    let callee_val = registers[callee as usize].clone();
-                    let arg_values: Vec<Value> = (0..argc as usize)
-                        .map(|i| registers[args as usize + i].clone())
-                        .collect();
-                    self.spawn_goroutine_native(callee_val, arg_values);
-                }
-                Op::SpawnMethod {
-                    receiver,
-                    name_idx,
-                    args,
-                    argc,
-                } => {
-                    let recv = registers[receiver as usize].clone();
-                    let name = &*chunk.globals[name_idx as usize];
-                    // Resolve method dispatch the same way `Op::MethodCall`
-                    // does (qualified key first, bare name fallback). The
-                    // resolved global is what the spawned goroutine
-                    // applies; the receiver is prepended to the arg
-                    // vector so the callee sees `[receiver, a0, a1, …]`.
-                    let resolved = self
-                        .qualified_key(&recv, name)
-                        .and_then(|qual| self.lookup_global(qual.as_ref()))
-                        .or_else(|| self.lookup_builtin_method(name));
-                    let mut arg_values: Vec<Value> = Vec::with_capacity(argc as usize + 1);
-                    arg_values.push(recv);
-                    for i in 0..argc as usize {
-                        arg_values.push(registers[args as usize + i].clone());
-                    }
-                    let callee_val = match resolved {
-                        Some(Global::Value(v)) => v,
-                        Some(Global::MutStatic(cell)) => cell.lock().clone(),
-                        Some(Global::Fn(_)) => Value::String(SmolStr::from(name.to_string())),
-                        None => {
-                            return Err(self.unresolved(name));
-                        }
-                    };
-                    self.spawn_goroutine_native(callee_val, arg_values);
-                }
             }
         }
     }

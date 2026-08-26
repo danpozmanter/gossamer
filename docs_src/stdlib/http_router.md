@@ -12,7 +12,7 @@ The [implementation source](https://github.com/gossamer-lang/gossamer/blob/main/
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`Handler`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `trait Handler` | Anything callable as `Fn(&Request, &Params) -> Response`. |
+| [`Handler`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `trait Handler` | Anything callable as `Fn(Request, Params) -> Response`. |
 | [`Params`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `type Params` | Captured path parameters. Read inside a handler with `r.path_value(name) -> String`; returns `""` for an undeclared name. All tiers. |
 | [`Router`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `type Router` | Routing table. Build with `Router::new()`, register routes via the verb methods, then pass to `http::serve`. Verb methods return the router so they chain. |
 | [`add`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_router.rs) | `fn add(router: http::router::Router, method: String, pattern: String) -> Result<(), errors::Error>` | Register a pattern-only route: `(router, method, pattern)`. Used with `lookup` for low-level dispatch. |
@@ -66,6 +66,6 @@ fn show_user(r: http::Request) -> http::Response {
     let id = r.path_value("id")           // -> String, "" if absent
     let n  = r.path_int("id")             // -> Option<i64>
     let f  = r.path_float("qty")          // -> Option<f64>
-    http::Response::text(200, format!("id={}", id))
+    http::Response::text(200, format("id={}", id))
 }
 ```

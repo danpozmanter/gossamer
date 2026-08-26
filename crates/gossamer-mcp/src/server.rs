@@ -195,7 +195,7 @@ mod tests {
     fn skill_card_teaches_explicit_imports_and_direct_metadata_access() {
         assert!(SKILL_CARD.contains("Import everything you name."));
         assert!(SKILL_CARD.contains("entry.is_symlink"));
-        assert!(SKILL_CARD.contains("fs::is_symlink(&entry.path)"));
+        assert!(SKILL_CARD.contains("fs::is_symlink(entry.path)"));
         assert!(SKILL_CARD.contains("Calls never create `&mut` implicitly"));
     }
 

@@ -7,7 +7,7 @@
 struct Holder { o: Option<i64>, label: Option<String> }
 
 // fn taking `&Option<T>` and reading the payload by reference.
-fn read_opt(o: &Option<i64>) -> i64 {
+fn read_opt(o: Option<i64>) -> i64 {
     match o {
         Some(x) => *x
         None => -1
@@ -15,7 +15,7 @@ fn read_opt(o: &Option<i64>) -> i64 {
 }
 
 // fn taking `&Result<T, E>`, reading both the Ok and Err payloads.
-fn read_res(r: &Result<i64, i64>) -> i64 {
+fn read_res(r: Result<i64, i64>) -> i64 {
     match r {
         Ok(x) => *x + 100
         Err(e) => -e
@@ -24,7 +24,7 @@ fn read_res(r: &Result<i64, i64>) -> i64 {
 
 // fn taking `&Option<String>` to exercise an RC (String) payload
 // flowing through the borrow.
-fn read_name(o: &Option<String>) -> String {
+fn read_name(o: Option<String>) -> String {
     match o {
         Some(s) => s
         None => "none"
@@ -32,12 +32,12 @@ fn read_name(o: &Option<String>) -> String {
 }
 
 // Returns the field value. References remain call-scoped in Gossamer 0.40.
-fn first_field(h: &Holder) -> Option<i64> {
+fn first_field(h: Holder) -> Option<i64> {
     h.o
 }
 
 // Recursion blocks inlining, forcing a real call across the ABI.
-fn deep_read(o: &Option<i64>, n: i64) -> i64 {
+fn deep_read(o: Option<i64>, n: i64) -> i64 {
     if n == 0 {
         return read_opt(o)
     }
@@ -58,10 +58,10 @@ fn main() {
         Ok(x) => *x
         Err(e) => -e
     }
-    println!("inline opt={} res={}", m_opt, m_res)
+    println("inline opt={} res={}", m_opt, m_res)
 
     // fn taking &Option / &Result.
-    println!("call opt={} res={} err={}", read_opt(&opt), read_res(&res), read_res(&err))
+    println("call opt={} res={} err={}", read_opt(opt), read_res(res), read_res(err))
 
     // Struct field of Option matched by reference and returned by value.
     let h = Holder { o: Some(99), label: Some("ada") }
@@ -69,12 +69,12 @@ fn main() {
         Some(x) => *x
         None => -1
     }
-    let field_returned = match first_field(&h) {
+    let field_returned = match first_field(h) {
         Some(x) => *x
         None => -1
     }
-    println!("field inline={} returned={}", field_inline, field_returned)
-    println!("name {}", read_name(&h.label))
+    println("field inline={} returned={}", field_inline, field_returned)
+    println("name {}", read_name(h.label))
 
     // &Option in a vec: borrow each element and read its payload.
     let xs: Vec<Option<i64>> = Vec::from([Some(1), None, Some(3), Some(4)])
@@ -85,8 +85,8 @@ fn main() {
             None => 0
         }
     }
-    println!("vec_sum {}", sum)
+    println("vec_sum {}", sum)
 
     // Borrow crossing a non-inlined recursive boundary.
-    println!("deep {}", deep_read(&opt, 4))
+    println("deep {}", deep_read(opt, 4))
 }

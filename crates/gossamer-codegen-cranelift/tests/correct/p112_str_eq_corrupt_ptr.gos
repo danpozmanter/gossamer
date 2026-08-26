@@ -17,5 +17,5 @@ fn main() {
         if args[i] == "two" { found_two = true }
         i += 1
     }
-    println!("found_one={} found_two={}", found_one, found_two)
+    println("found_one={} found_two={}", found_one, found_two)
 }

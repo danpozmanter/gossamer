@@ -8,23 +8,23 @@ fn sentinel_probe() {
     let sentinel = errors::new("not found")
     let lookalike = errors::new("not found")
     let wrapped = errors::wrap(sentinel, "loading config")
-    println!("identity_hit={}", errors::is(wrapped, sentinel))
-    println!("identity_miss={}", errors::is(wrapped, lookalike))
-    println!("message_hit={}", errors::is(wrapped, "not found"))
-    println!("message_miss={}", errors::is(wrapped, "denied"))
+    println("identity_hit={}", errors::is(wrapped, sentinel))
+    println("identity_miss={}", errors::is(wrapped, lookalike))
+    println("message_hit={}", errors::is(wrapped, "not found"))
+    println("message_miss={}", errors::is(wrapped, "denied"))
 }
 
 fn main() {
     let root = errors::new("EACCES")
     let outer = errors::wrap(root, "open /etc/passwd")
-    println!("message={}", outer.message())
-    println!("display={}", outer)
+    println("message={}", outer.message())
+    println("display={}", outer)
     match outer.cause() {
-        Some(c) => println!("cause={}", c.message())
-        None => println!("cause=none")
+        Some(c) => println("cause={}", c.message())
+        None => println("cause=none")
     }
     for link in outer.chain() {
-        println!("link={}", link.message())
+        println("link={}", link.message())
     }
 
     let tagged = errors::new("query failed")
@@ -32,15 +32,15 @@ fn main() {
         .with_field("op", "insert")
         .with_field("sqlstate", "23505")
     match tagged.field("sqlstate") {
-        Some(v) => println!("sqlstate={}", v)
-        None => println!("sqlstate=none")
+        Some(v) => println("sqlstate={}", v)
+        None => println("sqlstate=none")
     }
     match tagged.field("absent") {
-        Some(v) => println!("absent={}", v)
-        None => println!("absent=none")
+        Some(v) => println("absent={}", v)
+        None => println("absent=none")
     }
     for (key, value) in tagged.fields() {
-        println!("field {}={}", key, value)
+        println("field {}={}", key, value)
     }
 
     sentinel_probe()

@@ -39,7 +39,7 @@ fn main() {
         None => -1
     }
 
-    println!(
+    println(
         "g={} has={} missing={} popped={} len={} tg={}"
         g, has, missing, popped, len_after_pop, tg
     )

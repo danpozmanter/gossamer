@@ -30,7 +30,7 @@ struct Point {
 }
 
 fn show(p: Point) {
-    println!("Point {{ x: {}, y: {} }}", p.x, p.y)
+    println("Point {{ x: {}, y: {} }}", p.x, p.y)
 }
 
 fn main() {

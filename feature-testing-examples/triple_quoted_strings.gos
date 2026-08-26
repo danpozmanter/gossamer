@@ -8,7 +8,7 @@ fn page() -> String {
     """
 }
 
-fn scan(text: &String, rounds: i64) -> i64 {
+fn scan(text: String, rounds: i64) -> i64 {
     let mut total = 0
     for _ in 0..rounds {
         total += text.len()
@@ -17,33 +17,33 @@ fn scan(text: &String, rounds: i64) -> i64 {
 }
 
 fn main() {
-    println!("{}", page())
-    println!("scan:{}", scan(&page(), 100))
+    println("{}", page())
+    println("scan:{}", scan(page(), 100))
     let empty = """
     """
-    println!("empty:{}:", empty)
+    println("empty:{}:", empty)
     let trailing = """
     one
 
     """
-    println!("trailing:{}:", trailing)
+    println("trailing:{}:", trailing)
     let hugging = """
     two"""
-    println!("hugging:{}:", hugging)
+    println("hugging:{}:", hugging)
     let inline = """a"b"""
-    println!("inline:{}", inline)
+    println("inline:{}", inline)
     let tabbed = """
     a\tb
     """
-    println!("tabbed:{}", tabbed)
+    println("tabbed:{}", tabbed)
     let deeper = """
         indented once
     back
     """
-    println!("deeper:{}:", deeper)
+    println("deeper:{}:", deeper)
     match hugging {
         """
-        two""" => println!("match: yes")
-        _ => println!("match: no")
+        two""" => println("match: yes")
+        _ => println("match: no")
     }
 }

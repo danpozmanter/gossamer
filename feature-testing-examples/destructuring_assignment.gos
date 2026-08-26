@@ -11,46 +11,46 @@ fn pair() -> (String, Vec<i64>) {
 fn main() {
     let mut x = 0
     let mut y = 0
-    (x, y) = (x + 1, y + 1)
-    println!("{} {}", x, y)
+    x, y = (x + 1, y + 1)
+    println("{} {}", x, y)
 
-    (x, y) = (y, x)
-    println!("{} {}", x, y)
+    x, y = (y, x)
+    println("{} {}", x, y)
 
     let mut a = 1
     let mut b = 2
     let mut c = 3
-    (a, b, c) = (b, c, a)
-    println!("{} {} {}", a, b, c)
+    a, b, c = (b, c, a)
+    println("{} {} {}", a, b, c)
 
     let mut p = Point { x: 0, y: 0 }
     let mut v = #[0, 0]
-    (p.x, p.y, v[0], v[1]) = (5, 6, 7, 8)
-    println!("{} {} {} {}", p.x, p.y, v[0], v[1])
+    p.x, p.y, v[0], v[1] = (5, 6, 7, 8)
+    println("{} {} {} {}", p.x, p.y, v[0], v[1])
 
     let mut t = (0, 0)
-    (t.0, t.1) = (9, 10)
-    println!("{} {}", t.0, t.1)
+    t.0, t.1 = (9, 10)
+    println("{} {}", t.0, t.1)
 
     let mut s = ""
     let mut xs = #[]
-    (s, xs) = pair()
-    println!("{} {:?}", s, xs)
+    s, xs = pair()
+    println("{} {:?}", s, xs)
 
     let mut m = 0
     let mut n = 0
     let mut o = 0
-    (m, (n, o)) = (1, (2, 3))
-    println!("{} {} {}", m, n, o)
+    m, (n, o) = (1, (2, 3))
+    println("{} {} {}", m, n, o)
 
     let mut kept = 0
-    (_, kept) = (99, 42)
-    println!("{}", kept)
+    _, kept = (99, 42)
+    println("{}", kept)
 
     let mut prev = 0
     let mut cur = 1
     for _ in 0..8 {
-        (prev, cur) = (cur, prev + cur)
+        prev, cur = (cur, prev + cur)
     }
-    println!("{} {}", prev, cur)
+    println("{} {}", prev, cur)
 }

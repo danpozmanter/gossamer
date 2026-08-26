@@ -40,7 +40,7 @@ impl<'tcx> FnBuilder<'tcx> {
             // visible to a later statement. Spawn/call/container operations
             // clone or transfer every escaping value before the instruction
             // completes, so their compiler temporaries are dead here.
-            if !diverges && matches!(&stmt.kind, HirStmtKind::Expr { .. } | HirStmtKind::Go(_)) {
+            if !diverges && matches!(&stmt.kind, HirStmtKind::Expr { .. }) {
                 self.restore_register_mark(register_mark);
             }
         }
@@ -115,6 +115,7 @@ mod elide_unit_load_tests {
         let entry_diags = synthesize_entry_main(&mut sf);
         assert!(entry_diags.is_empty(), "entry main: {entry_diags:?}");
         let (resolutions, _) = resolve_source_file(&sf);
+        let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
         let mut tcx = TyCtxt::new();
         let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
         let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -296,7 +297,7 @@ fn pick(flag: bool) -> i64 {
 fn f() {
     let s = "abcdef"
     let n = s.len()
-    println!("{}", n)
+    println("{}", n)
 }
 "#;
         let (chunk, _) = compile_named(source, "f");
@@ -339,7 +340,7 @@ fn f() {
         let source = r#"
 let s = "abcdef"
 let n = s.len()
-println!("{}", n)
+println("{}", n)
 "#;
         let (chunk, _) = compile_named(source, "main");
         assert!(
@@ -592,7 +593,7 @@ fn build() -> String {
     #[test]
     fn string_byte_checksum_uses_fused_typed_opcode() {
         let source = r"
-fn checksum(s: &String) -> i64 {
+fn checksum(s: String) -> i64 {
     let mut sum: i64 = 0
     let mut i: i64 = 0
     while i < s.len() {
@@ -675,8 +676,8 @@ fn checksum(s: &String) -> i64 {
     fn last_use_shared_borrow_transfers_aggregate_handle() {
         let source = r"
 struct Item { value: i64 }
-fn read(item: &Item) -> i64 { item.value }
-fn consume(item: Item) -> i64 { read(&item) }
+fn read(item: Item) -> i64 { item.value }
+fn consume(item: Item) -> i64 { read(item) }
 ";
         let (chunk, _) = compile_named(source, "consume");
         assert!(

@@ -66,9 +66,9 @@ fn enum_match_identity(n: i64) -> i64 {
 }
 
 fn main() {
-    println!("{}", zero_step(30))
-    println!("{}", branch_with_identity_arm(30))
-    println!("{}", match_with_identity_arm(30))
-    println!("{}", option_match_identity(30))
-    println!("{}", enum_match_identity(30))
+    println("{}", zero_step(30))
+    println("{}", branch_with_identity_arm(30))
+    println("{}", match_with_identity_arm(30))
+    println("{}", option_match_identity(30))
+    println("{}", enum_match_identity(30))
 }

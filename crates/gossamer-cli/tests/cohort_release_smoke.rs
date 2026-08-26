@@ -49,29 +49,29 @@ fn main() {
         let _a = spawn(|| work(1))
         let _b = spawn(|| work(2))
     }
-    println!("ok: {:?}", ok)
+    println("ok: {:?}", ok)
 
     let failed = cohort {
         let _a = spawn(|| work(-1))
         let _b = spawn(|| polls())
     }
-    println!("failed: {:?}", failed)
+    println("failed: {:?}", failed)
 
     let collected = cohort(policy: Policy::CollectAll) {
         let _a = spawn(|| work(-1))
         let _b = spawn(|| work(-2))
     }
-    println!("collected: {:?}", collected)
+    println("collected: {:?}", collected)
 
     let bounded = cohort(timeout: 100) {
         let _s = spawn(|| nap())
     }
-    println!("bounded: {}", bounded.is_err())
+    println("bounded: {}", bounded.is_err())
 
     let isolated = cohort(context: Context::Isolated) {
         let _a = spawn(|| work(3))
     }
-    println!("isolated: {:?}", isolated)
+    println("isolated: {:?}", isolated)
 }
 "#;
 
@@ -107,7 +107,7 @@ fn nap() -> Result<i64, errors::Error> {
 }
 
 fn main() {
-    let (_tx, rx) = channel(1)
+    let _tx, rx = channel(1)
     let blocked = cohort {
         let _f = spawn(|| fail_now())
         let _d = spawn(|| drain(rx))
@@ -116,7 +116,7 @@ fn main() {
         let _f = spawn(|| fail_now())
         let _s = spawn(|| nap())
     }
-    println!("{} {}", blocked.is_err(), sleeping.is_err())
+    println("{} {}", blocked.is_err(), sleeping.is_err())
 }
 "#;
 

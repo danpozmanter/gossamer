@@ -24,7 +24,7 @@ use std::sandbox
 // A policy handed to a helper by reference: a parameter carries no
 // construction site, so its annotation is the only thing that can say what
 // the receiver is, down to the element type of a list a reader answers.
-fn reads_by_reference(policy: &sandbox::Policy) -> bool {
+fn reads_by_reference(policy: sandbox::Policy) -> bool {
     let mut named = 0
     for path in policy.read_write_grants() {
         if path.len() > 0 { named += 1 }
@@ -37,69 +37,69 @@ fn main() {
     // the host honors rather than assuming one operating system.
     let level = sandbox::max_level()
     let known = level == "none" || level == "basic" || level == "standard" || level == "strict"
-    println!("level known: {}", known)
-    println!("platform: {}", sandbox::platform().len() > 0)
-    println!("notes: {}", sandbox::notes().len() >= 0)
-    println!("json: {}", sandbox::capabilities_json().contains(&"max_level"))
+    println("level known: {}", known)
+    println("platform: {}", sandbox::platform().len() > 0)
+    println("notes: {}", sandbox::notes().len() >= 0)
+    println("json: {}", sandbox::capabilities_json().contains("max_level"))
 
     let policy = sandbox::Policy::new()
-        .read_write(&".")
-        .network_mode(&"none")
-        .env_allow(&"PATH")
-        .level(&"none")
+        .read_write(".")
+        .network_mode("none")
+        .env_allow("PATH")
+        .level("none")
 
-    println!("named: {}", policy.level_name() == "none")
+    println("named: {}", policy.level_name() == "none")
 
-    match sandbox::run(&policy, &#["echo", "released"]) {
-        Ok(out) => println!("run: {} {}", out.code, out.stdout.trim())
-        Err(e) => println!("run failed: {}", e)
+    match sandbox::run(policy, #["echo", "released"]) {
+        Ok(out) => println("run: {} {}", out.code, out.stdout.trim())
+        Err(e) => println("run failed: {}", e)
     }
 
     // A preset carries a whole command policy, so a program does not
     // reassemble a dozen grants and get one wrong.
-    let preset = sandbox::Policy::command_default(&".").level(&"none")
-    println!("preset: {}", preset.read_write_grants().len() > 0)
+    let preset = sandbox::Policy::command_default(".").level("none")
+    println("preset: {}", preset.read_write_grants().len() > 0)
 
     // The widened surface: the network's three modes, the temp choice,
     // and the readers a report is built from. Each one is a separate
     // runtime shim, so a missing dispatch entry shows up here as a
     // wrong answer rather than in a user's build.
     let full = sandbox::Policy::new()
-        .read_write(&".")
-        .network_mode(&"client")
-        .temp(&"private")
-        .level(&"none")
+        .read_write(".")
+        .network_mode("client")
+        .temp("private")
+        .level("none")
 
-    println!("mode: {}", full.network_name())
-    println!("level: {}", full.level_name())
-    println!("access: {}", full.access(&"."))
-    println!("grants: {}", full.read_write_grants().len() > 0)
-    println!("names: {}", full.environment_names().len() >= 0)
-    println!("mechanisms: {}", full.mechanisms().len() >= 0)
-    println!("policy json: {}", full.to_json().len() > 0)
-    println!("verdicts: {}", full.network_enforcement_kind().len() > 0)
-    println!("unblocked: {}", full.level_blocker() == "")
+    println("mode: {}", full.network_name())
+    println("level: {}", full.level_name())
+    println("access: {}", full.access("."))
+    println("grants: {}", full.read_write_grants().len() > 0)
+    println("names: {}", full.environment_names().len() >= 0)
+    println("mechanisms: {}", full.mechanisms().len() >= 0)
+    println("policy json: {}", full.to_json().len() > 0)
+    println("verdicts: {}", full.network_enforcement_kind().len() > 0)
+    println("unblocked: {}", full.level_blocker() == "")
     match full.check() {
-        Ok(_) => println!("check: ok")
-        Err(e) => println!("check failed: {}", e)
+        Ok(_) => println("check: ok")
+        Err(e) => println("check failed: {}", e)
     }
 
     // An explicit allow outranks a denial the policy carries: the
     // precedence rule has to hold through the release pipeline too.
-    let carved = sandbox::Policy::new().deny(&".").read_write(&".").level(&"none")
-    println!("allow wins: {}", carved.access(&".") == "read-write")
-    println!("by ref: {}", reads_by_reference(&full))
+    let carved = sandbox::Policy::new().deny(".").read_write(".").level("none")
+    println("allow wins: {}", carved.access(".") == "read-write")
+    println("by ref: {}", reads_by_reference(full))
 
     // An unknown name is refused rather than applied, so a typo can
     // never weaken a policy that was written to be strict.
-    println!("typo: {}", sandbox::Policy::new().network_mode(&"open").network_mode(&"opne").network_name())
-    println!("fetch: {}", sandbox::Policy::new().for_fetch_phase().network_name())
+    println("typo: {}", sandbox::Policy::new().network_mode("open").network_mode("opne").network_name())
+    println("fetch: {}", sandbox::Policy::new().for_fetch_phase().network_name())
 
     // The exit-code contract every consumer shares, and the wrapper run
     // that reports through it.
-    println!("codes: {} {} {} {}", sandbox::exit_policy_error(), sandbox::exit_command_not_found(), sandbox::exit_level_unavailable(), sandbox::exit_signal_base())
-    println!("inherited: {}", sandbox::run_inherit(&policy, &#["true"]))
-    println!("discovery: {} {}", sandbox::home_directory().is_some(), sandbox::expand(&"~").is_some())
+    println("codes: {} {} {} {}", sandbox::exit_policy_error(), sandbox::exit_command_not_found(), sandbox::exit_level_unavailable(), sandbox::exit_signal_base())
+    println("inherited: {}", sandbox::run_inherit(policy, #["true"]))
+    println("discovery: {} {}", sandbox::home_directory().is_some(), sandbox::expand("~").is_some())
 }
 "#;
 

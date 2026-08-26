@@ -6,8 +6,8 @@ fn main() {
     v.push(S { a: 2, b: "yy" })
     v.push(S { a: 3, b: "zzz" })
     for s in v {
-        println!("{} {}", s.a, s.b)
+        println("{} {}", s.a, s.b)
     }
     let lit: Vec<S> = Vec::from([])
-    println!("lit_len={}", lit.len())
+    println("lit_len={}", lit.len())
 }

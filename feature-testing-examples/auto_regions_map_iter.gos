@@ -12,7 +12,7 @@
 
 use std::collections::Map
 
-enum Tree { Leaf, Node(Box<Tree>, Box<Tree>) }
+enum Tree { Leaf, Node(Tree, Tree) }
 
 fn make(d: i64) -> Tree {
     if d == 0 {
@@ -22,7 +22,7 @@ fn make(d: i64) -> Tree {
     }
 }
 
-fn count(t: &Tree) -> i64 {
+fn count(t: Tree) -> i64 {
     match t {
         Tree::Leaf => 1
         Tree::Node(l, r) => 1 + count(l) + count(r)
@@ -33,12 +33,12 @@ fn main() {
     // ELIGIBLE String-keyed Map iter: each entry builds a tree from its
     // Copy value and discards it. Only the i64 accumulator escapes -> regioned.
     let mut depths: Map<String, i64> = Map::new()
-    depths.insert(format!("a"), 4)
-    depths.insert(format!("b"), 5)
-    depths.insert(format!("c"), 6)
+    depths.insert(format("a"), 4)
+    depths.insert(format("b"), 5)
+    depths.insert(format("c"), 6)
     let mut churn: i64 = 0
     for (_, d) in depths.iter() {
-        churn += count(&make(d))
+        churn += count(make(d))
     }
 
     // ELIGIBLE struct/tuple-keyed map, values-driven iter: build + discard a
@@ -49,15 +49,15 @@ fn main() {
     let mut churn2: i64 = 0
     for (_, d) in bykey.iter() {
         let t = make(d)
-        churn2 += count(&t)
+        churn2 += count(t)
     }
 
     // NOT ELIGIBLE: the body pushes each built tree into an outer `Vec` (a
     // method call, and a survivor that outlives the iteration), so the map iter
     // must NOT be regioned - the trees have to survive to be counted afterward.
     let mut sizes: Map<String, i64> = Map::new()
-    sizes.insert(format!("x"), 2)
-    sizes.insert(format!("y"), 3)
+    sizes.insert(format("x"), 2)
+    sizes.insert(format("y"), 3)
     let mut kept: Vec<Tree> = Vec::from([])
     for (_, d) in sizes.iter() {
         kept.push(make(d))
@@ -74,9 +74,9 @@ fn main() {
     let mut i = 0
     loop {
         if i >= 8 { break }
-        churn3 += count(&make(i))
+        churn3 += count(make(i))
         i += 1
     }
 
-    println!("{} {} {} {}", churn, churn2, total, churn3)
+    println("{} {} {} {}", churn, churn2, total, churn3)
 }

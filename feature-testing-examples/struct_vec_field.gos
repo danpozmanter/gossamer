@@ -32,7 +32,7 @@ fn make_box(n: i64) -> Box2 {
     Box2 { data: v }
 }
 
-fn sum_of(xs: &[i64]) -> i64 {
+fn sum_of(xs: [i64]) -> i64 {
     let mut acc = 0
     for x in xs {
         acc += *x
@@ -46,12 +46,12 @@ fn main() {
     while r < 500 {
         // whole-struct drop each iteration (moved in via a returning fn)
         let rec = make(8)
-        total += sum_of(&rec.data) + rec.name.len()
+        total += sum_of(rec.data) + rec.name.len()
 
         // struct copy: both owners share the vec
         let a = make(4)
         let b = a
-        total += sum_of(&a.data) + sum_of(&b.data)
+        total += sum_of(a.data) + sum_of(b.data)
 
         // field extract into an owned local
         let d = rec.data
@@ -59,23 +59,23 @@ fn main() {
 
         // single-field struct
         let bx = make_box(5)
-        total += sum_of(&bx.data)
+        total += sum_of(bx.data)
 
         // nested by-value struct with a vec field
         let mut nv: Vec<i64> = Vec::from([])
         nv.push(r)
         nv.push(r + 1)
         let o = Outer { inner: Inner { xs: nv, tag: "t" }, id: r }
-        total += sum_of(&o.inner.xs) + o.id + o.inner.tag.len()
+        total += sum_of(o.inner.xs) + o.id + o.inner.tag.len()
 
         // Positional copy sharing the vec field
         let mut bv: Vec<i64> = Vec::from([])
         bv.push(r * 3)
         let base = Tagged { data: bv, name: "b", id: r }
         let upd = Tagged { data: base.data, name: base.name, id: r + 1 }
-        total += sum_of(&base.data) + sum_of(&upd.data) + upd.id + upd.name.len()
+        total += sum_of(base.data) + sum_of(upd.data) + upd.id + upd.name.len()
 
         r += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }

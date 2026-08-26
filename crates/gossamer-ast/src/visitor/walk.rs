@@ -7,8 +7,8 @@
 
 use super::Visitor;
 use crate::expr::{
-    ArrayExpr, Block, ClosureParam, Expr, ExprKind, FieldSelector, Label, MacroCall, MatchArm,
-    PathExpr, PathSegment, SelectArm, SelectOp, StructExprField,
+    ArrayExpr, Block, ClosureParam, Expr, ExprKind, FieldSelector, Label, MatchArm, PathExpr,
+    PathSegment, SelectArm, SelectOp, StructExprField,
 };
 use crate::items::{
     Attrs, ConstDecl, EnumDecl, EnumVariant, FnDecl, FnParam, GenericParam, Generics, ImplDecl,
@@ -263,7 +263,7 @@ pub fn walk_stmt<V: Visitor + ?Sized>(visitor: &mut V, stmt: &Stmt) {
                 visitor.visit_expr(expr);
             }
         }
-        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => {
             visitor.visit_expr(expr);
         }
         StmtKind::Item(item) => visitor.visit_item(item),
@@ -276,9 +276,8 @@ pub fn walk_expr<V: Visitor + ?Sized>(visitor: &mut V, expr: &Expr) {
         ExprKind::Literal(lit) => visitor.visit_literal(lit),
         ExprKind::Path(path) => visitor.visit_path_expr(path),
         ExprKind::Block(block) | ExprKind::Unsafe(block) => visitor.visit_block(block),
-        ExprKind::Try(inner) | ExprKind::Go(inner) => visitor.visit_expr(inner),
+        ExprKind::Try(inner) => visitor.visit_expr(inner),
         ExprKind::Unary { operand, .. } => visitor.visit_expr(operand),
-        ExprKind::MacroCall(call) => walk_macro_call(visitor, call),
         ExprKind::Array(array_expr) | ExprKind::FixedArray(array_expr) => {
             walk_array_expr(visitor, array_expr);
         }
@@ -466,10 +465,6 @@ fn walk_array_expr<V: Visitor + ?Sized>(visitor: &mut V, array: &ArrayExpr) {
             visitor.visit_expr(count);
         }
     }
-}
-
-fn walk_macro_call<V: Visitor + ?Sized>(visitor: &mut V, call: &MacroCall) {
-    visitor.visit_path_expr(&call.path);
 }
 
 /// Walks into every child of a [`Type`].

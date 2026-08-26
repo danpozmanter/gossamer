@@ -19,9 +19,10 @@ use gossamer_types::{TyCtxt, typecheck_source_file};
 fn build(source: &str) -> Vec<gossamer_mir::Body> {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     assert!(resolve_diags.is_empty(), "resolve: {resolve_diags:?}");
     let mut tcx = TyCtxt::new();
     let (table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
@@ -131,7 +132,7 @@ fn match_on_int_produces_ordered_arms_in_switchint() {
 
 #[test]
 fn tuple_destructuring_produces_field_projection_reads() {
-    let bodies = build("fn main() -> i64 { let (a, b) = (11i64, 22i64)\n a + b }\n");
+    let bodies = build("fn main() -> i64 { let a, b = (11i64, 22i64)\n a + b }\n");
     let main = bodies.iter().find(|b| b.name == "main").expect("main body");
     let field_reads: Vec<u32> = main
         .blocks

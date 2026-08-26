@@ -12,5 +12,5 @@ The [implementation source](https://github.com/gossamer-lang/gossamer/blob/main/
 
 | Item | Canonical signature or declaration | Description |
 |---|---|---|
-| [`AppState`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_state.rs) | `type AppState` | TypeMap of Arc<T> values shared across handlers. |
-| [`State`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_state.rs) | `type State` | Newtype wrapper Arc<T> for ergonomic handler arguments. |
+| [`AppState`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_state.rs) | `type AppState` | TypeMap of T values shared across handlers. |
+| [`State`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_state.rs) | `type State` | Newtype wrapper T for ergonomic handler arguments. |

@@ -14,9 +14,10 @@ fn lower(source: &str) -> (gossamer_hir::HirProgram, TyCtxt) {
     // file's bare top-level statements into the implicit `fn main`, which
     // every tier reaches through here. Lowering the raw parse would see no
     // items at all for a program written without an explicit main.
-    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file);
+    let (mut sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -162,9 +163,10 @@ fn unknown_trait_bound_emits_diagnostic() {
     let mut map = SourceMap::new();
     let source = "fn need_hash<T: Hashabel>(x: T) -> T { x }\n";
     let file = map.add_file("bound.gos", source.to_string());
-    let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file);
+    let (mut sf, parse_diags) = gossamer_parse::parse_source_file(source, file);
     assert!(parse_diags.is_empty());
     let (resolutions, _) = gossamer_resolve::resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (_table, diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
     let found = diags.iter().any(|d| d.error.code() == "GT0011");
@@ -181,9 +183,10 @@ fn known_builtin_trait_bound_is_accepted() {
     let mut map = SourceMap::new();
     let source = "fn collect<T: Iterator>(it: T) -> T { it }\n";
     let file = map.add_file("bound.gos", source.to_string());
-    let (sf, parse_diags) = gossamer_parse::parse_source_file(source, file);
+    let (mut sf, parse_diags) = gossamer_parse::parse_source_file(source, file);
     assert!(parse_diags.is_empty());
     let (resolutions, _) = gossamer_resolve::resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (_table, diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
     let any_unknown_bound = diags.iter().any(|d| d.error.code() == "GT0011");

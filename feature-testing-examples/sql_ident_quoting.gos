@@ -4,10 +4,10 @@
 use std::database::sql
 
 fn main() {
-    let safe = sql::Select::new("players").columns(&["id", "name"]).order_by("id", true)
-    println!("{}", safe.render())
+    let safe = sql::Select::new("players").columns(["id", "name"]).order_by("id", true)
+    println("{}", safe.render())
     let evil = sql::Select::new("t").order_by("id; DROP TABLE t--", true)
-    println!("{}", evil.render())
-    let weird = sql::Select::new("a b").columns(&["c\"d"])
-    println!("{}", weird.render())
+    println("{}", evil.render())
+    let weird = sql::Select::new("a b").columns(["c\"d"])
+    println("{}", weird.render())
 }

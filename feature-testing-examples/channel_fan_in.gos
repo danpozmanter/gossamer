@@ -10,13 +10,13 @@ fn worker(id: i64, tx: channel::Sender<i64>, val: i64) {
 }
 
 fn main() {
-    let (tx, rx) = channel::unbounded()
+    let tx, rx = channel::unbounded()
 
-    go worker(1, tx, 10)
-    go worker(2, tx, 20)
-    go worker(3, tx, 30)
-    go worker(4, tx, 40)
-    go worker(5, tx, 50)
+    spawn(|| worker(1, tx, 10))
+    spawn(|| worker(2, tx, 20))
+    spawn(|| worker(3, tx, 30))
+    spawn(|| worker(4, tx, 40))
+    spawn(|| worker(5, tx, 50))
 
     // Give the scheduler a beat. Multiple senders share the
     // channel so drain via `try_recv` rather than `recv` -
@@ -30,14 +30,14 @@ fn main() {
 
     received.sort()
     for v in received {
-        println!("received {}", v)
+        println("received {}", v)
     }
 
     let mut total = 0
     for v in [10, 20, 30, 40, 50] {
         total += v
     }
-    println!("fan-in total = {}", total)
+    println("fan-in total = {}", total)
 }
 
 #[cfg(test)]
@@ -48,15 +48,15 @@ mod tests {
 
     #[test]
     fn fan_in_total() {
-        let (tx, rx) = channel::unbounded()
-        go super::worker(1, tx, 10)
-        go super::worker(2, tx, 20)
-        go super::worker(3, tx, 30)
+        let tx, rx = channel::unbounded()
+        spawn(|| super::worker(1, tx, 10))
+        spawn(|| super::worker(2, tx, 20))
+        spawn(|| super::worker(3, tx, 30))
         time::sleep(50)
         let mut total = 0
         while let Some(v) = rx.try_recv() {
             total += v
         }
-        let _ = testing::check_eq(&total, &60, "10+20+30=60")
+        let _ = testing::check_eq(total, 60, "10+20+30=60")
     }
 }

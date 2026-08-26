@@ -66,25 +66,25 @@ fn generate_program(seed: u64) -> String {
                 let a = rng.range(-1000, 1000);
                 let b = rng.range(-1000, 1000);
                 let op = rng.pick(&["+", "-", "*"]);
-                src += &format!("    println!(\"{{}}\", {a} {op} {b});\n");
+                src += &format!("    println(\"{{}}\", {a} {op} {b});\n");
             }
             1 => {
                 let a = rng.range(-1000, 1000);
                 let b = rng.range(1, 100);
-                src += &format!("    println!(\"{{}}\", {a} / {b});\n");
+                src += &format!("    println(\"{{}}\", {a} / {b});\n");
             }
             2 => {
                 // Integer comparison.
                 let a = rng.range(-100, 100);
                 let b = rng.range(-100, 100);
                 let op = rng.pick(&["==", "!=", "<", "<=", ">", ">="]);
-                src += &format!("    println!(\"{{}}\", {a} {op} {b});\n");
+                src += &format!("    println(\"{{}}\", {a} {op} {b});\n");
             }
             3 => {
                 // Bounded loop sum.
                 let n = rng.range(1, 20);
                 src += &format!(
-                    "    let mut sum = 0\n    let mut i = 0\n    loop {{ if i >= {n} {{ break }} ; sum += i; i += 1 }}\n    println!(\"{{}}\", sum);\n"
+                    "    let mut sum = 0\n    let mut i = 0\n    loop {{ if i >= {n} {{ break }} ; sum += i; i += 1 }}\n    println(\"{{}}\", sum);\n"
                 );
             }
             4 => {
@@ -92,7 +92,7 @@ fn generate_program(seed: u64) -> String {
                 let a = rng.range(0, 10);
                 let b = rng.range(0, 10);
                 src += &format!(
-                    "    let s = \"a=\" + &{a}.to_string() + \", b=\" + &{b}.to_string()\n    println!(\"{{}}\", s);\n"
+                    "    let s = \"a=\" + &{a}.to_string() + \", b=\" + &{b}.to_string()\n    println(\"{{}}\", s);\n"
                 );
             }
             _ => unreachable!(),

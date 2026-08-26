@@ -14,35 +14,35 @@ fn row(i: i64) -> Row {
 }
 
 fn nested(i: i64) -> (String, Vec<String>) {
-    (format!("r{}", i), #[format!("t{}", i), "fixed"])
+    (format("r{}", i), #[format("t{}", i), "fixed"])
 }
 
 fn main() {
     let mut k = 0
     let mut tags = #[]
     for i in 0..64 {
-        (k, tags) = pair(i)
+        k, tags = pair(i)
     }
-    println!("pair {} {:?}", k, tags)
+    println("pair {} {:?}", k, tags)
 
     let mut held = Row { id: 0, tags: #[] }
     for i in 0..64 {
         held = row(i)
     }
-    println!("struct {} {:?}", held.id, held.tags)
+    println("struct {} {:?}", held.id, held.tags)
 
     let mut name = ""
     let mut names = #[]
     for i in 0..64 {
-        (name, names) = nested(i)
+        name, names = nested(i)
     }
-    println!("nested {} {:?}", name, names)
+    println("nested {} {:?}", name, names)
 
     // The same builder whose result is read without being kept.
     let mut total = 0
     for i in 0..64 {
-        let (n, v) = pair(i)
+        let n, v = pair(i)
         total += n + v.len()
     }
-    println!("read-only {}", total)
+    println("read-only {}", total)
 }

@@ -31,7 +31,7 @@ fn nap() -> Result<i64, errors::Error> {
 }
 
 fn cleanup_child() -> Result<i64, errors::Error> {
-    defer println!("child cleanup ran")
+    defer println("child cleanup ran")
     time::sleep(30_000)
     Ok(1)
 }
@@ -51,21 +51,21 @@ fn polls() -> Result<i64, errors::Error> {
 }
 
 fn main() {
-    let (_tx, rx) = channel(1)
+    let _tx, rx = channel(1)
 
     // A blocked receiver is wound down when its sibling fails.
     let blocked = cohort {
         let _f = spawn(|| fail_now())
         let _d = spawn(|| drain(rx))
     }
-    println!("blocked: {:?}", blocked)
+    println("blocked: {:?}", blocked)
 
     // So is a sleeping one.
     let sleeping = cohort {
         let _f = spawn(|| fail_now())
         let _s = spawn(|| nap())
     }
-    println!("sleeping: {:?}", sleeping)
+    println("sleeping: {:?}", sleeping)
 
     // A cancelled child's `defer` still runs, in order, on its own exit
     // path: the line below is printed by the child before the cohort
@@ -74,27 +74,27 @@ fn main() {
         let _f = spawn(|| fail_now())
         let _c = spawn(|| cleanup_child())
     }
-    println!("cleaned: {:?}", cleaned)
+    println("cleaned: {:?}", cleaned)
 
     // A child can ask whether its cohort is cancelled.
     let polled = cohort {
         let _f = spawn(|| fail_now())
         let _p = spawn(|| polls())
     }
-    println!("polled: {:?}", polled)
+    println("polled: {:?}", polled)
 
     // A timeout bounds the whole block.
     let bounded = cohort(timeout: 100) {
         let _s = spawn(|| nap())
     }
-    println!("bounded: {}", bounded.is_err())
+    println("bounded: {}", bounded.is_err())
 
     // Collect-all runs every child and reports each failure.
     let collected = cohort(policy: Policy::CollectAll) {
         let _a = spawn(|| fail_now())
         let _b = spawn(|| fail_now())
     }
-    println!("collected: {:?}", collected)
+    println("collected: {:?}", collected)
 
     // Cancelling a cohort reaches a grandchild: the inner cohort's own
     // child is wound down when the outer cohort fails.
@@ -107,7 +107,7 @@ fn main() {
             Ok(0)
         })
     }
-    println!("nested: {:?}", nested)
+    println("nested: {:?}", nested)
 
     // Race stops at the first success; the loser is cancelled, and work
     // it already committed is not undone.
@@ -115,5 +115,5 @@ fn main() {
         let _w = spawn(|| -> Result<i64, errors::Error> { Ok(1) })
         let _l = spawn(|| nap())
     }
-    println!("raced: {:?}", raced)
+    println("raced: {:?}", raced)
 }

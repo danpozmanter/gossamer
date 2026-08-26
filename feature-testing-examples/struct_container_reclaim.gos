@@ -1,6 +1,6 @@
 use std::collections::Map
 
-struct Node { val: i64, next: Option<Box<Node>> }
+struct Node { val: i64, next: Option<Node> }
 
 fn vec_case() -> i64 {
     let mut total = 0
@@ -27,7 +27,7 @@ fn map_case() -> i64 {
         let inner = Node { val: i + 5, next: None }
         m.insert(1, Node { val: i, next: Some(inner) })
         m.insert(1, Node { val: i, next: None })
-        if let Some(n) = m.get(&1) {
+        if let Some(n) = m.get(1) {
             total += n.val
         }
         i += 1
@@ -36,5 +36,5 @@ fn map_case() -> i64 {
 }
 
 fn main() {
-    println!("{} {}", vec_case(), map_case())
+    println("{} {}", vec_case(), map_case())
 }

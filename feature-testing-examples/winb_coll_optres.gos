@@ -16,71 +16,71 @@ fn main() {
     // ---- Option, scalar payloads ----
     let some: Option<i64> = Some(3)
     let none: Option<i64> = None
-    println!("map {}", some |> |v| option::map(|n: i64| n + 1, v) |> |v| option::unwrap_or(0, v))
-    println!("map-none {}", none |> |v| option::map(|n: i64| n + 1, v) |> |v| option::unwrap_or(-1, v))
-    println!("and_then {}"
-        some |> |v| option::and_then(|n: i64| if n > 1 { Some(n * 10) } else { None }, v) |> |v| option::unwrap_or(0, v))
-    println!("filter-keep {}", some |> |v| option::filter(|n: i64| n % 2 == 1, v) |> |v| option::unwrap_or(0, v))
-    println!("filter-drop {}", some |> |v| option::filter(|n: i64| n % 2 == 0, v) |> |v| option::unwrap_or(-1, v))
-    println!("or {}", none |> |v| option::or(Some(5), v) |> |v| option::unwrap_or(0, v))
-    println!("or_else {}", none |> |v| option::or_else(|| Some(6), v) |> |v| option::unwrap_or(0, v))
-    println!("unwrap_or_else {}", none |> |v| option::unwrap_or_else(|| 9, v))
-    println!("is_some {} is_none {}", some |> option::is_some, none |> option::is_none)
+    println("map {}", some |> |v| option::map(v, |n: i64| n + 1) |> |v| option::unwrap_or(v, 0))
+    println("map-none {}", none |> |v| option::map(v, |n: i64| n + 1) |> |v| option::unwrap_or(v, -1))
+    println("and_then {}"
+        some |> |v| option::and_then(v, |n: i64| if n > 1 { Some(n * 10) } else { None }) |> |v| option::unwrap_or(v, 0))
+    println("filter-keep {}", some |> |v| option::filter(v, |n: i64| n % 2 == 1) |> |v| option::unwrap_or(v, 0))
+    println("filter-drop {}", some |> |v| option::filter(v, |n: i64| n % 2 == 0) |> |v| option::unwrap_or(v, -1))
+    println("or {}", none |> |v| option::or(v, Some(5)) |> |v| option::unwrap_or(v, 0))
+    println("or_else {}", none |> |v| option::or_else(v, || Some(6)) |> |v| option::unwrap_or(v, 0))
+    println("unwrap_or_else {}", none |> |v| option::unwrap_or_else(v, || 9))
+    println("is_some {} is_none {}", some |> option::is_some, none |> option::is_none)
 
     // zip + flatten.
-    let zipped = some |> |v| option::zip(Some(4), v)
+    let zipped = some |> |v| option::zip(v, Some(4))
     let mut zs = 0
     if let Some((a, b)) = zipped { zs = a + b }
-    println!("zip {}", zs)
+    println("zip {}", zs)
     let nested: Option<Option<i64>> = Some(Some(8))
-    println!("flatten {}", nested |> option::flatten |> |v| option::unwrap_or(0, v))
+    println("flatten {}", nested |> option::flatten |> |v| option::unwrap_or(v, 0))
 
     // ---- Option, struct payloads ----
     let sp: Option<Point> = Some(Point { x: 1, y: 2 })
     let np: Option<Point> = None
     match sp {
-        Some(p) => println!("struct some {} {}", p.x, p.y)
-        None => println!("struct some none")
+        Some(p) => println("struct some {} {}", p.x, p.y)
+        None => println("struct some none")
     }
-    println!("struct is_some {} none is_none {}", sp |> option::is_some, np |> option::is_none)
+    println("struct is_some {} none is_none {}", sp |> option::is_some, np |> option::is_none)
     // map a struct option to a scalar.
-    println!("struct map {}", sp |> |v| option::map(|p: Point| p.x + p.y, v) |> |v| option::unwrap_or(0, v))
+    println("struct map {}", sp |> |v| option::map(v, |p: Point| p.x + p.y) |> |v| option::unwrap_or(v, 0))
     // and_then producing a new struct option, read back.
-    let moved = sp |> |v| option::and_then(|p: Point| Some(Point { x: p.x + 10, y: p.y + 20 }), v)
+    let moved = sp |> |v| option::and_then(v, |p: Point| Some(Point { x: p.x + 10, y: p.y + 20 }))
     match moved {
-        Some(p) => println!("struct and_then {} {}", p.x, p.y)
-        None => println!("struct and_then none")
+        Some(p) => println("struct and_then {} {}", p.x, p.y)
+        None => println("struct and_then none")
     }
 
     // ---- Result, scalar payloads ----
     let ok: Result<i64, errors::Error> = Ok(2)
     let bad: Result<i64, errors::Error> = Err(errors::new("boom"))
-    println!("r map {}", ok |> |v| result::map(|n: i64| n * 3, v) |> |v| result::unwrap_or(0, v))
-    println!("r map-err-default {}"
-        bad |> |v| result::map(|n: i64| n * 3, v) |> |v| result::unwrap_or(-1, v))
-    println!("r and_then {}", ok |> |v| result::and_then(|n: i64| Ok(n + 10), v) |> |v| result::unwrap_or(0, v))
-    println!("r or_else {}", bad |> |v| result::or_else(|_e: errors::Error| Ok(7), v) |> |v| result::unwrap_or(0, v))
-    println!("r is_ok {} is_err {}", ok |> result::is_ok, bad |> result::is_err)
-    println!("r ok->some {} err->some {}"
+    println("r map {}", ok |> |v| result::map(v, |n: i64| n * 3) |> |v| result::unwrap_or(v, 0))
+    println("r map-err-default {}"
+        bad |> |v| result::map(v, |n: i64| n * 3) |> |v| result::unwrap_or(v, -1))
+    println("r and_then {}", ok |> |v| result::and_then(v, |n: i64| Ok(n + 10)) |> |v| result::unwrap_or(v, 0))
+    println("r or_else {}", bad |> |v| result::or_else(v, |_e: errors::Error| Ok(7)) |> |v| result::unwrap_or(v, 0))
+    println("r is_ok {} is_err {}", ok |> result::is_ok, bad |> result::is_err)
+    println("r ok->some {} err->some {}"
         ok |> result::ok |> option::is_some, bad |> result::err |> option::is_some)
-    bad |> |v| result::map_err(|e: errors::Error| errors::wrap(e, "ctx"), v)
-        |> |v| result::unwrap_or_else(|e: errors::Error| println!("r unwrap_or_else {}", e), v)
+    bad |> |v| result::map_err(v, |e: errors::Error| errors::wrap(e, "ctx"))
+        |> |v| result::unwrap_or_else(v, |e: errors::Error| println("r unwrap_or_else {}", e))
 
     // ---- Result, struct payloads ----
     let rsp: Result<Point, errors::Error> = Ok(Point { x: 5, y: 6 })
     let rbad: Result<Point, errors::Error> = Err(errors::new("nope"))
     match rsp {
-        Ok(p) => println!("r struct ok {} {}", p.x, p.y)
-        Err(e) => println!("r struct err {}", e)
+        Ok(p) => println("r struct ok {} {}", p.x, p.y)
+        Err(e) => println("r struct err {}", e)
     }
-    println!("r struct map {}", rsp |> |v| result::map(|p: Point| p.x * p.y, v) |> |v| result::unwrap_or(0, v))
-    let rmoved = rsp |> |v| result::and_then(|p: Point| Ok(Point { x: p.x + 1, y: p.y + 1 }), v)
+    println("r struct map {}", rsp |> |v| result::map(v, |p: Point| p.x * p.y) |> |v| result::unwrap_or(v, 0))
+    let rmoved = rsp |> |v| result::and_then(v, |p: Point| Ok(Point { x: p.x + 1, y: p.y + 1 }))
     match rmoved {
-        Ok(p) => println!("r struct and_then {} {}", p.x, p.y)
-        Err(_) => println!("r struct and_then err")
+        Ok(p) => println("r struct and_then {} {}", p.x, p.y)
+        Err(_) => println("r struct and_then err")
     }
-    match rbad |> |v| result::map(|p: Point| p.x, v) {
-        Ok(v) => println!("r struct bad ok {}", v)
-        Err(e) => println!("r struct bad err {}", e)
+    match rbad |> |v| result::map(v, |p: Point| p.x) {
+        Ok(v) => println("r struct bad ok {}", v)
+        Err(e) => println("r struct bad err {}", e)
     }
 }

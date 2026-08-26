@@ -12,22 +12,22 @@ fn square(n: i64) -> i64 {
 }
 
 fn main() {
-    let (tx, rx) = channel()
+    let tx, rx = channel()
     let base = 10
 
-    go {
+    spawn(|| {
         let mut i = 0
         while i < 5 {
             tx.send(base + square(i))
             i += 1
         }
         tx.close()
-    }
+    })
 
     let mut total = 0
     while let Some(v) = rx.recv() {
         total += 1
-        println!("got {}", v)
+        println("got {}", v)
     }
-    println!("total = {}", total)
+    println("total = {}", total)
 }

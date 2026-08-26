@@ -14,24 +14,24 @@ fn main() {
     // sha256 / hmac hex digests are 64 ASCII hex chars. `.len()` on
     // the inline temporary must dispatch to `gos_rt_str_len` (strlen),
     // not the GosVec-header `gos_rt_len`.
-    println!("sha256 len = {}", crypto::sha256::hex("abc").len())
-    println!("hmac len = {}", crypto::hmac::sha256_hex("key", "msg").len())
+    println("sha256 len = {}", crypto::sha256::hex("abc").len())
+    println("hmac len = {}", crypto::hmac::sha256_hex("key", "msg").len())
 
     // iter::min / iter::max are typed `Option<i64>`. Piped straight
     // into option::unwrap_or / matched inline, the boxed-Option ABI must
     // hold for the non-empty (Some) and empty (None) cases alike.
     let xs = #[4, 1, 7, 3]
-    let lo = iter::min(&xs) |> |v| option::unwrap_or(0, v)
-    let hi = iter::max(&xs) |> |v| option::unwrap_or(0, v)
-    println!("min = {} max = {}", lo, hi)
+    let lo = iter::min(xs) |> |v| option::unwrap_or(v, 0)
+    let hi = iter::max(xs) |> |v| option::unwrap_or(v, 0)
+    println("min = {} max = {}", lo, hi)
 
-    let present = match iter::min(&xs) {
+    let present = match iter::min(xs) {
         Some(_) => true
         None => false
     }
-    println!("min is_some = {}", present)
+    println("min is_some = {}", present)
 
     let empty: Vec<i64> = Vec::from([])
-    let fallback = iter::min(&empty) |> |v| option::unwrap_or(-1, v)
-    println!("empty default = {}", fallback)
+    let fallback = iter::min(empty) |> |v| option::unwrap_or(v, -1)
+    println("empty default = {}", fallback)
 }

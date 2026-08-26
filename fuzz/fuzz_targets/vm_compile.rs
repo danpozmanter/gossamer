@@ -31,11 +31,12 @@ fuzz_target!(|data: &[u8]| {
     }
     let mut map = SourceMap::new();
     let file = map.add_file("fuzz.gos", source.to_string());
-    let (sf, diags) = parse_source_file(source, file);
+    let (mut sf, diags) = parse_source_file(source, file);
     if !diags.is_empty() {
         return;
     }
     let (resolutions, r_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     if !r_diags.is_empty() {
         return;
     }

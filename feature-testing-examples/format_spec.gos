@@ -6,35 +6,35 @@
 
 fn main() {
     // width + alignment
-    println!("[{:>6}]", 42)
-    println!("[{:<6}]", 42)
-    println!("[{:^6}]", 42)
-    println!("[{:6}]", "hi")
+    println("[{:>6}]", 42)
+    println("[{:<6}]", 42)
+    println("[{:^6}]", 42)
+    println("[{:6}]", "hi")
 
     // fill character + zero-pad
-    println!("[{:*>6}]", "hi")
-    println!("[{:->6}]", 7)
-    println!("[{:06}]", 42)
-    println!("[{:06}]", -42)
+    println("[{:*>6}]", "hi")
+    println("[{:->6}]", 7)
+    println("[{:06}]", 42)
+    println("[{:06}]", -42)
 
     // radix
-    println!("[{:x}]", 255)
-    println!("[{:X}]", 255)
-    println!("[{:b}]", 10)
-    println!("[{:o}]", 64)
-    println!("[{:08x}]", 255)
+    println("[{:x}]", 255)
+    println("[{:X}]", 255)
+    println("[{:b}]", 10)
+    println("[{:o}]", 64)
+    println("[{:08x}]", 255)
 
     // precision and precision+width
-    println!("[{:.2}]", 3.14159)
-    println!("[{:>8.2}]", 3.14159)
+    println("[{:.2}]", 3.14159)
+    println("[{:>8.2}]", 3.14159)
 
     // named arguments with specs
     let n = 7
     let label = "ok"
-    println!("[{n:03}] [{label:>5}]")
+    println("[{n:03}] [{label:>5}]")
 
     // escaped braces are untouched
-    println!("{{literal}} {}", 1)
+    println("{{literal}} {}", 1)
 }
 
 #[cfg(test)]
@@ -43,19 +43,19 @@ mod tests {
 
     #[test]
     fn width_and_align() {
-        let _ = testing::check(format!("[{:>6}]", 42) == "[    42]", "right align")
-        let _ = testing::check(format!("[{:<6}]", 42) == "[42    ]", "left align")
-        let _ = testing::check(format!("[{:^6}]", 42) == "[  42  ]", "center")
-        let _ = testing::check(format!("[{:06}]", 42) == "[000042]", "zero pad")
-        let _ = testing::check(format!("[{:*>5}]", "hi") == "[***hi]", "fill char")
+        let _ = testing::check(format("[{:>6}]", 42) == "[    42]", "right align")
+        let _ = testing::check(format("[{:<6}]", 42) == "[42    ]", "left align")
+        let _ = testing::check(format("[{:^6}]", 42) == "[  42  ]", "center")
+        let _ = testing::check(format("[{:06}]", 42) == "[000042]", "zero pad")
+        let _ = testing::check(format("[{:*>5}]", "hi") == "[***hi]", "fill char")
     }
 
     #[test]
     fn radix_and_precision() {
-        let _ = testing::check(format!("{:x}", 255) == "ff", "hex")
-        let _ = testing::check(format!("{:X}", 255) == "FF", "upper hex")
-        let _ = testing::check(format!("{:b}", 10) == "1010", "binary")
-        let _ = testing::check(format!("{:08x}", 255) == "000000ff", "zero-padded hex")
-        let _ = testing::check(format!("{:>8.2}", 3.5) == "    3.50", "precision + width")
+        let _ = testing::check(format("{:x}", 255) == "ff", "hex")
+        let _ = testing::check(format("{:X}", 255) == "FF", "upper hex")
+        let _ = testing::check(format("{:b}", 10) == "1010", "binary")
+        let _ = testing::check(format("{:08x}", 255) == "000000ff", "zero-padded hex")
+        let _ = testing::check(format("{:>8.2}", 3.5) == "    3.50", "precision + width")
     }
 }

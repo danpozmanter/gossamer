@@ -12,7 +12,7 @@
 //   - the aliasing case `f(&mut s, <reads s>)`, which must observe the
 //     pre-call value (the move optimization falls back to a clone).
 
-fn classify(xs: &[i64]) -> Vec<i64> {
+fn classify(xs: [i64]) -> Vec<i64> {
     let mut evens: Vec<i64> = Vec::from([])
     let mut odds: Vec<i64> = Vec::from([])
     for x in xs {
@@ -61,8 +61,8 @@ fn combine(out: &mut String, extra: String) {
 }
 
 fn main() {
-    let classified = classify(&[1, 2, 3, 4, 5, 6])
-    println!("{:?}", classified)
+    let classified = classify([1, 2, 3, 4, 5, 6])
+    println("{:?}", classified)
 
     let mut local = String::new()
     let mut i: i64 = 0
@@ -70,22 +70,22 @@ fn main() {
         local += "ab"
         i += 1
     }
-    println!("{} {}", local, local.len())
+    println("{} {}", local, local.len())
 
     let mut tree = String::new()
     render(4, 0, &mut tree)
-    println!("{} {}", tree, tree.len())
+    println("{} {}", tree, tree.len())
 
     // Aliasing: `combine(&mut b, b)` appends b's pre-call value to itself.
     let mut b = "xy"
     combine(&mut b, b)
     combine(&mut b, b)
-    println!("{} {}", b, b.len())
+    println("{} {}", b, b.len())
 
     // &mut Vec local with a sibling read of the same local.
     let mut v: Vec<i64> = Vec::from([10, 20])
     push_first(&mut v)
-    println!("{:?}", v)
+    println("{:?}", v)
 }
 
 // Reads `v[0]` while `v` is borrowed `&mut`.

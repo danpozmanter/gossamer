@@ -59,27 +59,27 @@ fn main() {
 
     // Subslice middle
     let mid = subslice(data, 2, 5)
-    println!("mid len = {}", mid.len())
-    println!("mid[0] = {}", mid[0])
-    println!("mid[2] = {}", mid[2])
+    println("mid len = {}", mid.len())
+    println("mid[0] = {}", mid[0])
+    println("mid[2] = {}", mid[2])
 
     // Prefix and suffix
     let first3 = prefix(data, 3)
     let last3 = suffix(data, 3)
-    println!("first3 sum = {}", sum(first3))
-    println!("last3 sum = {}", sum(last3))
+    println("first3 sum = {}", sum(first3))
+    println("last3 sum = {}", sum(last3))
 
     // Windows of size 3
     let wins = windows(data, 3)
-    println!("window count = {}", wins.len())
-    println!("win[0] sum = {}", sum(wins[0]))
-    println!("win[7] sum = {}", sum(wins[7]))
+    println("window count = {}", wins.len())
+    println("win[0] sum = {}", sum(wins[0]))
+    println("win[7] sum = {}", sum(wins[7]))
 
     // Chunks of size 3
     let cks = chunks(data, 3)
-    println!("chunk count = {}", cks.len())
-    println!("chunk[0] sum = {}", sum(cks[0]))
-    println!("chunk[3] len = {}", cks[3].len())
+    println("chunk count = {}", cks.len())
+    println("chunk[0] sum = {}", sum(cks[0]))
+    println("chunk[3] len = {}", cks[3].len())
 }
 
 #[cfg(test)]
@@ -90,19 +90,19 @@ mod tests {
     fn subslice_middle() {
         let xs = #[1, 2, 3, 4, 5, 6, 7, 8]
         let s = super::subslice(xs, 2, 5)
-        let _ = testing::check_eq(&(s.len() as i64), &3, "len=3")
-        let _ = testing::check_eq(&s[0], &3, "s[0]=3")
-        let _ = testing::check_eq(&s[1], &4, "s[1]=4")
-        let _ = testing::check_eq(&s[2], &5, "s[2]=5")
+        let _ = testing::check_eq((s.len() as i64), 3, "len=3")
+        let _ = testing::check_eq(s[0], 3, "s[0]=3")
+        let _ = testing::check_eq(s[1], 4, "s[1]=4")
+        let _ = testing::check_eq(s[2], 5, "s[2]=5")
     }
 
     #[test]
     fn prefix_and_suffix() {
         let xs = #[10, 20, 30, 40, 50]
         let p = super::prefix(xs, 2)
-        let _ = testing::check_eq(&super::sum(p), &30, "prefix sum 10+20=30")
+        let _ = testing::check_eq(super::sum(p), 30, "prefix sum 10+20=30")
         let s = super::suffix(xs, 2)
-        let _ = testing::check_eq(&super::sum(s), &90, "suffix sum 40+50=90")
+        let _ = testing::check_eq(super::sum(s), 90, "suffix sum 40+50=90")
     }
 
     #[test]
@@ -110,10 +110,10 @@ mod tests {
         let xs = #[1, 2, 3, 4, 5]
         let ws = super::windows(xs, 3)
         // 5 elements, window 3 → 3 windows
-        let _ = testing::check_eq(&(ws.len() as i64), &3, "3 windows")
-        let _ = testing::check_eq(&super::sum(ws[0]), &6, "1+2+3=6")
-        let _ = testing::check_eq(&super::sum(ws[1]), &9, "2+3+4=9")
-        let _ = testing::check_eq(&super::sum(ws[2]), &12, "3+4+5=12")
+        let _ = testing::check_eq((ws.len() as i64), 3, "3 windows")
+        let _ = testing::check_eq(super::sum(ws[0]), 6, "1+2+3=6")
+        let _ = testing::check_eq(super::sum(ws[1]), 9, "2+3+4=9")
+        let _ = testing::check_eq(super::sum(ws[2]), 12, "3+4+5=12")
     }
 
     #[test]
@@ -121,17 +121,17 @@ mod tests {
         let xs = #[1, 2, 3, 4, 5, 6, 7]
         let cs = super::chunks(xs, 3)
         // 7 elements / 3 → 3 chunks (sizes 3, 3, 1)
-        let _ = testing::check_eq(&(cs.len() as i64), &3, "3 chunks")
-        let _ = testing::check_eq(&super::sum(cs[0]), &6, "chunk0 1+2+3=6")
-        let _ = testing::check_eq(&super::sum(cs[1]), &15, "chunk1 4+5+6=15")
-        let _ = testing::check_eq(&super::sum(cs[2]), &7, "chunk2 7")
-        let _ = testing::check_eq(&(cs[2].len() as i64), &1, "last chunk len=1")
+        let _ = testing::check_eq((cs.len() as i64), 3, "3 chunks")
+        let _ = testing::check_eq(super::sum(cs[0]), 6, "chunk0 1+2+3=6")
+        let _ = testing::check_eq(super::sum(cs[1]), 15, "chunk1 4+5+6=15")
+        let _ = testing::check_eq(super::sum(cs[2]), 7, "chunk2 7")
+        let _ = testing::check_eq((cs[2].len() as i64), 1, "last chunk len=1")
     }
 
     #[test]
     fn empty_subslice() {
         let xs = #[1, 2, 3]
         let s = super::subslice(xs, 1, 1)
-        let _ = testing::check_eq(&(s.len() as i64), &0, "empty subslice len=0")
+        let _ = testing::check_eq((s.len() as i64), 0, "empty subslice len=0")
     }
 }

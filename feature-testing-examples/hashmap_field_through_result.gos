@@ -1,7 +1,7 @@
 use std::collections::Map
 
 // A `Map<String, _>` field reached directly through a `Result`
-// match-payload binding (`match mk() { Ok(m) => m.tags.get(&"a") ... }`)
+// match-payload binding (`match mk() { Ok(m) => m.tags.get("a") ... }`)
 // keeps its declared key/value types: the accessor must dispatch to the
 // string-keyed helpers and format the keys as strings, identically on
 // every tier. Binding the field to a local first used to be the only way
@@ -13,18 +13,18 @@ struct Tags {
 
 fn build() -> Result<Tags, i64> {
     let mut m: Map<String, i64> = Map::new()
-    m.insert(&"a", 1)
-    m.insert(&"b", 2)
+    m.insert("a", 1)
+    m.insert("b", 2)
     Ok(Tags { tags: m })
 }
 
 fn main() {
     match build() {
         Ok(t) => {
-            let a = t.tags.get(&"a").unwrap_or(-9)
-            let missing = t.tags.get(&"zz").unwrap_or(-9)
-            println!("a={} missing={} keys={:?} values={:?}", a, missing, t.tags.keys(), t.tags.values())
+            let a = t.tags.get("a").unwrap_or(-9)
+            let missing = t.tags.get("zz").unwrap_or(-9)
+            println("a={} missing={} keys={:?} values={:?}", a, missing, t.tags.keys(), t.tags.values())
         }
-        Err(e) => println!("err={}", e)
+        Err(e) => println("err={}", e)
     }
 }

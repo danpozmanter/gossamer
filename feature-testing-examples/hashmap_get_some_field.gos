@@ -10,28 +10,28 @@ fn main() {
     let mut sum: f64 = 0.0
     let mut id: u32 = 0
     while id < 2 {
-        if let Some(p) = m.get(&id) {
+        if let Some(p) = m.get(id) {
             sum += p.x
         }
         id += 1
     }
 
-    let missing = match m.get(&999) {
+    let missing = match m.get(999) {
         Some(_) => "some"
         None => "none"
     }
 
     let mut i64s: Map<u32, i64> = Map::new()
     i64s.insert(0, 100)
-    let present_val = match i64s.get(&0) {
+    let present_val = match i64s.get(0) {
         Some(v) => v
         None => -1
     }
-    let missing_val = match i64s.get(&999) {
+    let missing_val = match i64s.get(999) {
         Some(v) => v
         None => -1
     }
 
-    println!("sum={} missing={} present_val={} missing_val={}"
+    println("sum={} missing={} present_val={} missing_val={}"
         sum, missing, present_val, missing_val)
 }

@@ -4,5 +4,5 @@ fn main() {
     for v in arr {
         sum = sum + v
     }
-    println!("{}", sum)
+    println("{}", sum)
 }

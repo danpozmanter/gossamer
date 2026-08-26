@@ -180,8 +180,8 @@ fn multibyte_in_format_template_round_trips_uncorrupted() {
     let src = r#"
 fn main() {
     let balance = 5
-    let msg = format!("balance is €{} after fees", balance)
-    println!("{}", msg)
+    let msg = format("balance is €{} after fees", balance)
+    println("{}", msg)
 }
 "#;
     let expected = "balance is €5 after fees";
@@ -219,8 +219,8 @@ fn ascii_only_format_template_round_trips_uncorrupted() {
     let src = r#"
 fn main() {
     let n = 42
-    let msg = format!("answer is {}", n)
-    println!("{}", msg)
+    let msg = format("answer is {}", n)
+    println("{}", msg)
 }
 "#;
     assert_three_tier_utf8("ascii_format", src, "answer is 42");
@@ -234,7 +234,7 @@ fn multibyte_glyphs_in_println_round_trip() {
     // lower-time + runtime emission untouched.
     let src = r#"
 fn main() {
-    println!("€ ™ © … é á")
+    println("€ ™ © … é á")
 }
 "#;
     assert_three_tier_utf8("multibyte_glyphs", src, "€ ™ © … é á");
@@ -245,7 +245,7 @@ fn unicode_in_format_with_named_arg_round_trips() {
     let src = r#"
 fn main() {
     let n = 7
-    println!("{n} € total")
+    println("{n} € total")
 }
 "#;
     assert_three_tier_utf8("named_arg_unicode", src, "7 € total");

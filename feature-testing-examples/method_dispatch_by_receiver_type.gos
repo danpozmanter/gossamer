@@ -59,15 +59,15 @@ fn tally(rounds: i64) -> i64 {
 
 fn main() {
     let v = Value::Null
-    println!("enum {}", v.type_name())
+    println("enum {}", v.type_name())
     let mut p = Parser { at: 0 }
-    println!("struct {} at {}", p.type_name(), p.at)
+    println("struct {} at {}", p.type_name(), p.at)
 
     let mut store = Store { pages: Map::new(), seen: Set::new() }
     store.record(1, #[1u8, 2u8])
-    println!("miss {}", store.fetch(2).len())
-    println!("hit {}", store.fetch(1).len())
-    println!("hit again {}", store.fetch(1).len())
+    println("miss {}", store.fetch(2).len())
+    println("hit {}", store.fetch(1).len())
+    println("hit again {}", store.fetch(1).len())
 
     let mut m: Map<String, i64> = Map::new()
     m.insert("a", 1)
@@ -75,7 +75,7 @@ fn main() {
     s.insert(9)
     let xs: Vec<i64> = #[1, 2, 3]
     let text = "abc"
-    println!(
+    println(
         "surfaces {:?} {} {} {} {}"
         m.get("a")
         s.contains(9)
@@ -83,7 +83,7 @@ fn main() {
         text.len()
         m.len()
     )
-    println!("free {} {} {}", get(1), insert(2), len(3))
+    println("free {} {} {}", get(1), insert(2), len(3))
 
     // Repeated calls so the hot path compiles: the name a call binds to must
     // not change once a body leaves the interpreter.
@@ -95,5 +95,5 @@ fn main() {
         lengths.push(store.fetch(i).len())
         lengths.push(v.type_name().len())
     }
-    println!("hot {} {} {:?} {}", names.len(), names[7], lengths, tally(4))
+    println("hot {} {} {:?} {}", names.len(), names[7], lengths, tally(4))
 }

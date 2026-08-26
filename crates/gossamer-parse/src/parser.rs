@@ -66,6 +66,14 @@ pub struct Parser<'src> {
     /// newline is not a token, so accepting the same one twice would let a
     /// list loop ask for an element that never arrives.
     pub(crate) newline_separator_at: Option<usize>,
+    /// Trait named by the header of the `impl` block being parsed, when
+    /// one is. A method's contract is decided by that header, so the name
+    /// has to be in hand while the method itself is read.
+    pub(crate) impl_trait_name: Option<String>,
+    /// Depth of items the autoderive stage spliced into the unit. Their
+    /// text has no source position an author could edit, so a spelling
+    /// rewrite is reported against what the author wrote or not at all.
+    pub(crate) synthesized_depth: u32,
 }
 
 impl<'src> Parser<'src> {
@@ -101,6 +109,8 @@ impl<'src> Parser<'src> {
             ids: NodeIdGenerator::new(),
             diagnostics,
             no_struct_literal_depth: 0,
+            impl_trait_name: None,
+            synthesized_depth: 0,
             pattern_pipe_depth: 0,
             parsing_pipe_step: false,
             match_arm_body_depth: 0,
@@ -260,6 +270,38 @@ impl<'src> Parser<'src> {
     /// Attempts to consume `keyword`, returning whether it was present.
     pub(crate) fn eat_keyword(&mut self, keyword: Keyword) -> bool {
         self.tokens.eat_keyword(keyword)
+    }
+
+    /// Returns `true` when the current token is the identifier `word`.
+    /// The block words (`select`, `defer`, `comptime`, `cohort`, `arena`,
+    /// `spawn`, `newtype`, `packed`) are contextual: each is a keyword
+    /// only where its construct can start, and an ordinary name anywhere
+    /// else.
+    #[must_use]
+    pub(crate) fn at_contextual_word(&self, word: &str) -> bool {
+        let token = self.peek();
+        matches!(token.kind, TokenKind::Ident) && self.slice(token.span) == word
+    }
+
+    /// Returns `true` when the token `offset` ahead is `punct`.
+    #[must_use]
+    pub(crate) fn peek_nth_is_punct(&self, offset: usize, punct: Punct) -> bool {
+        matches!(self.peek_nth(offset).kind, TokenKind::Punct(p) if p == punct)
+    }
+
+    /// Whether the cursor sits inside an item the compiler synthesized.
+    #[must_use]
+    pub(crate) fn in_synthesized_item(&self) -> bool {
+        self.synthesized_depth > 0
+    }
+
+    /// Consumes the identifier `word` when it is the current token.
+    pub(crate) fn eat_contextual_word(&mut self, word: &str) -> bool {
+        if self.at_contextual_word(word) {
+            self.bump();
+            return true;
+        }
+        false
     }
 
     /// Consumes `punct` or records a diagnostic if absent.

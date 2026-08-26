@@ -17,14 +17,14 @@ fn fast_sender(tx: channel::Sender<i64>) {
 }
 
 fn main() {
-    let (tx1, rx1) = channel()
-    let (tx2, rx2) = channel()
+    let tx1, rx1 = channel()
+    let tx2, rx2 = channel()
 
     // One slow producer
-    go slow_sender(tx1)
+    spawn(|| slow_sender(tx1))
 
     // One fast producer
-    go fast_sender(tx2)
+    spawn(|| fast_sender(tx2))
 
     let mut order: Vec<i64> = Vec::from([])
     let mut attempts = 0
@@ -40,8 +40,8 @@ fn main() {
         }
     }
 
-    println!("arrival order: {}", order)
-    println!("poll attempts: {}", attempts)
+    println("arrival order: {}", order)
+    println("poll attempts: {}", attempts)
 }
 
 #[cfg(test)]
@@ -52,10 +52,10 @@ mod tests {
 
     #[test]
     fn both_values_arrive() {
-        let (tx1, rx1) = channel()
-        let (tx2, rx2) = channel()
-        go super::slow_sender(tx1)
-        go super::fast_sender(tx2)
+        let tx1, rx1 = channel()
+        let tx2, rx2 = channel()
+        spawn(|| super::slow_sender(tx1))
+        spawn(|| super::fast_sender(tx2))
         time::sleep(60)
         let mut total = 0
         while let Some(v) = rx1.recv() {
@@ -64,6 +64,6 @@ mod tests {
         while let Some(v) = rx2.recv() {
             total += v
         }
-        let _ = testing::check_eq(&total, &3, "slow(1) + fast(2) = 3")
+        let _ = testing::check_eq(total, 3, "slow(1) + fast(2) = 3")
     }
 }

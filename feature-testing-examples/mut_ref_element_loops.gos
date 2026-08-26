@@ -9,27 +9,27 @@ fn shift(rows: &mut [Vec<i64>]) { for row in rows { row.push(9) } }
 fn replace(rows: &mut [Vec<i64>]) { for row in rows { *row = #[7] } }
 fn rename(names: &mut [String]) { for n in names { *n += "!" } }
 fn nudge(ps: &mut [P]) { for p in ps { p.x += 1 } }
-fn total(xs: &[i64]) -> i64 { let mut acc = 0
+fn total(xs: [i64]) -> i64 { let mut acc = 0
     for x in xs { acc += x }
     acc }
 fn main() {
     let mut a = #[1, 2, 3]
     bump(&mut a)
-    println!("scalar   = {:?}", a)
+    println("scalar   = {:?}", a)
     let mut g = #[#[1], #[2]]
     shift(&mut g)
-    println!("nested   = {:?}", g)
+    println("nested   = {:?}", g)
     let mut h = #[#[1], #[2]]
     replace(&mut h)
-    println!("replace  = {:?}", h)
+    println("replace  = {:?}", h)
     let mut n = #["a", "b"]
     rename(&mut n)
-    println!("strings  = {:?}", n)
+    println("strings  = {:?}", n)
     let mut ps = #[P { x: 1 }, P { x: 2 }]
     nudge(&mut ps)
-    println!("structs  = {} {}", ps[0].x, ps[1].x)
-    println!("readonly = {}", total(&#[1, 2, 3]))
+    println("structs  = {} {}", ps[0].x, ps[1].x)
+    println("readonly = {}", total(#[1, 2, 3]))
     let mut inline = #[#[1]]
     for row in &mut inline { row.push(5) }
-    println!("inline   = {:?}", inline)
+    println("inline   = {:?}", inline)
 }

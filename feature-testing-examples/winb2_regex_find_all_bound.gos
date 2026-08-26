@@ -5,12 +5,12 @@ fn main() {
         Ok(r) => r
         Err(_) => return
     }
-    let all = regex::find_all(&re, &"a1b22c333")
-    println!("n={}", all.len())
+    let all = regex::find_all(re, "a1b22c333")
+    println("n={}", all.len())
     for hit in all {
-        println!("{} {} {}", hit.0, hit.1, hit.2)
+        println("{} {} {}", hit.0, hit.1, hit.2)
     }
-    for (start, end, text) in regex::find_all(&re, &"x9y") {
-        println!("{}-{}={}", start, end, text)
+    for (start, end, text) in regex::find_all(re, "x9y") {
+        println("{}-{}={}", start, end, text)
     }
 }

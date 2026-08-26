@@ -15,7 +15,7 @@ trait Show {
 }
 
 impl Show for i64 {
-    fn show(&self) -> String { format!("{}", *self) }
+    fn show(&self) -> String { format("{}", *self) }
 }
 
 fn show_all<T: Show>(xs: [T]) -> String {
@@ -27,7 +27,7 @@ fn show_all<T: Show>(xs: [T]) -> String {
     out
 }
 
-fn nested<T: Clone, U: Default + Show>(t: T, u: U) -> (T, U) {
+fn nested<T: Clone, U = Default + Show>(t: T, u: U) -> (T, U) {
     (t.clone(), u)
 }
 

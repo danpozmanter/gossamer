@@ -22,21 +22,21 @@ mod shapes {
 
 fn describe(s: shapes::Shape) -> String {
     match s {
-        shapes::Shape::Circle(r) => format!("circle {:.1}", r)
-        shapes::Shape::Rect(w, h) => format!("rect {:.1}x{:.1}", w, h)
+        shapes::Shape::Circle(r) => format("circle {:.1}", r)
+        shapes::Shape::Rect(w, h) => format("rect {:.1}x{:.1}", w, h)
         shapes::Shape::Point => "point"
     }
 }
 
 fn main() {
     let one = shapes::Shape::Circle(2.0)
-    println!("{:.4}", shapes::area(one))
-    println!("{}", describe(shapes::Shape::Rect(2.0, 3.0)))
-    println!("{}", describe(shapes::Shape::Point))
+    println("{:.4}", shapes::area(one))
+    println("{}", describe(shapes::Shape::Rect(2.0, 3.0)))
+    println("{}", describe(shapes::Shape::Point))
     let all = #[
         shapes::Shape::Circle(1.0)
         shapes::Shape::Rect(2.0, 3.0)
         shapes::Shape::Point
     ]
-    println!("{:.4}", shapes::total(all))
+    println("{:.4}", shapes::total(all))
 }

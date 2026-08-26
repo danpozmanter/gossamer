@@ -1,14 +1,14 @@
-// Phase 7B: `*out += format!("{}", n)` on an enum-payload binding (append
+// Phase 7B: `*out += format("{}", n)` on an enum-payload binding (append
 // fusion through the resolved payload type) and `?`-heavy Result carrier
 // (result_new/disc/payload inline).
 use std::errors
 
 enum Val { Int(i64), Flt(f64), Txt(String) }
 
-fn ser(v: &Val, out: &mut String) {
+fn ser(v: Val, out: &mut String) {
     match v {
-        Val::Int(n) => *out += format!("{}", n)
-        Val::Flt(f) => *out += format!("{}", f)
+        Val::Int(n) => *out += format("{}", n)
+        Val::Flt(f) => *out += format("{}", f)
         Val::Txt(s) => {
             *out += "\""
             *out += s
@@ -17,7 +17,7 @@ fn ser(v: &Val, out: &mut String) {
     }
 }
 
-fn parse_leading_int(s: &String) -> Result<i64, errors::Error> {
+fn parse_leading_int(s: String) -> Result<i64, errors::Error> {
     let mut acc = 0
     let mut i = 0
     let n = s.len() as i64
@@ -30,7 +30,7 @@ fn parse_leading_int(s: &String) -> Result<i64, errors::Error> {
     Ok(acc)
 }
 
-fn sum_ints(items: &Vec<String>) -> Result<i64, errors::Error> {
+fn sum_ints(items: Vec<String>) -> Result<i64, errors::Error> {
     let mut total = 0
     for it in items { total += parse_leading_int(it)? }
     Ok(total)
@@ -40,13 +40,13 @@ fn main() {
     let items = #[Val::Int(42), Val::Flt(3.5), Val::Txt("hi"), Val::Int(-7)]
     let mut out = String::new()
     for v in items {
-        ser(&v, &mut out)
+        ser(v, &mut out)
         out += ";"
     }
-    println!("{}", out)
+    println("{}", out)
     let nums: Vec<String> = Vec::from(["12", "300", "7"])
-    match sum_ints(&nums) {
-        Ok(t) => println!("sum {}", t)
-        Err(e) => println!("err {}", e)
+    match sum_ints(nums) {
+        Ok(t) => println("sum {}", t)
+        Err(e) => println("err {}", e)
     }
 }

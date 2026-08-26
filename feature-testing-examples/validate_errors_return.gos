@@ -28,24 +28,24 @@ fn first_field_error() -> validate::FieldError {
 
 // Dispatches on an `Errors` received by parameter.
 fn summarize(errs: validate::Errors) {
-    println!("param is_empty: {}", errs.is_empty())
-    println!("param len: {}", errs.len())
-    println!("param collect: {}", errs.collect())
+    println("param is_empty: {}", errs.is_empty())
+    println("param len: {}", errs.len())
+    println("param collect: {}", errs.collect())
 }
 
 fn main() {
     let errs = build_errors()
-    println!("is_empty: {}", errs.is_empty())
-    println!("len: {}", errs.len())
-    println!("count name: {}", errs.count("name"))
-    println!("count missing: {}", errs.count("missing"))
-    println!("get name: {}", errs.get("name"))
-    println!("collect: {}", errs.collect())
+    println("is_empty: {}", errs.is_empty())
+    println("len: {}", errs.len())
+    println("count name: {}", errs.count("name"))
+    println("count missing: {}", errs.count("missing"))
+    println("get name: {}", errs.get("name"))
+    println("collect: {}", errs.collect())
 
     let fe = first_field_error()
-    println!("fe path: {}", fe.path())
-    println!("fe message: {}", fe.message())
-    println!("fe code: {}", fe.code())
+    println("fe path: {}", fe.path())
+    println("fe message: {}", fe.message())
+    println("fe code: {}", fe.code())
 
     summarize(build_errors())
 }

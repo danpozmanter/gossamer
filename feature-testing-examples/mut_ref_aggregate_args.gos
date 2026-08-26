@@ -44,17 +44,17 @@ fn main() {
     let _ = fill(&mut a5)
     let _ = fill(&mut a6)
     let _ = fill(&mut a7)
-    println!(
+    println(
         "filled {} {} {} {} {} {} {} {}"
         a0[0], a1[0], a2[0], a3[0], a4[0], a5[0], a6[0], a7[0]
     )
 
     let untouched = [8, 8, 8, 8]
-    println!("by-value {} {}", leave(untouched), untouched[0])
+    println("by-value {} {}", leave(untouched), untouched[0])
 
     let mut counter = Counter { hits: 0, misses: 0 }
     for _ in 0..8 {
         record(&mut counter)
     }
-    println!("counter {} {}", counter.hits, counter.misses)
+    println("counter {} {}", counter.hits, counter.misses)
 }

@@ -15,44 +15,44 @@ fn main() {
         Item { name: "washer", qty: 2 }
     ]
 
-    println!("total={}", items.iter().map(|i| i.qty).sum())
-    println!("names={}", items.iter().map(|i| i.name).collect().join(","))
-    println!("first={}", items.iter().map(|i| i.name).collect()[0])
+    println("total={}", items.iter().map(|i| i.qty).sum())
+    println("names={}", items.iter().map(|i| i.name).collect().join(","))
+    println("first={}", items.iter().map(|i| i.name).collect()[0])
 
     match items.iter().max_by_key(|i| i.qty) {
-        Some(top) => println!("top={} {}", top.name, top.qty)
-        None => println!("top=none")
+        Some(top) => println("top={} {}", top.name, top.qty)
+        None => println("top=none")
     }
     match items.iter().min_by_key(|i| i.qty) {
-        Some(low) => println!("low={} {}", low.name, low.qty)
-        None => println!("low=none")
+        Some(low) => println("low={} {}", low.name, low.qty)
+        None => println("low=none")
     }
 
     let mut inventory = 0
     for item in items {
         inventory += item.qty * item.name.len()
     }
-    println!("inventory={inventory}")
+    println("inventory={inventory}")
 
     let pairs = #[(1, "one"), (2, "two"), (3, "three")]
     for (n, word) in pairs {
-        println!("{n}:{word}")
+        println("{n}:{word}")
     }
     let mut keys = 0
     for p in pairs {
         keys += p.0
     }
-    println!("keys={keys}")
-    println!("words={}", pairs.iter().map(|p| p.1).collect().join("|"))
+    println("keys={keys}")
+    println("words={}", pairs.iter().map(|p| p.1).collect().join("|"))
 
     let nested = #[#[1, 2], #[3], #[4, 5, 6]]
     let mut flat = 0
     for row in nested {
         flat += row.len()
     }
-    println!("flat={flat}")
+    println("flat={flat}")
 
     let words = #["delta", "alpha", "charlie"]
-    println!("long={}", words.iter().filter(|w| w.len() > 5).count())
-    println!("joined={}", words.iter().map(|w| w.to_uppercase()).collect().join("-"))
+    println("long={}", words.iter().filter(|w| w.len() > 5).count())
+    println("joined={}", words.iter().map(|w| w.to_uppercase()).collect().join("-"))
 }

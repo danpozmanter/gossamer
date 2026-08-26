@@ -1,6 +1,6 @@
 struct Pair {
-    left: i64,
-    right: i64,
+    left: i64
+    right: i64
 }
 
 fn arithmetic_work(n: i64) -> i64 {
@@ -46,7 +46,7 @@ fn scalar_replacement_work(n: i64) -> i64 {
 fn string_work(n: i64) -> i64 {
     let mut out = String::new()
     for i in 0..n {
-        out.push_str(&format!("{}:", i % 17))
+        out.push_str(format("{}:", i % 17))
     }
     out.len() as i64
 }

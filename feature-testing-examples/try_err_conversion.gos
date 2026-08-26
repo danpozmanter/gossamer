@@ -22,11 +22,11 @@ fn outer(n: i64) -> Result<i64, errors::Error> {
 
 fn main() {
     match outer(4) {
-        Ok(v) => println!("outer(4) = {}", v)
-        Err(e) => println!("outer(4) err: {}", e.message())
+        Ok(v) => println("outer(4) = {}", v)
+        Err(e) => println("outer(4) err: {}", e.message())
     }
     match outer(-2) {
-        Ok(v) => println!("outer(-2) ok = {}", v)
-        Err(e) => println!("outer(-2) err: {}", e.message())
+        Ok(v) => println("outer(-2) ok = {}", v)
+        Err(e) => println("outer(-2) err: {}", e.message())
     }
 }

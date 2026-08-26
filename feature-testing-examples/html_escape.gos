@@ -11,7 +11,7 @@ use std::html
 fn main() {
     let raw = "<script>alert('XSS & \"injection\"')</script>"
     let safe = html::escape(raw)
-    println!("{}", safe)
+    println("{}", safe)
     assert(!safe.contains("<script>"), "angle brackets escaped")
     assert(!safe.contains("</"), "closing-tag slash escaped")
     assert(safe.contains("&lt;script&gt;"), "tag escaped")
@@ -28,5 +28,5 @@ fn main() {
         let round = html::unescape(html::escape(ch))
         assert_eq(round, ch, "round-trip")
     }
-    println!("ok")
+    println("ok")
 }

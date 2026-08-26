@@ -1,5 +1,215 @@
 # Changelog
 
+## 0.56.0 - Major syntax/keyword refinement, packed enums, efficiency & correctness
+
+- A function returning `Result<scalar, E>` or `Option<scalar>` answers its
+  arm on every tier. The JIT hands such a return back as a two-word
+  `[discriminant, payload]` carrier, and a body with no other aggregate at
+  its boundary took the scalar dispatch path, which has no decode step: the
+  caller read the carrier itself as a tuple, so `?` on the result reported a
+  non-exhaustive match. Such a return now routes through the path that
+  decodes it.
+- A bare call naming a module reports the import it needs. A module lives in
+  the type namespace, and a bare name that resolved to nothing in the value
+  namespace fell back to it, so a module and an item sharing a name - a
+  `physics_sys` module declaring `physics_sys` - passed `gos check` and
+  reached the backends as a function reference nothing declares. A module is
+  no longer a candidate in value position, so the name reports `GR0011` with
+  the `use` line that fixes it.
+- An assignment through `*x` where `x` is not a reference is rejected
+  (`GT0083`). `*` reaches the place a reference names; over a value there is
+  no place, so the write was accepted and silently discarded.
+- A spawn handle is reclaimed. Its one-shot channel is shared with the child
+  that delivers the outcome, and neither party released it, so every `spawn`
+  leaked the channel on the compiled tiers - about 300 bytes each. The
+  channel is reference-counted: the drop the codegen emits at the handle's
+  last use releases one share, the child releases its own as it leaves, and
+  whichever is last reclaims the storage.
+- A sandboxed child on Windows starts in the working directory the policy
+  names. The policy compiler answered every resolved path in the verbatim
+  `\\?\` form, which the Win32 file APIs accept and `cmd.exe` does not: it
+  refused the directory and ran in `C:\Windows` instead, and every grant the
+  policy reported back carried the same spelling. A drive or UNC path is now
+  recorded in its plain form; a volume GUID path keeps the prefix that is
+  what reaches it.
+- `gos check --fix` applies a suggestion raised in a sibling module to that
+  module. A suggestion's span addresses the bundled unit, and it was being
+  applied to the entry file's text at the same offsets - a panic once the
+  offset ran past the entry's end, and a wrong edit before that. Each span
+  is now resolved through the unit's provenance to the file it was written
+  in, and the rewrite is kept only when re-checking the whole unit proves
+  it better.
+- A binding and an assignment list their targets without parentheses:
+  `let mut x, mut y = 7, 8`, `a, b = b, a`, and `x, y += 2, 3`. One value on
+  the right spreads over the list when it is a tuple, so `let a, b = pair`
+  reads as before, and a compound operator pairs element-wise, which a
+  parenthesised target used to refuse. Parentheses now group a pattern only
+  where one sits beside others - a `match` arm, a `for` binding, a parameter,
+  or a nested element of the list - and a parenthesised target list reports
+  GP0042 with the rewrite `gos check --fix` applies.
+- A `let` target list has its arity checked. `let a, b, c = pair` bound past
+  the end of the value and reported nothing.
+- `gos build` without `--release` is roughly four times faster. A debug build
+  records a call-stack frame per function entry so a panic names the source
+  position, and each frame was copying the function name and file into two
+  fresh heap strings on every call. A frame now holds the program-image
+  pointers the prologue passes and decodes them only when a trace renders.
+- An integer `{:spec}` placeholder carrying a width renders its number on the
+  LLVM back-end. The fused render-and-pad call typed its destination as the
+  word a string handle fits in rather than as the `String` it answers, so the
+  whole line came out as a pointer value.
+- The `0` flag pads between a number's sign and its digits, and after a
+  `{:#x}` radix prefix, so `{:08}` on `-42` reads `-0000042`. An omitted
+  alignment follows the value - a number right, everything else left - and
+  the flag reaches numbers only, so `{:08}` on a string pads with spaces.
+- A map walked directly binds its own key and value types. `for (k, v) in m`
+  bound a pair nothing constrained, so a tuple built from the binding kept
+  unresolved element types; the compiled back-ends then sized its stack slot
+  from the tuple's arity instead of its flattened width and the store ran off
+  the end of the frame. Reading `{:?}` of such a tuple failed the build for
+  the same reason.
+- An indexed read or a tuple-field read taken while the operand's type is
+  still unknown binds its result once the operand resolves, instead of
+  leaving a variable nothing grounds.
+- `or_insert` inserts into a string-valued map on the compiled tiers.
+  `Map<i64, String>` and `Map<String, String>` store their values as bytes
+  rather than as a value word, and the helper was answering the default
+  without inserting.
+- Ctrl-C during `gos test` ends the test workers with it. A worker runs in a
+  process group of its own so a per-test timeout can end the tree it builds,
+  which also put it outside the terminal's foreground group where the signal
+  never reached it; the toolchain now owns that lifetime. Leaving the REPL
+  ends the children a program started there too.
+- A float-to-integer cast saturates at the target's own range on every tier:
+  `300.7 as u8` is `255`, `-1.5 as u8` is `0`, `70000.5 as u16` is `65535`.
+  It previously stopped at the machine word and answered `300`.
+- Every adapter chains from a receiver. `filter_map`, `find_map`, `flat_map`,
+  `chunk_by`, `count_by`, `max_by`, `min_by`, `partition`, `product_by`,
+  `reduce`, `sum_by`, `unzip`, and `scan` had a data-last free call and no
+  method form.
+- A `mod` declaration ends at its newline. The trailing `;` was the one form
+  in the language that asked for a terminator; it reports GP0043.
+- One callable type, `Fn(args) -> ret`. `fn`, `FnMut`, and `FnOnce` report
+  GP0044 with the `Fn` rewrite.
+- An argument label binds with `:`, as every other keyed form in the language
+  does. `name = value` at a call site reports GP0045.
+- `unsafe` reports GP0046 and is dropped by `--fix`. No operation was
+  withheld outside it, so the keyword marked a boundary the language does not
+  draw. It stays reserved.
+- `Box<T>`, `Rc<T>`, and `Arc<T>` report GT0079 with the rewrite that strips
+  them. Every value is heap-shared and reference-counted already.
+- `String::parse` reports GT0080 with the `to_i64` / `to_f64` / `to_bool`
+  rewrite. Those parse the whole string and answer an `Option<T>`.
+- An opaque alias is written `newtype Name = Repr`. `type Name = new Repr`
+  reports GP0047.
+- An enum declares how its discriminant is stored. A plain `enum` takes the
+  smallest byte-aligned width that holds every variant; `packed enum` takes
+  the smallest number of bits; either may name its own with `: uN`, from 1
+  to 64. A width too narrow for the variants reports GT0081 with the width
+  they need, and a representation that is not an unsigned width reports
+  GP0050. What a program observes - the variant a value names, comparison,
+  ordering, matching, and serialization - is the same whatever it asks for.
+- A compiler-known call is written without a `!`: `println("{x}")`,
+  `format("v={}", n)`, `matches(v, Some(_))`. The set is closed and
+  recognised at the `(`, so nothing a sigil disambiguates was lost. The
+  first argument is the template when it is a string literal, and a lone
+  argument renders on its own - a value is never parsed as a template, so
+  `println(s)` where `s` holds `"{x}"` prints `{x}`. `name!(..)` reports
+  GP0049 with the rewrite.
+- A `fn` or a binding declared under a compiler-known name reports GR0020:
+  the call expands where it is written, so the declaration could never be
+  reached. `gos doc`, the REPL, and the LSP call these "builtin" rather than
+  "macro", and no discovery surface spells one with a `!` any more. The
+  standard library manifest also advertised `write` and `writeln` builtins
+  that never existed.
+- `regex::compile("…")` and `sql::statement("…")` replace `regex!` / `sql!`.
+  A literal argument is still validated while the program is compiled;
+  `regex` and `sql` stay module names rather than becoming globals.
+- `m.inc(k)` works on an enum-keyed map in a native build. A unit-only enum
+  is a bare discriminant word at run time, but it was classified as neither
+  an integer key nor a content-hashed one, so the call lowered to an
+  undefined symbol.
+- The `go` keyword is gone. Concurrency is `spawn(|| expr)` and nothing else:
+  a spawn attaches to the enclosing cohort, `main` is an implicit root
+  cohort, and nothing detaches, so every goroutine is joined and its failure
+  reported. `gos check --fix` rewrites `go expr`, hoisting an effectful
+  operand into a temporary so it is still evaluated at the spawn site.
+- The i64-only `queue::` / `stack::` / `deque::` / `heap::` / `ordered_vec::`
+  / `ordered_set::` / `ordered_map::` re-bind modules are gone. `Queue`,
+  `Stack`, `Deque`, `MinHeap`, `MaxHeap`, `BTreeSet`, and `BTreeMap` hold any
+  element the language orders and mutate in place, so one data structure no
+  longer had two calling conventions and two element vocabularies.
+- `select`, `defer`, and `comptime` are contextual words rather than reserved
+  keywords, joining `cohort` and `arena`. Each opens its construct only where
+  one can start, so a binding, field, parameter, method, or function may
+  carry any of those names.
+- An item written under an attribute is recognised when it starts with a
+  contextual word, so `#[derive(Debug)] packed enum` and an attributed
+  `newtype` or `comptime fn` parse as the items they are.
+- `Display` and `Debug` are written the same way: each declares one method
+  that answers a `String`, and both are `fn fmt`. The `impl` header says
+  which rendering a block supplies, so `{}` still reaches only `Display` and
+  `{:?}` only `Debug`, and `x.to_string()` renders through `Display`.
+  `fn to_string` inside an `impl Display` block reports GP0053 with the
+  rewrite.
+- A goroutine that never finishes no longer hangs the process at exit. The
+  drain that runs after `main` returns waits with a deadline and then names
+  how many children are still going; a `cohort { }` block keeps waiting for
+  its own children, which is what entering one asked for.
+- The REPL renders a method's signature from the data-first catalogue, so
+  `%info Iterator` states each adapter's type again instead of listing bare
+  names. Completion offers every contextual word and no longer offers the
+  pointer wrappers the language does not have.
+- A `regex::compile("literal")` is validated once, while the program is
+  compiled, and leaves nothing behind in the running program - the check used
+  to survive into the caller, where its panic path also cost the whole
+  function its JIT entry.
+- A `cohort` header setting checks the enum its variant is qualified with, so
+  `Foo::FailFast` is no longer accepted where `Policy::FailFast` was meant.
+- A `print` with no trailing newline reaches stdout in a native build. A
+  Gossamer binary enters at `main` and returns from it, so nothing ran the
+  flush a Rust program's entry shim performs on the way out, and text with no
+  newline sat in the process's own line buffer until the process was gone.
+- `{:.N}` on a string takes its first N characters, as Rust's does. Precision
+  was a numeric-only path and panicked on text.
+- A formatting call written as a `|>` step reports GP0041, the diagnostic
+  every argument-taking step reports; GP0025, which claimed the same ground
+  back when a format call was a macro, is gone. `--fix` now writes the piped
+  value into the leading slot, which is where every std free function takes
+  its data.
+- A parameter is `T` or `&mut T`. Passing a value copies nothing whatever its
+  type, and a callee writes to the caller's variable only through `&mut`, so a
+  shared `&` in a parameter names no choice: it reports GP0054, and a shared
+  `&` written on an argument reports GP0055. Both drop the sigil and keep
+  checking, so the rest of the body is diagnosed on its own terms.
+- A reference passed where the parameter takes the value reports GT0082 with
+  the `*x` rewrite. The checker accepted it while the compiled tiers handed
+  the callee the address and the bytecode VM handed it the value - a wrong
+  answer with nothing to read.
+- A sequence view is written `[T]` in parameter position and takes an array, a
+  `Vec`, or another view directly; `&mut [T]` is the form that writes through.
+- `&self` names the same value `self` does, so a payload bound through a
+  method receiver is the value it is rather than a reference to it. `&mut
+  self` is unchanged.
+- Every std free function takes its data first, so a free call reads as the
+  method it stands for: `iter::map(xs, f)` beside `xs.map(f)`,
+  `option::unwrap_or(opt, 0)` beside `opt.unwrap_or(0)`. The 48 `iter::` /
+  `option::` / `result::` entries that took it last are the ones that moved;
+  a call still written the old way reports GR0021 and keeps meaning what it
+  did, so the rest of the body is diagnosed on its own terms.
+- Every file in a project may write `#[cfg(test)] mod tests`. A module
+  declared inside another one was registering at the unit root rather than
+  in its parent, so bundled siblings competed for one name and each file's
+  test module had to be given a name of its own.
+- A project entry may write `mod util` without a trailing semicolon. The
+  bundler recognised only the `mod util;` spelling, so the newline-terminated
+  form reported a missing source file for a sibling that was present and
+  then collided with the bundler's own wrapper.
+- Declaring anything named `spawn` reports GR0020. `spawn(f)` is the one way
+  to start a goroutine, so a function or binding of that name used to take
+  concurrency away from every call in the file while still compiling.
+
+
 ## 0.55.6 - Compile-time build inputs, permission modes, cwd+env process API, script updates
 
 - A file a `comptime` region reads is now an input of the build. `gos build`

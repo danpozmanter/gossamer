@@ -2,7 +2,7 @@
 
 Status: unproven
 
-Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - `go serve()`, `lifecycle::ready()`, `lifecycle::await_shutdown()`, then the cleanup.
+Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - `spawn(|| serve())`, `lifecycle::ready()`, `lifecycle::await_shutdown()`, then the cleanup.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 

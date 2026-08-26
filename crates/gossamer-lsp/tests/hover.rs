@@ -84,7 +84,7 @@ fn hover_on_inferred_mutable_reference_shows_concrete_type() {
 
 #[test]
 fn hover_on_stdlib_symbol_shows_doc() {
-    let server = server_with("file:///p.gos", "fn main() { println!(\"hi\") }\n");
+    let server = server_with("file:///p.gos", "fn main() { println(\"hi\") }\n");
     // Cursor on `println` (line 0, column 13).
     let params = position_params("file:///p.gos", 0, 13);
     let response = server.hover(&params);

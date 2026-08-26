@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GP0049]: A compiler-known call was written with a `!`. The set of such names - here
+--- framed ---
+error[GP0049]: A compiler-known call was written with a `!`. The set of such names
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

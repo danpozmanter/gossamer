@@ -6,32 +6,32 @@ use std::encoding
 
 fn main() {
     // "foobar" in the standard RFC 4648 Base32 alphabet.
-    match encoding::base32::decode(&"MZXW6YTBOI======") {
+    match encoding::base32::decode("MZXW6YTBOI======") {
         Ok(bytes) => {
-            print!("std:")
+            print("std:")
             for b in bytes {
-                print!(" {}", b)
+                print(" {}", b)
             }
-            println!("")
+            println("")
         }
-        Err(e) => println!("std: err {}", e)
+        Err(e) => println("std: err {}", e)
     }
 
     // "foobar" in the hex (extended) Base32 alphabet.
-    match encoding::base32::decode_hex(&"CPNMUOJ1E8======") {
+    match encoding::base32::decode_hex("CPNMUOJ1E8======") {
         Ok(bytes) => {
-            print!("hex:")
+            print("hex:")
             for b in bytes {
-                print!(" {}", b)
+                print(" {}", b)
             }
-            println!("")
+            println("")
         }
-        Err(e) => println!("hex: err {}", e)
+        Err(e) => println("hex: err {}", e)
     }
 
     // Invalid character surfaces the same error text on every tier.
-    match encoding::base32::decode(&"!!!!") {
-        Ok(_) => println!("bad: ok")
-        Err(e) => println!("bad: {}", e)
+    match encoding::base32::decode("!!!!") {
+        Ok(_) => println("bad: ok")
+        Err(e) => println("bad: {}", e)
     }
 }

@@ -48,7 +48,7 @@ fn bump(t: Tree) -> Tree {
     }
 }
 
-fn total(t: &Tree) -> i64 {
+fn total(t: Tree) -> i64 {
     match t {
         Tree::Leaf(n) => *n
         Tree::Node(kids) => {
@@ -75,7 +75,7 @@ fn main() {
         Tree::Leaf(4)
     ]))
     let bumped = bump(tree)
-    let s = total(&bumped)
+    let s = total(bumped)
 
-    println!("{} {} {} {} {} {} {}", a, b, c, d, e, f, s)
+    println("{} {} {} {} {} {} {}", a, b, c, d, e, f, s)
 }

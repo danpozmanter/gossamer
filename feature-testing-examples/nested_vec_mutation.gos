@@ -15,12 +15,12 @@ fn main() {
     groups[0].push(1)
     groups[0].push(2)
     groups[0].push(3)
-    println!("nested: {}", groups[0].len())
+    println("nested: {}", groups[0].len())
 
     let mut b = Bag { items: Vec::from([]) }
     b.items.push(10)
     b.items.push(20)
-    println!("field: {} {}", b.items.len(), b.items[1])
+    println("field: {} {}", b.items.len(), b.items[1])
 
     let mut buckets: Vec<Vec<i64>> = Vec::from([])
     let b0: Vec<i64> = Vec::from([])
@@ -33,5 +33,5 @@ fn main() {
         buckets[k].push(i)
         i += 1
     }
-    println!("counts: {} {}", buckets[0].len(), buckets[1].len())
+    println("counts: {} {}", buckets[0].len(), buckets[1].len())
 }

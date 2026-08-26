@@ -1648,7 +1648,7 @@ fn repl_bindings_preserve_reference_and_destructured_types() {
          let shared = &shared_source\n\
          let mut n = [7, 8]\n\
          let exclusive = &mut n\n\
-         let (a, b) = (9, \"ten\")\n\
+         let a, b = (9, \"ten\")\n\
          let p = Pair { left: 11, right: \"twelve\" }\n\
          let Pair { left, right } = p\n\
          %b\n",
@@ -1987,7 +1987,7 @@ fn repl_rejects_plain_tuple_for_tuple_struct_function_parameter() {
         "struct RGB(i64, i64, i64)\n\
          let color = RGB(0, 100, 100)\n\
          let three = (1, 500, -200)\n\
-         fn print_color(color: RGB) { println!(\"{}\", color) }\n\
+         fn print_color(color: RGB) { println(\"{}\", color) }\n\
          print_color(color)\n\
          print_color(three)\n",
     );
@@ -2036,7 +2036,7 @@ fn repl_open_ranges_are_lazy_and_printable() {
 
 #[test]
 fn repl_prints_runtime_error_without_crashing() {
-    let out = run_repl("let answer = 41\npanic!(\"boom\")\nanswer + 1\n");
+    let out = run_repl("let answer = 41\npanic(\"boom\")\nanswer + 1\n");
     assert!(
         out.success,
         "repl should keep running after a runtime panic; stderr: {}",
@@ -2901,101 +2901,46 @@ fn repl_listing_commands_reject_removed_pagination_options() {
     );
 }
 
+/// The strict parse family is the one parse surface, and `%info` answers
+/// for each spelling: the method form and the free form both.
 #[test]
-fn repl_meta_help_ls_and_find_cover_core_string_parse() {
+fn repl_meta_help_covers_the_strict_parse_family() {
     let out = run_repl(
-        "%info string::parse -d\n\
-         %info String::parse -d\n\
-         %info strings::parse -d\n\
-         %info string -d\n\
-         \"123\".parse<i64>()\n",
+        "%info String::to_i64 -d\n\
+         %info to_f64 -d\n\
+         \"123\".to_i64()\n\
+         \"1.5\".to_f64()\n\
+         \"true\".to_bool()\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout
-            .contains("String::parse<T>(self: String) -> Result<T, errors::Error> [method]"),
-        "expected core method help; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout
-            .contains("String::parse<T>(self: String) -> Result<T, errors::Error> [method]"),
-        "expected parse signature; stdout: {}",
+        out.stdout.contains("String::to_i64"),
+        "expected the method help; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout
-            .contains("std::strings::parse<T>(text: String) -> Result<T, errors::Error> [fn]")
-            && out
-                .stdout
-                .contains("std::strings::parse<T>(text: String) -> Result<T, errors::Error> [fn]"),
-        "expected strings::parse help; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("String::parse")
-            && out
-                .stdout
-                .contains("Parses the string into the expected result type."),
-        "expected %info to expose String::parse; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        out.stdout.contains("Ok(123)"),
-        "existing String::parse execution must still work; stdout: {}",
+        out.stdout.contains("Some(123)")
+            && out.stdout.contains("Some(1.5)")
+            && out.stdout.contains("Some(true)"),
+        "the strict parses answer an Option; stdout: {}",
         out.stdout
     );
 }
 
+/// `String::parse` is retired: it reports GT0080 with the `to_T` rewrite
+/// the expected type picks, and still types as it did so the rest of the
+/// line is diagnosed on its own terms.
 #[test]
-fn repl_string_parse_turbofish_forms_typecheck_without_bool_diagnostics() {
-    let out = run_repl(
-        "use std::strings\n\
-         use std::errors\n\
-         let a: Result<i64, errors::Error> = \"12\".parse<i64>()\n\
-         let b: Result<i64, errors::Error> = \"34\".parse::<i64>()\n\
-         let c: Result<i64, errors::Error> = strings::parse::<i64>(\"56\")\n\
-         a\n\
-         b\n\
-         c\n\
-         let bad: i64 = \"78\".parse<i64>()\n\
-         let bad_u8: u8 = \"90\".parse<u8>()\n\
-         let bad_plain: u8 = \"91\".parse()\n\
-         let missing = \"92\".parse()\n\
-         let missing_free = strings::parse(\"93\")\n",
-    );
-    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+fn repl_string_parse_reports_the_strict_rewrite() {
+    let out = run_repl("let a = \"12\".parse<i64>()\n");
     assert!(
-        out.stdout.contains("Ok(12)")
-            && out.stdout.contains("Ok(34)")
-            && out.stdout.contains("Ok(56)"),
-        "parse turbofish forms did not evaluate as Result values; stdout: {}",
-        out.stdout
-    );
-    assert!(
-        out.stderr
-            .contains("expected `i64`, found `Result<i64, errors::Error>`"),
-        "missing Result mismatch for assignment without `?`; stderr: {}",
+        out.stderr.contains("GT0080"),
+        "expected the retired-parse diagnostic; stderr: {}",
         out.stderr
     );
     assert!(
-        out.stderr
-            .contains("expected `u8`, found `Result<u8, errors::Error>`"),
-        "missing Result mismatch for u8 assignment; stderr: {}",
-        out.stderr
-    );
-    assert!(
-        out.stderr
-            .contains("cannot infer type parameter `T` for `String::parse`")
-            && out
-                .stderr
-                .contains("cannot infer type parameter `T` for `strings::parse`"),
-        "untyped parse calls must be rejected; stderr: {}",
-        out.stderr
-    );
-    assert!(
-        !out.stderr.contains("expected `bool`"),
-        "parse turbofish regressed into comparison parsing; stderr: {}",
+        out.stderr.contains("to_i64"),
+        "expected the rewrite to name `to_i64`; stderr: {}",
         out.stderr
     );
 }
@@ -3070,9 +3015,9 @@ fn repl_meta_info_covers_payload_and_sequence_method_gaps() {
 #[test]
 fn repl_question_mark_rejects_invalid_contexts_before_execution() {
     let out = run_repl(
-        "let bad_operand = \"12\"?.parse()\n\
-         let bad_context: u8 = \"12\".parse()?\n\
-         let malformed u8 = \"12\".parse()?\n",
+        "let bad_operand = \"12\"?.to_i64()\n\
+         let bad_context: u8 = \"12\".to_i64()?\n\
+         let malformed u8 = \"12\".to_i64()?\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
@@ -3091,21 +3036,21 @@ fn repl_question_mark_rejects_invalid_contexts_before_execution() {
 }
 
 #[test]
-fn repl_lists_a_stdlib_macro_by_its_calling_form() {
-    let out = run_repl("%info fmt\n%info println!\n");
+fn repl_lists_a_builtin_by_the_form_source_calls_it_by() {
+    let out = run_repl("%info fmt\n%info println\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
-        out.stdout.contains("std::fmt::println! [macro]"),
-        "a macro is listed as it is called; stdout: {}",
+        out.stdout.contains("std::fmt::println [builtin]"),
+        "a builtin is listed as it is called; stdout: {}",
         out.stdout
     );
     assert!(
-        !out.stdout.contains("std::fmt::println [macro]"),
-        "the bare spelling is not a form source can call; stdout: {}",
+        !out.stdout.contains("println!"),
+        "no discovery surface spells a builtin with a sigil; stdout: {}",
         out.stdout
     );
     assert!(
-        out.stdout.matches("std::fmt::println! [macro]").count() >= 2,
+        out.stdout.matches("std::fmt::println [builtin]").count() >= 2,
         "the calling form searches back to the same item; stdout: {}",
         out.stdout
     );
@@ -3257,11 +3202,7 @@ fn repl_meta_info_for_qualified_function_is_focused() {
 fn repl_meta_info_for_shared_method_name_does_not_append_an_owner_listing() {
     let out = run_repl("%i *contains_key\n");
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
-    for expected in [
-        "BTreeMap::contains_key<",
-        "Map::contains_key<",
-        "std::collections::ordered_map::contains_key(",
-    ] {
+    for expected in ["BTreeMap::contains_key<", "Map::contains_key<"] {
         assert!(
             out.stdout.contains(expected),
             "%i omitted `{expected}`: {}",
@@ -3298,13 +3239,13 @@ fn repl_info_shows_every_sync_map_method_signature() {
         let out = run_repl(&format!("%i {query}\n"));
         assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
         for expected in [
-            "contains_key(self: &sync::Map, key: String) -> bool [method]",
-            "get(self: &sync::Map, key: String) -> Option<String> [method]",
-            "insert(self: &sync::Map, key: String, value: String) -> () [method]",
-            "keys(self: &sync::Map) -> Vec<String> [method]",
-            "len(self: &sync::Map) -> i64 [method]",
+            "contains_key(self: sync::Map, key: String) -> bool [method]",
+            "get(self: sync::Map, key: String) -> Option<String> [method]",
+            "insert(self: sync::Map, key: String, value: String) -> () [method]",
+            "keys(self: sync::Map) -> Vec<String> [method]",
+            "len(self: sync::Map) -> i64 [method]",
             "new() -> sync::Map [associated function]",
-            "remove(self: &sync::Map, key: String) -> () [method]",
+            "remove(self: sync::Map, key: String) -> () [method]",
         ] {
             assert!(
                 out.stdout.contains(expected),
@@ -3723,7 +3664,7 @@ fn repl_bare_map_iteration_formats_keys_and_returns_unit() {
          h.insert(\"a\", 1)\n\
          h.insert(\"b\", 2)\n\
          %b\n\
-         for (k, v) in h { println!(\"{}: {}\", k, v) }\n",
+         for (k, v) in h { println(\"{}: {}\", k, v) }\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     assert!(
@@ -3744,7 +3685,7 @@ fn repl_bare_map_iteration_formats_keys_and_returns_unit() {
 /// until the closing delimiter arrives.
 #[test]
 fn repl_continues_reading_an_open_triple_quoted_string() {
-    let out = run_repl("let text = \"\"\"\n    a\n    b\n    \"\"\"\nprintln!(\"{}\", text)\n");
+    let out = run_repl("let text = \"\"\"\n    a\n    b\n    \"\"\"\nprintln(\"{}\", text)\n");
     assert!(
         out.stdout.contains("a\nb"),
         "stdout: {}\nstderr: {}",
@@ -4068,7 +4009,7 @@ fn repl_info_names_a_bare_stdlib_trait_and_the_method_to_implement() {
 fn repl_info_calls_an_implemented_trait_a_trait_not_a_type() {
     let out = run_repl(
         "struct P { a: i64 }\n\
-         impl Display for P { fn to_string(&self) -> String { \"p\" } }\n\
+         impl Display for P { fn fmt(&self) -> String { \"p\" } }\n\
          %i Display\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);

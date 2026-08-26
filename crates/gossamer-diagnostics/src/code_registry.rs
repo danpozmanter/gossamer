@@ -86,7 +86,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GL0015",
-        "`todo!()` and `unimplemented!()` are placeholders, not shippable\n\
+        "`todo()` and `unimplemented()` are placeholders, not shippable\n\
             expressions. Implement the branch before merging.",
     ),
     (
@@ -276,13 +276,6 @@ pub const REGISTRY: &[(&str, &str)] = &[
             indexing counts Unicode scalars and yields a `char`.",
     ),
     (
-        "GL0053",
-        "A `go` inside a `cohort { }` spawns a goroutine the cohort does not\n\
-            own: the block can return while it is still running, and its\n\
-            failure reaches nobody. `spawn(..)` attaches the child to the\n\
-            cohort, which joins it and reports its panic or `Err`.",
-    ),
-    (
         "GL0055",
         "A signature with no return type answers a unit, so the value the\n\
             body's tail expression produces is discarded and the caller reads\n\
@@ -431,12 +424,6 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "Format macros require a literal template so placeholders can be checked at compile time. Replace the computed template with a string literal.",
     ),
     (
-        "GP0025",
-        "A formatting macro was written as a `|>` step. A macro takes its\n\
-            arguments as written, so the piped value has no slot of its own.\n\
-            Write the step as a closure: `value |> |v| println!(\"{}\", v)`.",
-    ),
-    (
         "GP0026",
         "The inclusive range operator always needs an upper bound. Supply the bound, or use an exclusive open range.",
     ),
@@ -528,6 +515,114 @@ pub const REGISTRY: &[(&str, &str)] = &[
             data-last one. `--fix` puts the parameter in the trailing slot,\n\
             which a data-first callee does not want, so confirm the slot is\n\
             the one the call needs.",
+    ),
+    (
+        "GP0042",
+        "A binding or an assignment wrote its targets as a parenthesised\n\
+            tuple. The comma-separated list is the one spelling: `let a, b =\n\
+            value` and `a, b = x, y`. Parentheses group a pattern only where\n\
+            one sits beside others - a `match` arm, a `for` binding, a\n\
+            parameter, or a nested element of the list itself, as in\n\
+            `let a, (b, c) = 1, (2, 3)`. `--fix` drops the outer pair.",
+    ),
+    (
+        "GP0043",
+        "A `mod` declaration ended in `;`. A statement ends at its newline\n\
+            here, and a trailing semicolon is invalid everywhere else in the\n\
+            language; this was the one form that asked for one. Write\n\
+            `mod name`. `--fix` drops the semicolon.",
+    ),
+    (
+        "GP0044",
+        "A callable type was written as `fn`, `FnMut`, or `FnOnce`. The\n\
+            language has one callable type, `Fn(args) -> ret`: there is no raw\n\
+            function-pointer shape and no `FnMut` / `FnOnce` distinction to\n\
+            draw. `--fix` rewrites the spelling.",
+    ),
+    (
+        "GP0045",
+        "An argument label was bound with `=`. Every keyed form in the\n\
+            language binds with `:` - a struct field, a map entry, a `cohort`\n\
+            header setting - and `=` at a call site reads as the assignment it\n\
+            is elsewhere. Write `name: value`. `--fix` rewrites the separator.",
+    ),
+    (
+        "GP0046",
+        "`unsafe` was written. No operation is withheld outside an `unsafe`\n\
+            block or from a safe `fn`, so the keyword marked a boundary the\n\
+            language does not draw. It stays reserved for a future raw-FFI\n\
+            story. `--fix` drops it.",
+    ),
+    (
+        "GP0047",
+        "An opaque alias was written `type X = new T`. `new` reads as\n\
+            allocation to a reader arriving from any other language, and the\n\
+            concept has a standard name: write `newtype X = T`.",
+    ),
+    (
+        "GP0048",
+        "`go` was written. Every goroutine is a `spawn` attached to the\n\
+            enclosing cohort, and `main` is an implicit root cohort, so\n\
+            nothing a program starts is left unaccounted for: a failure is\n\
+            reported, and no goroutine outlives the block that started it.\n\
+            `go` evaluated its operands at the spawn site while a closure\n\
+            body runs in the child, so `--fix` hoists an operand that\n\
+            computes a value into a temporary before the `spawn`.",
+    ),
+    (
+        "GP0049",
+        "A compiler-known call was written with a `!`. The set of such names\n\
+            is closed and recognised at the `(`, so there is nothing a sigil\n\
+            disambiguates: `println(..)`, `format(..)`, `matches(..)`, and the\n\
+            rest are ordinary calls. The first argument is still the template\n\
+            when it is a string literal, and a lone argument renders on its\n\
+            own. `--fix` drops the `!`.",
+    ),
+    (
+        "GP0050",
+        "An `enum Name : R` named a representation that is not an unsigned\n\
+            width. A discriminant is a count, so its store is unsigned: write\n\
+            `enum Name : u8 { .. }`, with a width between 1 and 64 bits.",
+    ),
+    (
+        "GP0051",
+        "`regex!` or `sql!` was written. Both moved into their modules:\n\
+            `regex::compile(\"…\")` and `sql::statement(\"…\")`. A literal\n\
+            argument is still validated while the program is compiled, and\n\
+            the module keeps its name rather than becoming a global.",
+    ),
+    (
+        "GP0052",
+        "`sql::statement` was handed something other than a literal. The\n\
+            statement is checked while the program is compiled, so it has to\n\
+            be there to check; a statement built at run time is an ordinary\n\
+            `String` and needs no wrapper.",
+    ),
+    (
+        "GP0053",
+        "A `Display` implementation declared its rendering as `to_string`.\n\
+            Both rendering contracts declare one method that answers a\n\
+            `String`, so both are written `fn fmt`; the `impl` header is what\n\
+            decides which channel a value reaches, `{}` taking `Display` and\n\
+            `{:?}` taking `Debug`. `x.to_string()` still renders through\n\
+            `Display`.",
+    ),
+    (
+        "GP0054",
+        "A parameter was declared with a shared reference type. An argument\n\
+            is passed without copying whatever its type, and a callee cannot\n\
+            write to the caller's variable unless the parameter says `&mut`,\n\
+            so `f(m: &Map)` and `f(m: Map)` have the same cost and the same\n\
+            guarantee. A sequence view is written `[T]`, and `&mut [T]` is\n\
+            the form that writes through. `--fix` drops the `&`.",
+    ),
+    (
+        "GP0055",
+        "A call argument was written as a shared reference. No parameter is\n\
+            a shared reference, so the sigil changes nothing: an argument is\n\
+            passed without copying either way, and a callee writes to the\n\
+            caller's variable only through a `&mut` parameter, which is\n\
+            spelled `&mut` at the call too. `--fix` drops the `&`.",
     ),
     (
         "GR0001",
@@ -646,11 +741,11 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GR0018",
-        "A path named one of the standard library's macros - `println`,\n\
-            `format`, `panic`, and the rest of the fixed set. A macro\n\
-            expands where it is written and the runtime binds no callable\n\
-            for it, so the path has nothing to call or pass as a value.\n\
-            Write it as `name!(..)`; a macro needs no import.",
+        "A path named one of the compiler-known calls - `println`,\n\
+            `format`, `panic`, and the rest of the fixed set. Each expands\n\
+            where it is written and the runtime binds no callable for it,\n\
+            so the path has nothing to call or pass as a value. Write it\n\
+            as `name(..)`; it needs no import.",
     ),
     (
         "GR0019",
@@ -661,6 +756,21 @@ pub const REGISTRY: &[(&str, &str)] = &[
             both become `pgsql_gos`). Every path headed by that name would be\n\
             ambiguous. Give one of them a name of its own in\n\
             `[dependencies]`, or import each through `use \"id\" as name`.",
+    ),
+    (
+        "GR0020",
+        "A `fn` or a binding was declared under one of the compiler-known\n\
+            call names - `println`, `format`, `matches`, and the rest of the\n\
+            fixed set. Each expands where it is written, so the declaration\n\
+            could never be reached. Give it a name of its own.",
+    ),
+    (
+        "GR0021",
+        "A std free function was called with its data argument in the slot\n\
+            it occupied before every module took its data first. The call\n\
+            still means what it did, so nothing else in the body is\n\
+            affected; write the data argument first, which is what makes\n\
+            `iter::map(xs, f)` read as the `xs.map(f)` it stands for.",
     ),
     (
         "GT0001",
@@ -765,8 +875,8 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "A std free function was used as a first-class value, but the\n\
                      signature catalogue carries no fixed parameter list for it, so\n\
                      it cannot be rewritten into the closure that calls it. Write\n\
-                     the closure yourself: `|x| f(x)`. A macro is not a function and\n\
-                     reports GR0018 instead.",
+                     the closure yourself: `|x| f(x)`. A compiler-known call is not\n\
+                     a function and reports GR0018 instead.",
     ),
     (
         "GT0016",
@@ -798,7 +908,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     (
         "GT0020",
         "A method reached through a generic bound resolves only through a\n\
-                     supertrait of that bound (e.g. `fn f<T: Pet>(p: &T)` calling a\n\
+                     supertrait of that bound (e.g. `fn f<T: Pet>(p: T)` calling a\n\
                      method declared on `Animal` where `trait Pet: Animal`). The\n\
                      compiled tiers cannot lower supertrait-through-bound dispatch\n\
                      (SPEC §3.8); add the method to the named bound, or bound the\n\
@@ -1122,7 +1232,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "A parameter wrote `&` in its pattern rather than in its type.\n\
             `fn f(&m: Map<String, i64>)` declares a parameter that takes a\n\
             map by value and then destructures it as a reference, where\n\
-            `fn f(m: &Map<String, i64>)` was meant. A parameter's type is\n\
+            `fn f(m: Map<String, i64>)` was meant. A parameter's type is\n\
             what declares whether the call passes a reference; `&` in the\n\
             pattern destructures a reference the type already names, so over\n\
             a non-reference type it has no referent to bind. Move the `&`\n\
@@ -1204,6 +1314,42 @@ pub const REGISTRY: &[(&str, &str)] = &[
             discard.",
     ),
     (
+        "GT0079",
+        "A `Box<T>` / `Rc<T>` / `Arc<T>` wrapper was written. Every value is\n\
+            heap-shared and reference-counted already, so the wrapper names no\n\
+            choice the writer has to make. Write the inner type; `--fix`\n\
+            strips the wrapper.",
+    ),
+    (
+        "GT0080",
+        "`String::parse` was called. The parse surface is `to_i64`,\n\
+            `to_f64`, and `to_bool`: each parses the whole string and answers\n\
+            an `Option<T>`. Add `.ok_or(..)` where a `Result` is wanted.\n\
+            `--fix` rewrites the call.",
+    ),
+    (
+        "GT0081",
+        "An `enum Name : uN` named a width too narrow for its variants. A\n\
+            declared width is exact - it is what the discriminant is stored\n\
+            in - so it is never widened silently. Write a width that holds\n\
+            every variant, or drop it and let the compiler pick.",
+    ),
+    (
+        "GT0082",
+        "A reference was passed where the parameter takes the value. A\n\
+            parameter that is not `&mut` takes the value, and a reference\n\
+            names one rather than being one, so the compiled tiers would\n\
+            hand the callee the address. Write `*x`.",
+    ),
+    (
+        "GT0083",
+        "An assignment wrote through `*x` where `x` is not a reference. `*`\n\
+            reaches the place a reference names, and a value has no such\n\
+            place, so the write would reach nothing. Write the binding\n\
+            directly, or make the parameter `&mut T` and pass `&mut` at the\n\
+            call site.",
+    ),
+    (
         "GX0001",
         "An operation received a value of an incompatible type. The\n\
                      diagnostic names the type that was required and the type\n\
@@ -1229,7 +1375,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GX0005",
-        "Explicit `panic!(...)` or an assertion failure aborted the\n\
+        "Explicit `panic(...)` or an assertion failure aborted the\n\
                      program. Wrap the fallible operation in a `Result` path if the\n\
                      failure is recoverable.",
     ),

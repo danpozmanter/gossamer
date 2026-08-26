@@ -20,9 +20,10 @@ fn capture_writer(text: &str) {
 fn run_lazy_program(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("lazy_iterator_methods.gos", source.to_string());
-    let (sf, parse_diags) = parse_with_autoderive(source, file);
+    let (mut sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     assert!(resolve_diags.is_empty(), "resolve: {resolve_diags:?}");
     let mut tcx = TyCtxt::new();
     let (table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
@@ -45,7 +46,7 @@ fn lazy_range_methods_dispatch_like_iter_free_functions() {
     let source = r#"
 fn main() {
     let values = (0..).take(2).collect()
-    println!("{} {} {} {}", values[0], values[1], (0..).take(2).count(), (..0).take(2).count())
+    println("{} {} {} {}", values[0], values[1], (0..).take(2).count(), (..0).take(2).count())
 }
 "#;
     assert_eq!(run_lazy_program(source), "0 1 2 0\n");
@@ -56,7 +57,7 @@ fn lazy_range_terminal_methods_consume_closure_adapters() {
     let source = r#"
 fn main() {
     let mapped = (1..5).map(|n| n * n)
-    println!("{} {} {:?} {:?}", mapped.sum(), (1..5).product(), (1..5).min(), (1..5).max())
+    println("{} {} {:?} {:?}", mapped.sum(), (1..5).product(), (1..5).min(), (1..5).max())
 }
 "#;
     assert_eq!(run_lazy_program(source), "30 24 Some(1) Some(4)\n");

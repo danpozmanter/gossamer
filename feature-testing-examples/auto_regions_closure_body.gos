@@ -11,7 +11,7 @@
 // `closure body auto-regioned`.
 // Output must stay bit-identical across VM / Cranelift / LLVM.
 
-enum Tree { Leaf, Node(Box<Tree>, Box<Tree>) }
+enum Tree { Leaf, Node(Tree, Tree) }
 
 fn make(d: i64) -> Tree {
     if d == 0 {
@@ -21,14 +21,14 @@ fn make(d: i64) -> Tree {
     }
 }
 
-fn count(t: &Tree) -> i64 {
+fn count(t: Tree) -> i64 {
     match t {
         Tree::Leaf => 1
         Tree::Node(l, r) => 1 + count(l) + count(r)
     }
 }
 
-fn graft(t: &Tree, d: i64) -> Tree {
+fn graft(t: Tree, d: i64) -> Tree {
     Tree::Node(Box::new(make(d)), Box::new(make(count(t) % 3)))
 }
 
@@ -36,24 +36,24 @@ fn main() {
     // ELIGIBLE: each call builds a tree from a Copy element and discards it.
     // Only the i64 result leaves the closure -> regioned. The loop form spells
     // the same iteration and must produce the same total.
-    let combinator = (1..9).map(|d| count(&make(d))).sum()
+    let combinator = (1..9).map(|d| count(make(d))).sum()
     let mut loop_form = 0
     for d in 1..9 {
-        loop_form += count(&make(d))
+        loop_form += count(make(d))
     }
-    println!("{} {} {}", combinator, loop_form, combinator == loop_form)
+    println("{} {} {}", combinator, loop_form, combinator == loop_form)
 
     // ELIGIBLE with a captured Copy value and a read of an outer sequence: the
     // body allocates only what it discards, so reading through `base` and
     // `scale` cannot carry a region pointer out.
     let scale = 3
     let base = #[10, 20, 30]
-    let mixed = (0..3).map(|i| base[i] + count(&make(i + 2)) * scale).sum()
+    let mixed = (0..3).map(|i| base[i] + count(make(i + 2)) * scale).sum()
     let mut mixed_loop = 0
     for i in 0..3 {
-        mixed_loop += base[i] + count(&make(i + 2)) * scale
+        mixed_loop += base[i] + count(make(i + 2)) * scale
     }
-    println!("{} {} {}", mixed, mixed_loop, mixed == mixed_loop)
+    println("{} {} {}", mixed, mixed_loop, mixed == mixed_loop)
 
     // NOT ELIGIBLE: the tree itself is handed back, so the body must keep the
     // ordinary reference-counted path - the trees have to survive the call to
@@ -63,20 +63,20 @@ fn main() {
     for t in kept {
         kept_total += count(t)
     }
-    println!("{}", kept_total)
+    println("{}", kept_total)
 
     // NOT ELIGIBLE: the body allocates, but it passes a captured non-Copy
     // value into the call - the callee could stash it somewhere that outlives
     // the region, so the body keeps the reference-counted path.
     let held = make(4)
-    let borrowed = (1..4).map(|d| count(&graft(&held, d))).sum()
+    let borrowed = (1..4).map(|d| count(graft(held, d))).sum()
     let mut borrowed_loop = 0
     for d in 1..4 {
-        borrowed_loop += count(&graft(&held, d))
+        borrowed_loop += count(graft(held, d))
     }
-    println!("{} {} {}", borrowed, borrowed_loop, borrowed == borrowed_loop)
+    println("{} {} {}", borrowed, borrowed_loop, borrowed == borrowed_loop)
 
     // Nested: a regioned closure body driving a second combinator.
-    let nested = (1..4).map(|d| (1..d + 2).map(|e| count(&make(e))).sum()).sum()
-    println!("{}", nested)
+    let nested = (1..4).map(|d| (1..d + 2).map(|e| count(make(e))).sum()).sum()
+    println("{}", nested)
 }

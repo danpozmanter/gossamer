@@ -224,8 +224,8 @@ mod comptime_tests {
 
     #[test]
     fn a_failing_comptime_region_is_reported_in_the_editor() {
-        let source = "comptime fn tag() -> String { unimplemented!() }\n\
-                      fn main() { println!(\"{}\", tag()) }\n";
+        let source = "comptime fn tag() -> String { unimplemented() }\n\
+                      fn main() { println(\"{}\", tag()) }\n";
         let doc = crate::session::analyse("file:///comptime.gos", source);
         let reported = doc
             .diagnostics

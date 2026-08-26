@@ -43,7 +43,7 @@ fn build_projections() -> Vec<Projection> {
 }
 
 // Borrows the escaped vec and walks the heap enum field of each element.
-fn describe(ps: &[Projection]) -> i64 {
+fn describe(ps: [Projection]) -> i64 {
     let mut score = 0
     for p in ps {
         match &p.expr {
@@ -57,11 +57,11 @@ fn describe(ps: &[Projection]) -> i64 {
 
 // Group-by accumulation: the inner `for k in &keys` arm reads `key`,
 // the `else` arm pushes it. Exercises the hoist forward-liveness guard.
-fn group_counts(labels: &[String]) -> i64 {
+fn group_counts(labels: [String]) -> i64 {
     let mut keys: Vec<String> = Vec::from([])
     let mut counts: Vec<i64> = Vec::from([])
     for label in labels {
-        let key = format!("k:{}|", label.clone())
+        let key = format("k:{}|", label.clone())
         let mut idx: i64 = -1
         let mut i: i64 = 0
         for k in &keys {
@@ -78,7 +78,7 @@ fn group_counts(labels: &[String]) -> i64 {
     let mut total = 0
     let mut i: i64 = 0
     for k in &keys {
-        println!("group {} = {}", k.clone(), counts[i])
+        println("group {} = {}", k.clone(), counts[i])
         total += counts[i]
         i += 1
     }
@@ -92,7 +92,7 @@ fn main() {
     assert(true, "always holds")
 
     let ps = build_projections()
-    println!("score = {}", describe(&ps))
+    println("score = {}", describe(ps))
 
     let mut labels: Vec<String> = Vec::from([])
     let names: [String; 4] = #["north", "south", "east", "west"]
@@ -101,5 +101,5 @@ fn main() {
         labels.push(names[i % 4].clone())
         i += 1
     }
-    println!("total = {}", group_counts(&labels))
+    println("total = {}", group_counts(labels))
 }

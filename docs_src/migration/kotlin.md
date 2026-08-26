@@ -20,9 +20,9 @@ JVM-hosted and does not use exceptions or `suspend`; it uses explicit
 | `sealed class` | `enum` |
 | `T?` | `Option<T>` |
 | `try` / `catch` | `Result<T, E>` |
-| `launch { ... }` | `go fn() { ... }()` |
+| `launch { ... }` | `spawn(|| { ... })` |
 | `async { ... }.await()` | channel send and receive |
-| `println("$name")` | `println!("{name}")` |
+| `println("$name")` | `println("{name}")` |
 
 ## Gossamer 0.47 Syntax At A Glance
 
@@ -106,10 +106,10 @@ Gossamer:
 ```gos
 let len = name.map(|s: String| s.len())
 let display = name.unwrap_or("anonymous")
-let forced = strings::to_uppercase(&name.unwrap())
+let forced = strings::to_uppercase(name.unwrap())
 
 if let Some(n) = name {
-    println!("hello, {n}")
+    println("hello, {n}")
 }
 ```
 
@@ -153,9 +153,9 @@ enum Outcome {
 }
 
 match outcome {
-    Outcome::Win(message) => println!("{message}")
-    Outcome::Loss(message) => eprintln!("{message}")
-    Outcome::Draw => println!("draw")
+    Outcome::Win(message) => println("{message}")
+    Outcome::Loss(message) => eprintln("{message}")
+    Outcome::Draw => println("draw")
 }
 ```
 
@@ -178,19 +178,19 @@ Gossamer:
 ```gos
 use std::{errors, fs}
 
-fn read_config(path: &String) -> Result<Config, errors::Error> {
+fn read_config(path: String) -> Result<Config, errors::Error> {
     let text = fs::read_to_string(path)?
-    parse_config(&text)
+    parse_config(text)
 }
 ```
 
 Use `match` when a caller should recover locally:
 
 ```gos
-let cfg = match read_config(&path) {
+let cfg = match read_config(path) {
     Ok(v) => v
     Err(e) => {
-        eprintln!("config error: {e}")
+        eprintln("config error: {e}")
         default_config()
     }
 }
@@ -213,8 +213,8 @@ val total = listOf(1, 2, 3, 4)
 use std::iter
 
 let total = #[1, 2, 3, 4]
-    |> |v| iter::filter(|n: i64| n % 2 == 0, v)
-    |> |v| iter::sum_by(|n: i64| n * n, v)
+    |> |v| iter::filter(v, |n: i64| n % 2 == 0)
+    |> |v| iter::sum_by(v, |n: i64| n * n)
 ```
 
 Mutating operations stay method-shaped:
@@ -235,15 +235,15 @@ fun main() = runBlocking {
 ```
 
 ```gos
-let (tx, rx) = channel()
+let tx, rx = channel()
 
-go fn() {
-    tx.send(fetch_data(&url))
+spawn(|| {
+    tx.send(fetch_data(url))
     tx.close()
 }()
 
 if let Some(result) = rx.recv() {
-    println!("{result}")
+    println("{result}")
 }
 ```
 
@@ -251,18 +251,18 @@ For fan-out and fan-in, use `sync::WaitGroup`:
 
 ```gos
 let wg = sync::WaitGroup::new()
-let (tx, rx) = channel()
+let tx, rx = channel()
 
 for url in urls {
     wg.add(1)
     let tx = tx.clone()
-    go fn() {
+    spawn(|| {
         defer wg.done()
-        tx.send(http::get(&url, #[]))
+        tx.send(http::get(url, #[]))
     }()
 }
 
-go fn() {
+spawn(|| {
     wg.wait()
     tx.close()
 }()
@@ -319,7 +319,7 @@ impl Amount {
     fn normalize(&self) -> i64 { self.cents }   // private helper
 }
 
-pub(package) fn round_trip(a: &Amount) -> i64 { a.normalize() }
+pub(package) fn round_trip(a: Amount) -> i64 { a.normalize() }
 ```
 
 A `pub` type may keep private methods and private fields, so a struct with any
@@ -340,13 +340,13 @@ Kotlin defaults to public, Gossamer defaults to private. There is no
 | `File(path).readBytes()` | `fs::read(path)` |
 | `File(path).writeText(s)` | `fs::write(path, s)` |
 | `System.getenv("X")` | `env::var("X")` |
-| `ProcessBuilder(cmd).start()` | `process::run(cmd, &args)` |
+| `ProcessBuilder(cmd).start()` | `process::run(cmd, args)` |
 | `System.exit(0)` | `process::exit(0)` |
-| `println(x)` | `println!("{x}")` |
+| `println(x)` | `println("{x}")` |
 | `Regex(pattern)` | `regex::compile(pattern)` |
-| `s.trim()` | `strings::trim(&s)` |
-| `s.uppercase()` | `strings::to_uppercase(&s)` |
-| `s.toInt()` | `strconv::parse_i64(&s)` |
+| `s.trim()` | `strings::trim(s)` |
+| `s.uppercase()` | `strings::to_uppercase(s)` |
+| `s.toInt()` | `strconv::parse_i64(s)` |
 | `listOf(...)` | `[...]` |
 | `mutableListOf(...)` | `let mut xs = [...]` |
 | `arrayOf(...)` | `#[...]` |
@@ -359,6 +359,6 @@ Kotlin defaults to public, Gossamer defaults to private. There is no
 | `OkHttp` / `Ktor HttpClient` | `http::Client::new()` or `http::get(url, [])` |
 | `ktor server { ... }` | `http::serve(addr, handler)` |
 | `kotlinx.serialization` | `encoding::json` |
-| `kotlinx.coroutines.launch` | `go fn() { ... }()` |
+| `kotlinx.coroutines.launch` | `spawn(|| { ... })` |
 | `Mutex()` | `sync::Mutex::new()` |
 | `CountDownLatch(n)` | `sync::WaitGroup::new()` |

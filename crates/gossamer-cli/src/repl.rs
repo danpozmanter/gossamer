@@ -311,9 +311,9 @@ const CORE_TYPES: &[CoreTypeHelp] = &[CoreTypeHelp {
           Written `(a, b, c)`, with `()` for the empty tuple and a trailing \
           comma for the one-element form `(a,)`. Elements are read and \
           assigned positionally (`t.0`, `t.1`, chained as `t.0.1`), bound by \
-          destructuring (`let (a, b) = pair`), and compared field by field in \
+          destructuring (`let a, b = pair`), and compared field by field in \
           declaration order.",
-    example: "let t = (1, \"two\", 3.0); println!(\"{} {}\", t.0, t.1); let (n, s, f) = t",
+    example: "let t = (1, \"two\", 3.0); println(\"{} {}\", t.0, t.1); let n, s, f = t",
 }];
 
 // Core receiver and associated methods are runtime builtins, not stdlib module
@@ -783,7 +783,7 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "Vec",
         name: "binary_search",
         kind: "method",
-        signature: "fn binary_search<T>(self: &Vec<T>, needle: T) -> Result<i64, i64>",
+        signature: "fn binary_search<T>(self: Vec<T>, needle: T) -> Result<i64, i64>",
         doc: "Index of a matching element in an already-ascending sequence; \
               `Err` carries the position an insert would keep sorted.",
     },
@@ -791,7 +791,7 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
         owner: "Vec",
         name: "copy_from_slice",
         kind: "method",
-        signature: "fn copy_from_slice<T>(self: &mut Vec<T>, source: &Vec<T>) -> ()",
+        signature: "fn copy_from_slice<T>(self: &mut Vec<T>, source: Vec<T>) -> ()",
         doc: "Overwrites every element with the matching one of `source`; \
               the lengths must match.",
     },
@@ -1971,11 +1971,13 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                 if let Some(path) = &history_path {
                     let _ = editor.save_history(path);
                 }
+                gossamer_std::exec::terminate_live_children();
                 println!();
                 return Ok(());
             }
             Err(err) => {
                 print_repl_error(&format!("repl: {err}"));
+                gossamer_std::exec::terminate_live_children();
                 return Ok(());
             }
         };
@@ -2038,6 +2040,9 @@ pub(crate) fn cmd_repl(verbose: bool) -> Result<()> {
                     if let Some(path) = &history_path {
                         let _ = editor.save_history(path);
                     }
+                    // A program run here may have started children of its own;
+                    // the session that started them is what ends them.
+                    gossamer_std::exec::terminate_live_children();
                     return Ok(());
                 }
                 "bindings" | "b" => {
@@ -2580,10 +2585,10 @@ fn render_repl_setup(lets: &[String]) -> String {
 
 fn suppress_replayed_prints(input: &str) -> String {
     input
-        .replace("println!(", "format!(")
-        .replace("eprintln!(", "format!(")
-        .replace("print!(", "format!(")
-        .replace("eprint!(", "format!(")
+        .replace("println(", "format(")
+        .replace("eprintln(", "format(")
+        .replace("print(", "format(")
+        .replace("eprint(", "format(")
         .replace("println(", "__repl_discard(")
         .replace("eprintln(", "__repl_discard(")
         .replace("print(", "__repl_discard(")
@@ -3472,7 +3477,7 @@ fn render_catalog_matches(pattern: &Regex, details: bool) -> String {
             push_catalog_match(
                 &mut entry,
                 builtin.name,
-                "macro",
+                "builtin",
                 builtin.signature,
                 builtin.doc,
                 None,
@@ -3549,7 +3554,7 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
         push_catalog_match(
             &mut entry,
             builtin.name,
-            "macro",
+            "builtin",
             builtin.signature,
             builtin.doc,
             None,
@@ -4165,7 +4170,7 @@ fn build_core_method_entries() -> Vec<CoreMethodEntry> {
             owner: "Array".to_string(),
             name: "clone".to_string(),
             kind: "method",
-            signature: "fn clone<T, const N: i64>(self: &[T; N]) -> [T; N]".to_string(),
+            signature: "fn clone<T, const N: i64>(self: [T; N]) -> [T; N]".to_string(),
             doc: "Returns a fixed-size copy of the array.".to_string(),
         },
     );
@@ -4389,7 +4394,7 @@ fn add_data_last_std_methods(
         {
             continue;
         }
-        let Some(signature) = data_last_method_signature(owner, module_path, item.name) else {
+        let Some(signature) = data_first_method_signature(owner, module_path, item.name) else {
             continue;
         };
         insert_core_method_entry(
@@ -4411,10 +4416,12 @@ fn add_data_last_std_methods(
     }
 }
 
-fn data_last_method_signature(owner: &str, module_path: &str, name: &str) -> Option<String> {
+/// The method spelling of a std free function: every one takes its data
+/// first, so the leading parameter is the receiver and the rest follow it.
+fn data_first_method_signature(owner: &str, module_path: &str, name: &str) -> Option<String> {
     let row = gossamer_types::stdlib_function_signature(module_path, name)?;
     let shape = gossamer_types::stdlib_function_shape(module_path, name)?;
-    let (receiver, leading) = shape.params.split_last()?;
+    let (receiver, leading) = shape.params.split_first()?;
     let receiver_matches = match owner {
         "Option" => receiver.ty.starts_with("Option<"),
         "Result" => receiver.ty.starts_with("Result<"),
@@ -4500,11 +4507,8 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
     }
     if let Some(signature) = match (owner, name) {
         // The cursor pull a `for` desugars to, and the one iterator method
-        // that is not a data-last `std::iter` free function.
+        // that is not a `std::iter` free function.
         ("Iterator", "next") => Some("fn next<T>(self: &mut Iterator<T>) -> Option<T>"),
-        ("Arc", "new") => Some("fn new<T>(value: T) -> Arc<T>"),
-        ("Rc", "new") => Some("fn new<T>(value: T) -> Rc<T>"),
-        ("Box", "new") => Some("fn new<T>(value: T) -> Box<T>"),
         ("AtomicBool", "new") => Some("fn new(value: bool) -> AtomicBool"),
         ("AtomicI32", "new") => Some("fn new(value: i64) -> AtomicI32"),
         ("AtomicI64", "new") => Some("fn new(value: i64) -> AtomicI64"),
@@ -4516,15 +4520,15 @@ fn runtime_core_method_signature(owner: &str, name: &str, kind: &str) -> Option<
         ("WaitGroup", "new") => Some("fn new() -> WaitGroup"),
         ("sync::Map", "new") => Some("fn new() -> sync::Map"),
         ("sync::Map", "insert") => {
-            Some("fn insert(self: &sync::Map, key: String, value: String) -> ()")
+            Some("fn insert(self: sync::Map, key: String, value: String) -> ()")
         }
-        ("sync::Map", "get") => Some("fn get(self: &sync::Map, key: String) -> Option<String>"),
-        ("sync::Map", "remove") => Some("fn remove(self: &sync::Map, key: String) -> ()"),
-        ("sync::Map", "len") => Some("fn len(self: &sync::Map) -> i64"),
+        ("sync::Map", "get") => Some("fn get(self: sync::Map, key: String) -> Option<String>"),
+        ("sync::Map", "remove") => Some("fn remove(self: sync::Map, key: String) -> ()"),
+        ("sync::Map", "len") => Some("fn len(self: sync::Map) -> i64"),
         ("sync::Map", "contains_key") => {
-            Some("fn contains_key(self: &sync::Map, key: String) -> bool")
+            Some("fn contains_key(self: sync::Map, key: String) -> bool")
         }
-        ("sync::Map", "keys") => Some("fn keys(self: &sync::Map) -> Vec<String>"),
+        ("sync::Map", "keys") => Some("fn keys(self: sync::Map) -> Vec<String>"),
         ("Errors" | "validate::Errors", "new") => Some("fn new() -> validate::Errors"),
         ("FieldError" | "validate::FieldError", "new") => {
             Some("fn new(path: String, message: String, code: String) -> validate::FieldError")
@@ -4876,7 +4880,7 @@ fn core_namespace_matches(owner: &str, query: &str) -> bool {
 
 fn item_query_matches(module: &StdModule, item: &StdItem, query: &str) -> bool {
     // A macro is written bare, so its calling form is a spelling of its own.
-    if item.kind == StdItemKind::Macro && symbol_query_matches(&item.call_name(), query) {
+    if item.kind == StdItemKind::Builtin && symbol_query_matches(&item.call_name(), query) {
         return true;
     }
     // Every other item is named through the module that declares it, so its
@@ -4999,7 +5003,7 @@ fn item_kind_label(kind: StdItemKind) -> &'static str {
         StdItemKind::Function => "fn",
         StdItemKind::Type => "type",
         StdItemKind::Trait => "trait",
-        StdItemKind::Macro => "macro",
+        StdItemKind::Builtin => "builtin",
         StdItemKind::Const => "const",
     }
 }
@@ -5086,7 +5090,7 @@ fn repl_stmt_mutates_binding(
         StmtKind::Let { init, .. } => init
             .as_deref()
             .is_some_and(|expr| repl_expr_mutates_binding(expr, user_mutating_methods)),
-        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => {
             repl_expr_mutates_binding(expr, user_mutating_methods)
         }
         StmtKind::Item(_) => false,
@@ -5110,9 +5114,7 @@ fn repl_stmt_contains_ref_mut(stmt: &gossamer_ast::Stmt) -> bool {
 
     match &stmt.kind {
         StmtKind::Let { init, .. } => init.as_deref().is_some_and(repl_expr_contains_ref_mut),
-        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
-            repl_expr_contains_ref_mut(expr)
-        }
+        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => repl_expr_contains_ref_mut(expr),
         StmtKind::Item(_) => false,
     }
 }
@@ -5143,9 +5145,7 @@ fn repl_expr_contains_ref_mut(expr: &gossamer_ast::Expr) -> bool {
         ExprKind::Assign { place, value, .. } => {
             repl_expr_contains_ref_mut(place) || repl_expr_contains_ref_mut(value)
         }
-        ExprKind::Cast { value, .. } | ExprKind::Try(value) | ExprKind::Go(value) => {
-            repl_expr_contains_ref_mut(value)
-        }
+        ExprKind::Cast { value, .. } | ExprKind::Try(value) => repl_expr_contains_ref_mut(value),
         ExprKind::If {
             condition,
             then_branch,
@@ -5200,11 +5200,9 @@ fn repl_expr_contains_ref_mut(expr: &gossamer_ast::Expr) -> bool {
         ExprKind::Select(arms) => arms.iter().any(|arm| {
             repl_select_op_contains_ref_mut(&arm.op) || repl_expr_contains_ref_mut(&arm.body)
         }),
-        ExprKind::MacroCall(_)
-        | ExprKind::Literal(_)
-        | ExprKind::Path(_)
-        | ExprKind::Continue { .. }
-        | ExprKind::Error => false,
+        ExprKind::Literal(_) | ExprKind::Path(_) | ExprKind::Continue { .. } | ExprKind::Error => {
+            false
+        }
     }
 }
 
@@ -5283,7 +5281,7 @@ fn repl_expr_mutates_binding(
             repl_expr_mutates_binding(lhs, user_mutating_methods)
                 || repl_expr_mutates_binding(rhs, user_mutating_methods)
         }
-        ExprKind::Cast { value, .. } | ExprKind::Try(value) | ExprKind::Go(value) => {
+        ExprKind::Cast { value, .. } | ExprKind::Try(value) => {
             repl_expr_mutates_binding(value, user_mutating_methods)
         }
         ExprKind::Closure { body, .. } => repl_expr_mutates_binding(body, user_mutating_methods),
@@ -5310,11 +5308,9 @@ fn repl_expr_mutates_binding(
         ExprKind::Select(arms) => arms
             .iter()
             .any(|arm| repl_expr_mutates_binding(&arm.body, user_mutating_methods)),
-        ExprKind::Literal(_)
-        | ExprKind::Path(_)
-        | ExprKind::Continue { .. }
-        | ExprKind::MacroCall(_)
-        | ExprKind::Error => false,
+        ExprKind::Literal(_) | ExprKind::Path(_) | ExprKind::Continue { .. } | ExprKind::Error => {
+            false
+        }
     }
 }
 
@@ -5806,12 +5802,12 @@ mod tests {
         let rendered = render_catalog_query_matches("sync::Map", false);
         for expected in [
             "sync::Map::new() -> sync::Map [associated function]",
-            "sync::Map::insert(self: &sync::Map, key: String, value: String) -> () [method]",
-            "sync::Map::get(self: &sync::Map, key: String) -> Option<String> [method]",
-            "sync::Map::remove(self: &sync::Map, key: String) -> () [method]",
-            "sync::Map::len(self: &sync::Map) -> i64 [method]",
-            "sync::Map::contains_key(self: &sync::Map, key: String) -> bool [method]",
-            "sync::Map::keys(self: &sync::Map) -> Vec<String> [method]",
+            "sync::Map::insert(self: sync::Map, key: String, value: String) -> () [method]",
+            "sync::Map::get(self: sync::Map, key: String) -> Option<String> [method]",
+            "sync::Map::remove(self: sync::Map, key: String) -> () [method]",
+            "sync::Map::len(self: sync::Map) -> i64 [method]",
+            "sync::Map::contains_key(self: sync::Map, key: String) -> bool [method]",
+            "sync::Map::keys(self: sync::Map) -> Vec<String> [method]",
         ] {
             assert!(
                 rendered.contains(expected),
@@ -6127,7 +6123,7 @@ mod tests {
             push_catalog_match(
                 &mut rendered,
                 builtin.name,
-                "macro",
+                "builtin",
                 builtin.signature,
                 builtin.doc,
                 None,

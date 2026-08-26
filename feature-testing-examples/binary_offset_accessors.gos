@@ -13,30 +13,30 @@ fn main() -> Result<(), errors::Error> {
     binary::put_u16_le_at(&mut page, 14, 258)?
     binary::put_u32_be_at(&mut page, 2, 3_735_928_559)?
     binary::put_u32_be_at(&mut page, 6, 3_735_928_558)?
-    println!("{:?}", page)
+    println("{:?}", page)
 
-    println!("u16 be {}", binary::get_u16_be_at(&page, 0)?)
-    println!("u32 be at 2 {}", binary::get_u32_be_at(&page, 2)?)
-    println!("u32 be at 6 {}", binary::get_u32_be_at(&page, 6)?)
-    println!("u16 le {}", binary::get_u16_le_at(&page, 14)?)
+    println("u16 be {}", binary::get_u16_be_at(page, 0)?)
+    println("u32 be at 2 {}", binary::get_u32_be_at(page, 2)?)
+    println("u32 be at 6 {}", binary::get_u32_be_at(page, 6)?)
+    println("u16 le {}", binary::get_u16_le_at(page, 14)?)
 
     let mut little: Vec<u8> = #[0; 8]
     binary::put_u32_le_at(&mut little, 0, 66_051)?
     binary::put_u64_le_at(&mut little, 0, 1)?
-    println!("{:?}", little)
-    println!("u64 le {}", binary::get_u64_le_at(&little, 0)?)
+    println("{:?}", little)
+    println("u64 le {}", binary::get_u64_le_at(little, 0)?)
 
-    match binary::get_u32_be_at(&page, 14) {
-        Ok(v) => println!("unexpected read {}", v)
-        Err(e) => println!("read err: {}", e)
+    match binary::get_u32_be_at(page, 14) {
+        Ok(v) => println("unexpected read {}", v)
+        Err(e) => println("read err: {}", e)
     }
     match binary::put_u32_be_at(&mut page, 14, 1) {
-        Ok(_) => println!("unexpected write")
-        Err(e) => println!("write err: {}", e)
+        Ok(_) => println("unexpected write")
+        Err(e) => println("write err: {}", e)
     }
-    match binary::get_u16_be_at(&page, -1) {
-        Ok(v) => println!("unexpected negative {}", v)
-        Err(e) => println!("negative err: {}", e)
+    match binary::get_u16_be_at(page, -1) {
+        Ok(v) => println("unexpected negative {}", v)
+        Err(e) => println("negative err: {}", e)
     }
     Ok(())
 }

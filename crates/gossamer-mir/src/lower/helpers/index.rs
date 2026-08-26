@@ -81,8 +81,22 @@ pub(crate) fn map_key_kind_from(tcx: &gossamer_types::TyCtxt, ty: Ty) -> MapKeyK
     match tcx.kind_of(ty) {
         TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::Float(_) => MapKeyKind::I64,
         TyKind::String => MapKeyKind::String,
+        // An enum whose variants all carry nothing is a discriminant and
+        // nothing else, so it keys a map the way any other integer does. A
+        // payload-bearing enum is a node, and content-hashes through its
+        // structural descriptor instead.
+        TyKind::Adt { .. } if is_unit_only_enum(tcx, ty) => MapKeyKind::I64,
         _ => MapKeyKind::Other,
     }
+}
+
+/// Whether `ty` is a user enum represented as a bare discriminant word.
+fn is_unit_only_enum(tcx: &gossamer_types::TyCtxt, ty: Ty) -> bool {
+    use gossamer_types::TyKind;
+    let TyKind::Adt { def, .. } = tcx.kind_of(ty) else {
+        return false;
+    };
+    tcx.enum_variant_names(*def).is_some() && !tcx.is_rc_managed(ty) && !tcx.is_inline_enum_ty(ty)
 }
 
 pub(crate) struct EnumIndex {

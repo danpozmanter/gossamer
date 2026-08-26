@@ -2,14 +2,14 @@ fn main() {
     let mut xs = Vec::from([1, 2, 3, 4])
     let _ = xs.insert(0, 10)
     let _ = xs.insert(5, 50)
-    println!("{:?}", xs)
+    println("{:?}", xs)
     let _ = xs.remove(0)
     let _ = xs.remove(4)
-    println!("{:?}", xs)
+    println("{:?}", xs)
 
     let mut ys: Vec<String> = Vec::from(["a", "b", "c"])
     let _ = ys.insert(1, "X")
-    println!("{:?}", ys)
+    println("{:?}", ys)
     let _ = ys.remove(2)
-    println!("{:?}", ys)
+    println("{:?}", ys)
 }

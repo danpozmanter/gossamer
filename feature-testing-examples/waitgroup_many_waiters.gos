@@ -11,15 +11,15 @@ fn waiter(wg: WaitGroup, done: Sender<i64>) {
 
 fn main() {
     let wg = WaitGroup::new()
-    let (tx, rx) = channel()
+    let tx, rx = channel()
     wg.add(1)
     for _ in 0..48 {
-        go waiter(wg, tx)
+        spawn(|| waiter(wg, tx))
     }
     wg.done()
     let mut seen = 0
     while seen < 48 {
         if let Some(_v) = rx.recv() { seen += 1 }
     }
-    println!("waiters {}", seen)
+    println("waiters {}", seen)
 }

@@ -11,7 +11,7 @@ fn program_step(mut program: Vec<i64>, offset: i64) -> Vec<i64> {
     } else if opcode == 2 {
         program[out_pos] = program[lhs_pos] * program[rhs_pos]
     } else {
-        panic!("Unknown opcode encountered!")
+        panic("Unknown opcode encountered!")
     }
     program
 }
@@ -25,7 +25,7 @@ fn run_program(mut program: Vec<i64>) -> Vec<i64> {
     program
 }
 
-fn with_inputs(program: &[i64], noun: i64, verb: i64) -> Vec<i64> {
+fn with_inputs(program: [i64], noun: i64, verb: i64) -> Vec<i64> {
     let mut copy = program.to_vec()
     copy[1] = noun
     copy[2] = verb
@@ -34,10 +34,10 @@ fn with_inputs(program: &[i64], noun: i64, verb: i64) -> Vec<i64> {
 
 fn main() {
     let input = #[1, 9, 10, 3, 2, 3, 11, 0, 99, 30, 40, 50]
-    let part1 = run_program(with_inputs(&input, 9, 10))
-    println!("pos0={}", part1[0])
+    let part1 = run_program(with_inputs(input, 9, 10))
+    println("pos0={}", part1[0])
 
     let sample = Vec::from([1, 1, 1, 4, 99, 5, 6, 0, 99])
     let out = run_program(sample)
-    println!("sample={} {}", out[0], out[4])
+    println("sample={} {}", out[0], out[4])
 }

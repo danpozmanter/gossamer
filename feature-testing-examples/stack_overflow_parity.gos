@@ -14,5 +14,5 @@ fn tree(n: i64) -> i64 {
 }
 
 fn main() {
-    println!("{}", tree(1))
+    println("{}", tree(1))
 }

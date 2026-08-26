@@ -11,7 +11,7 @@ use std::time
 
 fn announce_late() {
     time::sleep(time::Duration::from_millis(250))
-    println!("late goroutine observed")
+    println("late goroutine observed")
 }
 
 fn produce(tx: Sender<i64>) {
@@ -21,14 +21,14 @@ fn produce(tx: Sender<i64>) {
 }
 
 fn main() {
-    go announce_late()
+    spawn(|| announce_late())
 
-    let (tx, rx) = channel()
-    go produce(tx)
+    let tx, rx = channel()
+    spawn(|| produce(tx))
     let mut total = 0
     while let Some(v) = rx.recv() {
         total += v
     }
-    println!("channel total {}", total)
-    println!("main returning")
+    println("channel total {}", total)
+    println("main returning")
 }

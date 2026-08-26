@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GR0018]: A path named one of the standard library's macros - `println`, - here
+error[GR0018]: A path named one of the compiler-known calls - `println`, - here
 --- framed ---
-error[GR0018]: A path named one of the standard library's macros - `println`,
+error[GR0018]: A path named one of the compiler-known calls - `println`,
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

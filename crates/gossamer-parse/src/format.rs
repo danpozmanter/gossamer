@@ -1100,7 +1100,7 @@ mod tests {
 
     #[test]
     fn macro_calls_never_rewritten() {
-        let source = "fn main() {\n    let n = 3\n    println!(\"value: {} / {n}\", n)\n}\n";
+        let source = "fn main() {\n    let n = 3\n    println(\"value: {} / {n}\", n)\n}\n";
         let out = fmt(source);
         assert_eq!(out, source);
         assert!(!out.contains("__concat"));
@@ -1240,7 +1240,7 @@ let s = #{
 
     #[test]
     fn generics_and_turbofish_preserved() {
-        let source = "fn parse(text: &String) -> Result<Config, errors::Error> {\n    from_json::<Config>(text)\n}\n";
+        let source = "fn parse(text: String) -> Result<Config, errors::Error> {\n    from_json::<Config>(text)\n}\n";
         assert_eq!(fmt(source), source);
     }
 

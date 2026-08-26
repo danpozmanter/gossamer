@@ -193,7 +193,7 @@ fn build(depth: i64) -> Node {
     Node::Pair(build(depth - 1), build(depth - 1))
 }
 
-fn count(n: &Node) -> i64 {
+fn count(n: Node) -> i64 {
     match n {
         Node::Leaf(_) => 1,
         Node::Pair(left, right) => 1 + count(left) + count(right),
@@ -204,7 +204,7 @@ fn main() {
     let mut total = 0
     for _ in 0..3 {
         let tree = build(5)
-        total += count(&tree)
+        total += count(tree)
         runtime::collect_cycles()
     }
     println(total)
@@ -248,14 +248,14 @@ fn lexical_nonescaping_region_has_vm_and_native_parity() {
     let src = r"
 enum Node { Leaf(i64), Pair(Node, Node) }
 
-fn count(n: &Node) -> i64 {
+fn count(n: Node) -> i64 {
     match n { Node::Leaf(_) => 1, Node::Pair(a, b) => count(a) + count(b) }
 }
 
 fn main() {
     let answer = {
         let tree = Node::Pair(Node::Leaf(1), Node::Pair(Node::Leaf(2), Node::Leaf(3)))
-        count(&tree)
+        count(tree)
     }
     println(answer)
 }
@@ -278,15 +278,15 @@ use std::sync::channel
 
 fn main() {
     let n = 10000
-    let (tx, rx) = channel()
+    let tx, rx = channel()
 
     let mut i = 0
     while i < n {
         let me = i
         let txc = tx
-        go fn() {
+        spawn(|| {
             txc.send(me)
-        }()
+        })
         i = i + 1
     }
 
@@ -301,7 +301,7 @@ fn main() {
             None => break,
         }
     }
-    println!("received={} total={}", received, total)
+    println("received={} total={}", received, total)
 }
 "#;
     let n = 10_000_i64;
@@ -320,15 +320,15 @@ use std::sync::channel
 
 fn main() {
     let n = 1000
-    let (tx, rx) = channel()
+    let tx, rx = channel()
 
     let mut i = 0
     while i < n {
         let me = i
         let txc = tx
-        go fn() {
+        spawn(|| {
             txc.send(me)
-        }()
+        })
         i = i + 1
     }
 
@@ -343,7 +343,7 @@ fn main() {
             None => break,
         }
     }
-    println!("received={} total={}", received, total)
+    println("received={} total={}", received, total)
 }
 "#;
     let n = 1_000_i64;

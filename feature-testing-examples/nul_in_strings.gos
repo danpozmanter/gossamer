@@ -13,7 +13,7 @@ use std::encoding::{base64, hex}
 use std::hash::{adler32, crc32, fnv}
 
 fn nul() -> String {
-    format!("{}", 0 as char)
+    format("{}", 0 as char)
 }
 
 // Assembled fragment by fragment so the string is a runtime builder rather
@@ -31,75 +31,75 @@ fn main() {
     let literal = "one\0two\0three"
     let built = assembled()
 
-    println!("literal_len={}", literal.len())
-    println!("built_len={}", built.len())
-    println!("byte_len={}", literal.byte_len())
-    println!("chars={}", literal.chars().count())
-    println!("bytes={}", literal.bytes().len())
-    println!("byte_at={} {}", literal.byte_at(3), literal.byte_at(7))
+    println("literal_len={}", literal.len())
+    println("built_len={}", built.len())
+    println("byte_len={}", literal.byte_len())
+    println("chars={}", literal.chars().count())
+    println("bytes={}", literal.bytes().len())
+    println("byte_at={} {}", literal.byte_at(3), literal.byte_at(7))
 
     // Digests read the whole buffer, so a truncating read changes them.
-    println!("sha256_literal={}", sha256::hex(literal))
-    println!("sha256_built={}", sha256::hex(built))
-    println!("blake3={}", blake3::hex(literal))
-    println!("crc32={}", crc32::checksum_string(literal))
-    println!("adler32={}", adler32::checksum_string(literal))
-    println!("fnv={}", fnv::hash_string(literal))
+    println("sha256_literal={}", sha256::hex(literal))
+    println("sha256_built={}", sha256::hex(built))
+    println("blake3={}", blake3::hex(literal))
+    println("crc32={}", crc32::checksum_string(literal))
+    println("adler32={}", adler32::checksum_string(literal))
+    println("fnv={}", fnv::hash_string(literal))
 
     // Encodings render every byte, including the NULs.
-    println!("base64={}", base64::encode(literal.as_bytes()))
-    println!("hex={}", hex::encode(literal.as_bytes()))
-    println!("hex_built={}", hex::encode(built.as_bytes()))
+    println("base64={}", base64::encode(literal.as_bytes()))
+    println("hex={}", hex::encode(literal.as_bytes()))
+    println("hex_built={}", hex::encode(built.as_bytes()))
 
     // `strings` operations keep the bytes on both sides of a NUL.
-    println!("upper={}", hex::encode(strings::to_uppercase(literal).as_bytes()))
-    println!("replace={}", hex::encode(strings::replace(literal, "two", "2").as_bytes()))
-    println!("split_parts={}", literal.split(nul()).len())
-    println!("split_lens={} {}", literal.split(nul())[0].len(), literal.split(nul())[2].len())
-    println!("join={}", hex::encode(#["a", "b"].join(nul()).as_bytes()))
-    println!("find={}", literal.find("three"))
-    println!("substring={}", hex::encode(literal.substring(0, 5).as_bytes()))
-    println!("slice={}", hex::encode(literal.slice(4, 9).unwrap_or("").as_bytes()))
-    println!("truncate={}", { let mut t = literal; t.truncate(7); hex::encode(t.as_bytes()) })
-    println!("repeat_len={}", literal.repeat(2).len())
-    println!("concat_len={}", (literal + built).len())
-    println!("append_len={}", { let mut a = "q"; a += nul(); a.len() })
+    println("upper={}", hex::encode(strings::to_uppercase(literal).as_bytes()))
+    println("replace={}", hex::encode(strings::replace(literal, "two", "2").as_bytes()))
+    println("split_parts={}", literal.split(nul()).len())
+    println("split_lens={} {}", literal.split(nul())[0].len(), literal.split(nul())[2].len())
+    println("join={}", hex::encode(#["a", "b"].join(nul()).as_bytes()))
+    println("find={}", literal.find("three"))
+    println("substring={}", hex::encode(literal.substring(0, 5).as_bytes()))
+    println("slice={}", hex::encode(literal.slice(4, 9).unwrap_or("").as_bytes()))
+    println("truncate={}", { let mut t = literal; t.truncate(7); hex::encode(t.as_bytes()) })
+    println("repeat_len={}", literal.repeat(2).len())
+    println("concat_len={}", (literal + built).len())
+    println("append_len={}", { let mut a = "q"; a += nul(); a.len() })
 
     // Comparison must see the full buffer, not the prefix before the NUL.
-    println!("eq_prefix={}", literal == "one")
-    println!("eq_self={}", literal == "one\0two\0three")
-    println!("lt={}", literal < "one\0two\0threx")
-    println!("contains_nul={}", literal.contains(nul()))
-    println!("starts_ends={} {}", literal.starts_with("one"), literal.ends_with("three"))
+    println("eq_prefix={}", literal == "one")
+    println("eq_self={}", literal == "one\0two\0three")
+    println("lt={}", literal < "one\0two\0threx")
+    println("contains_nul={}", literal.contains(nul()))
+    println("starts_ends={} {}", literal.starts_with("one"), literal.ends_with("three"))
 
     // Keys that share a prefix up to the NUL must stay distinct.
     let mut counts = Map::new()
     counts.insert("a\0b", 1)
     counts.insert("a\0c", 2)
     counts.insert("a", 3)
-    println!(
+    println(
         "map={} {} {} {}"
         counts.len()
         counts.get_or("a\0b", 0)
         counts.get_or("a\0c", 0)
         counts.get_or("a", 0)
     )
-    println!("map_contains={}", counts.contains_key("a\0b"))
+    println("map_contains={}", counts.contains_key("a\0b"))
 
     let mut seen = #{}
     seen.insert("x\0y")
     seen.insert("x")
-    println!("set={} {}", seen.len(), seen.contains("x\0y"))
+    println("set={} {}", seen.len(), seen.contains("x\0y"))
 
     // File round-trip: the bytes written must be the bytes read back.
-    let target = path::join(&env::temp_dir(), &"gossamer_test_nul_in_strings.bin")
+    let target = path::join(env::temp_dir(), "gossamer_test_nul_in_strings.bin")
     match fs::write(target, literal.as_bytes()) {
         Ok(_) => match fs::read_to_string(target) {
-            Ok(back) => println!("file={} {}", back.len(), sha256::hex(back))
-            Err(e) => println!("file_read_error={}", e)
+            Ok(back) => println("file={} {}", back.len(), sha256::hex(back))
+            Err(e) => println("file_read_error={}", e)
         }
-        Err(e) => println!("file_write_error={}", e)
+        Err(e) => println("file_write_error={}", e)
     }
     let _ = fs::remove_file(target)
-    println!("file_gone={}", !fs::exists(target))
+    println("file_gone={}", !fs::exists(target))
 }

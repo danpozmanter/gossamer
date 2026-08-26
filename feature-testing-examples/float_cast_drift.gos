@@ -6,40 +6,40 @@
 fn main() {
     let n: i64 = 7
     let f: f64 = n as f64
-    println!("7 as f64 = {}", f)
+    println("7 as f64 = {}", f)
 
     let a: f64 = 1000000001 as f64
     let b: f64 = 1000000002 as f64
     let diff = b - a
-    println!("float diff near 1e9 = {}", diff)
+    println("float diff near 1e9 = {}", diff)
 
     // Repeated int->float arithmetic
     let mut acc: f64 = 0.0
     for i in 1..1001 {
         acc += (i as f64) * 0.1
     }
-    println!("repeated cast-sum = {}", acc)
+    println("repeated cast-sum = {}", acc)
 
     // Division order matters for precision
     let x: i64 = 22
     let y: i64 = 7
     let pi_approx = (x as f64) / (y as f64)
-    println!("22/7 as f64 = {}", pi_approx)
+    println("22/7 as f64 = {}", pi_approx)
 
     // Chained casts
     let chain: f64 = 255 as u8 as i32 as f64
-    println!("255 -> u8 -> i32 -> f64 = {}", chain)
+    println("255 -> u8 -> i32 -> f64 = {}", chain)
 
     // Negative ints to float
     let neg: i64 = -273
     let float_neg = neg as f64
-    println!("-273 as f64 = {}", float_neg)
+    println("-273 as f64 = {}", float_neg)
 
     // Large i64 to f64 and back
     let big: i64 = 9007199254740993
     let big_f = big as f64
     let back = big_f as i64
-    println!("big i64 -> f64 -> i64 = {}", back)
+    println("big i64 -> f64 -> i64 = {}", back)
 }
 
 #[cfg(test)]

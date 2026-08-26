@@ -45,9 +45,9 @@ fn print_cwd() -> String {
 /// A command line that prints one environment variable.
 fn print_var(name: String) -> String {
     if os::family() == "windows" {
-        format!("echo %{}%", name)
+        format("echo %{}%", name)
     } else {
-        format!("echo ${}", name)
+        format("echo ${}", name)
     }
 }
 
@@ -60,43 +60,43 @@ fn output_of(result: Result<process::Output, errors::Error>) -> String {
 }
 
 fn main() {
-    let (program, flag) = shell()
-    let root = path::join(&env::temp_dir(), &"gossamer_run_in_fixture")
-    let _ = fs::remove_dir_all(&root)
-    let _ = fs::create_dir_all(&root)
-    let _ = fs::write(path::join(&root, &"marker.txt"), "inside".as_bytes())
+    let program, flag = shell()
+    let root = path::join(env::temp_dir(), "gossamer_run_in_fixture")
+    let _ = fs::remove_dir_all(root)
+    let _ = fs::create_dir_all(root)
+    let _ = fs::write(path::join(root, "marker.txt"), "inside".as_bytes())
 
     // The child starts where the caller said, so a relative path it
     // reads is relative to that directory.
-    let in_dir = process::run_in(&program, &#[flag, read_marker()], &root, &#[])
-    println!("dir: {}", output_of(in_dir))
+    let in_dir = process::run_in(program, #[flag, read_marker()], root, #[])
+    println("dir: {}", output_of(in_dir))
 
     // An empty directory leaves the child where the caller is.
-    let inherited = process::run_in(&program, &#[flag, print_cwd()], &"", &#[])
+    let inherited = process::run_in(program, #[flag, print_cwd()], "", #[])
     let here = env::current_dir().unwrap_or("?")
-    println!("inherited dir: {}", output_of(inherited) == here)
+    println("inherited dir: {}", output_of(inherited) == here)
 
     // The pairs reach the child.
     let overrides = #[("GOS_RUN_IN_PROBE", "set-by-caller")]
     let named = process::run_in(
-        &program
-        &#[flag, print_var("GOS_RUN_IN_PROBE")]
-        &""
-        &overrides
+        program
+        #[flag, print_var("GOS_RUN_IN_PROBE")]
+        ""
+        overrides
     )
-    println!("env: {}", output_of(named))
+    println("env: {}", output_of(named))
 
     // ... on top of the environment the caller already had, rather than
     // instead of it.
-    let inherited_env = process::run_in(&program, &#[flag, print_var("PATH")], &"", &overrides)
-    println!("inherited env: {}", !output_of(inherited_env).is_empty())
+    let inherited_env = process::run_in(program, #[flag, print_var("PATH")], "", overrides)
+    println("inherited env: {}", !output_of(inherited_env).is_empty())
 
     // A command that does not exist is an Err, as it is for run.
-    let missing = path::join(&root, &"no-such-command")
-    match process::run_in(&missing, &#[], &"", &#[]) {
-        Ok(output) => println!("missing: code={}", output.code)
-        Err(_) => println!("missing: error")
+    let missing = path::join(root, "no-such-command")
+    match process::run_in(missing, #[], "", #[]) {
+        Ok(output) => println("missing: code={}", output.code)
+        Err(_) => println("missing: error")
     }
 
-    let _ = fs::remove_dir_all(&root)
+    let _ = fs::remove_dir_all(root)
 }

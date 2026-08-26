@@ -6,9 +6,9 @@
 fn classify(xs: Vec<i64>) -> String {
     match xs {
         [] => "empty"
-        [a] => format!("one({})", a)
-        [a, b] => format!("two({},{})", a, b)
-        [first, .., last] => format!("ends({},{})", first, last)
+        [a] => format("one({})", a)
+        [a, b] => format("two({},{})", a, b)
+        [first, .., last] => format("ends({},{})", first, last)
     }
 }
 
@@ -41,12 +41,12 @@ fn last_or(xs: Vec<i64>, fallback: i64) -> i64 {
 
 fn literal_prefix(xs: Vec<i64>) -> String {
     match xs {
-        [1, second, _third] => format!("one-then-{}", second)
+        [1, second, _third] => format("one-then-{}", second)
         _ => "other"
     }
 }
 
-fn build(values: &[i64]) -> Vec<i64> {
+fn build(values: [i64]) -> Vec<i64> {
     let mut v: Vec<i64> = Vec::new()
     for x in values {
         v.push(x)
@@ -55,27 +55,27 @@ fn build(values: &[i64]) -> Vec<i64> {
 }
 
 fn main() {
-    println!("{}", classify(build(&[])))
-    println!("{}", classify(build(&[7])))
-    println!("{}", classify(build(&[3, 4])))
-    println!("{}", classify(build(&[1, 2, 3, 4, 5])))
+    println("{}", classify(build([])))
+    println("{}", classify(build([7])))
+    println("{}", classify(build([3, 4])))
+    println("{}", classify(build([1, 2, 3, 4, 5])))
 
-    println!("middle_sum {}", middle_sum(build(&[10, 1, 2, 3])))
-    println!("middle_sum_empty {}", middle_sum(build(&[])))
+    println("middle_sum {}", middle_sum(build([10, 1, 2, 3])))
+    println("middle_sum_empty {}", middle_sum(build([])))
 
-    println!("starts_zero {}", starts_with_zero(build(&[0, 9])))
-    println!("starts_zero {}", starts_with_zero(build(&[4, 0])))
+    println("starts_zero {}", starts_with_zero(build([0, 9])))
+    println("starts_zero {}", starts_with_zero(build([4, 0])))
 
-    println!("last {}", last_or(build(&[5, 6, 7]), -1))
-    println!("last_empty {}", last_or(build(&[]), -1))
+    println("last {}", last_or(build([5, 6, 7]), -1))
+    println("last_empty {}", last_or(build([]), -1))
 
-    println!("{}", literal_prefix(build(&[1, 42, 99])))
-    println!("{}", literal_prefix(build(&[2, 42, 99])))
+    println("{}", literal_prefix(build([1, 42, 99])))
+    println("{}", literal_prefix(build([2, 42, 99])))
 
     // Slice pattern in a `let` binding (irrefutable destructure).
-    let pair = build(&[100, 200])
+    let pair = build([100, 200])
     match pair {
-        [x, y] => println!("pair {} {}", x, y)
-        _ => println!("nope")
+        [x, y] => println("pair {} {}", x, y)
+        _ => println("nope")
     }
 }

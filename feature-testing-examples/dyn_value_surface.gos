@@ -5,7 +5,7 @@
  */
 
 fn describe(v: DynValue) -> String {
-    format!("{}/{}/{}", v.kind(), v.name(), v.len())
+    format("{}/{}/{}", v.kind(), v.name(), v.len())
 }
 
 fn scalars() -> String {
@@ -21,7 +21,7 @@ fn scalars() -> String {
 }
 
 fn readers() -> String {
-    format!(
+    format(
         "{:?} {:?} {:?} {:?} {:?} {:?}"
         DynValue::int(7).as_i64()
         DynValue::float(1.5).as_f64()
@@ -36,7 +36,7 @@ fn containers() -> String {
     let list = DynValue::list(#[DynValue::int(1), DynValue::string("a")])
     let bytes = DynValue::bytes(#[104, 105])
     let m = DynValue::map(#[DynValue::string("k")], #[DynValue::int(9)])
-    format!(
+    format(
         "{} {} {:?} | {} {:?} | {} {:?} {:?}"
         describe(list)
         list.at(0).as_i64().unwrap_or(0)
@@ -52,7 +52,7 @@ fn containers() -> String {
 fn arms() -> String {
     let inner = DynValue::tagged("Inner", #[DynValue::bool(false)])
     let row = DynValue::tagged("Row" + "8", #[DynValue::int(9), inner])
-    format!(
+    format(
         "{} {} {} {:?}"
         row.kind()
         row.name()
@@ -66,7 +66,7 @@ fn equality() -> String {
     let b = DynValue::tagged("Row", #[DynValue::int(1)])
     let c = DynValue::tagged("Row", #[DynValue::int(2)])
     let d = DynValue::tagged("Other", #[DynValue::int(1)])
-    format!("{} {} {} {}", a == b, a == c, a == d, a != b)
+    format("{} {} {} {}", a == b, a == c, a == d, a != b)
 }
 
 fn main() {
@@ -79,7 +79,7 @@ fn main() {
         seen.push(equality())
     }
     for i in 0..5 {
-        println!("{}", seen[i])
+        println("{}", seen[i])
     }
-    println!("stable: {}", seen[0] == seen[5] && seen[4] == seen[9])
+    println("stable: {}", seen[0] == seen[5] && seen[4] == seen[9])
 }

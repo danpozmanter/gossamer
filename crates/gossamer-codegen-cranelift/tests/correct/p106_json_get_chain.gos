@@ -1,17 +1,17 @@
 use std::encoding::json
 
 fn main() {
-    let v = json::parse(&"{\"name\":\"alice\",\"age\":30}").unwrap()
-    match json::get(&v, &"name") {
-        Some(name) => println!("name: {}", json::as_str(&name).unwrap_or("?")),
-        None => println!("no name"),
+    let v = json::parse("{\"name\":\"alice\",\"age\":30}").unwrap()
+    match json::get(v, "name") {
+        Some(name) => println("name: {}", json::as_str(name).unwrap_or("?"))
+        None => println("no name")
     }
-    match json::get(&v, &"age") {
-        Some(age) => println!("age: {}", json::as_i64(&age).unwrap_or(-1)),
-        None => println!("no age"),
+    match json::get(v, "age") {
+        Some(age) => println("age: {}", json::as_i64(age).unwrap_or(-1))
+        None => println("no age")
     }
-    match json::get(&v, &"missing") {
-        Some(_) => println!("?"),
-        None => println!("missing not found"),
+    match json::get(v, "missing") {
+        Some(_) => println("?")
+        None => println("missing not found")
     }
 }

@@ -26,46 +26,46 @@ fn total(it: Iterator<i64>) -> i64 {
 
 fn main() {
     let numbers = #[1, 2, 3]
-    println!("vec.iter = {:?}", first(numbers.iter()))
-    println!("vec.total = {}", total(numbers.iter()))
+    println("vec.iter = {:?}", first(numbers.iter()))
+    println("vec.total = {}", total(numbers.iter()))
 
-    println!("range = {:?}", first(..5))
-    println!("range.total = {}", total(0..5))
+    println("range = {:?}", first(..5))
+    println("range.total = {}", total(0..5))
 
-    println!("adapter = {:?}", first(numbers.iter().map(|v| v * 10)))
-    println!("adapter.total = {}", total((0..6).filter(|v| v > 3)))
+    println("adapter = {:?}", first(numbers.iter().map(|v| v * 10)))
+    println("adapter.total = {}", total((0..6).filter(|v| v > 3)))
 
     let words = #["alpha", "beta"]
-    println!("text = {:?}", first_text(words.iter()))
-    println!("text.skip = {:?}", first_text(words.iter().skip(1)))
+    println("text = {:?}", first_text(words.iter()))
+    println("text.skip = {:?}", first_text(words.iter().skip(1)))
 
     // A String element rides the lazy state as its managed pointer, so the
     // walk and the source stay independently usable.
-    println!("text.count = {}", words.iter().count())
-    println!("text.collect = {:?}", words.iter().collect())
-    println!("text.take = {:?}", words.iter().take(1).collect())
+    println("text.count = {}", words.iter().count())
+    println("text.collect = {:?}", words.iter().collect())
+    println("text.take = {:?}", words.iter().take(1).collect())
     let mut walked = words.iter()
-    println!("text.next = {:?}", walked.next())
-    println!("text.source = {} {}", words.len(), words[1])
+    println("text.next = {:?}", walked.next())
+    println("text.source = {} {}", words.len(), words[1])
 
     let stored = numbers.iter().rev()
-    println!("bound = {:?}", first(stored))
+    println("bound = {:?}", first(stored))
 
     // An element the lazy state cannot carry in its slot keeps the eager
     // sequence surface, which reads the element at its real width: a float
     // stays a float rather than the integer its bits spell, and an aggregate
     // keeps every field.
     let floats: Vec<f64> = #[-2.5, 1.5, 3.0]
-    println!("f64.sum = {}", floats.iter().sum())
-    println!("f64.min = {:?}", floats.iter().min())
-    println!("f64.max = {:?}", floats.iter().max())
-    println!("f64.count = {}", floats.iter().count())
-    println!("f64.collect = {:?}", floats.iter().collect())
+    println("f64.sum = {}", floats.iter().sum())
+    println("f64.min = {:?}", floats.iter().min())
+    println("f64.max = {:?}", floats.iter().max())
+    println("f64.count = {}", floats.iter().count())
+    println("f64.collect = {:?}", floats.iter().collect())
 
     let pairs = #[Pair { id: 1, label: "one" }, Pair { id: 2, label: "two" }]
     let snapshot = pairs.iter().collect()
-    println!("aggregate.count = {}", pairs.iter().count())
-    println!("aggregate.field = {} {}", snapshot.len(), snapshot[1].label)
+    println("aggregate.count = {}", pairs.iter().count())
+    println("aggregate.field = {} {}", snapshot.len(), snapshot[1].label)
 }
 
 #[cfg(test)]
@@ -75,11 +75,11 @@ mod iterator_param_argument_tests {
     #[test]
     fn vec_iter_satisfies_an_iterator_parameter() {
         let xs = #[4, 5, 6]
-        let _ = testing::check_eq(&super::total(xs.iter()), &15, "total")
+        let _ = testing::check_eq(super::total(xs.iter()), 15, "total")
     }
 
     #[test]
     fn adapter_chain_satisfies_an_iterator_parameter() {
-        let _ = testing::check_eq(&super::total((0..4).map(|v| v * 2)), &12, "mapped total")
+        let _ = testing::check_eq(super::total((0..4).map(|v| v * 2)), 12, "mapped total")
     }
 }

@@ -255,7 +255,7 @@ pub const HTTP_ROUTER: StdModule = StdModule {
         StdItem {
             name: "Handler",
             kind: StdItemKind::Trait,
-            doc: "Anything callable as `Fn(&Request, &Params) -> Response`.",
+            doc: "Anything callable as `Fn(Request, Params) -> Response`.",
         },
         StdItem {
             name: "new",
@@ -498,7 +498,7 @@ pub const HTTP_WEBSOCKET: StdModule = StdModule {
         StdItem {
             name: "serve",
             kind: StdItemKind::Function,
-            doc: "serve(addr, handler) -> Result<(), Error>: bind, upgrade each connection, dispatch the handler's handle(&self, ws) per connection.",
+            doc: "serve(addr, handler) -> Result<(), Error>: bind, upgrade each connection, dispatch the handler's handle(self, ws) per connection.",
         },
         StdItem {
             name: "connect",

@@ -20,7 +20,7 @@ const UNEXPECTED_OK: i64 = 0
 const CONNECT_FAILED: i64 = -1
 
 fn client(addr: String, tx: Sender<i64>) {
-    let stream = match net::TcpStream::connect(&addr) {
+    let stream = match net::TcpStream::connect(addr) {
         Ok(s) => s
         Err(_) => { tx.send(CONNECT_FAILED)
             return }
@@ -41,19 +41,19 @@ fn client(addr: String, tx: Sender<i64>) {
 fn main() {
     let listener = match net::TcpListener::bind("127.0.0.1:0") {
         Ok(l) => l
-        Err(e) => { println!("bind failed: {}", e)
+        Err(e) => { println("bind failed: {}", e)
             return }
     }
     let addr = match listener.local_addr() {
         Ok(a) => a
-        Err(e) => { println!("addr failed: {}", e)
+        Err(e) => { println("addr failed: {}", e)
             return }
     }
-    let (tx, rx) = channel()
-    go client(addr, tx)
-    let (stream, _peer) = match listener.accept() {
+    let tx, rx = channel()
+    spawn(|| client(addr, tx))
+    let stream, _peer = match listener.accept() {
         Ok(p) => p
-        Err(e) => { println!("accept failed: {}", e)
+        Err(e) => { println("accept failed: {}", e)
             return }
     }
     let _ = stream.read(512)
@@ -62,14 +62,14 @@ fn main() {
     let _ = listener.close()
     let code = match rx.recv() {
         Some(c) => c
-        None => { println!("no client result")
+        None => { println("no client result")
             return }
     }
     if code == REJECTED {
-        println!("tls handshake rejected")
+        println("tls handshake rejected")
     } else if code == UNEXPECTED_OK {
-        println!("tls handshake UNEXPECTEDLY ok")
+        println("tls handshake UNEXPECTEDLY ok")
     } else {
-        println!("client connect failed")
+        println("client connect failed")
     }
 }

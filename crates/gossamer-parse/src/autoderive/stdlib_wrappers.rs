@@ -102,11 +102,11 @@ const HTTP_SECURITY_MARKERS: &[&str] = &[
 
 const PEM_WRAPPERS: &str = r"
 struct __gos_pem_Block { block_type: String, bytes: Vec<u8> }
-fn __gos_pem_decode(s: &String) -> Result<__gos_pem_Block, errors::Error> {
-    let (t, b) = __gos_pem_decode_raw(s)?
+fn __gos_pem_decode(s: String) -> Result<__gos_pem_Block, errors::Error> {
+    let t, b = __gos_pem_decode_raw(s)?
     Ok(__gos_pem_Block { block_type: t, bytes: b })
 }
-fn __gos_pem_decode_all(s: &String) -> Result<Vec<__gos_pem_Block>, errors::Error> {
+fn __gos_pem_decode_all(s: String) -> Result<Vec<__gos_pem_Block>, errors::Error> {
     let raws = __gos_pem_decode_all_raw(s)?
     let mut out: Vec<__gos_pem_Block> = Vec::from([])
     for r in raws {
@@ -129,8 +129,8 @@ fn __gos_time_after_fire(tx: Sender<i64>, d: time::Duration) {
     tx.close()
 }
 fn __gos_time_after(d: time::Duration) -> Receiver<i64> {
-    let (tx, rx) = channel(1)
-    go __gos_time_after_fire(tx, d)
+    let tx, rx = channel(1)
+    spawn(|| __gos_time_after_fire(tx, d))
     rx
 }
 ";
@@ -149,11 +149,11 @@ impl __gos_time_Location {
     }
     fn name(&self) -> String { self.spec }
     fn civil(&self, unix_ms: i64) -> Result<__gos_time_CivilTime, errors::Error> {
-        let (year, month, day, hour, minute, second, nano, offset, weekday) = __gos_time_civil_raw(unix_ms, self.spec)?
+        let year, month, day, hour, minute, second, nano, offset, weekday = __gos_time_civil_raw(unix_ms, self.spec)?
         Ok(__gos_time_CivilTime { year: year, month: month, day: day, hour: hour, minute: minute, second: second, nanosecond: nano, offset_seconds: offset, weekday: weekday })
     }
     fn resolve(&self, civil: __gos_time_CivilTime) -> Result<__gos_time_CivilResolution, errors::Error> {
-        let (kind, earlier, later) = __gos_time_resolve_raw(self.spec, civil.year, civil.month, civil.day, civil.hour, civil.minute, civil.second, civil.nanosecond)?
+        let kind, earlier, later = __gos_time_resolve_raw(self.spec, civil.year, civil.month, civil.day, civil.hour, civil.minute, civil.second, civil.nanosecond)?
         if kind == 0 { Ok(__gos_time_CivilResolution::Gap) }
         else if kind == 1 { Ok(__gos_time_CivilResolution::Unique(earlier)) }
         else { Ok(__gos_time_CivilResolution::Fold(earlier, later)) }
@@ -170,8 +170,8 @@ fn __gos_time_add_date(unix_ms: i64, location: __gos_time_Location, years: i64, 
 /// Real-struct + wrapper source for `std::crypto::x509`.
 const X509_WRAPPERS: &str = r"
 struct __gos_x509_CertInfo { subject: String, issuer: String, serial: Vec<u8>, not_before_unix: i64, not_after_unix: i64, san_dns: Vec<String>, sha256: Vec<u8> }
-fn __gos_x509_parse_pem(s: &String) -> Result<__gos_x509_CertInfo, errors::Error> {
-    let (subject, issuer, serial, nb, na, san, sha) = __gos_x509_parse_pem_raw(s)?
+fn __gos_x509_parse_pem(s: String) -> Result<__gos_x509_CertInfo, errors::Error> {
+    let subject, issuer, serial, nb, na, san, sha = __gos_x509_parse_pem_raw(s)?
     Ok(__gos_x509_CertInfo { subject: subject, issuer: issuer, serial: serial, not_before_unix: nb, not_after_unix: na, san_dns: san, sha256: sha })
 }
 ";
@@ -183,8 +183,8 @@ fn __gos_x509_parse_pem(s: &String) -> Result<__gos_x509_CertInfo, errors::Error
 /// `builtin_fs_metadata`).
 const FS_METADATA_WRAPPERS: &str = r"
 struct __gos_fs_Metadata { size: i64, is_file: bool, is_dir: bool, is_symlink: bool, readonly: bool, modified_unix_ms: i64 }
-fn __gos_fs_metadata(path: &String) -> Result<__gos_fs_Metadata, errors::Error> {
-    let (size, is_file, is_dir, is_symlink, readonly, modified) = __gos_fs_metadata_raw(path)?
+fn __gos_fs_metadata(path: String) -> Result<__gos_fs_Metadata, errors::Error> {
+    let size, is_file, is_dir, is_symlink, readonly, modified = __gos_fs_metadata_raw(path)?
     Ok(__gos_fs_Metadata { size: size, is_file: is_file, is_dir: is_dir, is_symlink: is_symlink, readonly: readonly, modified_unix_ms: modified })
 }
 ";
@@ -217,7 +217,7 @@ impl __gos_path_Path {
     fn extension(&self) -> Option<String> { path::extension(self.value) }
     fn normalize(&self) -> __gos_path_Path { __gos_path_Path { value: path::normalize(self.value) } }
     fn is_absolute(&self) -> bool { path::is_absolute(self.value) }
-    fn starts_with(&self, prefix: &__gos_path_Path) -> bool { path::starts_with(self.value, prefix.value) }
+    fn starts_with(&self, prefix: __gos_path_Path) -> bool { path::starts_with(self.value, prefix.value) }
 }
 ";
 
@@ -271,7 +271,7 @@ fn __gos_sql_row_guard(k: i64) -> Result<(), errors::Error> {
     if k == -2 { return Err(errors::new("sql: row is no longer valid (cursor advanced or rows closed)")) }
     Ok(())
 }
-fn __gos_sql_open(name: &String, url: &String) -> Result<__gos_sql_Conn, errors::Error> {
+fn __gos_sql_open(name: String, url: String) -> Result<__gos_sql_Conn, errors::Error> {
     let h = __gos_sql_open_raw(name, url)
     if h < 0 { return Err(__gos_sql_err()) }
     Ok(__gos_sql_Conn { __handle: h })
@@ -281,7 +281,7 @@ fn __gos_sql_drivers() -> Vec<String> {
     if joined == "" { return Vec::from([]) }
     joined.split(",")
 }
-fn __gos_sql_bind(params: &[__gos_sql_Value]) -> i64 {
+fn __gos_sql_bind(params: [__gos_sql_Value]) -> i64 {
     let p = __gos_sql_params_new_raw()
     for v in params {
         match v {
@@ -296,17 +296,17 @@ fn __gos_sql_bind(params: &[__gos_sql_Value]) -> i64 {
     p
 }
 impl __gos_sql_Conn {
-    fn execute(&mut self, sql: &String, params: &[__gos_sql_Value]) -> Result<i64, errors::Error> {
+    fn execute(&mut self, sql: String, params: [__gos_sql_Value]) -> Result<i64, errors::Error> {
         let n = __gos_sql_conn_execute_raw(self.__handle, sql, __gos_sql_bind(params))
         if n < 0 { return Err(__gos_sql_err()) }
         Ok(n)
     }
-    fn query(&mut self, sql: &String, params: &[__gos_sql_Value]) -> Result<__gos_sql_Rows, errors::Error> {
+    fn query(&mut self, sql: String, params: [__gos_sql_Value]) -> Result<__gos_sql_Rows, errors::Error> {
         let h = __gos_sql_conn_query_raw(self.__handle, sql, __gos_sql_bind(params))
         if h < 0 { return Err(__gos_sql_err()) }
         Ok(__gos_sql_Rows { __handle: h })
     }
-    fn query_each(&mut self, sql: &String, params: &[__gos_sql_Value], f: Fn(__gos_sql_Row)) -> Result<(), errors::Error> {
+    fn query_each(&mut self, sql: String, params: [__gos_sql_Value], f: Fn(__gos_sql_Row)) -> Result<(), errors::Error> {
         let h = __gos_sql_conn_query_raw(self.__handle, sql, __gos_sql_bind(params))
         if h < 0 { return Err(__gos_sql_err()) }
         let mut rows = __gos_sql_Rows { __handle: h }
@@ -346,25 +346,25 @@ impl __gos_sql_Conn {
     fn interrupt(&self) {
         let _ = __gos_sql_conn_interrupt_raw(self.__handle)
     }
-    fn prepare(&mut self, sql: &String) -> Result<__gos_sql_Stmt, errors::Error> {
+    fn prepare(&mut self, sql: String) -> Result<__gos_sql_Stmt, errors::Error> {
         let h = __gos_sql_conn_prepare_raw(self.__handle, sql)
         if h < 0 { return Err(__gos_sql_err()) }
         Ok(__gos_sql_Stmt { __handle: h })
     }
-    fn copy_in(&mut self, sql: &String, data: &[u8]) -> Result<i64, errors::Error> {
+    fn copy_in(&mut self, sql: String, data: [u8]) -> Result<i64, errors::Error> {
         let n = __gos_sql_conn_copy_in_raw(self.__handle, sql, data)
         if n < 0 { return Err(__gos_sql_err()) }
         Ok(n)
     }
-    fn copy_out(&mut self, sql: &String) -> Result<Vec<u8>, errors::Error> {
+    fn copy_out(&mut self, sql: String) -> Result<Vec<u8>, errors::Error> {
         if __gos_sql_conn_copy_out_run_raw(self.__handle, sql) < 0 { return Err(__gos_sql_err()) }
         Ok(__gos_sql_conn_copy_out_take_raw(self.__handle))
     }
-    fn listen(&mut self, channel: &String) -> Result<(), errors::Error> {
+    fn listen(&mut self, channel: String) -> Result<(), errors::Error> {
         if __gos_sql_conn_listen_raw(self.__handle, channel) < 0 { return Err(__gos_sql_err()) }
         Ok(())
     }
-    fn unlisten(&mut self, channel: &String) -> Result<(), errors::Error> {
+    fn unlisten(&mut self, channel: String) -> Result<(), errors::Error> {
         if __gos_sql_conn_unlisten_raw(self.__handle, channel) < 0 { return Err(__gos_sql_err()) }
         Ok(())
     }
@@ -384,12 +384,12 @@ impl __gos_sql_Conn {
     }
 }
 impl __gos_sql_Stmt {
-    fn execute(&mut self, params: &[__gos_sql_Value]) -> Result<i64, errors::Error> {
+    fn execute(&mut self, params: [__gos_sql_Value]) -> Result<i64, errors::Error> {
         let n = __gos_sql_stmt_execute_raw(self.__handle, __gos_sql_bind(params))
         if n < 0 { return Err(__gos_sql_err()) }
         Ok(n)
     }
-    fn query(&mut self, params: &[__gos_sql_Value]) -> Result<__gos_sql_Rows, errors::Error> {
+    fn query(&mut self, params: [__gos_sql_Value]) -> Result<__gos_sql_Rows, errors::Error> {
         let h = __gos_sql_stmt_query_raw(self.__handle, __gos_sql_bind(params))
         if h < 0 { return Err(__gos_sql_err()) }
         Ok(__gos_sql_Rows { __handle: h })
@@ -414,46 +414,46 @@ impl __gos_sql_Pool {
         let _ = __gos_sql_pool_close_idle_raw(self.__handle)
     }
 }
-fn __gos_sql_pool_open(driver: &String, url: &String, max: i64) -> Result<__gos_sql_Pool, errors::Error> {
+fn __gos_sql_pool_open(driver: String, url: String, max: i64) -> Result<__gos_sql_Pool, errors::Error> {
     __gos_sql_pool_open_with(driver, url, 0, max, 30000, 300000, 1800000)
 }
-fn __gos_sql_pool_open_with(driver: &String, url: &String, min: i64, max: i64, acquire_ms: i64, idle_ms: i64, lifetime_ms: i64) -> Result<__gos_sql_Pool, errors::Error> {
+fn __gos_sql_pool_open_with(driver: String, url: String, min: i64, max: i64, acquire_ms: i64, idle_ms: i64, lifetime_ms: i64) -> Result<__gos_sql_Pool, errors::Error> {
     let h = __gos_sql_pool_new_raw(driver, url, min, max, acquire_ms, idle_ms, lifetime_ms)
     if h < 0 { return Err(__gos_sql_err()) }
     Ok(__gos_sql_Pool { __handle: h })
 }
-fn __gos_sql_migrate_up(db: &mut __gos_sql_Conn, dir: &String) -> Result<i64, errors::Error> {
+fn __gos_sql_migrate_up(db: &mut __gos_sql_Conn, dir: String) -> Result<i64, errors::Error> {
     let n = __gos_sql_migrate_up_raw(db.__handle, dir)
     if n < 0 { return Err(__gos_sql_err()) }
     Ok(n)
 }
-fn __gos_sql_join(parts: &[String], sep: String) -> String {
+fn __gos_sql_join(parts: [String], sep: String) -> String {
     let mut out = ""
     let mut first = true
     for p in parts {
         if first {
-            out = format!("{}", p)
+            out = format("{}", p)
             first = false
         } else {
-            out = format!("{}{}{}", out, sep, p)
+            out = format("{}{}{}", out, sep, p)
         }
     }
     out
 }
-fn __gos_sql_select_new(table: &String) -> __gos_sql_Select {
+fn __gos_sql_select_new(table: String) -> __gos_sql_Select {
     __gos_sql_Select { table: table.clone(), cols: Vec::from([]), wheres: Vec::from([]), binds: Vec::from([]), order: "", lim: -1, off: -1 }
 }
-fn __gos_sql_copy_strs(xs: &[String]) -> Vec<String> {
+fn __gos_sql_copy_strs(xs: [String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::from([])
     for x in xs { out.push(x) }
     out
 }
-fn __gos_sql_copy_vals(xs: &[__gos_sql_Value]) -> Vec<__gos_sql_Value> {
+fn __gos_sql_copy_vals(xs: [__gos_sql_Value]) -> Vec<__gos_sql_Value> {
     let mut out: Vec<__gos_sql_Value> = Vec::from([])
     for x in xs { out.push(x) }
     out
 }
-fn __gos_sql_is_simple_ident(s: &String) -> bool {
+fn __gos_sql_is_simple_ident(s: String) -> bool {
     let n = s.len()
     if n == 0 { return false }
     let mut i = 0
@@ -481,57 +481,57 @@ fn __gos_sql_is_simple_ident(s: &String) -> bool {
     if start { return false }
     true
 }
-fn __gos_sql_quote_ident(ident: &String) -> String {
+fn __gos_sql_quote_ident(ident: String) -> String {
     if __gos_sql_is_simple_ident(ident) {
-        return format!("{}", ident)
+        return format("{}", ident)
     }
-    format!("\"{}\"", ident.replace("\"", "\"\""))
+    format("\"{}\"", ident.replace("\"", "\"\""))
 }
-fn __gos_sql_quote_idents(xs: &[String]) -> Vec<String> {
+fn __gos_sql_quote_idents(xs: [String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::from([])
     for x in xs { out.push(__gos_sql_quote_ident(x)) }
     out
 }
 impl __gos_sql_Select {
-    fn columns(&self, cols: &[String]) -> __gos_sql_Select {
-        let mut c = __gos_sql_copy_strs(&self.cols)
+    fn columns(&self, cols: [String]) -> __gos_sql_Select {
+        let mut c = __gos_sql_copy_strs(self.cols)
         for x in cols { c.push(x) }
-        __gos_sql_Select { table: self.table, cols: c, wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: self.order, lim: self.lim, off: self.off }
+        __gos_sql_Select { table: self.table, cols: c, wheres: __gos_sql_copy_strs(self.wheres), binds: __gos_sql_copy_vals(self.binds), order: self.order, lim: self.lim, off: self.off }
     }
-    fn where_eq(&self, column: &String, v: __gos_sql_Value) -> __gos_sql_Select {
-        let mut b = __gos_sql_copy_vals(&self.binds)
+    fn where_eq(&self, column: String, v: __gos_sql_Value) -> __gos_sql_Select {
+        let mut b = __gos_sql_copy_vals(self.binds)
         b.push(v)
-        let mut w = __gos_sql_copy_strs(&self.wheres)
-        w.push(format!("{} = ${}", __gos_sql_quote_ident(column), b.len()))
-        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: w, binds: b, order: self.order, lim: self.lim, off: self.off }
+        let mut w = __gos_sql_copy_strs(self.wheres)
+        w.push(format("{} = ${}", __gos_sql_quote_ident(column), b.len()))
+        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(self.cols), wheres: w, binds: b, order: self.order, lim: self.lim, off: self.off }
     }
-    fn order_by(&self, column: &String, ascending: bool) -> __gos_sql_Select {
+    fn order_by(&self, column: String, ascending: bool) -> __gos_sql_Select {
         let dir = if ascending { "ASC" } else { "DESC" }
-        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: format!("{} {}", __gos_sql_quote_ident(column), dir), lim: self.lim, off: self.off }
+        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(self.cols), wheres: __gos_sql_copy_strs(self.wheres), binds: __gos_sql_copy_vals(self.binds), order: format("{} {}", __gos_sql_quote_ident(column), dir), lim: self.lim, off: self.off }
     }
     fn limit(&self, n: i64) -> __gos_sql_Select {
-        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: self.order, lim: n, off: self.off }
+        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(self.cols), wheres: __gos_sql_copy_strs(self.wheres), binds: __gos_sql_copy_vals(self.binds), order: self.order, lim: n, off: self.off }
     }
     fn offset(&self, n: i64) -> __gos_sql_Select {
-        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(&self.cols), wheres: __gos_sql_copy_strs(&self.wheres), binds: __gos_sql_copy_vals(&self.binds), order: self.order, lim: self.lim, off: n }
+        __gos_sql_Select { table: self.table, cols: __gos_sql_copy_strs(self.cols), wheres: __gos_sql_copy_strs(self.wheres), binds: __gos_sql_copy_vals(self.binds), order: self.order, lim: self.lim, off: n }
     }
     fn params(&self) -> Vec<__gos_sql_Value> {
-        __gos_sql_copy_vals(&self.binds)
+        __gos_sql_copy_vals(self.binds)
     }
     fn render(&self) -> String {
-        let cols = if self.cols.len() == 0 { "*" } else { __gos_sql_join(&__gos_sql_quote_idents(&self.cols), ", ") }
-        let mut out = format!("SELECT {} FROM {}", cols, __gos_sql_quote_ident(&self.table))
+        let cols = if self.cols.len() == 0 { "*" } else { __gos_sql_join(__gos_sql_quote_idents(self.cols), ", ") }
+        let mut out = format("SELECT {} FROM {}", cols, __gos_sql_quote_ident(self.table))
         if self.wheres.len() > 0 {
-            out = format!("{} WHERE {}", out, __gos_sql_join(&self.wheres, " AND "))
+            out = format("{} WHERE {}", out, __gos_sql_join(self.wheres, " AND "))
         }
         if self.order != "" {
-            out = format!("{} ORDER BY {}", out, self.order)
+            out = format("{} ORDER BY {}", out, self.order)
         }
         if self.lim >= 0 {
-            out = format!("{} LIMIT {}", out, self.lim)
+            out = format("{} LIMIT {}", out, self.lim)
         }
         if self.off >= 0 {
-            out = format!("{} OFFSET {}", out, self.off)
+            out = format("{} OFFSET {}", out, self.off)
         }
         out
     }
@@ -554,7 +554,7 @@ impl __gos_sql_Rows {
     }
 }
 impl __gos_sql_Row {
-    fn get_i64(&self, column: &String) -> Result<i64, errors::Error> {
+    fn get_i64(&self, column: String) -> Result<i64, errors::Error> {
         let k = __gos_sql_row_kind_raw(self.__handle, column)
         __gos_sql_row_guard(k)?
         if k != 2 {
@@ -562,7 +562,7 @@ impl __gos_sql_Row {
         }
         Ok(__gos_sql_row_get_i64_raw(self.__handle, column))
     }
-    fn get_f64(&self, column: &String) -> Result<f64, errors::Error> {
+    fn get_f64(&self, column: String) -> Result<f64, errors::Error> {
         let k = __gos_sql_row_kind_raw(self.__handle, column)
         __gos_sql_row_guard(k)?
         if k != 3 && k != 2 {
@@ -570,7 +570,7 @@ impl __gos_sql_Row {
         }
         Ok(__gos_sql_row_get_f64_raw(self.__handle, column))
     }
-    fn get_bool(&self, column: &String) -> Result<bool, errors::Error> {
+    fn get_bool(&self, column: String) -> Result<bool, errors::Error> {
         let k = __gos_sql_row_kind_raw(self.__handle, column)
         __gos_sql_row_guard(k)?
         if k != 1 {
@@ -578,7 +578,7 @@ impl __gos_sql_Row {
         }
         Ok(__gos_sql_row_get_bool_raw(self.__handle, column) != 0)
     }
-    fn get_text(&self, column: &String) -> Result<String, errors::Error> {
+    fn get_text(&self, column: String) -> Result<String, errors::Error> {
         let k = __gos_sql_row_kind_raw(self.__handle, column)
         __gos_sql_row_guard(k)?
         if k != 4 {
@@ -586,7 +586,7 @@ impl __gos_sql_Row {
         }
         Ok(__gos_sql_row_get_text_raw(self.__handle, column))
     }
-    fn get_blob(&self, column: &String) -> Result<Vec<u8>, errors::Error> {
+    fn get_blob(&self, column: String) -> Result<Vec<u8>, errors::Error> {
         let k = __gos_sql_row_kind_raw(self.__handle, column)
         __gos_sql_row_guard(k)?
         if k != 5 {
@@ -594,35 +594,35 @@ impl __gos_sql_Row {
         }
         Ok(__gos_sql_row_get_blob_raw(self.__handle, column))
     }
-    fn get_opt_i64(&self, column: &String) -> Result<Option<i64>, errors::Error> {
+    fn get_opt_i64(&self, column: String) -> Result<Option<i64>, errors::Error> {
         let k = __gos_sql_row_kind_raw(self.__handle, column)
         __gos_sql_row_guard(k)?
         if k == 0 { return Ok(None) }
         if k != 2 { return Err(errors::newf("sql: column {} is not Int", column)) }
         Ok(Some(__gos_sql_row_get_i64_raw(self.__handle, column)))
     }
-    fn get_opt_f64(&self, column: &String) -> Result<Option<f64>, errors::Error> {
+    fn get_opt_f64(&self, column: String) -> Result<Option<f64>, errors::Error> {
         let k = __gos_sql_row_kind_raw(self.__handle, column)
         __gos_sql_row_guard(k)?
         if k == 0 { return Ok(None) }
         if k != 3 && k != 2 { return Err(errors::newf("sql: column {} is not Float", column)) }
         Ok(Some(__gos_sql_row_get_f64_raw(self.__handle, column)))
     }
-    fn get_opt_bool(&self, column: &String) -> Result<Option<bool>, errors::Error> {
+    fn get_opt_bool(&self, column: String) -> Result<Option<bool>, errors::Error> {
         let k = __gos_sql_row_kind_raw(self.__handle, column)
         __gos_sql_row_guard(k)?
         if k == 0 { return Ok(None) }
         if k != 1 { return Err(errors::newf("sql: column {} is not Bool", column)) }
         Ok(Some(__gos_sql_row_get_bool_raw(self.__handle, column) != 0))
     }
-    fn get_opt_text(&self, column: &String) -> Result<Option<String>, errors::Error> {
+    fn get_opt_text(&self, column: String) -> Result<Option<String>, errors::Error> {
         let k = __gos_sql_row_kind_raw(self.__handle, column)
         __gos_sql_row_guard(k)?
         if k == 0 { return Ok(None) }
         if k != 4 { return Err(errors::newf("sql: column {} is not Text", column)) }
         Ok(Some(__gos_sql_row_get_text_raw(self.__handle, column)))
     }
-    fn is_null(&self, column: &String) -> bool {
+    fn is_null(&self, column: String) -> bool {
         __gos_sql_row_kind_raw(self.__handle, column) == 0
     }
     fn width(&self) -> i64 {
@@ -638,30 +638,30 @@ impl __gos_sql_Tx {
         if __gos_sql_tx_rollback_raw(self.__handle) < 0 { return Err(__gos_sql_err()) }
         Ok(())
     }
-    fn execute(&mut self, sql: &String) -> Result<i64, errors::Error> {
+    fn execute(&mut self, sql: String) -> Result<i64, errors::Error> {
         let n = __gos_sql_tx_execute_raw(self.__handle, sql)
         if n < 0 { return Err(__gos_sql_err()) }
         Ok(n)
     }
-    fn execute_params(&mut self, sql: &String, params: &[__gos_sql_Value]) -> Result<i64, errors::Error> {
+    fn execute_params(&mut self, sql: String, params: [__gos_sql_Value]) -> Result<i64, errors::Error> {
         let n = __gos_sql_tx_execute_params_raw(self.__handle, sql, __gos_sql_bind(params))
         if n < 0 { return Err(__gos_sql_err()) }
         Ok(n)
     }
-    fn query(&mut self, sql: &String, params: &[__gos_sql_Value]) -> Result<__gos_sql_Rows, errors::Error> {
+    fn query(&mut self, sql: String, params: [__gos_sql_Value]) -> Result<__gos_sql_Rows, errors::Error> {
         let h = __gos_sql_tx_query_params_raw(self.__handle, sql, __gos_sql_bind(params))
         if h < 0 { return Err(__gos_sql_err()) }
         Ok(__gos_sql_Rows { __handle: h })
     }
-    fn savepoint(&mut self, name: &String) -> Result<(), errors::Error> {
+    fn savepoint(&mut self, name: String) -> Result<(), errors::Error> {
         if __gos_sql_tx_savepoint_raw(self.__handle, name) < 0 { return Err(__gos_sql_err()) }
         Ok(())
     }
-    fn release_savepoint(&mut self, name: &String) -> Result<(), errors::Error> {
+    fn release_savepoint(&mut self, name: String) -> Result<(), errors::Error> {
         if __gos_sql_tx_release_savepoint_raw(self.__handle, name) < 0 { return Err(__gos_sql_err()) }
         Ok(())
     }
-    fn rollback_to_savepoint(&mut self, name: &String) -> Result<(), errors::Error> {
+    fn rollback_to_savepoint(&mut self, name: String) -> Result<(), errors::Error> {
         if __gos_sql_tx_rollback_to_savepoint_raw(self.__handle, name) < 0 { return Err(__gos_sql_err()) }
         Ok(())
     }
@@ -674,7 +674,7 @@ impl __gos_sql_Tx {
 /// hmac / hex / url primitives, so it lowers natively on every tier.
 const HTTP_SECURITY_WRAPPERS: &str = r##"
 // ---- shared helpers ----
-fn __gos_http_header_lookup(headers: &[(String, String)], name: &String) -> String {
+fn __gos_http_header_lookup(headers: [(String, String)], name: String) -> String {
     let target = name.to_lowercase()
     let mut found = ""
     for (k, v) in headers {
@@ -682,12 +682,12 @@ fn __gos_http_header_lookup(headers: &[(String, String)], name: &String) -> Stri
     }
     found
 }
-fn __gos_http_bytes_to_str(b: &[u8]) -> String {
+fn __gos_http_bytes_to_str(b: [u8]) -> String {
     let mut buf = bytes::Buffer::new()
     for x in b { buf.push(x) }
     buf.to_string()
 }
-fn __gos_http_first12(b: &[u8]) -> Vec<u8> {
+fn __gos_http_first12(b: [u8]) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::from([])
     let mut i = 0
     while i < 12 {
@@ -696,11 +696,11 @@ fn __gos_http_first12(b: &[u8]) -> Vec<u8> {
     }
     out
 }
-fn __gos_http_trim_slash(s: &String) -> String {
+fn __gos_http_trim_slash(s: String) -> String {
     let n = s.len()
     if n > 0 && s.ends_with("/") { s.substring(0, n - 1) } else { s.substring(0, n) }
 }
-fn __gos_http_origin_host(origin: &String) -> String {
+fn __gos_http_origin_host(origin: String) -> String {
     let mut host: String = match origin.split_once("://") {
         Some((_, r)) => r,
         None => origin.substring(0, origin.len()),
@@ -710,13 +710,13 @@ fn __gos_http_origin_host(origin: &String) -> String {
     match host.split_once("#") { Some((h, _)) => host = h, None => {} }
     host
 }
-fn __gos_http_origin_from_referer(referer: &String) -> String {
+fn __gos_http_origin_from_referer(referer: String) -> String {
     match referer.split_once("://") {
         Some((scheme, _)) => scheme + "://" + &__gos_http_origin_host(referer),
         None => "",
     }
 }
-fn __gos_http_origins_equal(a: &String, b: &String) -> bool {
+fn __gos_http_origins_equal(a: String, b: String) -> bool {
     __gos_http_trim_slash(a).to_lowercase() == __gos_http_trim_slash(b).to_lowercase()
 }
 
@@ -748,7 +748,7 @@ fn __gos_http_csrf_config(key: Vec<u8>) -> __gos_http_csrf_Config {
         exempt_prefixes: Vec::from([]),
     }
 }
-fn __gos_http_csrf_is_safe(config: &__gos_http_csrf_Config, method: &String) -> bool {
+fn __gos_http_csrf_is_safe(config: __gos_http_csrf_Config, method: String) -> bool {
     let m = method.to_lowercase()
     let mut safe = false
     for s in config.safe_methods {
@@ -756,26 +756,26 @@ fn __gos_http_csrf_is_safe(config: &__gos_http_csrf_Config, method: &String) -> 
     }
     safe
 }
-fn __gos_http_csrf_extract_token(r: http::Request, config: &__gos_http_csrf_Config) -> Option<String> {
-    let h = __gos_http_header_lookup(&r.headers, &config.header_name)
+fn __gos_http_csrf_extract_token(r: http::Request, config: __gos_http_csrf_Config) -> Option<String> {
+    let h = __gos_http_header_lookup(r.headers, config.header_name)
     if h != "" { return Some(h) }
-    let ct = __gos_http_header_lookup(&r.headers, &"content-type")
+    let ct = __gos_http_header_lookup(r.headers, "content-type")
     if ct.to_lowercase().starts_with("application/x-www-form-urlencoded") {
         let f = r.form_value(config.form_field)
         if f != "" { return Some(f) }
     }
     None
 }
-fn __gos_http_csrf_origin_allowed(r: http::Request, config: &__gos_http_csrf_Config) -> bool {
+fn __gos_http_csrf_origin_allowed(r: http::Request, config: __gos_http_csrf_Config) -> bool {
     let method = r.method()
-    let is_safe = __gos_http_csrf_is_safe(config, &method)
-    let origin = __gos_http_header_lookup(&r.headers, &"origin")
-    let referer = __gos_http_header_lookup(&r.headers, &"referer")
+    let is_safe = __gos_http_csrf_is_safe(config, method)
+    let origin = __gos_http_header_lookup(r.headers, "origin")
+    let referer = __gos_http_header_lookup(r.headers, "referer")
     let mut candidate = ""
     if origin != "" {
         candidate = origin
     } else if referer != "" {
-        let o = __gos_http_origin_from_referer(&referer)
+        let o = __gos_http_origin_from_referer(referer)
         if o == "" { return is_safe }
         candidate = o
     } else {
@@ -784,33 +784,33 @@ fn __gos_http_csrf_origin_allowed(r: http::Request, config: &__gos_http_csrf_Con
     if config.trusted_origins.len() > 0 {
         let mut ok = false
         for t in config.trusted_origins {
-            if __gos_http_origins_equal(&t, &candidate) { ok = true }
+            if __gos_http_origins_equal(t, candidate) { ok = true }
         }
         return ok
     }
-    let host = __gos_http_header_lookup(&r.headers, &"host")
+    let host = __gos_http_header_lookup(r.headers, "host")
     if host == "" { return false }
-    __gos_http_origin_host(&candidate).to_lowercase() == host.to_lowercase()
+    __gos_http_origin_host(candidate).to_lowercase() == host.to_lowercase()
 }
-fn __gos_http_csrf_check(r: http::Request, route_auth: __gos_http_csrf_RouteAuth, config: &__gos_http_csrf_Config) -> Result<(), errors::Error> {
+fn __gos_http_csrf_check(r: http::Request, route_auth: __gos_http_csrf_RouteAuth, config: __gos_http_csrf_Config) -> Result<(), errors::Error> {
     match route_auth {
         __gos_http_csrf_RouteAuth::BearerOnly => return Ok(()),
         _ => {}
     }
     let method = r.method()
-    if __gos_http_csrf_is_safe(config, &method) { return Ok(()) }
+    if __gos_http_csrf_is_safe(config, method) { return Ok(()) }
     if config.exempt_prefixes.len() > 0 {
         let path = r.path()
         for p in config.exempt_prefixes {
-            if path.starts_with(&p) { return Ok(()) }
+            if path.starts_with(p) { return Ok(()) }
         }
     }
     if !__gos_http_csrf_origin_allowed(r, config) {
         return Err(errors::new("csrf: origin not allowed"))
     }
-    let cookie_header = __gos_http_header_lookup(&r.headers, &"cookie")
+    let cookie_header = __gos_http_header_lookup(r.headers, "cookie")
     if cookie_header == "" { return Err(errors::new("csrf: missing cookie header")) }
-    let pairs = http::cookie::parse_cookie_header(&cookie_header)
+    let pairs = http::cookie::parse_cookie_header(cookie_header)
     let mut cookie_token = ""
     for (k, v) in pairs {
         if k == config.cookie_name { cookie_token = v }
@@ -820,7 +820,7 @@ fn __gos_http_csrf_check(r: http::Request, route_auth: __gos_http_csrf_RouteAuth
         Some(t) => t,
         None => return Err(errors::new("csrf: missing csrf token")),
     }
-    http::csrf::verify_token(&cookie_token, &supplied, &config.key)
+    http::csrf::verify_token(cookie_token, supplied, config.key)
 }
 // A function that returns an `http::Response` must stay strictly
 // straight-line: a branch (`if` / `match`) between the handle param and
@@ -828,19 +828,19 @@ fn __gos_http_csrf_check(r: http::Request, route_auth: __gos_http_csrf_RouteAuth
 // tiers, so every conditional that shapes the header string lives in a
 // pure `String` helper and the response builder only concatenates calls.
 fn __gos_http_max_age_attr(max_age_secs: i64) -> String {
-    if max_age_secs > 0 { "; Max-Age=" + &format!("{}", max_age_secs) } else { "" }
+    if max_age_secs > 0 { "; Max-Age=" + &format("{}", max_age_secs) } else { "" }
 }
 fn __gos_http_secure_attr(secure: bool) -> String {
     if secure { "; Secure" } else { "" }
 }
-fn __gos_http_csrf_cookie_value(token: &String, config: &__gos_http_csrf_Config) -> String {
-    let bare = http::cookie::serialize(&config.cookie_name, token)
+fn __gos_http_csrf_cookie_value(token: String, config: __gos_http_csrf_Config) -> String {
+    let bare = http::cookie::serialize(config.cookie_name, token)
     bare + "; Path=/" + &__gos_http_max_age_attr(config.max_age_secs)
         + &__gos_http_secure_attr(config.secure) + "; SameSite=" + &config.same_site
 }
-fn __gos_http_csrf_attach_cookie(resp: http::Response, token: &String, config: &__gos_http_csrf_Config) -> http::Response {
+fn __gos_http_csrf_attach_cookie(resp: http::Response, token: String, config: __gos_http_csrf_Config) -> http::Response {
     let sc = __gos_http_csrf_cookie_value(token, config)
-    resp.with_header("set-cookie", &sc)
+    resp.with_header("set-cookie", sc)
 }
 
 // ---- session (signed + AES-256-GCM encrypted store) ----
@@ -857,38 +857,38 @@ fn __gos_http_session_signed(key: Vec<u8>) -> __gos_http_session_Store {
 fn __gos_http_session_encrypted(key: Vec<u8>) -> __gos_http_session_Store {
     __gos_http_session_Store { key: key, cookie_name: "gos_session", encrypted: true, secure: true, max_age_secs: 86400 }
 }
-fn __gos_http_session_seal(key: &[u8], data: &String) -> Result<String, errors::Error> {
+fn __gos_http_session_seal(key: [u8], data: String) -> Result<String, errors::Error> {
     let pt = data.as_bytes()
     let mac = crypto::hmac::sha256_mac(key.to_vec(), pt)
-    let nonce = __gos_http_first12(&mac)
+    let nonce = __gos_http_first12(mac)
     let empty: Vec<u8> = Vec::from([])
     let ct = crypto::aead::aes_256_gcm_seal(key.to_vec(), nonce, pt, empty)?
-    Ok(encoding::hex::encode(&nonce) + "." + &encoding::hex::encode(&ct))
+    Ok(encoding::hex::encode(nonce) + "." + &encoding::hex::encode(ct))
 }
-fn __gos_http_session_open(key: &[u8], cookie: &String) -> Result<String, errors::Error> {
-    let (n, c) = match cookie.split_once(".") {
+fn __gos_http_session_open(key: [u8], cookie: String) -> Result<String, errors::Error> {
+    let n, c = match cookie.split_once(".") {
         Some(p) => p,
         None => return Err(errors::new("session: bad framing")),
     }
-    let nonce = encoding::hex::decode(&n)?
-    let ct = encoding::hex::decode(&c)?
+    let nonce = encoding::hex::decode(n)?
+    let ct = encoding::hex::decode(c)?
     let empty: Vec<u8> = Vec::from([])
     let pt = crypto::aead::aes_256_gcm_open(key.to_vec(), nonce, ct, empty)?
-    Ok(__gos_http_bytes_to_str(&pt))
+    Ok(__gos_http_bytes_to_str(pt))
 }
-fn __gos_http_session_encode(store: &__gos_http_session_Store, data: &String) -> String {
+fn __gos_http_session_encode(store: __gos_http_session_Store, data: String) -> String {
     if store.encrypted {
-        match __gos_http_session_seal(&store.key, data) {
+        match __gos_http_session_seal(store.key, data) {
             Ok(v) => v,
             Err(_) => "",
         }
     } else {
-        http::session::sign(data, &store.key)
+        http::session::sign(data, store.key)
     }
 }
-fn __gos_http_session_cookie_value(store: &__gos_http_session_Store, data: &String) -> String {
+fn __gos_http_session_cookie_value(store: __gos_http_session_Store, data: String) -> String {
     let cookie_val = __gos_http_session_encode(store, data)
-    let bare = http::cookie::serialize(&store.cookie_name, &cookie_val)
+    let bare = http::cookie::serialize(store.cookie_name, cookie_val)
     bare + "; Path=/; HttpOnly" + &__gos_http_max_age_attr(store.max_age_secs)
         + &__gos_http_secure_attr(store.secure) + "; SameSite=Lax"
 }
@@ -897,75 +897,75 @@ fn __gos_http_session_cookie_value(store: &__gos_http_session_Store, data: &Stri
 // (`http::Request`) miscompiles the call on the LLVM tier, whereas the
 // free-function form is sound - and `session::load(store, req)` /
 // `session::save(store, resp, data)` is also the data-first spelling.
-fn __gos_http_session_save(store: &__gos_http_session_Store, resp: http::Response, data: &String) -> http::Response {
+fn __gos_http_session_save(store: __gos_http_session_Store, resp: http::Response, data: String) -> http::Response {
     let sc = __gos_http_session_cookie_value(store, data)
-    resp.with_header("set-cookie", &sc)
+    resp.with_header("set-cookie", sc)
 }
-fn __gos_http_session_cookie_raw(store: &__gos_http_session_Store, r: http::Request) -> String {
-    let cookie_header = __gos_http_header_lookup(&r.headers, &"cookie")
-    let pairs = http::cookie::parse_cookie_header(&cookie_header)
+fn __gos_http_session_cookie_raw(store: __gos_http_session_Store, r: http::Request) -> String {
+    let cookie_header = __gos_http_header_lookup(r.headers, "cookie")
+    let pairs = http::cookie::parse_cookie_header(cookie_header)
     let mut raw = ""
     for (k, v) in pairs {
         if k == store.cookie_name { raw = v }
     }
     raw
 }
-fn __gos_http_session_load(store: &__gos_http_session_Store, r: http::Request) -> Result<String, errors::Error> {
+fn __gos_http_session_load(store: __gos_http_session_Store, r: http::Request) -> Result<String, errors::Error> {
     let raw = __gos_http_session_cookie_raw(store, r)
     if raw == "" { return Err(errors::new("session: cookie not present")) }
     if store.encrypted {
-        __gos_http_session_open(&store.key, &raw)
+        __gos_http_session_open(store.key, raw)
     } else {
-        http::session::verify(&raw, &store.key)
+        http::session::verify(raw, store.key)
     }
 }
-fn __gos_http_session_load_or_empty(store: &__gos_http_session_Store, r: http::Request) -> String {
+fn __gos_http_session_load_or_empty(store: __gos_http_session_Store, r: http::Request) -> String {
     match __gos_http_session_load(store, r) {
         Ok(d) => d,
         Err(_) => "",
     }
 }
-fn __gos_http_session_with_session(store: &__gos_http_session_Store, r: http::Request, resp: http::Response, f: Fn(String) -> String) -> http::Response {
+fn __gos_http_session_with_session(store: __gos_http_session_Store, r: http::Request, resp: http::Response, f: Fn(String) -> String) -> http::Response {
     let current = __gos_http_session_load_or_empty(store, r)
     let updated = f(current)
-    __gos_http_session_save(store, resp, &updated)
+    __gos_http_session_save(store, resp, updated)
 }
 
 // ---- form (application/x-www-form-urlencoded) ----
 struct __gos_http_form_Form { pairs: Vec<(String, String)> }
-fn __gos_http_form_parse(body: &String) -> __gos_http_form_Form {
+fn __gos_http_form_parse(body: String) -> __gos_http_form_Form {
     let mut pairs: Vec<(String, String)> = Vec::from([])
     let raw_pairs: Vec<String> = strings::split(body, "&")
     for pair in raw_pairs {
         let p: String = pair
         if p == "" { continue }
         match p.split_once("=") {
-            Some((k, v)) => pairs.push((url::query_unescape(&k), url::query_unescape(&v))),
-            None => pairs.push((url::query_unescape(&p), "")),
+            Some((k, v)) => pairs.push((url::query_unescape(k), url::query_unescape(v))),
+            None => pairs.push((url::query_unescape(p), "")),
         }
     }
     __gos_http_form_Form { pairs: pairs }
 }
-fn __gos_http_form_get(form: &__gos_http_form_Form, name: &String) -> String {
+fn __gos_http_form_get(form: __gos_http_form_Form, name: String) -> String {
     for (k, v) in form.pairs {
         if k == *name { return v }
     }
     ""
 }
-fn __gos_http_form_get_all(form: &__gos_http_form_Form, name: &String) -> Vec<String> {
+fn __gos_http_form_get_all(form: __gos_http_form_Form, name: String) -> Vec<String> {
     let mut out: Vec<String> = Vec::from([])
     for (k, v) in form.pairs {
         if k == *name { out.push(v) }
     }
     out
 }
-fn __gos_http_form_has(form: &__gos_http_form_Form, name: &String) -> bool {
+fn __gos_http_form_has(form: __gos_http_form_Form, name: String) -> bool {
     for (k, _v) in form.pairs {
         if k == *name { return true }
     }
     false
 }
-fn __gos_http_form_count(form: &__gos_http_form_Form) -> i64 {
+fn __gos_http_form_count(form: __gos_http_form_Form) -> i64 {
     form.pairs.len()
 }
 
@@ -976,7 +976,7 @@ struct __gos_http_multipart_Part {
     content_type: String,
     content: Vec<u8>,
 }
-fn __gos_http_multipart_boundary(content_type: &String) -> String {
+fn __gos_http_multipart_boundary(content_type: String) -> String {
     match content_type.split_once("boundary=") {
         Some((_, rest)) => {
             let raw = match rest.split_once(";") {
@@ -988,7 +988,7 @@ fn __gos_http_multipart_boundary(content_type: &String) -> String {
         None => "",
     }
 }
-fn __gos_http_multipart_header_value(head: &String, key: &String) -> String {
+fn __gos_http_multipart_header_value(head: String, key: String) -> String {
     let target = key.to_lowercase()
     let lines: Vec<String> = strings::lines(head)
     for line in lines {
@@ -1002,9 +1002,9 @@ fn __gos_http_multipart_header_value(head: &String, key: &String) -> String {
     }
     ""
 }
-fn __gos_http_multipart_disp_param(disp: &String, key: &String) -> String {
+fn __gos_http_multipart_disp_param(disp: String, key: String) -> String {
     let needle = key.clone() + "=\""
-    match disp.split_once(&needle) {
+    match disp.split_once(needle) {
         Some((_, rest)) => {
             match rest.split_once("\"") {
                 Some((val, _)) => val,
@@ -1014,10 +1014,10 @@ fn __gos_http_multipart_disp_param(disp: &String, key: &String) -> String {
         None => "",
     }
 }
-fn __gos_http_multipart_parse(body: &[u8], boundary: &String) -> Vec<__gos_http_multipart_Part> {
+fn __gos_http_multipart_parse(body: [u8], boundary: String) -> Vec<__gos_http_multipart_Part> {
     let text = __gos_http_bytes_to_str(body)
     let delim = "--" + boundary
-    let segments: Vec<String> = strings::split(&text, &delim)
+    let segments: Vec<String> = strings::split(text, delim)
     let mut parts: Vec<__gos_http_multipart_Part> = Vec::from([])
     for seg in segments {
         let s: String = seg
@@ -1029,10 +1029,10 @@ fn __gos_http_multipart_parse(body: &[u8], boundary: &String) -> Vec<__gos_http_
                 if content_str.ends_with("\r\n") {
                     content_str = content_str.substring(0, content_str.len() - 2)
                 }
-                let disp = __gos_http_multipart_header_value(&head, &"content-disposition")
-                let name = __gos_http_multipart_disp_param(&disp, &"name")
-                let filename = __gos_http_multipart_disp_param(&disp, &"filename")
-                let ctype = __gos_http_multipart_header_value(&head, &"content-type")
+                let disp = __gos_http_multipart_header_value(head, "content-disposition")
+                let name = __gos_http_multipart_disp_param(disp, "name")
+                let filename = __gos_http_multipart_disp_param(disp, "filename")
+                let ctype = __gos_http_multipart_header_value(head, "content-type")
                 parts.push(__gos_http_multipart_Part {
                     name: name,
                     filename: filename,
@@ -1045,11 +1045,11 @@ fn __gos_http_multipart_parse(body: &[u8], boundary: &String) -> Vec<__gos_http_
     }
     parts
 }
-fn __gos_http_request_form_file(r: http::Request, name: &String) -> Option<__gos_http_multipart_Part> {
-    let ct = __gos_http_header_lookup(&r.headers, &"content-type")
-    let boundary = __gos_http_multipart_boundary(&ct)
+fn __gos_http_request_form_file(r: http::Request, name: String) -> Option<__gos_http_multipart_Part> {
+    let ct = __gos_http_header_lookup(r.headers, "content-type")
+    let boundary = __gos_http_multipart_boundary(ct)
     if boundary == "" { return None }
-    let parts = __gos_http_multipart_parse(&r.raw_body, &boundary)
+    let parts = __gos_http_multipart_parse(r.raw_body, boundary)
     for p in parts {
         if p.name == *name && p.filename != "" { return Some(p) }
     }

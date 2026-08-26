@@ -324,9 +324,15 @@ impl Printer {
     }
 
     fn print_enum_decl(&mut self, decl: &EnumDecl) {
+        if decl.repr.packed {
+            self.write("packed ");
+        }
         self.write("enum ");
         self.write_ident(&decl.name);
         self.print_generics(&decl.generics);
+        if let Some(bits) = decl.repr.declared_bits {
+            self.write(&format!(": u{bits}"));
+        }
         self.print_where_clause(&decl.where_clause);
         self.write(" {");
         self.newline();

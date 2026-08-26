@@ -1,9 +1,9 @@
 //! Sequence combinators for `std::iter`.
 //!
-//! Generic, eager, data-last. Every closure-taking combinator in this
-//! module takes the callable first and the data last, mirroring F#'s
-//! `Seq`/`List`/`Array` modules so `xs |> |v| iter::map(f, v)` desugars
-//! (per SPEC §4.6) to `iter::map(f, xs)` and threads cleanly.
+//! Generic and eager. A caller writes the data first - `iter::map(xs, f)`
+//! reads as the `xs.map(f)` it stands for - and the front end rotates that
+//! into the data-last order these helpers and both tiers' lowering use, so
+//! everything below the front end sees one shape.
 //!
 //! These Rust-side helpers exist for stdlib code that wants to call
 //! into the same surface; user `.gos` programs see the dynamic

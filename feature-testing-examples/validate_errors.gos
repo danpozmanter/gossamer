@@ -11,12 +11,12 @@ use std::validate
 
 fn main() {
     let fe = validate::FieldError::new("name", "must not be empty", "required")
-    println!("path: {}", fe.path())
-    println!("message: {}", fe.message())
-    println!("code: {}", fe.code())
+    println("path: {}", fe.path())
+    println("message: {}", fe.message())
+    println("code: {}", fe.code())
 
     let errs = validate::Errors::new()
-    println!("empty before: {}", errs.is_empty())
+    println("empty before: {}", errs.is_empty())
 
     errs.add("name", fe)
     let fe2 = validate::FieldError::new("name", "too short", "length")
@@ -24,10 +24,10 @@ fn main() {
     let fe3 = validate::FieldError::new("age", "must be >= 0", "range")
     errs.add("age", fe3)
 
-    println!("empty after: {}", errs.is_empty())
-    println!("len: {}", errs.len())
-    println!("count name: {}", errs.count("name"))
-    println!("count missing: {}", errs.count("missing"))
-    println!("get name: {}", errs.get("name"))
-    println!("collect: {}", errs.collect())
+    println("empty after: {}", errs.is_empty())
+    println("len: {}", errs.len())
+    println("count name: {}", errs.count("name"))
+    println("count missing: {}", errs.count("missing"))
+    println("get name: {}", errs.get("name"))
+    println("collect: {}", errs.collect())
 }

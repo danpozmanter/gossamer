@@ -13,22 +13,22 @@ use std::context
 
 fn main() {
     let root = context::Context::background()
-    println!("root cancelled: {}", root.is_cancelled())
+    println("root cancelled: {}", root.is_cancelled())
 
     let child = context::Context::with_cancel(root)
     let grandchild = context::Context::with_cancel(child)
-    println!("child cancelled: {}", child.is_cancelled())
-    println!("grandchild cancelled: {}", grandchild.is_cancelled())
+    println("child cancelled: {}", child.is_cancelled())
+    println("grandchild cancelled: {}", grandchild.is_cancelled())
 
     child.cancel()
-    println!("child after cancel: {}", child.is_cancelled())
-    println!("grandchild after cancel: {}", grandchild.is_cancelled())
-    println!("root after cancel: {}", root.is_cancelled())
+    println("child after cancel: {}", child.is_cancelled())
+    println("grandchild after cancel: {}", grandchild.is_cancelled())
+    println("root after cancel: {}", root.is_cancelled())
 
     let expired = context::Context::with_timeout(root, 0)
-    println!("expired cancelled: {}", expired.is_cancelled())
-    println!("expired done: {}", expired.done())
+    println("expired cancelled: {}", expired.is_cancelled())
+    println("expired done: {}", expired.done())
 
     let long = context::Context::with_timeout(root, 600000)
-    println!("long cancelled: {}", long.is_cancelled())
+    println("long cancelled: {}", long.is_cancelled())
 }

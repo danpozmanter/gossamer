@@ -1,0 +1,7 @@
+// ERROR: GP0055
+fn measure(s: String) -> i64 { s.len() }
+
+fn main() {
+    let text = "ab"
+    println("{}", measure(&text))
+}

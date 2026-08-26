@@ -13,8 +13,8 @@ use std::http
 fn main() {
     let pairs = http::cookie::parse_cookie_header("sid=abc123; theme=dark; lang=\"en US\"; ; =skip; ok=1")
     for (name, value) in pairs {
-        println!("{} = {}", name, value)
+        println("{} = {}", name, value)
     }
-    println!("serialize: {}", http::cookie::serialize("session", "tok42"))
-    println!("serialize-special: {}", http::cookie::serialize("k", "a b,c"))
+    println("serialize: {}", http::cookie::serialize("session", "tok42"))
+    println("serialize-special: {}", http::cookie::serialize("k", "a b,c"))
 }

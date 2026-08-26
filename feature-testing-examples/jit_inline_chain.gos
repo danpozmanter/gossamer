@@ -3,7 +3,7 @@
 // which poisoned the caller's JIT eligibility. Post-inline the helper
 // is dissolved and `hot_sum` is a self-contained promotable body.
 fn label_len(i: i64) -> i64 {
-    let s = format!("item-{}", i)
+    let s = format("item-{}", i)
     s.len()
 }
 
@@ -24,5 +24,5 @@ fn main() {
         total += hot_sum(50)
         k += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }

@@ -259,7 +259,7 @@ fn help_distinguishes_run_from_inline_source() {
 fn run_forwards_script_arguments_without_a_separator() {
     let fixture = write_fixture(
         "run-script-args",
-        "use std::env\nprintln!(\"{} {}\", env::args()[0], env::args()[1])\n",
+        "use std::env\nprintln(\"{} {}\", env::args()[0], env::args()[1])\n",
     );
     let out = Command::new(gos_bin())
         .arg("run")
@@ -622,12 +622,12 @@ fn queue_and_stack_push_pop_order() {
          fn main() {\n\
              let mut q: Queue<i64> = Queue::from([1, 2, 3])\n\
              q.push(4)\n\
-             println!(\"{}\", q)\n\
-             println!(\"queue {} {} {} {}\", q.len(), q.peek().unwrap_or(0), q.pop().unwrap_or(0), q.pop().unwrap_or(0))\n\
+             println(\"{}\", q)\n\
+             println(\"queue {} {} {} {}\", q.len(), q.peek().unwrap_or(0), q.pop().unwrap_or(0), q.pop().unwrap_or(0))\n\
              let mut s: Stack<i64> = Stack::from([1, 2, 3])\n\
              s.push(4)\n\
-             println!(\"{}\", s)\n\
-             println!(\"stack {} {} {}\", s.len(), s.peek().unwrap_or(0), s.pop().unwrap_or(0))\n\
+             println(\"{}\", s)\n\
+             println(\"stack {} {} {}\", s.len(), s.peek().unwrap_or(0), s.pop().unwrap_or(0))\n\
          }\n",
     );
     let out = Command::new(gos_bin())
@@ -651,83 +651,83 @@ const LAZY_ITERATOR_TIER_SOURCE: &str = r#"use std::{iter, option}
 
 fn main() {
     let xs = 1..100
-        |> |v| iter::map(|x| {
+        |> |v| iter::map(v, |x| {
             if x > 3 { panic("map was eager") }
             x
-        }, v)
-        |> |v| iter::take(3, v)
+        })
+        |> |v| iter::take(v, 3)
         |> iter::collect
-    println!("{}", xs.sum())
+    println("{}", xs.sum())
 
-    let skipped = (1..8) |> |v| iter::skip(3, v) |> |v| iter::take(2, v) |> iter::sum
-    println!("{skipped}")
+    let skipped = (1..8) |> |v| iter::skip(v, 3) |> |v| iter::take(v, 2) |> iter::sum
+    println("{skipped}")
 
     let chained = iter::chain((1..3), (5..7)) |> iter::sum
-    println!("{chained}")
+    println("{chained}")
 
-    let folded = (1..5) |> |v| iter::fold(10i64, |acc: i64, x: i64| acc + x, v)
-    println!("{folded}")
+    let folded = (1..5) |> |v| iter::fold(v, 10i64, |acc: i64, x: i64| acc + x)
+    println("{folded}")
 
     let any_hit = (1..100)
-        |> |v| iter::any(|x| {
+        |> |v| iter::any(v, |x| {
             if x > 4 { panic("any was eager") }
             x == 3
-        }, v)
-    println!("{any_hit}")
+        })
+    println("{any_hit}")
 
     let all_hit = (1..100)
-        |> |v| iter::all(|x| {
+        |> |v| iter::all(v, |x| {
             if x > 4 { panic("all was eager") }
             x < 3
-        }, v)
-    println!("{all_hit}")
+        })
+    println("{all_hit}")
 
     let found = (1..100)
-        |> |v| iter::find(|x| {
+        |> |v| iter::find(v, |x| {
             if x > 5 { panic("find was eager") }
             x == 4
-        }, v)
-        |> |v| option::unwrap_or(-1, v)
-    println!("{found}")
+        })
+        |> |v| option::unwrap_or(v, -1)
+    println("{found}")
 
     let once_sum = iter::once(41) |> iter::sum
-    println!("{once_sum}")
+    println("{once_sum}")
 
     let product = (2..5) |> iter::product
-    println!("{product}")
+    println("{product}")
 
-    let min_value = (4..7) |> iter::min |> |v| option::unwrap_or(-1, v)
-    println!("{min_value}")
+    let min_value = (4..7) |> iter::min |> |v| option::unwrap_or(v, -1)
+    println("{min_value}")
 
-    let max_value = (4..7) |> iter::max |> |v| option::unwrap_or(-1, v)
-    println!("{max_value}")
+    let max_value = (4..7) |> iter::max |> |v| option::unwrap_or(v, -1)
+    println("{max_value}")
 
     let enumerated = (3..6) |> iter::enumerate |> iter::collect
-    println!("{}", enumerated.len())
+    println("{}", enumerated.len())
 
     let zipped = iter::zip((1..4), (10..20)) |> iter::collect
-    println!("{}", zipped.len())
+    println("{}", zipped.len())
 
     let pair_count = (1..4) |> iter::enumerate |> iter::count
-    println!("{pair_count}")
+    println("{pair_count}")
 
     let borrowed = [1, 2, 3, 4]
     let borrowed_total = borrowed
-        |> |v| iter::map(|x| x * 2, v)
-        |> |v| iter::filter(|x| x > 4, v)
-        |> |v| iter::take(2, v)
+        |> |v| iter::map(v, |x| x * 2)
+        |> |v| iter::filter(v, |x| x > 4)
+        |> |v| iter::take(v, 2)
         |> iter::sum
-    println!("{borrowed_total}")
+    println("{borrowed_total}")
 
     let mut replaced: Vec<i64> = Vec::from([1, 2, 3])
-    let pending_replacement = replaced |> |v| iter::map(|x| x, v)
+    let pending_replacement = replaced |> |v| iter::map(v, |x| x)
     replaced[1] = 9
-    println!("{}", pending_replacement |> iter::sum)
+    println("{}", pending_replacement |> iter::sum)
 
     let open_end = 10..
-        |> |v| iter::take(4, v)
+        |> |v| iter::take(v, 4)
         |> iter::collect
-    println!("{}", open_end.len())
+    println("{}", open_end.len())
 }
 "#;
 
@@ -738,10 +738,10 @@ const EAGER_COLLECTION_SOURCE: &str = r#"use std::iter
 
 fn main() {
     let range = iter::range(2, 6)
-    let mapped = range |> |v| iter::map(|x| x * 2, v)
-    let filtered = mapped |> |v| iter::filter(|x| x > 5, v)
-    let taken = filtered |> |v| iter::take(2, v)
-    println!("{} {} {} {}", range[0], mapped[1], taken[0], iter::sum(taken))
+    let mapped = range |> |v| iter::map(v, |x| x * 2)
+    let filtered = mapped |> |v| iter::filter(v, |x| x > 5)
+    let taken = filtered |> |v| iter::take(v, 2)
+    println("{} {} {} {}", range[0], mapped[1], taken[0], iter::sum(taken))
 }
 "#;
 
@@ -754,11 +754,11 @@ const LAZY_ITERATOR_ALLOCATION_SOURCE: &str = r#"use std::iter
 
 fn main() {
     let out = (0..100)
-        |> |v| iter::map(|x| x + 1, v)
-        |> |v| iter::filter(|x| x % 2 == 0, v)
-        |> |v| iter::take(3, v)
+        |> |v| iter::map(v, |x| x + 1)
+        |> |v| iter::filter(v, |x| x % 2 == 0)
+        |> |v| iter::take(v, 3)
         |> iter::collect
-    println!("{}", out.sum())
+    println("{}", out.sum())
 }
 "#;
 
@@ -766,9 +766,9 @@ const LAZY_ITERATOR_INVALIDATION_SOURCE: &str = r#"use std::iter
 
 fn main() {
     let mut xs: Vec<i64> = Vec::from([1, 2, 3])
-    let pending = xs.iter() |> |v| iter::map(|x| x, v)
+    let pending = xs.iter() |> |v| iter::map(v, |x| x)
     xs.push(4)
-    println!("{}", pending |> iter::sum)
+    println("{}", pending |> iter::sum)
 }
 "#;
 
@@ -776,10 +776,10 @@ const LAZY_ITERATOR_PANIC_SOURCE: &str = r#"use std::iter
 
 fn main() {
     let _ = (0..8)
-        |> |v| iter::map(|x| {
+        |> |v| iter::map(v, |x| {
             if x == 3 { panic("lazy adapter panic sentinel") }
             x
-        }, v)
+        })
         |> iter::count
 }
 "#;
@@ -1152,7 +1152,7 @@ fn stdin_read_line_appends_to_mut_string() {
 fn main() {
     let mut input = String::new()
     io::stdin().read_line(&mut input).unwrap()
-    println!("typed={} bytes={}", input.trim(), input.len())
+    println("typed={} bytes={}", input.trim(), input.len())
 }
 "#,
     );
@@ -1192,10 +1192,10 @@ fn stdin_read_line_no_arg_matches_option_in_vm_and_native() {
 fn main() {
     let mut input = String::new()
     io::stdin().read_line(&mut input).unwrap()
-    println!("first={}", input.trim())
+    println("first={}", input.trim())
     match io::stdin().read_line() {
-        Some(name) => println!("second={}", name),
-        None => println!("EOF"),
+        Some(name) => println("second={}", name),
+        None => println("EOF"),
     }
 }
 "#,
@@ -1587,7 +1587,7 @@ fn build_output_preserves_http_method_chain_through_send_and_field_access() {
             "use std::http\n\
              fn main() {{\n\
                  let url = \"http://{addr}/\"\n\
-                 match http::Client::new().get(&url).send() {{\n\
+                 match http::Client::new().get(url).send() {{\n\
                      Ok(resp) => println(resp.status.to_string() + \":\" + resp.body),\n\
                      Err(e) => println(\"send failed: \" + e.message()),\n\
                  }}\n\
@@ -1678,17 +1678,17 @@ fn vm_and_native_client_builder_chain_outputs_match() {
          fn main() {{\n\
              let client = http::Client::new()\n\
              let sent = client\n\
-                 .post(&\"http://{addr}/echo\")\n\
+                 .post(\"http://{addr}/echo\")\n\
                  .header(\"x-test\", \"parity\")\n\
                  .body(\"ping\")\n\
                  .send()\n\
              match sent {{\n\
-                 Ok(r) => println!(\"post: {{}} {{}}\", r.status, r.body),\n\
-                 Err(e) => println!(\"post err: {{}}\", e),\n\
+                 Ok(r) => println(\"post: {{}} {{}}\", r.status, r.body),\n\
+                 Err(e) => println(\"post err: {{}}\", e),\n\
              }}\n\
-             match client.get(&\"http://127.0.0.1:1/refused\").send() {{\n\
-                 Ok(r) => println!(\"refused ok: {{}}\", r.status),\n\
-                 Err(e) => println!(\"refused err: {{}}\", e),\n\
+             match client.get(\"http://127.0.0.1:1/refused\").send() {{\n\
+                 Ok(r) => println(\"refused ok: {{}}\", r.status),\n\
+                 Err(e) => println(\"refused err: {{}}\", e),\n\
              }}\n\
          }}\n"
     );

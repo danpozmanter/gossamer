@@ -14,7 +14,7 @@
 //! then drains with ordinary code:
 //!
 //! ```text
-//! go serve()
+//! spawn(|| serve())
 //! lifecycle::ready()
 //! lifecycle::await_shutdown()
 //! pool.close()

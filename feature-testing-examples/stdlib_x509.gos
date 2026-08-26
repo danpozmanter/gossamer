@@ -4,18 +4,18 @@ use std::crypto
 
 fn main() {
     let pem = "-----BEGIN CERTIFICATE-----\nMIIBRDCB96ADAgECAhQnt57N4K4w+Y+hc0oxp5OI0XurpTAFBgMrZXAwGDEWMBQG\nA1UEAwwNZ29zc2FtZXItdGVzdDAeFw0yNjA1MTExNDUzMDBaFw0zNjA1MDgxNDUz\nMDBaMBgxFjAUBgNVBAMMDWdvc3NhbWVyLXRlc3QwKjAFBgMrZXADIQBYAEVcgBQQ\n9oLXYVyhLpZU7l5yYU6oSnx2Qlkgo+fYLqNTMFEwHQYDVR0OBBYEFOJ/O1vNvhaB\nr5hxYbQWR13gpxQnMB8GA1UdIwQYMBaAFOJ/O1vNvhaBr5hxYbQWR13gpxQnMA8G\nA1UdEwEB/wQFMAMBAf8wBQYDK2VwA0EA3GQ1ASwU/c6DutoL71Cay73qWflaZAzL\nZ0a9c62Dmf7/VSq9YUN2zOZsKFCE5U/2f5g5KrAWM3ZseJMS6VYDAw==\n-----END CERTIFICATE-----\n"
-    match crypto::x509::parse_pem(&pem) {
+    match crypto::x509::parse_pem(pem) {
         Ok(cert) => {
-            println!("subject_ok={}", cert.subject.len() > 0)
-            println!("issuer_ok={}", cert.issuer.len() > 0)
-            println!("serial_nonempty={}", cert.serial.len() > 0)
-            println!("validity_ok={}", cert.not_after_unix > cert.not_before_unix)
-            println!("sha256_len={}", cert.sha256.len())
+            println("subject_ok={}", cert.subject.len() > 0)
+            println("issuer_ok={}", cert.issuer.len() > 0)
+            println("serial_nonempty={}", cert.serial.len() > 0)
+            println("validity_ok={}", cert.not_after_unix > cert.not_before_unix)
+            println("sha256_len={}", cert.sha256.len())
         }
-        Err(_e) => println!("parse_err")
+        Err(_e) => println("parse_err")
     }
     match crypto::x509::verify_server_certificate_with_crls("", "", "localhost", "") {
-        Ok(_) => println!("missing_crl_rejected=false")
-        Err(_) => println!("missing_crl_rejected=true")
+        Ok(_) => println("missing_crl_rejected=false")
+        Err(_) => println("missing_crl_rejected=true")
     }
 }

@@ -12,13 +12,13 @@ fn main() {
     let mut numbers = #[(1, 2), (3, 4), (5, 6)]
     numbers[1] = (30, 40)
     for (a, b) in numbers {
-        println!("numbers {} {}", a, b)
+        println("numbers {} {}", a, b)
     }
 
     let mut mixed = #[("p", 1), ("q", 2)]
     mixed[0] = ("z", 20)
     for (name, value) in mixed {
-        println!("mixed {} {}", name, value)
+        println("mixed {} {}", name, value)
     }
 
     // Both fields heap-allocated: the outgoing element's strings are
@@ -28,7 +28,7 @@ fn main() {
     let replacement = ("delta", "four")
     text[1] = replacement
     for (key, value) in text {
-        println!("text {} {}", key, value)
+        println("text {} {}", key, value)
     }
 
     // A rebuild-in-place walk, the shape a lookup table gets when one
@@ -36,19 +36,19 @@ fn main() {
     let mut rows = #[("a", "1"), ("b", "2"), ("c", "3")]
     let mut index = 0
     while index < rows.len() {
-        let (name, value) = rows[index]
+        let name, value = rows[index]
         if name == "b" {
-            rows[index] = (name, format!("{}!", value))
+            rows[index] = (name, format("{}!", value))
         }
         index += 1
     }
     for (name, value) in rows {
-        println!("rows {} {}", name, value)
+        println("rows {} {}", name, value)
     }
 
     let mut structs = #[Pair { name: "one", count: 1 }, Pair { name: "two", count: 2 }]
     structs[1] = Pair { name: "replaced", count: 99 }
     for pair in structs {
-        println!("struct {} {}", pair.name, pair.count)
+        println("struct {} {}", pair.name, pair.count)
     }
 }

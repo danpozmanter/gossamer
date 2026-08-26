@@ -40,9 +40,9 @@ fn worker(b: sync::Barrier, tx: Sender<i64>) {{
 
 fn main() {{
     let b = sync::Barrier::new({parties})
-    let (tx, rx) = channel()
+    let tx, rx = channel()
     for _ in 0..{k} {{
-        go worker(b, tx)
+        spawn(|| worker(b, tx))
     }}
     sync::Barrier::wait(b)
     let mut total = 0

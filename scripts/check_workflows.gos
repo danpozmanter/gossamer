@@ -23,10 +23,10 @@ const ACTIONS: String = ".github/actions"
 fn repo_root() -> String {
     let mut directory = env::current_dir().unwrap_or(".")
     loop {
-        if fs::is_dir(&path::join(&directory, &WORKFLOWS)) {
+        if fs::is_dir(path::join(directory, WORKFLOWS)) {
             return directory
         }
-        match path::parent(&directory) {
+        match path::parent(directory) {
             Some(parent) => directory = parent
             None => return "."
         }
@@ -34,14 +34,14 @@ fn repo_root() -> String {
 }
 
 /// Every `.yml` / `.yaml` file directly under `directory`, sorted.
-fn yaml_files(directory: &String) -> Vec<String> {
+fn yaml_files(directory: String) -> Vec<String> {
     let mut found = #[]
     for entry in fs::read_dir(directory).unwrap_or(#[]) {
         if entry.is_file && (entry.name.ends_with(".yml") || entry.name.ends_with(".yaml")) {
             found.push(entry.path)
         }
         if entry.is_dir {
-            for nested in fs::read_dir(&entry.path).unwrap_or(#[]) {
+            for nested in fs::read_dir(entry.path).unwrap_or(#[]) {
                 if nested.is_file
                 && (nested.name.ends_with(".yml") || nested.name.ends_with(".yaml"))
                 {
@@ -54,32 +54,32 @@ fn yaml_files(directory: &String) -> Vec<String> {
 }
 
 /// Reports `path`, answering whether it is usable.
-fn check(file: &String, needs_jobs: bool) -> bool {
+fn check(file: String, needs_jobs: bool) -> bool {
     let text = match fs::read_to_string(file) {
         Ok(text) => text
         Err(e) => {
-            eprintln!("workflows: reading {}: {}", file, e)
+            eprintln("workflows: reading {}: {}", file, e)
             return false
         }
     }
     // Parsed through JSON because that is where the accessors are: a
     // YAML document that converts is a YAML document that parses, and
     // the job table is then an ordinary object to read.
-    let converted = match yaml::to_json(&text) {
+    let converted = match yaml::to_json(text) {
         Ok(converted) => converted
         Err(e) => {
-            eprintln!("workflows: {} is not valid YAML: {}", file, e)
+            eprintln("workflows: {} is not valid YAML: {}", file, e)
             return false
         }
     }
     if !needs_jobs {
-        println!("ok   {}", file)
+        println("ok   {}", file)
         return true
     }
-    let document = match json::parse(&converted) {
+    let document = match json::parse(converted) {
         Ok(document) => document
         Err(e) => {
-            eprintln!("workflows: {} did not convert to a readable document: {}", file, e)
+            eprintln("workflows: {} did not convert to a readable document: {}", file, e)
             return false
         }
     }
@@ -88,23 +88,23 @@ fn check(file: &String, needs_jobs: bool) -> bool {
         None => 0
     }
     if count <= 0 {
-        eprintln!("workflows: {} declares no jobs", file)
+        eprintln("workflows: {} declares no jobs", file)
         return false
     }
-    println!("ok   {} ({} jobs)", file, count)
+    println("ok   {} ({} jobs)", file, count)
     true
 }
 
 fn main() {
     let root = repo_root()
     let mut failed = false
-    for file in yaml_files(&path::join(&root, &WORKFLOWS)) {
-        if !check(&file, true) {
+    for file in yaml_files(path::join(root, WORKFLOWS)) {
+        if !check(file, true) {
             failed = true
         }
     }
-    for file in yaml_files(&path::join(&root, &ACTIONS)) {
-        if !check(&file, false) {
+    for file in yaml_files(path::join(root, ACTIONS)) {
+        if !check(file, false) {
             failed = true
         }
     }

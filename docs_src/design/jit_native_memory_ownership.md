@@ -6,8 +6,8 @@ Before this change, `compile_bodies` in `gossamer-codegen-cranelift/src/jit.rs`
 created a `JITModule`, finalized it, copied each callable entry pointer into a
 `JitFn`, and stored the entire module in `JitArtifact`. `JitArtifact::drop`
 called `JITModule::free_memory`. The interpreter retained the artifact in
-`JitState` and in a weak per-thread cache. Dispatch maps retained `Arc<JitFn>`
-metadata, but the VM's `Rc<JitArtifact>` was the actual allocation owner.
+`JitState` and in a weak per-thread cache. Dispatch maps retained `JitFn`
+metadata, but the VM's `JitArtifact` was the actual allocation owner.
 
 Only finalized function pointers leave the module. Gossamer does not retain a
 Cranelift function ID, data ID, declaration reference, compilation context, or

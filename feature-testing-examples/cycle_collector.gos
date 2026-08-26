@@ -7,7 +7,7 @@
 
 use std::runtime
 
-enum Tree { Node(i64, Box<Tree>, Box<Tree>), Leaf }
+enum Tree { Node(i64, Tree, Tree), Leaf }
 
 fn build(depth: i64) -> Tree {
     if depth <= 0 {
@@ -17,7 +17,7 @@ fn build(depth: i64) -> Tree {
     }
 }
 
-fn sum(t: &Tree) -> i64 {
+fn sum(t: Tree) -> i64 {
     match t {
         Tree::Node(v, l, r) => v + sum(l) + sum(r)
         Tree::Leaf => 0
@@ -29,11 +29,11 @@ fn main() {
     let mut i = 0
     while i < 50 {
         let t = build(8)
-        total += sum(&t)
+        total += sum(t)
         // Collect mid-churn as well as at the end: exercises the candidate
         // buffer staying empty on acyclic workloads (the no-op fast path).
         runtime::collect_cycles()
         i += 1
     }
-    println!("total: {}", total)
+    println("total: {}", total)
 }

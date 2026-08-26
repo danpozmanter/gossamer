@@ -60,6 +60,11 @@ const NON_CAPTURING_RUNTIME_CALLEES: &[&str] = &[
     "gos_rt_heap_u8_set",
     "gos_rt_heap_u8_to_string",
     "gos_rt_heap_u8_write_lines_to_stdout",
+    // Reads the spawned child's outcome off the handle channel and
+    // hands back a freshly boxed payload. The handle pointer reaches
+    // nothing that outlives the call: the cohort entry it retires is
+    // keyed by address, not held.
+    "gos_rt_join",
     "gos_rt_len",
     "gos_rt_len_is_zero",
     // HashMap counter / probe helpers. The string-key variants
@@ -291,8 +296,9 @@ mod tests {
     fn build(source: &str) -> Vec<Body> {
         let mut map = SourceMap::new();
         let file = map.add_file("t.gos", source.to_string());
-        let (sf, _) = parse_source_file(source, file);
+        let (mut sf, _) = parse_source_file(source, file);
         let (res, _) = resolve_source_file(&sf);
+        let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &res);
         let mut tcx = TyCtxt::new();
         let (tbl, _) = typecheck_source_file(&sf, &res, &mut tcx);
         let hir = lower_source_file(&sf, &res, &tbl, &mut tcx);

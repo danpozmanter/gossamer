@@ -26,18 +26,18 @@ fn is_prime(n: i64) -> bool {
     true
 }
 
-print!("primes ≤ 50:")
+print("primes ≤ 50:")
 for n in 0..=50 {
     if is_prime(n) {
-        print!(" {}", n)
+        print(" {}", n)
     }
 }
-println!()
+println()
 
 // A few targeted spot-checks.
 for (n, expected) in [(2, true), (3, true), (4, false), (97, true)
     (100, false), (7919, true), (7920, false)] {
     let actual = is_prime(n)
     let label = if actual == expected { "ok" } else { "WRONG" }
-    println!("is_prime({}) = {} (expected {}): {}", n, actual, expected, label)
+    println("is_prime({}) = {} (expected {}): {}", n, actual, expected, label)
 }

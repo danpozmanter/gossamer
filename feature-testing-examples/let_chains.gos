@@ -11,15 +11,15 @@ fn first_positive(a: Option<i64>, b: Option<i64>) -> i64 {
 }
 
 fn main() {
-    println!("{}", first_positive(Some(3), Some(4)))
-    println!("{}", first_positive(Some(-1), Some(4)))
-    println!("{}", first_positive(Some(3), None))
-    println!("{}", first_positive(None, Some(4)))
+    println("{}", first_positive(Some(3), Some(4)))
+    println("{}", first_positive(Some(-1), Some(4)))
+    println("{}", first_positive(Some(3), None))
+    println("{}", first_positive(None, Some(4)))
 
     // Earlier binding feeds a later clause's scrutinee.
     let pair = Some(Some(42))
     if let Some(inner) = pair && let Some(v) = inner {
-        println!("nested {}", v)
+        println("nested {}", v)
     }
 
     // Mixed let + bool clause, no else branch.
@@ -28,16 +28,16 @@ fn main() {
     if let Some(v) = opt && v > 5 {
         total += v
     }
-    println!("total {}", total)
+    println("total {}", total)
 
     // Plain boolean conditions still parse with `&&` and `||`.
     let a = 1
     let b = 2
     if a < b && b < 10 {
-        println!("ordered")
+        println("ordered")
     }
     if a > 5 || b < 5 {
-        println!("either")
+        println("either")
     }
 
     // while-let chain: bind an element and test it each iteration.
@@ -48,5 +48,5 @@ fn main() {
         sum += n
         i += 1
     }
-    println!("sum {}", sum)
+    println("sum {}", sum)
 }

@@ -276,7 +276,7 @@ fn test_subcommand_with_no_args_walks_up_to_project_toml() {
          \x20\x20\x20\x20use std::testing\n\
          \x20\x20\x20\x20#[test]\n\
          \x20\x20\x20\x20fn add_combines_two_ints() {\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20let _ = testing::check_eq(&super::add(2, 3), &5, \"add\")\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20let _ = testing::check_eq(super::add(2, 3), 5, \"add\")\n\
          \x20\x20\x20\x20}\n\
          }\n\
          fn main() { }\n",
@@ -500,7 +500,7 @@ fn jit_compiled_binding_call_resolves_predeclared_symbol() {
          fn main() {\n    \
              let mut total: i64 = 0\n    \
              for i in 0..3000 { total += hot(i) }\n    \
-             println!(\"total = {}\", total)\n\
+             println(\"total = {}\", total)\n\
          }\n",
     )
     .expect("write main.gos");
@@ -533,7 +533,7 @@ fn run_main_thread_flag_executes_program() {
     // `gos run --main-thread` runs the VM on the process main thread
     // (for native libraries that require it) instead of the spawned
     // `gos-vm` thread. The program must still execute correctly.
-    let fixture = write_fixture("main-thread", "fn main() { println!(\"mt {}\", 40 + 2) }\n");
+    let fixture = write_fixture("main-thread", "fn main() { println(\"mt {}\", 40 + 2) }\n");
     let out = Command::new(gos_bin())
         .arg("run")
         .arg("--main-thread")
@@ -624,7 +624,7 @@ fn may_fail(n: i64) -> Result<i64, errors::Error> {
 
 fn main() {
     let _ = may_fail(1)
-    println!("ok")
+    println("ok")
 }
 "#;
     let fixture = write_fixture("n6-let-underscore-ok", src);
@@ -658,7 +658,7 @@ fn bare_manifest_id_is_a_hard_error_for_project_commands() {
         "[project]\nid = \"bareid\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    std::fs::write(dir.join("src/main.gos"), "fn main() { println!(\"hi\") }\n").unwrap();
+    std::fs::write(dir.join("src/main.gos"), "fn main() { println(\"hi\") }\n").unwrap();
     let out = Command::new(gos_bin())
         .arg("test")
         .arg(".")
@@ -696,7 +696,7 @@ fn unbound_binding_module_import_is_rejected() {
 use std::testing
 
 fn main() {
-    println!("unused")
+    println("unused")
 }
 
 #[cfg(test)]

@@ -7,5 +7,5 @@ fn main() {
         }
         total += values[123] + values[987] + values.len() as i64
     }
-    println!("{}", total)
+    println("{}", total)
 }

@@ -13,11 +13,11 @@ fn volume(width: i64, height: i64 = 2, depth: i64 = 3) -> i64 {
 }
 
 fn main() {
-    println!("{}", volume(2))                              // 12
-    println!("{}", volume(2, 3))                           // 18
-    println!("{}", volume(width = 2, height = 3, depth = 4))  // 24
-    println!("{}", volume(depth = 4, width = 2, height = 3))  // 24
-    println!("{}", volume(2, depth = 10))                   // 40
+    println("{}", volume(2))                              // 12
+    println("{}", volume(2, 3))                           // 18
+    println("{}", volume(width = 2, height = 3, depth = 4))  // 24
+    println("{}", volume(depth = 4, width = 2, height = 3))  // 24
+    println("{}", volume(2, depth = 10))                   // 40
 }
 ```
 

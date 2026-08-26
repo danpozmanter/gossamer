@@ -106,7 +106,7 @@ fn assert_parity(name: &str, body: &str) {
 fn format_precision_zero() {
     assert_parity(
         "fmt_p0",
-        r#"fn main() { println(format!("{:.0}", 1.5)) }
+        r#"fn main() { println(format("{:.0}", 1.5)) }
 "#,
     );
 }
@@ -115,7 +115,7 @@ fn format_precision_zero() {
 fn format_precision_three() {
     assert_parity(
         "fmt_p3",
-        r#"fn main() { println(format!("{:.3}", 3.14159)) }
+        r#"fn main() { println(format("{:.3}", 3.14159)) }
 "#,
     );
 }
@@ -124,7 +124,7 @@ fn format_precision_three() {
 fn format_precision_padded_eight_three() {
     assert_parity(
         "fmt_p83",
-        r#"fn main() { println(format!("{:08.3}", 3.14)) }
+        r#"fn main() { println(format("{:08.3}", 3.14)) }
 "#,
     );
 }
@@ -136,7 +136,7 @@ fn format_combined_specifiers() {
         r#"fn main() {
     let pi = 3.14159265358979
 
-    println(format!("pi={:.2} pi3={:.3} pad={:08.3}", pi, pi, pi))
+    println(format("pi={:.2} pi3={:.3} pad={:08.3}", pi, pi, pi))
 
 }
 "#,

@@ -117,7 +117,7 @@ fn iterate_vec_of_enums_from_enum_payload() {
         "iter",
         r#"
 enum J { Int(i64), Arr(Vec<J>) }
-fn sz(j: &J) -> i64 {
+fn sz(j: J) -> i64 {
     match j { J::Int(n) => *n, J::Arr(xs) => { let mut t = 0
  for x in xs { t += sz(x) }
  t } }
@@ -131,9 +131,9 @@ fn main() {
     let mut i = 0
     let mut total = 0
     while i < 100 { let a = mkarr()
- total += sz(&a)
+ total += sz(a)
  i += 1 }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     );
@@ -147,29 +147,29 @@ fn vec_stored_into_returned_enum_survives() {
         "ret",
         r#"
 enum J { Int(i64), Arr(Vec<J>), Obj(Vec<(String, J)>) }
-fn sumj(j: &J) -> i64 {
+fn sumj(j: J) -> i64 {
     match j {
         J::Int(n) => *n,
         J::Arr(xs) => { let mut t = 0
  for x in xs { t += sumj(x) }
  t }
         J::Obj(ps) => { let mut t = 0
- for p in ps { t += sumj(&p.1) }
+ for p in ps { t += sumj(p.1) }
  t }
     }
 }
 fn mkobj(i: i64) -> J {
     let mut v: Vec<(String, J)> = Vec::from([])
-    v.push((format!("k{}", i), J::Int(10)))
+    v.push((format("k{}", i), J::Int(10)))
     J::Obj(v)
 }
 fn main() {
     let mut i = 0
     let mut total = 0
     while i < 100 { let o = mkobj(i)
- total += sumj(&o)
+ total += sumj(o)
  i += 1 }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     );
@@ -184,7 +184,7 @@ fn deeply_nested_enum_in_vec_in_enum() {
         "nest",
         r#"
 enum J { Int(i64), Arr(Vec<J>) }
-fn cnt(j: &J) -> i64 {
+fn cnt(j: J) -> i64 {
     match j { J::Int(_) => 1, J::Arr(xs) => { let mut t = 0
  for x in xs { t += cnt(x) }
  t } }
@@ -200,9 +200,9 @@ fn main() {
     let mut i = 0
     let mut total = 0
     while i < 100 { let v = build()
- total += cnt(&v)
+ total += cnt(v)
  i += 1 }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     );
@@ -232,7 +232,7 @@ fn main() {
         m.remove(1i64)
         round += 1i64
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     );
@@ -264,8 +264,8 @@ fn one_round(round: i64) -> Result<i64, errors::Error> {
     m.insert(2i64, retained)
     let popped_map = Map::pop(m, 1i64).unwrap()
     let mut tags: Set<String> = Set::new()
-    tags.insert(format!("round-{}", round))
-    tags.insert(format!("next-{}", round + 1i64))
+    tags.insert(format("round-{}", round))
+    tags.insert(format("next-{}", round + 1i64))
     if round % 2i64 == 0i64 {
         return Err(errors::new("expected short-circuit"))
     }
@@ -282,7 +282,7 @@ fn main() {
         }
         round += 1i64
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     );
@@ -316,13 +316,13 @@ impl P {
     }
     fn pobj(&mut self) -> Result<J, errors::Error> {
         let mut ps: Vec<(String, J)> = Vec::from([])
-        ps.push((format!("d"), J::Int(1)))
+        ps.push((format("d"), J::Int(1)))
         Ok(J::Obj(ps))
     }
     fn top(&mut self) -> Result<J, errors::Error> {
         let mut ps: Vec<(String, J)> = Vec::from([])
         let mut i = 0
-        loop { let k = format!("k{}", i)
+        loop { let k = format("k{}", i)
  let v = self.pval()?
  ps.push((k, v))
  i += 1
@@ -330,14 +330,14 @@ impl P {
         Ok(J::Obj(ps))
     }
 }
-fn cnt(j: &J) -> i64 {
+fn cnt(j: J) -> i64 {
     match j {
         J::Int(n) => *n,
         J::Arr(xs) => { let mut t = 0
  for x in xs { t += cnt(x) }
  t }
         J::Obj(ps) => { let mut t = 0
- for p in ps { t += cnt(&p.1) }
+ for p in ps { t += cnt(p.1) }
  t }
     }
 }
@@ -346,9 +346,9 @@ fn main() -> Result<(), errors::Error> {
     let mut i = 0
     while i < 50 { let mut p = P { step: 0 }
  let r = p.top()?
- total += cnt(&r)
+ total += cnt(r)
  i += 1 }
-    println!("{}", total)
+    println("{}", total)
     Ok(())
 }
 "#,
@@ -371,7 +371,7 @@ fn transform(v: J) -> J {
  J::Arr(out) }
     }
 }
-fn cnt(j: &J) -> i64 {
+fn cnt(j: J) -> i64 {
     match j { J::Int(n) => *n, J::Arr(xs) => { let mut t = 0
  for x in xs { t += cnt(x) }
  t } }
@@ -385,9 +385,9 @@ fn main() {
     let mut total = 0
     while i < 100 { let p = build()
  let t = transform(p)
- total += cnt(&t)
+ total += cnt(t)
  i += 1 }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     );

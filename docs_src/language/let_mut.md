@@ -28,7 +28,7 @@ let &mut copy = reference
 
 `copy` is an independent `[i64; 3]` value and is not reassignable. Only
 `mut name` makes a binding reassignable. Reference patterns also compose with
-other patterns, for example `let (name, &mut count) = entry`. For a simple
+other patterns, for example `let name, &mut count = entry`. For a simple
 top-level copy, `let copy = *reference` is usually clearer.
 
 An immutable binding cannot be used as the source of `&mut`, because that

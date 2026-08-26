@@ -8,10 +8,10 @@ struct User { name: String, role: String }
 struct Team { lead: User, members: Vec<String>, size: i64 }
 
 fn main() {
-    let lead = User { name: format!("lin"), role: format!("eng") }
+    let lead = User { name: format("lin"), role: format("eng") }
     let mut roster: Vec<String> = Vec::from([])
-    roster.push(format!("ben"))
-    roster.push(format!("cleo"))
+    roster.push(format("ben"))
+    roster.push(format("cleo"))
     let team = Team { lead: lead, members: roster, size: 3 }
 
     // A copied nested `User` sub-struct and `Vec` with a new sibling scalar.
@@ -19,6 +19,6 @@ fn main() {
 
     // Extract the nested sub-struct, then its fields.
     let who = grown.lead
-    println!("{} {} {} {}", who.name, who.role, grown.members[0], grown.size)
-    println!("team intact: {} {}", team.lead.name, team.members[1])
+    println("{} {} {} {}", who.name, who.role, grown.members[0], grown.size)
+    println("team intact: {} {}", team.lead.name, team.members[1])
 }

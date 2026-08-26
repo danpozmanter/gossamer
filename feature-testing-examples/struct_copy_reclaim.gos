@@ -1,6 +1,6 @@
 use std::strconv
 
-struct Node { val: i64, next: Option<Box<Node>> }
+struct Node { val: i64, next: Option<Node> }
 
 // Case 1: None payload - release walk must skip cleanly.
 fn case_none() -> i64 {
@@ -82,5 +82,5 @@ fn case_chain() -> i64 {
 }
 
 fn main() {
-    println!("{} {} {} {} {}", case_none(), case_two_slots(), case_borrow(), case_return(), case_chain())
+    println("{} {} {} {} {}", case_none(), case_two_slots(), case_borrow(), case_return(), case_chain())
 }

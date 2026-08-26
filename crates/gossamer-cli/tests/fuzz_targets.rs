@@ -48,19 +48,19 @@ fn gos(args: &[&str], file: &PathBuf) -> (String, bool) {
 /// so finding it at all is evidence the loop is coverage-guided rather
 /// than throwing random bytes at a wall.
 const PLANTED: &str = r#"
-fn decode(data: &[u8]) -> i64 {
+fn decode(data: [u8]) -> i64 {
     if data.len() < 3 { return 0 }
     if data[0] != 71 { return 0 }
     if data[1] != 79 { return 0 }
     let want = data[2] as i64
     if want > 4 {
-        panic!("length byte too large")
+        panic("length byte too large")
     }
     want
 }
 
 #[fuzz]
-fn fuzz_decode(data: &[u8]) {
+fn fuzz_decode(data: [u8]) {
     let _ = decode(data)
 }
 "#;
@@ -100,7 +100,7 @@ fn a_planted_fault_is_found_minimised_and_committed() {
 
     // And it passes once the fault is fixed - the regression is real,
     // not a permanently red marker.
-    let fixed = PLANTED.replace("panic!(\"length byte too large\")", "return 4");
+    let fixed = PLANTED.replace("panic(\"length byte too large\")", "return 4");
     std::fs::write(&file, fixed).unwrap();
     let (report, ok) = gos(&["test"], &file);
     assert!(ok, "the regression must pass once fixed: {report}");
@@ -116,7 +116,7 @@ fn a_planted_fault_is_found_minimised_and_committed() {
 fn a_target_with_no_fault_reports_clean() {
     let file = case(
         "clean",
-        "#[fuzz]\nfn fuzz_sum(data: &[u8]) {\n    let mut n = 0\n    for b in data { n += b as i64 }\n    let _ = n\n}\n",
+        "#[fuzz]\nfn fuzz_sum(data: [u8]) {\n    let mut n = 0\n    for b in data { n += b as i64 }\n    let _ = n\n}\n",
     );
     let (report, ok) = gos(&["test", "--fuzz"], &file);
     assert!(ok, "a clean target must not fail: {report}");

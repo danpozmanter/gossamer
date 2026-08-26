@@ -11,11 +11,11 @@ fn main() -> Result<(), flag::Error> {
     let b = fs.bool("b", true, "bool")
     let d = fs.duration("d", time::Duration::from_secs(3), "duration")
     let _ = fs.parse(env::args())?
-    println!("s={}", *s)
-    println!("i={}", *i)
-    println!("u={}", *u)
-    println!("f={}", *f)
-    println!("b={}", *b)
-    println!("d={}", *d)
+    println("s={}", *s)
+    println("i={}", *i)
+    println("u={}", *u)
+    println("f={}", *f)
+    println("b={}", *b)
+    println("d={}", *d)
     Ok(())
 }

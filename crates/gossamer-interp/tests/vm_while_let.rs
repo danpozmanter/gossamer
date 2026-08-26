@@ -23,9 +23,10 @@ fn capture_writer(text: &str) {
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("while_let.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -50,11 +51,11 @@ fn produce(tx: Sender<i64>) {
  tx.close()
 }
 fn main() {
-    let (tx, rx) = channel()
-    go produce(tx)
+    let tx, rx = channel()
+    spawn(|| produce(tx))
     let mut total = 0
     while let Some(v) = rx.recv() { total += v }
-    println!("{}", total)
+    println("{}", total)
 }
 "#;
     assert_eq!(run_main(src), "6\n");
@@ -69,7 +70,7 @@ fn main() {
     if let Some(arr) = o {
         for x in arr { sum += x }
     }
-    println!("{}", sum)
+    println("{}", sum)
 }
 "#;
     assert_eq!(run_main(src), "15\n");
@@ -80,8 +81,8 @@ fn for_over_plain_string_array() {
     let src = r#"
 fn main() {
     let xs = ["a", "b", "c"]
-    for x in xs { print!("{}", x) }
-    println!("")
+    for x in xs { print("{}", x) }
+    println("")
 }
 "#;
     assert_eq!(run_main(src), "abc\n");

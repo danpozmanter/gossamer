@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GR0020]: A `fn` or a binding was declared under one of the compiler-known - here
+--- framed ---
+error[GR0020]: A `fn` or a binding was declared under one of the compiler-known
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

@@ -65,11 +65,6 @@ pub enum FnKind {
     /// in the cookie. The interpreter's `jit_call` resolves the
     /// expected shape per call site.
     JitEntry(u32),
-    /// Goroutine entry - `extern "C" fn(...)` of arity `arity`,
-    /// args i64 each, no return (the goroutine's task wrapper
-    /// discards). The audit-cited transmutes in
-    /// `gos_rt_go_spawn_call_N` use this kind.
-    GoSpawnEntry { arity: u8 },
     /// Context-cancellation hook (`AtomicPtr`-installed). Two
     /// shapes today; both i64-result `extern "C"`.
     CtxCancelI64,

@@ -10,25 +10,25 @@ fn main() {
         a[i] = (i * 30 + 5) as u8
         i += 1
     }
-    print!("idx:")
+    print("idx:")
     for x in a {
-        print!(" {}", x)
+        print(" {}", x)
     }
-    println!("")
+    println("")
 
     let s = a.slice(2, 6).unwrap()
-    print!("slice:")
+    print("slice:")
     for x in s {
-        print!(" {}", x)
+        print(" {}", x)
     }
-    println!(" len {}", s.len())
+    println(" len {}", s.len())
 
     // High-bit values must zero-extend, not sign-extend.
     let mut hi = [0u8; 3]
     hi[0] = 200 as u8
     hi[1] = 255 as u8
     hi[2] = 128 as u8
-    println!("high: {} {} {}", hi[0], hi[1], hi[2])
+    println("high: {} {} {}", hi[0], hi[1], hi[2])
 
     // Vec<u8> built by push.
     let mut v: Vec<u8> = Vec::from([])
@@ -37,16 +37,16 @@ fn main() {
         v.push((j * 40 + 3) as u8)
         j += 1
     }
-    print!("push:")
+    print("push:")
     for x in v {
-        print!(" {}", x)
+        print(" {}", x)
     }
-    println!(" len {}", v.len())
+    println(" len {}", v.len())
 
     // Sum to fold the bytes into one checksum (exercises reads in arithmetic).
     let mut sum = 0
     for x in v {
         sum += x as i64
     }
-    println!("sum {}", sum)
+    println("sum {}", sum)
 }

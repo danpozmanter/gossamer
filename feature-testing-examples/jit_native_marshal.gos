@@ -4,7 +4,7 @@
 // the in-process JIT; the output must be bit-identical on the VM, the
 // Cranelift JIT, and LLVM AOT.
 
-fn scale_sum(xs: &Vec<f64>, k: f64) -> f64 {
+fn scale_sum(xs: Vec<f64>, k: f64) -> f64 {
     let mut acc = 0.0
     let mut i = 0
     while i < xs.len() {
@@ -14,11 +14,11 @@ fn scale_sum(xs: &Vec<f64>, k: f64) -> f64 {
     acc
 }
 
-fn weight_pairs(ps: &Vec<(i64, f64)>) -> f64 {
+fn weight_pairs(ps: Vec<(i64, f64)>) -> f64 {
     let mut acc = 0.0
     let mut i = 0
     while i < ps.len() {
-        let (n, w) = ps[i]
+        let n, w = ps[i]
         acc += (n as f64) * w
         i += 1
     }
@@ -38,13 +38,13 @@ fn fill_letters(buf: U8Vec, n: i64) {
 
 fn main() {
     let xs: Vec<f64> = Vec::from([1.0, 2.0, 3.0, 4.0])
-    println!("scale={}", scale_sum(&xs, 2.5))
+    println("scale={}", scale_sum(xs, 2.5))
 
     let ps: Vec<(i64, f64)> = Vec::from([(1, 0.5), (2, 0.25), (4, 0.125)])
-    println!("weight={}", weight_pairs(&ps))
+    println("weight={}", weight_pairs(ps))
 
     let buf = U8Vec::new(32)
     fill_letters(buf, 26)
     buf.write_byte_range_to_stdout(0, 26)
-    print!("\n")
+    print("\n")
 }

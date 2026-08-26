@@ -1,5 +1,5 @@
 enum Tree {
-    Node(Box<Tree>, Box<Tree>)
+    Node(Tree, Tree)
     Nil
 }
 
@@ -11,7 +11,7 @@ fn build(depth: i64) -> Tree {
     }
 }
 
-fn check(t: &Tree) -> i64 {
+fn check(t: Tree) -> i64 {
     match t {
         Tree::Node(l, r) => 1 + check(l) + check(r)
         Tree::Nil => 0
@@ -21,7 +21,7 @@ fn check(t: &Tree) -> i64 {
 fn early(n: i64) -> i64 {
     arena {
         let t = build(6)
-        if check(&t) > 100 {
+        if check(t) > 100 {
             return n * 2
         }
     }
@@ -34,16 +34,16 @@ fn nested() -> i64 {
         // Keep the tree large enough to exercise nested arena ownership while
         // staying inside the debug VM's native stack budget on every CI host.
         let outer = build(6)
-        total += check(&outer)
+        total += check(outer)
         arena {
             let inner = build(4)
-            total += check(&inner)
+            total += check(inner)
         }
-        total += check(&outer)
+        total += check(outer)
     }
     total
 }
 
 fn main() {
-    println!("{} {}", early(21), nested())
+    println("{} {}", early(21), nested())
 }

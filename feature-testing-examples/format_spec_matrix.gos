@@ -1,0 +1,124 @@
+// The format-spec matrix: every placeholder kind and every spec crossed
+// against the argument types that render, plus the template shapes that
+// decide how a line is assembled.
+
+use std::collections::{BTreeMap, BTreeSet, Deque, MaxHeap, MinHeap, Queue, Stack}
+use std::errors
+
+struct Account { owner: String, balance: i64 }
+struct Wrapper(i64, f64)
+
+enum Level { Low, High }
+enum Shape { Circle(f64), Rect { w: i64, h: i64 } }
+
+struct Tagged { id: i64 }
+
+impl Display for Tagged {
+    fn fmt(&self) -> String { format("<{}>", self.id) }
+}
+
+struct Marked { id: i64 }
+
+impl Debug for Marked {
+    fn fmt(&self) -> String { format("M{}", self.id) }
+}
+
+fn main() {
+    // ---- placeholder kinds
+    let a = Account { owner: "jane", balance: 1200 }
+    let t = Wrapper(5, 2.5)
+    println("{}", 1)
+    println("{a.owner}")
+    println("{a.balance}")
+    println("{t.0} {t.1}")
+    println("{:?}", a)
+    println("{{}} literal braces")
+
+    // ---- specs against a positive and a negative integer
+    for n in #[42, 0 - 42] {
+        println("[{:8}]", n)
+        println("[{:>8}]", n)
+        println("[{:<8}]", n)
+        println("[{:^8}]", n)
+        println("[{:*>8}]", n)
+        println("[{:08}]", n)
+        println("[{:x}] [{:b}] [{:o}]", n, n, n)
+        println("[{:#x}] [{:#b}] [{:#o}]", n, n, n)
+        println("[{:>8x}]", n)
+    }
+
+    // ---- specs against a float
+    for f in #[3.14159, 0.0 - 3.14159] {
+        println("[{:.2}]", f)
+        println("[{:.0}]", f)
+        println("[{:10.2}]", f)
+        println("[{:>10.2}]", f)
+        println("[{:010.2}]", f)
+    }
+
+    // ---- specs against the remaining scalars and text
+    println("[{:6}] [{:>6}] [{:<6}]", true, false, true)
+    println("[{:3}] [{:>3}]", 'g', 'x')
+    println("[{:8}] [{:>8}] [{:*<8}] [{:.2}]", "text", "text", "text", "text")
+    println("[{:08}]", "pad")
+
+    // ---- a field path and a tuple position carrying a spec
+    println("[{a.balance:>10}] [{a.owner:*<8}] [{t.1:.2}] [{t.0:03}]")
+
+    // ---- every aggregate the language renders, on both channels
+    let arr = [1, 2, 3]
+    let vec = #[4.5, 6.5]
+    let map = { "k": 1 }
+    let set = #{ 3, 1, 2 }
+    let btm: BTreeMap<String, i64> = BTreeMap::from([("a", 1), ("b", 2)])
+    let bts: BTreeSet<i64> = #{ 9, 7, 8 }
+    let deque = Deque::from([1, 2])
+    let queue = Queue::from([3, 4])
+    let stack = Stack::from([5, 6])
+    let minh = MinHeap::from([3, 1])
+    let maxh = MaxHeap::from([3, 1])
+    let some: Option<i64> = Some(1)
+    let none: Option<i64> = None
+    let ok: Result<i64, String> = Ok(2)
+    let err: Result<i64, String> = Err("bad")
+    let dyn_value = DynValue::list(#[DynValue::int(1), DynValue::string("two")])
+    let wrapped = errors::wrap(errors::new("root"), "outer")
+
+    println("{} {:?}", arr, arr)
+    println("{} {:?}", vec, vec)
+    println("{} {:?}", map, map)
+    println("{} {:?}", set, set)
+    println("{} {:?}", btm, btm)
+    println("{} {:?}", bts, bts)
+    println("{} {:?}", deque, deque)
+    println("{} {:?}", queue, queue)
+    println("{} {:?}", stack, stack)
+    println("{} {:?}", minh, maxh)
+    println("{} {:?}", some, none)
+    println("{} {:?}", ok, err)
+    println("{} {:?}", dyn_value, dyn_value)
+    println("{}", wrapped)
+    println("{}", wrapped.message())
+
+    // ---- enums, unit and both payload shapes
+    println("{} {:?}", Level::Low, Level::High)
+    println("{} {:?}", Shape::Circle(1.5), Shape::Rect { w: 2, h: 3 })
+
+    // ---- a user rendering on each channel, alone and nested
+    let tagged = Tagged { id: 4 }
+    let marked = Marked { id: 5 }
+    println("{} {:?}", tagged, tagged)
+    println("{} {:?}", marked, marked)
+    println("{} {:?}", #[tagged], #[marked])
+    println("{} {:?}", Some(tagged), Some(marked))
+    println("{} {:?}", (tagged, 1), (marked, 1))
+
+    // ---- template shapes
+    println("{}", 1)
+    println("{} trailing", 1)
+    println("{}{}", 1, 2)
+    println("{} {} {}", 1, 2, 3)
+    println("{} leading", 1)
+    println("")
+    println("only literal")
+}

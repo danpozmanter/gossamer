@@ -9,12 +9,12 @@ mod util {
     pub fn birthday(r: &mut util::Rec) { r.age += 1 }
 }
 
-fn describe(r: &util::Rec) -> String {
-    format!("{} is {}", r.name, r.age)
+fn describe(r: util::Rec) -> String {
+    format("{} is {}", r.name, r.age)
 }
 
 fn main() {
     let mut r = util::make("ada", 36)
     util::birthday(&mut r)
-    println!("{}", describe(&r))
+    println("{}", describe(r))
 }

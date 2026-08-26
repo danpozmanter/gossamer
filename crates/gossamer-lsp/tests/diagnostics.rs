@@ -79,7 +79,7 @@ fn a_project_sibling_module_resolves_in_the_editor() {
     )
     .expect("write sibling");
     let entry = dir.join("main.gos");
-    let source = "use options::Colorize\nfn paint(color: Colorize) -> i64 {\n    match color {\n        Colorize::Always => 1,\n        Colorize::Never => 0,\n    }\n}\nfn main() { println!(\"{}\", paint(Colorize::Always)) }\n";
+    let source = "use options::Colorize\nfn paint(color: Colorize) -> i64 {\n    match color {\n        Colorize::Always => 1,\n        Colorize::Never => 0,\n    }\n}\nfn main() { println(\"{}\", paint(Colorize::Always)) }\n";
     std::fs::write(&entry, source).expect("write entry");
 
     let uri = format!("file://{}", entry.display());
@@ -376,7 +376,7 @@ fn non_exhaustive_match_emits_gm0001() {
          \x20       Shape::Square => \"square\",\n\
          \x20   }\n\
          }\n\
-         fn main() { println!(\"{}\", name(Shape::Circle)) }\n",
+         fn main() { println(\"{}\", name(Shape::Circle)) }\n",
     );
     let diags = diagnostics_from(&server.publish_diagnostics(uri));
     assert!(
@@ -402,7 +402,7 @@ fn arena_escape_emits_gm0003() {
          \x20       let n = Node { v: 1 }\n\
          \x20       outer.push(n)\n\
          \x20   }\n\
-         \x20   println!(\"{}\", outer.len())\n\
+         \x20   println(\"{}\", outer.len())\n\
          }\n",
     );
     let diags = diagnostics_from(&server.publish_diagnostics(uri));
@@ -425,7 +425,7 @@ fn generated_serde_failure_is_reported_against_the_user_declaration() {
                   struct Outer { i: Inner }\n\
                   fn main() {\n\
                   \x20   let o = Outer { i: Inner { m: {} } }\n\
-                  \x20   println!(\"{}\", json::to_json::<Outer>(o))\n\
+                  \x20   println(\"{}\", json::to_json::<Outer>(o))\n\
                   }\n";
     let server = server_with(uri, source);
     let diags = diagnostics_from(&server.publish_diagnostics(uri));

@@ -138,7 +138,7 @@ fn collect_block_const_values(
                     collect_expr_const_values(init, out);
                 }
             }
-            HirStmtKind::Expr { expr, .. } | HirStmtKind::Defer(expr) | HirStmtKind::Go(expr) => {
+            HirStmtKind::Expr { expr, .. } | HirStmtKind::Defer(expr) => {
                 collect_expr_const_values(expr, out);
             }
             HirStmtKind::Item(item) => collect_item_const_values(item, out),
@@ -230,8 +230,7 @@ fn collect_expr_const_values(
                 collect_expr_const_values(count, out);
             }
         },
-        HirExprKind::Go(inner)
-        | HirExprKind::Return(Some(inner))
+        HirExprKind::Return(Some(inner))
         | HirExprKind::Break {
             value: Some(inner), ..
         } => collect_expr_const_values(inner, out),

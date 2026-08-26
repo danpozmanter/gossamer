@@ -3,9 +3,9 @@
 fn main() {
     let mut xs = Vec::from([1, 2, 3])
     let _ = xs.remove(2)
-    println!("before {}", xs.len())
+    println("before {}", xs.len())
     match xs.remove(2) {
-        Ok(_) => println!("unexpected ok")
-        Err(_) => println!("remove oob err len={}", xs.len())
+        Ok(_) => println("unexpected ok")
+        Err(_) => println("remove oob err len={}", xs.len())
     }
 }

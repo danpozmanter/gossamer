@@ -21,20 +21,20 @@ comptime fn describe(entries: Vec<(String, String)>) -> String {
 }
 
 fn main() {
-    println!("User {}", comptime { describe(typeInfo::<User>()) })
-    println!("Pair {}", comptime { describe(typeInfo::<Pair>()) })
-    println!("Shape {}", comptime { describe(typeInfo::<Shape>()) })
-    println!("Maybe<f64> {}", comptime { describe(typeInfo::<Maybe<f64>>()) })
+    println("User {}", comptime { describe(typeInfo::<User>()) })
+    println("Pair {}", comptime { describe(typeInfo::<Pair>()) })
+    println("Shape {}", comptime { describe(typeInfo::<Shape>()) })
+    println("Maybe<f64> {}", comptime { describe(typeInfo::<Maybe<f64>>()) })
 
     for (name, ty) in typeInfo::<Wrapper<String>>() {
-        println!("Wrapper<String> {} {}", name, ty)
+        println("Wrapper<String> {} {}", name, ty)
     }
     for (name, ty) in typeInfo::<Wrapper<i64>>() {
-        println!("Wrapper<i64> {} {}", name, ty)
+        println("Wrapper<i64> {} {}", name, ty)
     }
 
     let u = User { id: 7, name: "ada", active: true }
     for (name, _ty) in typeInfo::<User>() {
-        println!("value {} = {}", name, field_of(u, name))
+        println("value {} = {}", name, field_of(u, name))
     }
 }

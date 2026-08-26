@@ -11,13 +11,6 @@ For receiver methods on built-in types, see [`Methods by type`](../method_suppor
 | [`std::bufio`](bufio.md) | Buffered readers, writers, and line scanners. |
 | [`std::bytes`](bytes.md) | Byte buffers, builders, and slice helpers. |
 | [`std::collections`](collections.md) | Built-in container types. |
-| [`std::collections::deque`](collections_deque.md) | Double-ended queue over Vec<i64>. Re-bind shape on every mutator. |
-| [`std::collections::heap`](collections_heap.md) | Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: `let h = heap::push(h, v)`. |
-| [`std::collections::ordered_map`](collections_ordered_map.md) | Sorted key/value map (i64 -> i64) backed by a flat pair Vec. Re-bind on every mutator. |
-| [`std::collections::ordered_set`](collections_ordered_set.md) | Sorted set of i64 with binary-search lookups. Re-bind shape on every mutator. |
-| [`std::collections::ordered_vec`](collections_ordered_vec.md) | Sorted-on-insert Vec<i64> with binary-search lookups. |
-| [`std::collections::queue`](collections_queue.md) | FIFO queue over Vec<i64>. Re-bind shape: `let q = queue::push(q, v)`. |
-| [`std::collections::stack`](collections_stack.md) | LIFO stack over Vec<i64>. Re-bind shape: `let s = stack::push(s, v)`. |
 | [`std::compress::bzip2`](compress_bzip2.md) | bzip2 encoder / decoder (BZh format). |
 | [`std::compress::flate`](compress_flate.md) | Raw DEFLATE (RFC 1951) encoder / decoder. |
 | [`std::compress::gzip`](compress_gzip.md) | gzip encoder / decoder (RFC 1952; flate2-backed). |
@@ -82,7 +75,7 @@ For receiver methods on built-in types, see [`Methods by type`](../method_suppor
 | [`std::io`](io.md) | Stream-oriented I/O abstractions and process standard streams. |
 | [`std::iter`](iter.md) | Sequence adapters: map, filter, fold, zip, enumerate, chain, etc. A `Vec` argument is traversed eagerly; an `Iterator` argument keeps the adapter lazy and answers with another iterator. |
 | [`std::jwt`](jwt.md) | RFC 7519 tokens. Signs with HS256 / HS384 / HS512, ES256, and EdDSA; verifies those plus the RS256 / RS384 / RS512 family every mainstream identity provider mints with. Claims cross the boundary as JSON text. |
-| [`std::lifecycle`](lifecycle.md) | Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - `go serve()`, `lifecycle::ready()`, `lifecycle::await_shutdown()`, then the cleanup. |
+| [`std::lifecycle`](lifecycle.md) | Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - `spawn(|| serve())`, `lifecycle::ready()`, `lifecycle::await_shutdown()`, then the cleanup. |
 | [`std::math`](math.md) | Mathematical constants and f64 functions (Go's math package shape). |
 | [`std::math::big`](math_big.md) | Arbitrary-precision integers (num-bigint). |
 | [`std::math::bits`](math_bits.md) | Integer bit-manipulation operations (Go's math/bits shape). |

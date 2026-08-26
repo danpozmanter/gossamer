@@ -111,7 +111,7 @@ fn item_kind_tag(kind: gossamer_std::registry::StdItemKind) -> &'static str {
         StdItemKind::Function => "fn",
         StdItemKind::Type => "type",
         StdItemKind::Trait => "trait",
-        StdItemKind::Macro => "macro",
+        StdItemKind::Builtin => "builtin",
         StdItemKind::Const => "const",
     }
 }
@@ -160,7 +160,7 @@ pub(crate) fn cmd_doc_std(query: &str) -> Result<()> {
     let query = query
         .strip_suffix('!')
         .map_or(query, |base| match registry::item(base) {
-            Some((_, item)) if matches!(item.kind, registry::StdItemKind::Macro) => base,
+            Some((_, item)) if matches!(item.kind, registry::StdItemKind::Builtin) => base,
             _ => query,
         });
     if let Some((module, item)) = registry::item(query) {

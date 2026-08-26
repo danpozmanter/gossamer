@@ -14,9 +14,10 @@ use gossamer_types::{TyCtxt, typecheck_source_file};
 fn lower(source: &str) -> (Vec<Body>, TyCtxt) {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -195,8 +196,8 @@ fn self_recursive_callee_is_not_inlined() {
 #[test]
 fn callee_with_const_and_indexed_args_inlines() {
     let (mut bodies, tcx) = lower(
-        "fn pick(xs: &[i64], i: i64, bias: i64) -> i64 { xs[i] + bias }\n\
-         fn run(xs: &[i64]) -> i64 { pick(xs, 0, 100) + pick(xs, 1, 200) }\n",
+        "fn pick(xs: [i64], i: i64, bias: i64) -> i64 { xs[i] + bias }\n\
+         fn run(xs: [i64]) -> i64 { pick(xs, 0, 100) + pick(xs, 1, 200) }\n",
     );
     gossamer_mir::inline_general(&mut bodies);
     for b in &mut bodies {

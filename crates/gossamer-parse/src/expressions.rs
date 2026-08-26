@@ -8,12 +8,16 @@ use gossamer_ast::visitor::{
 };
 use gossamer_ast::{
     ArrayExpr, AssignOp, BinaryOp, Block, ClosureParam, Expr, ExprKind, FieldSelector, Ident, Item,
-    Label, Literal, MacroCall, MacroDelim, MatchArm, Mutability, NodeIdGenerator, PathExpr,
-    PathSegment, Pattern, PatternKind, RangeKind, Stmt, StmtKind, StructExprField, Type, UnaryOp,
+    Label, Literal, MatchArm, Mutability, NodeIdGenerator, PathExpr, PathSegment, Pattern,
+    PatternKind, RangeKind, Stmt, StmtKind, StructExprField, Type, UnaryOp,
+};
+use gossamer_ast::{
+    PAD_REQUEST_CENTER, PAD_REQUEST_DEFAULT, PAD_REQUEST_LEFT, PAD_REQUEST_RIGHT,
+    PAD_REQUEST_ZERO_FLAG,
 };
 use gossamer_lex::{Keyword, Punct, Span, TokenKind};
 
-use crate::builtin_macros::{is_comptime_macro, is_desugar_macro, is_format_macro};
+use crate::builtin_macros::{is_desugar_macro, is_format_macro};
 use crate::diagnostic::ParseError;
 use crate::parser::Parser;
 use crate::patterns::{
@@ -320,6 +324,13 @@ impl Parser<'_> {
         )
     }
 
+    /// Consumes an assignment operator when one is next.
+    pub(crate) fn eat_assign_op(&mut self) -> Option<AssignOp> {
+        let op = self.peek_assign_op()?;
+        self.bump();
+        Some(op)
+    }
+
     fn peek_assign_op(&self) -> Option<AssignOp> {
         let TokenKind::Punct(punct) = self.peek().kind else {
             return None;
@@ -391,16 +402,11 @@ impl Parser<'_> {
         if step_contains_parse_error(rhs) {
             return;
         }
-        if is_format_macro_expansion(rhs) {
-            self.record(ParseError::PipedFormatMacroStep, rhs.span);
-            return;
-        }
         let callable = matches!(
             rhs.kind,
             ExprKind::Path(_)
                 | ExprKind::Call { .. }
                 | ExprKind::MethodCall { .. }
-                | ExprKind::MacroCall(_)
                 | ExprKind::Closure { .. }
         );
         if !callable {
@@ -874,14 +880,23 @@ impl Parser<'_> {
     }
 
     /// Rewrites a step that writes every argument into the closure it stands
-    /// for: `f(a)` becomes `|v| f(a, v)`. Answers `None` when the call's own
-    /// text cannot be recovered, which suppresses the suggestion rather than
-    /// offering a wrong one.
+    /// for: `f(a)` becomes `|v| f(v, a)`. Every std free function takes its
+    /// data first, so the leading slot is the one a piped value fills.
+    /// Answers `None` when the call's own text cannot be recovered, which
+    /// suppresses the suggestion rather than offering a wrong one.
     fn pipe_step_closure_rewrite(&self, span: Span) -> Option<String> {
         let text = self.span_text(span);
+        let open = text.find('(')?;
         let close = text.rfind(')')?;
         let parameter = closure_parameter_name(text)?;
-        Some(format!("|{parameter}| {}, {parameter})", &text[..close]))
+        let written = text.get(open + 1..close)?.trim();
+        if written.is_empty() {
+            return Some(format!("|{parameter}| {}{parameter})", &text[..=open]));
+        }
+        Some(format!(
+            "|{parameter}| {}{parameter}, {written})",
+            &text[..=open]
+        ))
     }
 
     fn parse_arg_list(&mut self, allow_labels: bool) -> (Vec<Expr>, Vec<gossamer_ast::NamedArg>) {
@@ -901,21 +916,21 @@ impl Parser<'_> {
                     });
                 } else if allow_labels
                     && matches!(p.peek().kind, TokenKind::Ident)
-                    && matches!(p.peek_nth(1).kind, TokenKind::Punct(Punct::Colon))
+                    && matches!(p.peek_nth(1).kind, TokenKind::Punct(Punct::Eq))
                 {
-                    // `name: value` is the struct-literal and type-annotation
-                    // spelling; an argument label binds with `=`.
+                    // `=` at a call site reads as assignment in a language
+                    // where assignment is an expression; a label binds with
+                    // `:`, as every other keyed form does.
                     let span = p.peek_span();
                     let name = p.slice(span).to_string();
-                    p.record(
-                        crate::ParseError::unexpected_help(
-                            "an argument label to bind with `=`",
-                            "`:`".to_string(),
-                            format!("write `{name} = value`"),
-                        ),
-                        span,
-                    );
                     p.bump();
+                    // The rewrite covers the separator alone, so applying it
+                    // leaves the label and the value exactly as written.
+                    let separator = p.peek_span();
+                    p.record(
+                        crate::ParseError::ArgumentLabelSeparator { name: name.clone() },
+                        separator,
+                    );
                     p.bump();
                     labels.push(gossamer_ast::NamedArg {
                         index: args.len(),
@@ -923,7 +938,9 @@ impl Parser<'_> {
                         span,
                     });
                 }
-                args.push(p.parse_expr_no_assign());
+                let amp = p.peek_span();
+                let arg = p.parse_expr_no_assign();
+                args.push(p.strip_shared_argument_reference(arg, amp));
                 if !p.eat_list_separator() {
                     break;
                 }
@@ -935,15 +952,39 @@ impl Parser<'_> {
         })
     }
 
+    /// Drops the `&` of a shared reference written on a call argument.
+    /// No parameter is a shared reference any more, so the sigil names no
+    /// choice: the argument is passed without copying either way and the
+    /// callee cannot write through it. `amp` is the span of the `&`, so
+    /// the fix deletes exactly that.
+    pub(crate) fn strip_shared_argument_reference(&mut self, arg: Expr, amp: Span) -> Expr {
+        let ExprKind::Unary {
+            op: gossamer_ast::UnaryOp::RefShared,
+            operand,
+        } = arg.kind
+        else {
+            return arg;
+        };
+        if !self.in_synthesized_item() {
+            self.record(ParseError::SharedReferenceArgument, amp);
+        }
+        *operand
+    }
+
     /// Consumes a `name =` argument label when one starts here. `==` is a
     /// single token, so an equality test in argument position cannot be
     /// mistaken for a label.
     ///
     /// A path segment is separated by `::`, which lexes as its own
     /// token, so a bare identifier followed by `:` is only ever a label.
+    /// Consumes `name:` at an argument position.
+    ///
+    /// `name: value` is what every other keyed form in the language writes -
+    /// a struct field, a map entry, a `cohort` header setting - so it is what
+    /// an argument label writes too.
     fn eat_argument_name(&mut self) -> Option<(Ident, gossamer_lex::Span)> {
         if !matches!(self.peek().kind, TokenKind::Ident)
-            || !matches!(self.peek_nth(1).kind, TokenKind::Punct(Punct::Eq))
+            || !matches!(self.peek_nth(1).kind, TokenKind::Punct(Punct::Colon))
         {
             return None;
         }
@@ -958,13 +999,41 @@ impl Parser<'_> {
     /// `unsafe`, `comptime`, and the contextual `cohort`. The last is
     /// an expression rather than a statement, as `arena` is, because its
     /// `Result` can be bound or propagated with `?`.
+    /// `true` at the head of a `select { .. }` expression. `select` is
+    /// contextual, never reserved, so a binding or method of that name
+    /// keeps working; only `select` directly before `{` opens the block.
+    pub(crate) fn at_select_block(&self) -> bool {
+        self.at_contextual_word("select")
+            && matches!(
+                self.peek_nth(1).kind,
+                gossamer_lex::TokenKind::Punct(Punct::LBrace)
+            )
+            && !self.struct_literal_forbidden()
+    }
+
+    /// `true` at the head of a `comptime { .. }` block, the expression
+    /// form of the contextual word.
+    pub(crate) fn at_comptime_block(&self) -> bool {
+        self.at_contextual_word("comptime")
+            && matches!(
+                self.peek_nth(1).kind,
+                gossamer_lex::TokenKind::Punct(Punct::LBrace)
+            )
+            && !self.struct_literal_forbidden()
+    }
+
     fn parse_contextual_block(&mut self) -> Option<ExprKind> {
+        // `unsafe` grants nothing: there is no operation the language refuses
+        // outside it, so the keyword marked a boundary that does not exist.
+        // It stays reserved, and the block it opened is an ordinary one.
         if self.at_keyword(Keyword::Unsafe) {
+            let span = self.peek_span();
             self.bump();
-            self.expect_punct(Punct::LBrace, "to open `unsafe` block");
+            self.record(ParseError::UnsafeGrantsNothing, span);
+            self.expect_punct(Punct::LBrace, "to open the block");
             return Some(ExprKind::Unsafe(self.parse_block_body()));
         }
-        if self.at_keyword(Keyword::Comptime) {
+        if self.at_comptime_block() {
             self.bump();
             self.expect_punct(Punct::LBrace, "to open `comptime` block");
             let mut block = self.parse_block_body();
@@ -1048,12 +1117,7 @@ impl Parser<'_> {
         if self.at_keyword(Keyword::Continue) {
             return self.parse_continue_expr();
         }
-        if self.at_keyword(Keyword::Go) {
-            self.bump();
-            let value = self.parse_expr_no_assign();
-            return ExprKind::Go(Box::new(value));
-        }
-        if self.at_keyword(Keyword::Select) {
+        if self.at_select_block() {
             return self.parse_select_expr();
         }
         if let Some(kind) = self.parse_contextual_block() {
@@ -1845,7 +1909,9 @@ impl Parser<'_> {
             while !self.at_punct(Punct::Pipe) && !self.at_eof() {
                 let pattern = self.parse_pattern_no_or();
                 let ty = if self.eat_punct(Punct::Colon) {
-                    Some(self.parse_type())
+                    let amp = self.peek_span();
+                    let ty = self.parse_type();
+                    Some(self.strip_shared_parameter_reference(ty, amp))
                 } else {
                     None
                 };
@@ -1889,7 +1955,9 @@ impl Parser<'_> {
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
             let pattern = self.parse_pattern_no_or();
             let ty = if self.eat_punct(Punct::Colon) {
-                Some(self.parse_type())
+                let amp = self.peek_span();
+                let ty = self.parse_type();
+                Some(self.strip_shared_parameter_reference(ty, amp))
             } else {
                 None
             };
@@ -2003,6 +2071,58 @@ impl Parser<'_> {
 
     fn parse_path_expr_or_struct(&mut self) -> ExprKind {
         let path = self.parse_path_expr();
+        // A compiler-known name is recognised by the name and the `(`, the
+        // way any other call is. The set is closed and known at parse time,
+        // so there is nothing a sigil would disambiguate.
+        if self.at_punct(Punct::LParen)
+            && let Some(name) = single_segment_name(&path)
+            && is_builtin_call_name(name)
+        {
+            let name = name.to_string();
+            return self.parse_builtin_call(&name);
+        }
+        // `regex::compile("…")` and `sql::statement("…")` validate a literal
+        // argument while the program is compiled, so a malformed pattern or
+        // statement fails the build rather than reaching a run. The call is
+        // an ordinary one; only the literal form is checked.
+        if self.at_punct(Punct::LParen)
+            && let Some(validator) = validating_module_call(&path)
+        {
+            self.bump();
+            let call_span = self.peek_span();
+            let mut args = self.parse_call_args();
+            let literal = args.first().and_then(literal_string).is_some();
+            if validator == "__gos_sql_validate" {
+                // A statement is checked while the program is compiled, so
+                // the call folds to the literal it validated. There is no
+                // run-time function behind it: a statement built at run time
+                // is an ordinary `String`.
+                if !literal {
+                    self.record(ParseError::ValidatedCallNeedsLiteral, call_span);
+                    return ExprKind::Error;
+                }
+                return self.alloc_function_call(validator, args);
+            }
+            // The validator folds to the literal it was handed, so the call
+            // keeps the callee it was written with and the type that callee
+            // answers; only the argument travels through the check.
+            if literal {
+                let argument = args.remove(0);
+                // The comptime fold rewrites source over the call's own
+                // span, so the synthesized call must cover exactly the
+                // literal it replaces.
+                let span = argument.span;
+                let id = self.alloc_id();
+                let kind = self.alloc_function_call(validator, vec![argument]);
+                args.insert(0, Expr::new(id, span, kind));
+            }
+            let span = self.last_span();
+            let id = self.alloc_id();
+            return ExprKind::Call {
+                callee: Box::new(Expr::new(id, span, ExprKind::Path(path))),
+                args,
+            };
+        }
         if self.at_punct(Punct::Bang) {
             return self.parse_macro_tail(path);
         }
@@ -2142,73 +2262,40 @@ impl Parser<'_> {
             .last()
             .map_or("?", |s| s.name.name.as_str())
             .to_string();
-        let delim = if self.at_punct(Punct::LParen) {
-            MacroDelim::Paren
-        } else if self.at_punct(Punct::LBracket) {
-            MacroDelim::Bracket
-        } else if self.at_punct(Punct::LBrace) {
-            MacroDelim::Brace
-        } else {
-            MacroDelim::Paren
-        };
+        let paren = self.at_punct(Punct::LParen);
 
-        let recognised = is_format_macro(&macro_name) && delim == MacroDelim::Paren;
-
-        if recognised {
-            if !self.expect_punct(
-                Punct::LParen,
-                &format!("to open the arguments of `{macro_name}!`"),
-            ) {
-                return ExprKind::Error;
-            }
-            let args = self.parse_call_args();
-            return self.expand_format_macro(&macro_name, args);
+        // A compiler-known name is an ordinary call now. The bang reports
+        // with the rewrite that drops it, and the call still parses so the
+        // rest of the file is diagnosed on its own terms.
+        if paren && is_builtin_call_name(&macro_name) {
+            self.record(
+                ParseError::MacroSigilRetired {
+                    name: macro_name.clone(),
+                },
+                bang_span,
+            );
+            return self.parse_builtin_call(&macro_name);
         }
 
-        // Compile-time validation macros. `regex!("…")` / `sql!("…")`
-        // expand to a call to a synthesized `comptime fn` validator
-        // (injected by autoderive), so a malformed pattern / statement
-        // fails the build rather than reaching runtime. The validator
-        // returns the original string on success, folded in place by the
-        // comptime pass.
-        if is_comptime_macro(&macro_name)
-            && matches!(macro_name.as_str(), "regex" | "sql")
-            && delim == MacroDelim::Paren
-        {
+        // `regex!("…")` / `sql!("…")` moved into their modules:
+        // `regex::compile("…")` and `sql::statement("…")` validate a literal
+        // argument at build time and read as the ordinary calls they are.
+        if paren && matches!(macro_name.as_str(), "regex" | "sql") {
+            self.record(
+                ParseError::ValidatingMacroMoved {
+                    name: macro_name.clone(),
+                },
+                bang_span,
+            );
             if !self.expect_punct(
                 Punct::LParen,
-                &format!("to open the arguments of `{macro_name}!`"),
+                &format!("to open the arguments of `{macro_name}`"),
             ) {
                 return ExprKind::Error;
             }
             let args = self.parse_call_args();
             let validator = format!("__gos_{macro_name}_validate");
             return self.alloc_function_call(&validator, args);
-        }
-
-        // Code-emitting comptime. `codegen!(EXPR)` evaluates `EXPR` (a
-        // `comptime fn` call over reflected fields) during compilation and
-        // splices its `String` result back as raw source - the same
-        // zero-cost stratum autoderive uses, but driven by user code. The
-        // call lowers to the synthesized identity `comptime fn`
-        // `__gos_codegen`, which the comptime pass recognizes and renders
-        // unquoted (as source) rather than as a string literal.
-        if is_comptime_macro(&macro_name) && macro_name == "codegen" && delim == MacroDelim::Paren {
-            if !self.expect_punct(
-                Punct::LParen,
-                &format!("to open the arguments of `{macro_name}!`"),
-            ) {
-                return ExprKind::Error;
-            }
-            let args = self.parse_call_args();
-            return self.alloc_function_call("__gos_codegen", args);
-        }
-
-        // Control-flow / inspection desugars (`matches!`, `todo!`,
-        // `unimplemented!`, `unreachable!`, `dbg!`) expand to plain
-        // constructs every tier already handles. See `expand_builtin_macro`.
-        if delim == MacroDelim::Paren && is_desugar_macro(&macro_name) {
-            return self.expand_builtin_macro(&macro_name);
         }
 
         // Gossamer has no `vec!`: `#[...]` is the Vec literal and a plain
@@ -2225,26 +2312,37 @@ impl Parser<'_> {
             ParseError::unexpected(expected, "`!`".to_string()),
             bang_span,
         );
-        let (open, close) = delim.pair();
-        let open_punct = match open {
-            "(" => Punct::LParen,
-            "[" => Punct::LBracket,
-            _ => Punct::LBrace,
-        };
-        let close_punct = match close {
-            ")" => Punct::RParen,
-            "]" => Punct::RBracket,
-            _ => Punct::RBrace,
+        let (open_punct, close_punct) = if self.at_punct(Punct::LBracket) {
+            (Punct::LBracket, Punct::RBracket)
+        } else if self.at_punct(Punct::LBrace) {
+            (Punct::LBrace, Punct::RBrace)
+        } else {
+            (Punct::LParen, Punct::RParen)
         };
         if self.eat_punct(open_punct) {
             let _tokens = self.collect_delimited_tokens(open_punct, close_punct);
             self.eat_punct(close_punct);
         }
-        ExprKind::MacroCall(MacroCall {
-            path,
-            delim,
-            tokens: String::new(),
-        })
+        ExprKind::Error
+    }
+
+    /// Parses a compiler-known call whose name was recognised at the `(`.
+    ///
+    /// Every one of these parses its arguments exactly as an ordinary call
+    /// does; `matches` is the sole exception, and its rule keys on the name,
+    /// which is in hand before the `(` is consumed.
+    fn parse_builtin_call(&mut self, name: &str) -> ExprKind {
+        if is_desugar_macro(name) {
+            return self.expand_builtin_macro(name);
+        }
+        if !self.expect_punct(Punct::LParen, &format!("to open the arguments of `{name}`")) {
+            return ExprKind::Error;
+        }
+        let args = self.parse_call_args();
+        if name == "codegen" {
+            return self.alloc_function_call("__gos_codegen", args);
+        }
+        self.expand_format_macro(name, args)
     }
 
     /// Expands the parser-level desugar macros into ordinary AST. None of
@@ -2257,7 +2355,7 @@ impl Parser<'_> {
         if macro_name == "matches" {
             if !self.expect_punct(
                 Punct::LParen,
-                &format!("to open the arguments of `{macro_name}!`"),
+                &format!("to open the arguments of `{macro_name}`"),
             ) {
                 return ExprKind::Error;
             }
@@ -2268,7 +2366,7 @@ impl Parser<'_> {
             if !self.eat_punct(Punct::Comma) && !self.newline_before_peek() {
                 let found = self.peek_text();
                 self.record(
-                    ParseError::unexpected("`,` after `matches!` scrutinee".to_string(), found),
+                    ParseError::unexpected("`,` after the `matches` scrutinee".to_string(), found),
                     self.peek_span(),
                 );
             }
@@ -2286,7 +2384,7 @@ impl Parser<'_> {
         }
         if !self.expect_punct(
             Punct::LParen,
-            &format!("to open the arguments of `{macro_name}!`"),
+            &format!("to open the arguments of `{macro_name}`"),
         ) {
             return ExprKind::Error;
         }
@@ -2378,6 +2476,15 @@ impl Parser<'_> {
             }
         };
         let Some(template) = literal_string(&first) else {
+            // The first argument is the template when it is a string
+            // literal. A lone argument that is not one renders, which is the
+            // `"{}"` template written out - and a value is never parsed as a
+            // template, which is the property the literal-only rule exists
+            // to protect.
+            if rest.is_empty() {
+                let rendered = self.alloc_function_call_expr("__concat", vec![first]);
+                return self.alloc_function_call(macro_name, vec![rendered]);
+            }
             let mut all = vec![first];
             all.extend(rest);
             self.record(ParseError::FormatStringMustBeLiteral, all[0].span);
@@ -2520,10 +2627,18 @@ impl Parser<'_> {
         }
         let width_lit = self.alloc_literal_expr(Literal::Int(spec.width.to_string()));
         let fill_lit = self.alloc_literal_expr(Literal::Int((spec.fill as u32).to_string()));
+        // The alignment a spec asks for, plus the zero flag, as HIR lowering
+        // reads them: it resolves both against the padded value's type before
+        // the runtime sees a concrete alignment.
         let align_code = match spec.align {
-            Align::Left => 1,
-            Align::Center => 2,
-            Align::Right | Align::Default => 0,
+            Align::Default => PAD_REQUEST_DEFAULT,
+            Align::Left => PAD_REQUEST_LEFT,
+            Align::Center => PAD_REQUEST_CENTER,
+            Align::Right => PAD_REQUEST_RIGHT,
+        } | if spec.zero_pad {
+            PAD_REQUEST_ZERO_FLAG
+        } else {
+            0
         };
         let align_lit = self.alloc_literal_expr(Literal::Int(align_code.to_string()));
         self.alloc_function_call_expr("__fmt_pad", vec![rendered, width_lit, fill_lit, align_lit])
@@ -2878,12 +2993,9 @@ pub(crate) fn is_expression_start(parser: &Parser<'_>) -> bool {
                 | Keyword::While
                 | Keyword::For
                 | Keyword::Unsafe
-                | Keyword::Comptime
                 | Keyword::Return
                 | Keyword::Break
                 | Keyword::Continue
-                | Keyword::Go
-                | Keyword::Select
                 | Keyword::Fn
                 | Keyword::SelfLower
                 | Keyword::SelfUpper
@@ -2989,46 +3101,6 @@ fn is_underscore_path(path: &PathExpr) -> bool {
         && path.segments[0].generics.is_empty()
 }
 
-/// Whether `expr` is the parser-level expansion of a Rust-style formatting
-/// macro. A value may not flow into this shape through the implicit data-last
-/// pipe rule: format arguments must be represented by `{}` and an explicit
-/// `$` placeholder.
-fn is_format_macro_expansion(expr: &Expr) -> bool {
-    let ExprKind::Call { callee, args } = &expr.kind else {
-        return false;
-    };
-    if is_internal_concat(callee_path_name(callee)) {
-        return true;
-    }
-    args.len() == 1
-        && is_format_macro_sink(callee)
-        && matches!(
-            args[0].kind,
-            ExprKind::Call {
-                ref callee,
-                ..
-            } if is_internal_concat(callee_path_name(callee))
-        )
-}
-
-fn is_format_macro_sink(callee: &Expr) -> bool {
-    matches!(
-        callee_path_name(callee),
-        Some("println" | "print" | "eprintln" | "eprint" | "panic")
-    )
-}
-
-fn is_internal_concat(name: Option<&str>) -> bool {
-    name == Some("__concat")
-}
-
-fn callee_path_name(expr: &Expr) -> Option<&str> {
-    let ExprKind::Path(path) = &expr.kind else {
-        return None;
-    };
-    (path.segments.len() == 1).then(|| path.segments[0].name.name.as_str())
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Align {
     Default,
@@ -3041,6 +3113,10 @@ enum Align {
 /// alternate radix prefix / precision / radix - the subset of Rust's `{:spec}` grammar Gossamer
 /// expands by composing `__concat`, `strconv::format_i64_radix`, and the
 /// `strings` padding helpers (all already wired on every tier).
+// Each flag is one bit of the `{:spec}` grammar, and the grammar is what
+// decides how many there are; a bit-set here would name the same four
+// things behind an index.
+#[allow(clippy::struct_excessive_bools, reason = "one field per spec flag")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FormatSpec {
     fill: char,
@@ -3055,6 +3131,10 @@ struct FormatSpec {
     alternate: bool,
     /// `{:?}` - render through the Debug channel rather than Display.
     debug: bool,
+    /// `{:08}` - the zero flag. Kept apart from `fill`, because it means
+    /// "sign-aware zero pad" on a number and nothing at all on any other
+    /// value, a distinction an explicit `{:0>8}` fill does not carry.
+    zero_pad: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3251,6 +3331,7 @@ fn debug_format_spec() -> FormatSpec {
         upper: false,
         alternate: false,
         debug: true,
+        zero_pad: false,
     }
 }
 
@@ -3305,14 +3386,10 @@ fn parse_format_spec(inner: &str) -> Option<FormatSegment> {
     let alternate = chars.get(pos) == Some(&'#');
     pos += usize::from(alternate);
 
-    // `0` zero-pad flag: fill with '0', right-align by default.
-    if chars.get(pos) == Some(&'0') {
-        fill = '0';
-        if align == Align::Default {
-            align = Align::Right;
-        }
-        pos += 1;
-    }
+    // `0` zero-pad flag. Its meaning depends on what is being padded, so it
+    // travels as its own field and is resolved once the value's type is known.
+    let zero_pad = chars.get(pos) == Some(&'0');
+    pos += usize::from(zero_pad);
 
     // width
     let mut width = 0usize;
@@ -3385,6 +3462,7 @@ fn parse_format_spec(inner: &str) -> Option<FormatSegment> {
         upper,
         alternate,
         debug: false,
+        zero_pad,
     };
     if head.is_empty() {
         Some(FormatSegment::PositionalSpec(spec))
@@ -3457,6 +3535,34 @@ fn is_errors_newf_path(expr: &Expr) -> bool {
     };
     let segs: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
     matches!(segs.as_slice(), ["errors", "newf"] | ["newf"])
+}
+
+/// The single segment a path names, or `None` when it is qualified.
+fn single_segment_name(path: &PathExpr) -> Option<&str> {
+    if path.segments.len() != 1 {
+        return None;
+    }
+    path.segments.first().map(|s| s.name.name.as_str())
+}
+
+/// Whether `name` is one the parser expands rather than resolves.
+fn is_builtin_call_name(name: &str) -> bool {
+    is_format_macro(name) || is_desugar_macro(name) || name == "codegen"
+}
+
+/// The build-time validator a module call routes through, if any.
+fn validating_module_call(path: &PathExpr) -> Option<&'static str> {
+    let names: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+    match names.as_slice() {
+        // `regex::compile` keeps the call it was written as: its literal
+        // is validated by a synthesized `const` whose initialiser folds
+        // while the program is compiled, so nothing of the check reaches
+        // the running program. `sql::statement` has no run-time function
+        // behind it at all - the call IS the validator, and it folds to
+        // the statement it checked.
+        [.., "sql", "statement"] => Some("__gos_sql_validate"),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -3547,7 +3653,7 @@ mod tests {
                 _ => None,
             })
             .expect("expected a rewrite");
-        assert_eq!(replacement, "|value| f(v, value)");
+        assert_eq!(replacement, "|value| f(value, v)");
     }
 
     #[test]

@@ -222,9 +222,9 @@ impl FieldKind {
     fn render_to_json(&self, expr: &str) -> String {
         match self {
             Self::I64 | Self::Int(_) | Self::F64 | Self::Bool => {
-                format!("format!(\"{{}}\", {expr})")
+                format!("format(\"{{}}\", {expr})")
             }
-            Self::String => format!("format!(\"\\\"{{}}\\\"\", &{expr})"),
+            Self::String => format!("format(\"\\\"{{}}\\\"\", {expr})"),
             Self::Vec(inner) => render_vec_to_json(expr, inner),
             Self::Struct(ty) => format!("{}({expr})?", to_json_fn(&ty.symbol)),
             Self::Option(inner) => {
@@ -472,7 +472,7 @@ fn render_map_to_json(expr: &str, inner: &FieldKind) -> String {
     // iteration order is not stable and differs interp-vs-compiled).
     let vr = inner.render_to_json("__v");
     format!(
-        "{{ let mut __ks = {expr}.keys()\n            __ks.sort()\n            let mut __buf = \"{{\"\n            let mut __first = true\n            for __k in __ks {{\n                if !__first {{ __buf += \",\" }}\n                __first = false\n                __buf += format!(\"\\\"{{}}\\\":\", __k)\n                if let Some(__v) = {expr}.get(&__k) {{ __buf += {vr} }}\n            }}\n            __buf += \"}}\"\n            __buf }}"
+        "{{ let mut __ks = {expr}.keys()\n            __ks.sort()\n            let mut __buf = \"{{\"\n            let mut __first = true\n            for __k in __ks {{\n                if !__first {{ __buf += \",\" }}\n                __first = false\n                __buf += format(\"\\\"{{}}\\\":\", __k)\n                if let Some(__v) = {expr}.get(__k) {{ __buf += {vr} }}\n            }}\n            __buf += \"}}\"\n            __buf }}"
     )
 }
 
@@ -483,7 +483,7 @@ fn extract_map_strict(value_expr: &str, inner: &FieldKind, path: &str) -> String
     let vt = inner.type_spelling();
     let ve = inner.extract_strict("__mapval", &format!("{path}[key]"));
     format!(
-        "match json::keys({value_expr}) {{\n                Some(__mapkeys) => {{\n                    let mut __map: Map<String, {vt}> = Map::new()\n                    for __mapk in __mapkeys {{\n                        let __mapval = match json::get({value_expr}, &__mapk) {{ Some(__mc) => __mc, None => return Err(errors::new(\"{path}: missing key\")) }}\n                        let __mapentry = {ve}\n                        __map.insert(__mapk, __mapentry)\n                    }}\n                    __map\n                }}\n                None => return Err(errors::new(\"{path}: expected object\")),\n            }}"
+        "match json::keys({value_expr}) {{\n                Some(__mapkeys) => {{\n                    let mut __map: Map<String, {vt}> = Map::new()\n                    for __mapk in __mapkeys {{\n                        let __mapval = match json::get({value_expr}, __mapk) {{ Some(__mc) => __mc, None => return Err(errors::new(\"{path}: missing key\")) }}\n                        let __mapentry = {ve}\n                        __map.insert(__mapk, __mapentry)\n                    }}\n                    __map\n                }}\n                None => return Err(errors::new(\"{path}: expected object\")),\n            }}"
     )
 }
 
@@ -495,42 +495,94 @@ pub(crate) fn type_info_fn(ty: &str) -> String {
 }
 
 /// Synthesizes the `comptime fn` backers for the compile-time macros:
-/// the `regex!("…")` / `sql!("…")` validators, and the `codegen!(…)`
+/// the `regex::compile("…")` / `sql::statement("…")` validators, and the `codegen(…)`
 /// source-emitter. Emitted only when the source uses the matching macro,
 /// so programs that use none carry no extra items. Each validator returns
 /// its input on success and `panic!`s on malformed input - a comptime
 /// panic fails the build. `__gos_codegen` is the identity passthrough the
 /// comptime pass keys on to splice a result as raw source rather than as a
 /// quoted literal.
+/// Every string literal `source` hands to `head` as a first argument,
+/// in source spelling (escapes included), ignoring the whitespace a call
+/// may carry after the `(`.
+fn literal_call_arguments(source: &str, head: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while let Some(found) = source[at..].find(head) {
+        let after_head = at + found + head.len();
+        let trimmed = source[after_head..].trim_start();
+        let start = source.len() - trimmed.len();
+        at = after_head;
+        if !trimmed.starts_with('"') {
+            continue;
+        }
+        // Walk to the closing quote, stepping over an escaped one.
+        let bytes = source.as_bytes();
+        let mut i = start + 1;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\\' => i += 2,
+                b'"' => break,
+                _ => i += 1,
+            }
+        }
+        if i < bytes.len() {
+            out.push(source[start..=i].to_string());
+            at = i + 1;
+        }
+    }
+    out
+}
+
+/// Whether `source` calls `head` with a string literal as its first
+/// argument.
+fn contains_literal_call(source: &str, head: &str) -> bool {
+    !literal_call_arguments(source, head).is_empty()
+}
+
 fn synthesize_validators(source: &str) -> String {
     let mut out = String::new();
-    if source.contains("codegen!") {
+    if source.contains("codegen(") {
         out.push_str("comptime fn __gos_codegen(__src: String) -> String { __src }\n");
     }
-    if source.contains("regex!") {
+    // Only a literal argument is validated while the program is compiled,
+    // so only a literal call site needs the validator spliced in. A
+    // pattern built at run time reaches `regex::compile` directly, and a
+    // body the unit never calls would still cost every pass that walks it.
+    let regex_literals = literal_call_arguments(source, "regex::compile(");
+    if source.contains("regex!") || !regex_literals.is_empty() {
         out.push_str(
             "comptime fn __gos_regex_validate(p: String) -> String {\n\
-             \tmatch regex::compile(&p) {\n\
+             \tmatch regex::compile(p) {\n\
              \t\tOk(_) => p,\n\
-             \t\tErr(__e) => panic!(\"invalid regex `{}`: {}\", p, __e),\n\
+             \t\tErr(__e) => panic(\"invalid regex `{}`: {}\", p, __e),\n\
              \t}\n\
              }\n",
         );
+        // One `const` per literal pattern. The initialiser folds while the
+        // program is compiled, which is where the validation happens, and
+        // the call site keeps the ordinary `regex::compile` it was written
+        // as - so nothing of the check survives into the running program.
+        for (i, literal) in regex_literals.iter().enumerate() {
+            out.push_str(&format!(
+                "const __GOS_REGEX_CHECK_{i}: String = __gos_regex_validate({literal})\n"
+            ));
+        }
     }
-    if source.contains("sql!") {
+    if source.contains("sql!") || contains_literal_call(source, "sql::statement(") {
         out.push_str(
             "comptime fn __gos_sql_validate(q: String) -> String {\n\
-             \tif q.len() == 0 { panic!(\"empty SQL statement\") }\n\
+             \tif q.len() == 0 { panic(\"empty SQL statement\") }\n\
              \tlet mut depth = 0\n\
              \tlet mut i = 0\n\
              \twhile i < q.len() {\n\
              \t\tlet b = q.byte_at(i)\n\
              \t\tif b == 40 { depth += 1 }\n\
              \t\tif b == 41 { depth -= 1 }\n\
-             \t\tif depth < 0 { panic!(\"unbalanced parentheses in SQL: {}\", q) }\n\
+             \t\tif depth < 0 { panic(\"unbalanced parentheses in SQL: {}\", q) }\n\
              \t\ti += 1\n\
              \t}\n\
-             \tif depth != 0 { panic!(\"unbalanced parentheses in SQL: {}\", q) }\n\
+             \tif depth != 0 { panic(\"unbalanced parentheses in SQL: {}\", q) }\n\
              \tq\n\
              }\n",
         );

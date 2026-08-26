@@ -4,13 +4,13 @@
 
 fn main() {
     let s = "hi"
-    println!("{}", s.byte_at(0))
-    println!("{}", s.byte_at(1))
-    println!("{}", s.byte_at(2))
-    println!("{}", s.byte_at(1000000))
-    println!("{}", s.byte_at(-1))
+    println("{}", s.byte_at(0))
+    println("{}", s.byte_at(1))
+    println("{}", s.byte_at(2))
+    println("{}", s.byte_at(1000000))
+    println("{}", s.byte_at(-1))
 
     let t = "ABC"
-    println!("{} {} {}", t.byte_at(0), t.byte_at(1), t.byte_at(2))
-    println!("{}", "hi".byte_at(1000000))
+    println("{} {} {}", t.byte_at(0), t.byte_at(1), t.byte_at(2))
+    println("{}", "hi".byte_at(1000000))
 }

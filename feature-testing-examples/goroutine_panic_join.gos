@@ -11,7 +11,7 @@ struct Worker {
 impl Worker {
     fn run(&mut self) -> i64 {
         if self.id < 0 {
-            panic!("bad id")
+            panic("bad id")
         }
         self.id * 10
     }
@@ -23,8 +23,8 @@ fn main() {
         w.run()
     })
     match good.join() {
-        Ok(v) => println!("ok {}", v)
-        Err(_) => println!("good failed")
+        Ok(v) => println("ok {}", v)
+        Err(_) => println("good failed")
     }
 
     let bad = spawn(|| {
@@ -32,9 +32,9 @@ fn main() {
         w.run()
     })
     match bad.join() {
-        Ok(v) => println!("ok {}", v)
-        Err(_) => println!("caught panic")
+        Ok(v) => println("ok {}", v)
+        Err(_) => println("caught panic")
     }
 
-    println!("parent alive")
+    println("parent alive")
 }

@@ -12,11 +12,11 @@ use std::errors
 // Parses a positive integer from a string. Returns an `Err` with
 // a contextual message on failure.
 fn parse_positive(text: String) -> Result<i64, errors::Error> {
-    let n: i64 = text.parse().map_err(|_|
-        errors::new(format!("not a number: {text}"))
+    let n: i64 = text.to_i64().ok_or_else(||
+        errors::new(format("not a number: {text}"))
     )?
     if n <= 0 {
-        return Err(errors::new(format!("must be positive: {n}")))
+        return Err(errors::new(format("must be positive: {n}")))
     }
     Ok(n)
 }
@@ -25,26 +25,26 @@ fn parse_positive(text: String) -> Result<i64, errors::Error> {
 // context.
 fn load_setting(key: String, raw: String) -> Result<i64, errors::Error> {
     parse_positive(raw).map_err(|e|
-        errors::wrap(e, format!("loading setting `{key}`"))
+        errors::wrap(e, format("loading setting `{key}`"))
     )
 }
 
 // Happy path.
 let n = load_setting("port", "8080")?
-println!("port = {n}")
+println("port = {n}")
 
 // Failure path - propagate with `?` or inspect directly.
 let attempt = load_setting("port", "oops")
 match attempt {
-    Ok(v) => println!("parsed {v}")
+    Ok(v) => println("parsed {v}")
     Err(e) => {
-        println!("top-level: {}", e.message())
+        println("top-level: {}", e.message())
         // Walk the cause chain - the natural `while let` shape.
         // `cursor: Option<errors::Error>` falls through to `None`
         // once the cause chain is exhausted.
         let mut cursor = e.cause()
         while let Some(inner) = cursor {
-            println!("  caused by: {}", inner.message())
+            println("  caused by: {}", inner.message())
             cursor = inner.cause()
         }
     }
@@ -53,10 +53,10 @@ match attempt {
 // `errors::is` checks whether any link in the chain matches.
 let broken = load_setting("workers", "-3")
 match broken {
-    Ok(_) => println!("unexpected success")
+    Ok(_) => println("unexpected success")
     Err(e) => {
         if e.is("must be positive: -3") {
-            println!("caught the specific error we expected")
+            println("caught the specific error we expected")
         }
     }
 }

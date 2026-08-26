@@ -24,23 +24,23 @@ fn main() {
         accounts.or_insert(name, Account { balance: 0, txns: 0 }).apply(amount)
     }
     for (name, a) in accounts.iter() {
-        println!("{name}: {a.balance} ({a.txns} transactions)")
+        println("{name}: {a.balance} ({a.txns} transactions)")
     }
 
     let mut m = Map::new()
     let a = m.or_insert("x", Rec { hits: 1, label: "first" })
-    println!("{a.hits} {a.label} len={}", m.len())
+    println("{a.hits} {a.label} len={}", m.len())
     let b = m.or_insert("x", Rec { hits: 99, label: "other" })
-    println!("{b.hits} {b.label} len={}", m.len())
+    println("{b.hits} {b.label} len={}", m.len())
 
     let mut counts = Map::new()
     counts.or_insert("w", 10)
     counts.inc("w", 5)
-    println!("{}", counts.get_or("w", 0))
+    println("{}", counts.get_or("w", 0))
 
     let o = Outer { inner: Rec { hits: 7, label: "deep" } }
-    println!("{o.inner.hits} {o.inner.label}")
-    println!("[{o.inner.hits:>4}]")
+    println("{o.inner.hits} {o.inner.label}")
+    println("[{o.inner.hits:>4}]")
     let t = (3.14159, "pi")
-    println!("{t.0:.2} {t.1}")
+    println("{t.0:.2} {t.1}")
 }

@@ -68,51 +68,51 @@ fn main() {
     for _ in 0..2000 {
         total += sum4(base)
     }
-    println!("sum {}", total)
+    println("sum {}", total)
 
     let mut bumped = [1, 2, 3, 4]
     for _ in 0..2000 {
         bump(&mut bumped)
     }
-    println!("bumped {} {} {} {}", bumped[0], bumped[1], bumped[2], bumped[3])
+    println("bumped {} {} {} {}", bumped[0], bumped[1], bumped[2], bumped[3])
 
     let mut rotated = [7, 8, 9]
     for _ in 0..2000 {
         rotate3(&mut rotated)
     }
-    println!("rotated {} {} {}", rotated[0], rotated[1], rotated[2])
+    println("rotated {} {} {}", rotated[0], rotated[1], rotated[2])
 
     let mut private = 0
     for _ in 0..2000 {
         private = copy_is_private(base)
     }
-    println!("private {}", private)
-    println!("source {} {} {} {}", base[0], base[1], base[2], base[3])
+    println("private {}", private)
+    println("source {} {} {} {}", base[0], base[1], base[2], base[3])
 
     let reals = [1.5, 2.5, 3.5, 4.5]
     let mut scaled = 0.0
     for _ in 0..2000 {
         scaled = scale(reals)
     }
-    println!("scaled {:.1}", scaled)
+    println("scaled {:.1}", scaled)
 
     let flags = [true, false, true, true]
     let mut set = 0
     for _ in 0..2000 {
         set = count_set(flags)
     }
-    println!("set {}", set)
+    println("set {}", set)
 
     let letters = ['g', 'o', 's', '!']
     let mut codes = 0
     for _ in 0..2000 {
         codes = code_sum(letters)
     }
-    println!("codes {}", codes)
+    println("codes {}", codes)
 
     let mut toggled = [true, false, true, false]
     for _ in 0..2001 {
         invert(&mut toggled)
     }
-    println!("toggled {} {} {} {}", toggled[0], toggled[1], toggled[2], toggled[3])
+    println("toggled {} {} {} {}", toggled[0], toggled[1], toggled[2], toggled[3])
 }

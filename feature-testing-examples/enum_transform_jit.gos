@@ -16,7 +16,7 @@ enum Node {
 fn transform(v: Node) -> Node {
     match v {
         Node::Leaf(n) => Node::Leaf(n + 1)
-        Node::Text(s) => Node::Text(strings::to_uppercase(&s))
+        Node::Text(s) => Node::Text(strings::to_uppercase(s))
         Node::List(xs) => {
             let mut out: Vec<Node> = Vec::from([])
             for x in xs { out.push(transform(x)) }
@@ -32,9 +32,9 @@ fn transform(v: Node) -> Node {
 
 // `&Node` read-only plus a `&mut String` written through: the canonical
 // recursive serialize. Exercises the `&mut String` pointer-to-slot ABI.
-fn serialize_into(v: &Node, out: &mut String) {
+fn serialize_into(v: Node, out: &mut String) {
     match v {
-        Node::Leaf(n) => *out += format!("{}", n)
+        Node::Leaf(n) => *out += format("{}", n)
         Node::Text(s) => {
             *out += "\""
             *out += s
@@ -72,7 +72,7 @@ fn build(seed: i64) -> Node {
     tags.push(Node::Leaf(seed))
     let mut meta: Vec<(String, Node)> = Vec::from([])
     meta.push(("level", Node::Leaf(seed % 7)))
-    meta.push(("group", Node::Text(format!("grp-{}", seed % 3))))
+    meta.push(("group", Node::Text(format("grp-{}", seed % 3))))
     let mut rec: Vec<(String, Node)> = Vec::from([])
     rec.push(("id", Node::Leaf(seed)))
     rec.push(("tags", Node::List(tags)))
@@ -80,7 +80,7 @@ fn build(seed: i64) -> Node {
     Node::Map(rec)
 }
 
-fn checksum(s: &String) -> i64 {
+fn checksum(s: String) -> i64 {
     let mut sum: i64 = 0
     let mut i: i64 = 0
     let n = s.len()
@@ -99,10 +99,10 @@ fn main() {
         let v = build(i)
         let t = transform(v)
         let mut out = String::new()
-        serialize_into(&t, &mut out)
+        serialize_into(t, &mut out)
         total_len += out.len()
-        total_sum += checksum(&out)
+        total_sum += checksum(out)
         i += 1
     }
-    println!("{} {}", total_len, total_sum)
+    println("{} {}", total_len, total_sum)
 }

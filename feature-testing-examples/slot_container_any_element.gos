@@ -19,12 +19,12 @@ fn churn(rounds: i64) -> i64 {
         total += names.pop().unwrap_or("").len() + names.len()
         let mut pairs: Stack<(i64, i64)> = Stack::new()
         pairs.push((i, i + 1))
-        let (a, b) = pairs.pop().unwrap_or((0, 0))
+        let a, b = pairs.pop().unwrap_or((0, 0))
         total += a % 3 + b % 5
         let mut ranked: MinHeap<(i64, String)> = MinHeap::new()
         ranked.push((i % 7, "x"))
         ranked.push((i % 3, "y"))
-        let (rank, _) = ranked.pop().unwrap_or((0, ""))
+        let rank, _ = ranked.pop().unwrap_or((0, ""))
         total += rank
         i += 1
     }
@@ -32,50 +32,50 @@ fn churn(rounds: i64) -> i64 {
 }
 
 fn main() {
-    println!("churn {}", churn(2000))
+    println("churn {}", churn(2000))
 
     let mut names: Queue<String> = Queue::new()
     names.push("first")
     names.push("second")
-    println!("queue {} len {}", names, names.len())
+    println("queue {} len {}", names, names.len())
     let taken = names.pop()
-    println!("queue pop {:?} peek {:?}", taken, names.peek())
+    println("queue pop {:?} peek {:?}", taken, names.peek())
 
     let mut points: Stack<Point> = Stack::new()
     points.push(Point { x: 1, y: "one" })
     points.push(Point { x: 2, y: "two" })
-    println!("stack {}", points)
+    println("stack {}", points)
     let top = points.pop()
-    println!("stack pop {:?} len {}", top, points.len())
+    println("stack pop {:?} len {}", top, points.len())
 
     let mut pairs: Deque<(i64, String)> = Deque::new()
     pairs.push_back((2, "b"))
     pairs.push_front((1, "a"))
-    println!("deque {} front {:?} back {:?}", pairs, pairs.peek_front(), pairs.peek_back())
+    println("deque {} front {:?} back {:?}", pairs, pairs.peek_front(), pairs.peek_back())
 
     let mut rows: Queue<Vec<i64>> = Queue::new()
     rows.push(#[1, 2])
     rows.push(#[3])
-    println!("rows {}", rows)
-    println!("rows pop {:?}", rows.pop())
+    println("rows {}", rows)
+    println("rows pop {:?}", rows.pop())
 
     let mut fixed: Stack<[i64; 2]> = Stack::new()
     fixed.push([1, 2])
     fixed.push([3, 4])
-    println!("fixed {}", fixed)
-    println!("fixed pop {:?}", fixed.pop())
+    println("fixed {}", fixed)
+    println("fixed pop {:?}", fixed.pop())
 
     let mut maybe: Deque<Option<i64>> = Deque::new()
     maybe.push_back(Some(7))
     maybe.push_back(None)
-    println!("maybe {}", maybe)
-    println!("maybe pop {:?}", maybe.pop_front())
+    println("maybe {}", maybe)
+    println("maybe pop {:?}", maybe.pop_front())
 
     let mut levels: Queue<Level> = Queue::new()
     levels.push(Level::Mid(3))
     levels.push(Level::High)
-    println!("levels {}", levels)
-    println!("levels pop {:?}", levels.pop())
+    println("levels {}", levels)
+    println("levels pop {:?}", levels.pop())
 
     // A heap orders by the element's own comparison, at every element shape.
     let mut words: MaxHeap<String> = MaxHeap::new()
@@ -85,20 +85,20 @@ fn main() {
     let w1 = words.pop()
     let w2 = words.pop()
     let w3 = words.pop()
-    println!("max word {:?} {:?} {:?}", w1, w2, w3)
+    println("max word {:?} {:?} {:?}", w1, w2, w3)
 
     let mut ranked: MinHeap<(i64, String)> = MinHeap::new()
     ranked.push((3, "c"))
     ranked.push((1, "a"))
     ranked.push((2, "b"))
     let least = ranked.pop()
-    println!("min pair {:?} {:?}", least, ranked.peek())
+    println("min pair {:?} {:?}", least, ranked.peek())
 
     let mut by_field: MinHeap<Point> = MinHeap::new()
     by_field.push(Point { x: 9, y: "nine" })
     by_field.push(Point { x: 4, y: "four" })
     let smallest = by_field.pop()
-    println!("min point {:?} len {}", smallest, by_field.len())
+    println("min point {:?} len {}", smallest, by_field.len())
 
     let mut tiers: MaxHeap<Level> = MaxHeap::new()
     tiers.push(Level::Low)
@@ -106,20 +106,20 @@ fn main() {
     tiers.push(Level::Mid(8))
     let t1 = tiers.pop()
     let t2 = tiers.pop()
-    println!("max level {:?} {:?}", t1, t2)
+    println("max level {:?} {:?}", t1, t2)
 
     let mut seqs: MinHeap<Vec<i64>> = MinHeap::new()
     seqs.push(#[2])
     seqs.push(#[1, 5])
-    println!("min seq {:?}", seqs.pop())
+    println("min seq {:?}", seqs.pop())
 
     let mut opts: MaxHeap<Option<i64>> = MaxHeap::new()
     opts.push(Some(1))
     opts.push(None)
     let o1 = opts.pop()
     let o2 = opts.pop()
-    println!("max opt {:?} {:?}", o1, o2)
+    println("max opt {:?} {:?}", o1, o2)
 
     let seeded = MaxHeap::from(#["a", "c", "b"])
-    println!("seeded {}", seeded)
+    println("seeded {}", seeded)
 }

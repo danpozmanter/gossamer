@@ -36,12 +36,18 @@ fn literal_type_name(value: &Expr) -> Option<&'static str> {
     })
 }
 
-fn empty_enum_decl(name: Ident, generics: Generics, where_clause: WhereClause) -> EnumDecl {
+fn empty_enum_decl(
+    name: Ident,
+    generics: Generics,
+    where_clause: WhereClause,
+    repr: gossamer_ast::EnumRepr,
+) -> EnumDecl {
     EnumDecl {
         name,
         generics,
         where_clause,
         variants: Vec::new(),
+        repr,
     }
 }
 
@@ -114,7 +120,14 @@ impl Parser<'_> {
         let start_span = self.peek_span();
         let attrs = self.parse_attrs();
         let visibility = self.parse_visibility();
+        let synthesized = attrs.has_word("gos_synthesized");
+        if synthesized {
+            self.synthesized_depth = self.synthesized_depth.saturating_add(1);
+        }
         let kind = self.parse_item_kind(visibility);
+        if synthesized {
+            self.synthesized_depth = self.synthesized_depth.saturating_sub(1);
+        }
         let end_span = self.last_span();
         let span = self.join(start_span, end_span);
         let id = self.alloc_id();
@@ -122,9 +135,7 @@ impl Parser<'_> {
     }
 
     fn parse_item_kind(&mut self, visibility: Visibility) -> ItemKind {
-        if self.at_keyword(Keyword::Fn)
-            || self.at_keyword(Keyword::Unsafe)
-            || self.at_keyword(Keyword::Comptime)
+        if self.at_keyword(Keyword::Fn) || self.at_keyword(Keyword::Unsafe) || self.at_comptime_fn()
         {
             return ItemKind::Fn(self.parse_fn_decl(visibility));
         }
@@ -132,7 +143,13 @@ impl Parser<'_> {
             return ItemKind::Struct(self.parse_struct_decl());
         }
         if self.at_keyword(Keyword::Enum) {
-            return ItemKind::Enum(self.parse_enum_decl());
+            return ItemKind::Enum(self.parse_enum_decl(false));
+        }
+        // `packed enum Name { .. }` stores its discriminant in the fewest
+        // bits the variants need. `packed` is contextual, never reserved.
+        if self.at_packed_enum() {
+            self.bump();
+            return ItemKind::Enum(self.parse_enum_decl(true));
         }
         if self.at_keyword(Keyword::Trait) {
             return ItemKind::Trait(self.parse_trait_decl());
@@ -141,7 +158,13 @@ impl Parser<'_> {
             return ItemKind::Impl(self.parse_impl_decl());
         }
         if self.at_keyword(Keyword::Type) {
-            return ItemKind::TypeAlias(self.parse_type_alias_decl());
+            return ItemKind::TypeAlias(self.parse_type_alias_decl(false));
+        }
+        // `newtype Name = Repr` declares a distinct type over the
+        // representation. `newtype` is a contextual word, never reserved:
+        // it opens the form only when a name and an `=` follow it.
+        if self.at_contextual_newtype() {
+            return ItemKind::TypeAlias(self.parse_type_alias_decl(true));
         }
         if self.at_keyword(Keyword::Const) {
             return ItemKind::Const(self.parse_const_decl());
@@ -357,10 +380,27 @@ impl Parser<'_> {
 
     fn parse_fn_decl(&mut self, visibility: Visibility) -> FnDecl {
         let start = self.peek_span();
-        let is_comptime = self.eat_keyword(Keyword::Comptime);
+        let is_comptime = self.eat_contextual_word("comptime");
+        let unsafe_span = self.peek_span();
         let is_unsafe = self.eat_keyword(Keyword::Unsafe);
+        if is_unsafe {
+            self.record(ParseError::UnsafeGrantsNothing, unsafe_span);
+        }
         self.expect_keyword(Keyword::Fn, "to start function declaration");
+        let name_span = self.peek_span();
         let name = self.parse_ident_required("function name");
+        // A wrapper the autoderive stage splices in carries no source
+        // position an author could edit, so its spelling is not reported.
+        let synthesized_fn = name.name.starts_with("__gos_");
+        if synthesized_fn {
+            self.synthesized_depth = self.synthesized_depth.saturating_add(1);
+        }
+        // Both rendering contracts declare one method answering a `String`,
+        // so both are written `fn fmt`; the `impl` header is what decides
+        // which of the two channels a value reaches.
+        if name.name == "to_string" && self.impl_trait_name.as_deref() == Some("Display") {
+            self.record(ParseError::DisplayContractMethod, name_span);
+        }
         let generics = self.parse_generics();
         self.expect_punct(Punct::LParen, "to open the parameter list");
         let params = self.parse_fn_params();
@@ -383,6 +423,9 @@ impl Parser<'_> {
             self.eat_punct(Punct::Semi);
             None
         };
+        if synthesized_fn {
+            self.synthesized_depth = self.synthesized_depth.saturating_sub(1);
+        }
         FnDecl {
             attrs: Attrs::default(),
             span: start.join(self.last_span()),
@@ -410,12 +453,20 @@ impl Parser<'_> {
         }
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
             let before_param = self.tokens.checkpoint();
-            let is_comptime = self.eat_keyword(Keyword::Comptime);
+            // `comptime x: T` marks the parameter; a parameter simply
+            // named `comptime` is the same word followed by its `:`.
+            let is_comptime =
+                self.at_contextual_word("comptime") && !self.peek_nth_is_punct(1, Punct::Colon);
+            if is_comptime {
+                self.bump();
+            }
             let pattern = self.parse_pattern_no_or();
             if !self.expect_punct(Punct::Colon, "after the parameter pattern") {
                 break;
             }
+            let amp = self.peek_span();
             let ty = self.parse_type();
+            let ty = self.strip_shared_parameter_reference(ty, amp);
             let default = if self.eat_punct(Punct::Eq) {
                 Some(Box::new(self.parse_expr_no_assign()))
             } else {
@@ -564,13 +615,26 @@ impl Parser<'_> {
         StructBody::Unit
     }
 
-    fn parse_enum_decl(&mut self) -> EnumDecl {
+    fn parse_enum_decl(&mut self, packed: bool) -> EnumDecl {
         self.bump();
         let name = self.parse_ident_required("enum name");
         let generics = self.parse_generics();
+        // `enum Name : uN { .. }` names the width the discriminant is stored
+        // in. It sits before the where clause, where a reader looks for the
+        // type's own shape rather than its bounds.
+        let declared_bits = if self.at_punct(Punct::Colon) {
+            self.bump();
+            self.parse_enum_repr_width()
+        } else {
+            None
+        };
+        let repr = gossamer_ast::EnumRepr {
+            packed,
+            declared_bits,
+        };
         let where_clause = self.parse_where_clause();
         if !self.expect_punct(Punct::LBrace, "to open enum body") {
-            return empty_enum_decl(name, generics, where_clause);
+            return empty_enum_decl(name, generics, where_clause, repr);
         }
         let mut variants = Vec::new();
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
@@ -652,7 +716,41 @@ impl Parser<'_> {
             generics,
             where_clause,
             variants,
+            repr,
         }
+    }
+
+    /// Parses the `uN` of an `enum Name : uN` representation, in bits.
+    ///
+    /// Only an unsigned width names a discriminant store: a discriminant is
+    /// a count, never a negative number.
+    fn parse_enum_repr_width(&mut self) -> Option<u32> {
+        let span = self.peek_span();
+        let text = self.slice(span).to_string();
+        let bits = text
+            .strip_prefix('u')
+            .and_then(|digits| digits.parse::<u32>().ok())
+            .filter(|bits| (1..=64).contains(bits));
+        if bits.is_none() {
+            self.record(
+                ParseError::EnumReprWidth {
+                    written: text.clone(),
+                },
+                span,
+            );
+        }
+        if matches!(self.peek().kind, TokenKind::Ident) {
+            self.bump();
+        }
+        bits
+    }
+
+    /// Whether the cursor sits on the `packed` of `packed enum`.
+    fn at_packed_enum(&self) -> bool {
+        let token = self.peek();
+        matches!(token.kind, TokenKind::Ident)
+            && self.slice(token.span) == "packed"
+            && matches!(self.peek_nth(1).kind, TokenKind::Keyword(Keyword::Enum))
     }
 
     fn parse_trait_decl(&mut self) -> TraitDecl {
@@ -757,9 +855,17 @@ impl Parser<'_> {
             };
         }
         let mut items = Vec::new();
+        let outer_trait = self.impl_trait_name.replace(
+            trait_ref
+                .as_ref()
+                .and_then(|bound| bound.path.segments.last())
+                .map(|segment| segment.name.name.clone())
+                .unwrap_or_default(),
+        );
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
             items.push(self.parse_impl_item());
         }
+        self.impl_trait_name = outer_trait;
         self.expect_punct(Punct::RBrace, "to close impl body");
         ImplDecl {
             generics,
@@ -799,17 +905,90 @@ impl Parser<'_> {
         ImplItem::Fn(decl)
     }
 
-    fn parse_type_alias_decl(&mut self) -> TypeAliasDecl {
+    /// Drops the `&` of a shared reference in parameter position, which
+    /// names no choice a caller has: an argument is passed without copying
+    /// and a callee cannot write to the caller's variable through it. A
+    /// sequence view is written `[T]` and carries the shared reference
+    /// internally, which is the one shape every pass below the parser
+    /// reads a view through. `amp` is the span of the `&`, so the fix
+    /// deletes exactly that.
+    pub(crate) fn strip_shared_parameter_reference(
+        &mut self,
+        ty: gossamer_ast::Type,
+        amp: gossamer_lex::Span,
+    ) -> gossamer_ast::Type {
+        use gossamer_ast::TypeKind;
+        // `[T]` is the unsized view a parameter names directly. It carries
+        // the shared reference internally, which is the one shape every
+        // pass below the parser reads a sequence view through.
+        if matches!(ty.kind, TypeKind::Slice(_)) {
+            let id = ty.id;
+            let span = ty.span;
+            return gossamer_ast::Type::new(
+                id,
+                span,
+                TypeKind::Ref {
+                    mutability: Mutability::Immutable,
+                    inner: Box::new(ty),
+                },
+            );
+        }
+        let TypeKind::Ref {
+            mutability: Mutability::Immutable,
+            inner,
+        } = ty.kind
+        else {
+            return ty;
+        };
+        if !self.in_synthesized_item() {
+            self.record(ParseError::SharedReferenceParameter, amp);
+        }
+        if matches!(inner.kind, TypeKind::Slice(_)) {
+            return gossamer_ast::Type::new(
+                ty.id,
+                ty.span,
+                TypeKind::Ref {
+                    mutability: Mutability::Immutable,
+                    inner,
+                },
+            );
+        }
+        *inner
+    }
+
+    /// Whether the cursor sits on the `comptime` of a `comptime fn`
+    /// declaration. The word is contextual, so it opens an item only
+    /// when a function declaration follows.
+    fn at_comptime_fn(&self) -> bool {
+        self.at_contextual_word("comptime")
+            && matches!(
+                self.peek_nth(1).kind,
+                TokenKind::Keyword(Keyword::Fn | Keyword::Unsafe)
+            )
+    }
+
+    /// Whether the cursor sits on the `newtype` of `newtype Name = Repr`.
+    fn at_contextual_newtype(&self) -> bool {
+        let token = self.peek();
+        matches!(token.kind, TokenKind::Ident)
+            && self.slice(token.span) == "newtype"
+            && matches!(self.peek_nth(1).kind, TokenKind::Ident)
+    }
+
+    fn parse_type_alias_decl(&mut self, newtype: bool) -> TypeAliasDecl {
         self.bump();
         let name = self.parse_ident_required("type alias name");
         let generics = self.parse_generics();
         self.expect_punct(Punct::Eq, "after the alias name");
-        // `new` is a contextual marker, never a reserved word - `Vec::new()`
-        // and every other constructor depend on it staying an ordinary
-        // identifier. It opens the opaque form only when a type follows it.
-        let nominal = self.at_contextual_new_before_type();
-        if nominal {
+        // `type X = new T` was the old opaque spelling. `new` reads as
+        // allocation to a reader arriving from any other language, and the
+        // concept has a standard name, so `newtype X = T` replaces it.
+        let mut nominal = newtype;
+        if self.at_contextual_new_before_type() {
+            let span = self.peek_span();
             self.bump();
+            self.record(ParseError::OpaqueAliasSpelling, span);
+            nominal = true;
         }
         let ty = self.parse_type();
         self.eat_punct(Punct::Semi);
@@ -924,18 +1103,26 @@ impl Parser<'_> {
     fn parse_mod_decl(&mut self) -> ModDecl {
         self.bump();
         let name = self.parse_ident_required("module name");
-        if self.eat_punct(Punct::Semi) {
+        // A statement ends at its newline here, so the module a file declares
+        // is `mod name`. The trailing `;` is the one place the old grammar
+        // asked for a terminator, and it reports with the rewrite that drops
+        // it rather than parsing as a statement separator would.
+        if self.at_punct(Punct::Semi) {
+            let span = self.peek_span();
+            self.bump();
+            self.record(ParseError::ModDeclSemicolon, span);
             return ModDecl {
                 name,
                 body: ModBody::External,
             };
         }
-        if !self.expect_punct(Punct::LBrace, "to open inline module") {
+        if !self.at_punct(Punct::LBrace) {
             return ModDecl {
                 name,
-                body: ModBody::Inline(Vec::new()),
+                body: ModBody::External,
             };
         }
+        self.bump();
         let mut items = Vec::new();
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
             let before = self.checkpoint_public();

@@ -27,15 +27,15 @@ fn handler(r: http::Request) -> Result<http::Response, http::Error> {
     let tx = pair.0
     let rx = pair.1
     tx.send(42)
-    let v = rx.recv_ctx(&r.context)
+    let v = rx.recv_ctx(r.context)
     match v {
-        Some(n) => Ok(http::Response::text(200, format!(\"got {}\", n))),
+        Some(n) => Ok(http::Response::text(200, format(\"got {}\", n))),
         None => Ok(http::Response::text(200, \"cancelled\")),
     }
 }
 
 fn main() {
-    println!(\"ok\")
+    println(\"ok\")
 }
 ";
 

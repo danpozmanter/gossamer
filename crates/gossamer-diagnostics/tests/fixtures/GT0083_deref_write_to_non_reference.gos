@@ -1,0 +1,2 @@
+// ERROR: GT0083
+fn set(x: i64) { *x = 5 }

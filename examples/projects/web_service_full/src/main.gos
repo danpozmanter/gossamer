@@ -50,11 +50,11 @@ fn seed_notes() -> Vec<Note> {
     ])
 }
 
-fn render_note_json(note: &Note) -> String {
-    format!("{{\"id\":{},\"body\":\"{}\"}}", note.id, escape_json(&note.body))
+fn render_note_json(note: Note) -> String {
+    format("{{\"id\":{},\"body\":\"{}\"}}", note.id, escape_json(note.body))
 }
 
-fn render_notes_json(notes: &[Note]) -> String {
+fn render_notes_json(notes: [Note]) -> String {
     let mut out = String::new()
     out.push('[')
     let mut first = true
@@ -62,23 +62,23 @@ fn render_notes_json(notes: &[Note]) -> String {
         if !first { out.push(',') }
         first = false
         out.push_str("{\"id\":")
-        out.push_str(&format!("{}", note.id))
+        out.push_str(format("{}", note.id))
         out.push_str(",\"body\":\"")
-        out.push_str(&escape_json(&note.body))
+        out.push_str(escape_json(note.body))
         out.push_str("\"}")
     }
     out.push(']')
     out
 }
 
-fn render_notes_html(notes: &[Note]) -> String {
+fn render_notes_html(notes: [Note]) -> String {
     let mut out = String::new()
     out.push_str("<!doctype html><html><head><title>notes</title></head><body><ul>")
     for note in notes {
         out.push_str("<li>#")
-        out.push_str(&format!("{}", note.id))
+        out.push_str(format("{}", note.id))
         out.push_str(": ")
-        out.push_str(&escape_html(&note.body))
+        out.push_str(escape_html(note.body))
         out.push_str("</li>")
     }
     out.push_str("</ul></body></html>")
@@ -92,17 +92,17 @@ fn render_notes_html(notes: &[Note]) -> String {
 fn find_note_json(id: i64) -> Option<String> {
     for note in seed_notes() {
         if note.id == id {
-            return Some(format!(
+            return Some(format(
                 "{{\"id\":{},\"body\":\"{}\"}}"
                 note.id
-                escape_json(&note.body)
+                escape_json(note.body)
             ))
         }
     }
     None
 }
 
-fn escape_json(text: &String) -> String {
+fn escape_json(text: String) -> String {
     let mut out = String::new()
     for ch in text.chars() {
         match ch {
@@ -115,7 +115,7 @@ fn escape_json(text: &String) -> String {
     out
 }
 
-fn escape_html(text: &String) -> String {
+fn escape_html(text: String) -> String {
     let mut out = String::new()
     for ch in text.chars() {
         match ch {
@@ -133,7 +133,7 @@ fn escape_html(text: &String) -> String {
 // form `{"body":"<text>"}`. The full json decoder is plumbed through
 // std::encoding::json, but this service stays small and uses a string
 // scan for the one field it cares about.
-fn extract_body(body: &String) -> String {
+fn extract_body(body: String) -> String {
     let needle = "\"body\":\""
     let start = match body.find(needle) {
         Some(s) => s
@@ -163,14 +163,14 @@ fn health(_r: http::Request) -> Result<http::Response, http::Error> {
 fn list_notes(_r: http::Request) -> Result<http::Response, http::Error> {
     slog::info("GET /notes")
     let notes = seed_notes()
-    Ok(http::Response::json(200, render_notes_json(&notes)))
+    Ok(http::Response::json(200, render_notes_json(notes)))
 }
 
 fn create_note(r: http::Request) -> Result<http::Response, http::Error> {
-    let body = extract_body(&r.body)
+    let body = extract_body(r.body)
     let created = Note { id: seed_notes().len() + 1, body: body }
     slog::info("POST /notes")
-    Ok(http::Response::json(201, render_note_json(&created)))
+    Ok(http::Response::json(201, render_note_json(created)))
 }
 
 fn show_note(r: http::Request) -> Result<http::Response, http::Error> {
@@ -195,7 +195,7 @@ fn delete_note(r: http::Request) -> Result<http::Response, http::Error> {
 
 fn notes_html(_r: http::Request) -> Result<http::Response, http::Error> {
     let notes = seed_notes()
-    let resp = http::Response::text(200, render_notes_html(&notes))
+    let resp = http::Response::text(200, render_notes_html(notes))
     Ok(resp.with_header("Content-Type", "text/html; charset=utf-8"))
 }
 
@@ -213,11 +213,11 @@ fn shutdown_watcher() {
 
 fn main() -> Result<(), http::Error> {
     slog::info("web_service_full starting on 0.0.0.0:8080")
-    println!("web_service_full: listening on 0.0.0.0:8080")
-    println!("  routes: GET /health, GET /notes, POST /notes,")
-    println!("          GET /notes/{{id}}, DELETE /notes/{{id}}, GET /notes.html")
+    println("web_service_full: listening on 0.0.0.0:8080")
+    println("  routes: GET /health, GET /notes, POST /notes,")
+    println("          GET /notes/{{id}}, DELETE /notes/{{id}}, GET /notes.html")
 
-    go shutdown_watcher()
+    spawn(|| shutdown_watcher())
 
     router::Router::new().get("/health", health).get("/notes", list_notes).post("/notes", create_note).get("/notes.html", notes_html).get("/notes/{id}", show_note).delete("/notes/{id}", delete_note)
         |> |v| http::serve("0.0.0.0:8080", v)
@@ -229,7 +229,7 @@ mod web_service_tests {
 
     #[test]
     fn seed_has_three_notes() {
-        let _ = testing::check_eq(&(super::seed_notes().len() as i64), &3, "seed size")
+        let _ = testing::check_eq((super::seed_notes().len() as i64), 3, "seed size")
     }
 
     #[test]
@@ -247,7 +247,7 @@ mod web_service_tests {
     #[test]
     fn notes_json_renders_array() {
         let notes = super::seed_notes()
-        let out = super::render_notes_json(&notes)
+        let out = super::render_notes_json(notes)
         let _ = testing::check(out.starts_with("[{"), "json array opener")
         let _ = testing::check(out.contains("\"first note\""), "first body present")
         let _ = testing::check(out.ends_with("]"), "json array closer")
@@ -256,15 +256,15 @@ mod web_service_tests {
     #[test]
     fn note_json_escapes_quotes() {
         let note = super::Note { id: 7, body: "a\"b" }
-        let out = super::render_note_json(&note)
-        let _ = testing::check_eq(&out, &"{\"id\":7,\"body\":\"a\\\"b\"}", "escaped note json")
+        let out = super::render_note_json(note)
+        let _ = testing::check_eq(out, "{\"id\":7,\"body\":\"a\\\"b\"}", "escaped note json")
     }
 
     #[test]
     fn html_escapes_markup() {
         let note = super::Note { id: 1, body: "<script>" }
         let notes = #[note]
-        let out = super::render_notes_html(&notes)
+        let out = super::render_notes_html(notes)
         let _ = testing::check(out.contains("&lt;script&gt;"), "markup escaped")
         let _ = testing::check(!out.contains("<script>"), "no raw script tag")
     }
@@ -272,6 +272,6 @@ mod web_service_tests {
     #[test]
     fn extract_body_pulls_field() {
         let body = "{\"body\":\"hello\"}"
-        let _ = testing::check_eq(&super::extract_body(&body), &"hello", "extracted body")
+        let _ = testing::check_eq(super::extract_body(body), "hello", "extracted body")
     }
 }

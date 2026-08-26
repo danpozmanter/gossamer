@@ -11,7 +11,7 @@
 
 use std::http
 
-fn byte_sum(data: &[u8]) -> i64 {
+fn byte_sum(data: [u8]) -> i64 {
     let mut sum: i64 = 0
     for b in data {
         sum += *b as i64
@@ -33,16 +33,16 @@ fn main() {
     + "file-body-contents\r\n"
     + "--GOSBOUNDARY9000--\r\n"
     let bytes = body.as_bytes()
-    let parts = http::multipart::parse(&bytes, &boundary)
-    println!("count={}", parts.len())
+    let parts = http::multipart::parse(bytes, boundary)
+    println("count={}", parts.len())
     for p in parts {
-        println!(
+        println(
             "name={} filename={} ctype={} len={} sum={}"
             p.name
             p.filename
             p.content_type
             p.content.len()
-            byte_sum(&p.content)
+            byte_sum(p.content)
         )
     }
 }

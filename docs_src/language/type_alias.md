@@ -16,7 +16,7 @@ type Names = [String]
 fn next(id: Id) -> Id { id + 1 }   // Id and i64 are the same type
 
 let a: Id = 41
-println!("{}", next(a))            // 42
+println("{}", next(a))            // 42
 let ns: Names = ["go", "rust"]
 ```
 
@@ -29,7 +29,7 @@ use-site arguments.
 type Pair<A> = (A, A)
 
 let p: Pair<i64> = (3, 4)
-let (x, y) = p
+let x, y = p
 ```
 
 ## Alias chains
@@ -45,7 +45,7 @@ type B = A      // error[GT0024]: type alias `B` is cyclic - it expands to itsel
 
 ## Opaque aliases
 
-Writing `new` before the target - `type UserId = new i64` - declares a
+Writing `new` before the target - `newtype UserId = i64` - declares a
 distinct type over the same representation instead of another spelling
 of it. It inherits equality, ordering, hashing and formatting and
 nothing else, converts to and from its representation with `.into()`,

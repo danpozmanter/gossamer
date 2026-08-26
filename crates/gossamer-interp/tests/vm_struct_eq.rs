@@ -26,9 +26,10 @@ fn run_main(source: &str) -> String {
     let augmented = gossamer_parse::autoderive::augment_source(source);
     let mut map = SourceMap::new();
     let file = map.add_file("struct_eq.gos", augmented.clone());
-    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&augmented, file);
+    let (mut sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&augmented, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -51,7 +52,7 @@ fn main() {
     let a = Point { x: 1, y: 2 }
     let b = Point { x: 1, y: 2 }
     let c = Point { x: 3, y: 4 }
-    println!("{} {} {}", a == b, a == c, a != c)
+    println("{} {} {}", a == b, a == c, a != c)
 }
 "#;
     assert_eq!(run_main(src), "true false true\n");
@@ -66,7 +67,7 @@ fn main() {
     let a = Color::Rgb(1, 2, 3)
     let b = Color::Rgb(1, 2, 3)
     let g = Color::Green
-    println!("{} {} {}", a == b, a == g, g == Color::Green)
+    println("{} {} {}", a == b, a == g, g == Color::Green)
 }
 "#;
     assert_eq!(run_main(src), "true false true\n");
@@ -76,7 +77,7 @@ fn main() {
 fn option_equality_is_structural() {
     let src = r#"
 fn main() {
-    println!("{} {}", Some(5) == Some(5), Some(5) == Some(6))
+    println("{} {}", Some(5) == Some(5), Some(5) == Some(6))
 }
 "#;
     assert_eq!(run_main(src), "true false\n");

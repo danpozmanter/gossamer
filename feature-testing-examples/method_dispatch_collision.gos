@@ -8,13 +8,13 @@ struct Square { side: f64 }
 impl Circle {
     fn area(&self) -> f64 { 3.14159 * self.radius * self.radius }
     fn name(&self) -> String { "circle" }
-    fn describe(&self) -> String { format!("r={}", self.radius) }
+    fn describe(&self) -> String { format("r={}", self.radius) }
 }
 
 impl Square {
     fn area(&self) -> f64 { self.side * self.side }
     fn name(&self) -> String { "square" }
-    fn describe(&self) -> String { format!("s={}", self.side) }
+    fn describe(&self) -> String { format("s={}", self.side) }
 }
 
 fn main() {
@@ -22,20 +22,20 @@ fn main() {
     let s = Square { side: 4.0 }
 
     // Method-style dispatch
-    println!("{} area = {}", c.name(), c.area())
-    println!("{} area = {}", s.name(), s.area())
+    println("{} area = {}", c.name(), c.area())
+    println("{} area = {}", s.name(), s.area())
 
     // Qualified path calls
-    println!("Circle::area = {}", Circle::area(&c))
-    println!("Square::area = {}", Square::area(&s))
+    println("Circle::area = {}", Circle::area(c))
+    println("Square::area = {}", Square::area(s))
 
     // Mixed qualified + method
-    println!("{} -> {}", c.describe(), Circle::name(&c))
-    println!("{} -> {}", s.describe(), Square::name(&s))
+    println("{} -> {}", c.describe(), Circle::name(c))
+    println("{} -> {}", s.describe(), Square::name(s))
 
     // Ensure shadowed names resolve per receiver type
-    println!("{} -> {}", c.name(), c.area())
-    println!("{} -> {}", s.name(), s.area())
+    println("{} -> {}", c.name(), c.area())
+    println("{} -> {}", s.name(), s.area())
 }
 
 #[cfg(test)]
@@ -60,8 +60,8 @@ mod tests {
     fn name_methods() {
         let c = super::Circle { radius: 1.0 }
         let s = super::Square { side: 1.0 }
-        let _ = testing::check_eq(&c.name(), &"circle", "circle name")
-        let _ = testing::check_eq(&s.name(), &"square", "square name")
+        let _ = testing::check_eq(c.name(), "circle", "circle name")
+        let _ = testing::check_eq(s.name(), "square", "square name")
     }
 
     #[test]

@@ -823,13 +823,44 @@ pub enum TypeError {
         /// Name of the immutable root binding.
         name: String,
     },
-    /// A compound assignment (`+=`, `*=`, ...) was written against a tuple.
-    /// A tuple on the left destructures the right-hand side, which only
-    /// plain `=` does.
-    #[error("cannot apply `{op}` to a destructuring assignment")]
-    CompoundDestructuringAssign {
-        /// The compound operator as written.
-        op: String,
+    /// `*x = v` where `x` is not a reference, so the write reaches no place.
+    #[error("cannot write through `{name}`: it is a value, not a reference")]
+    DerefWriteToNonReference {
+        /// Name of the dereferenced binding.
+        name: String,
+    },
+    /// A reference was passed where the parameter is a value.
+    #[error("`{argument}` is a reference; the parameter is the value it names")]
+    ReferenceArgumentNeedsDeref {
+        /// The argument as written.
+        argument: String,
+    },
+    /// `String::parse` was called. The strict `to_T()` family is the one
+    /// parse surface, and it answers an `Option<T>`.
+    #[error("`parse` is not a string method; the parse family is `to_i64` / `to_f64` / `to_bool`")]
+    StringParseRetired {
+        /// The `to_T()` spelling this site wants.
+        suggestion: String,
+    },
+    /// An `enum Name : uN` named a width too narrow for its variants.
+    #[error("`{name}` declares {count} variants, which `u{bits}` cannot represent")]
+    EnumReprTooNarrow {
+        /// The enum's name.
+        name: String,
+        /// The declared width, in bits.
+        bits: u32,
+        /// How many variants the declaration has.
+        count: usize,
+    },
+    /// A `Box<T>` / `Arc<T>` / `Rc<T>` wrapper was written. Every value is
+    /// already heap-shared and reference-counted, so the wrapper names no
+    /// distinction the language draws.
+    #[error("`{wrapper}<{inner}>` is `{inner}`; the language has no pointer wrappers")]
+    TransparentWrapper {
+        /// The wrapper as written.
+        wrapper: String,
+        /// The inner type it wrapped.
+        inner: String,
     },
     /// An assignment targets an expression that names no place: a
     /// literal, a call result, or another temporary. Only a binding, a
@@ -1005,13 +1036,17 @@ impl TypeError {
             Self::NotIndexable { .. } => "not-indexable",
             Self::NotCallable { .. } => "not-callable",
             Self::NoTupleField { .. } => "no-tuple-field",
+            Self::TransparentWrapper { .. } => "transparent-wrapper",
+            Self::StringParseRetired { .. } => "string-parse-retired",
+            Self::ReferenceArgumentNeedsDeref { .. } => "reference-argument-needs-deref",
+            Self::DerefWriteToNonReference { .. } => "deref-write-to-non-reference",
+            Self::EnumReprTooNarrow { .. } => "enum-repr-too-narrow",
             Self::JsonValuePatternUnsupported { .. } => "json-value-pattern-unsupported",
             Self::WeakDowngradeNonRc { .. } => "weak-downgrade-non-rc",
             Self::CombinatorDataArgMismatch { .. } => "combinator-data-arg-mismatch",
             Self::AssignToImmutable { .. } => "assign-to-immutable",
             Self::AssignThroughSharedReference { .. } => "assign-through-shared-reference",
             Self::InvalidAssignTarget { .. } => "invalid-assign-target",
-            Self::CompoundDestructuringAssign { .. } => "compound-destructuring-assign",
             Self::MutableReferenceToImmutable { .. } => "mutable-reference-to-immutable",
             Self::MutableReferenceConflict { .. } => "mutable-reference-conflict",
             Self::ReferenceEscapeUnsupported { .. } => "reference-escape-unsupported",
@@ -1110,7 +1145,12 @@ impl TypeError {
             Self::CombinatorDataArgMismatch { .. } => "GT0029",
             Self::AssignToImmutable { .. } => "GT0030",
             Self::AssignThroughSharedReference { .. } => "GT0031",
-            Self::InvalidAssignTarget { .. } | Self::CompoundDestructuringAssign { .. } => "GT0078",
+            Self::InvalidAssignTarget { .. } => "GT0078",
+            Self::TransparentWrapper { .. } => "GT0079",
+            Self::StringParseRetired { .. } => "GT0080",
+            Self::ReferenceArgumentNeedsDeref { .. } => "GT0082",
+            Self::DerefWriteToNonReference { .. } => "GT0083",
+            Self::EnumReprTooNarrow { .. } => "GT0081",
             Self::MutableReferenceToImmutable { .. } => "GT0032",
             Self::MutableReferenceConflict { .. } => "GT0043",
             Self::ReferenceEscapeUnsupported { .. } => "GT0052",
@@ -1832,8 +1872,8 @@ impl TypeDiagnostic {
                     .with_help(
                         "read a `json::Value` with the dynamic accessors instead: \
                          `json::as_i64` / `json::as_f64` / `json::as_str` / `json::as_bool`, \
-                         `json::is_null`, `json::get(&v, key)`, `json::at(&v, i)`, \
-                         `json::keys(&v)`, `json::len(&v)`",
+                         `json::is_null`, `json::get(v, key)`, `json::at(v, i)`, \
+                         `json::keys(v)`, `json::len(v)`",
                     )
                     .with_note(
                         "`json::Value` is an opaque dynamic-document handle with no matchable \
@@ -1875,17 +1915,58 @@ impl TypeDiagnostic {
                         "bindings are immutable by default; only a `mut` place can be assigned",
                     );
             }
-            TypeError::CompoundDestructuringAssign { op } => {
-                let scalar = op.trim_end_matches('=');
+            TypeError::EnumReprTooNarrow { bits, count, .. } => {
+                let needed = gossamer_ast::EnumRepr::natural_bits(true, *count);
                 out = out
                     .with_help(format!(
-                        "write each element on its own: `a {op} ..` and `b {op} ..`, or \
-                         `(a, b) = (a {scalar} .., b {scalar} ..)`"
+                        "{count} variants need {needed} bits; write `: u{needed}` or wider, \
+                         or drop the width and let the compiler pick"
                     ))
                     .with_note(
-                        "a tuple on the left destructures the right-hand side, which only \
-                         plain `=` does",
+                        "a declared width is exact - it is what the discriminant is stored \
+                         in, so it cannot be widened silently",
                     );
+                let _ = bits;
+            }
+            TypeError::ReferenceArgumentNeedsDeref { argument } => {
+                out = out
+                    .with_help(format!("write `*{argument}`"))
+                    .with_note(
+                        "a parameter that is not `&mut` takes the value, and a reference \
+                         names one rather than being one: the deref says which",
+                    )
+                    .with_suggestion(gossamer_diagnostics::Suggestion::replacement(
+                        location,
+                        format!("write `*{argument}`"),
+                        format!("*{argument}"),
+                    ));
+            }
+            TypeError::StringParseRetired { suggestion } => {
+                out = out
+                    .with_help(format!("write `{suggestion}()`"))
+                    .with_note(
+                        "`to_i64` / `to_f64` / `to_bool` parse the whole string and answer \
+                         an `Option<T>`; add `.ok_or(..)` where a `Result` is wanted",
+                    )
+                    .with_suggestion(gossamer_diagnostics::Suggestion::replacement(
+                        location,
+                        format!("write `{suggestion}()`"),
+                        format!("{suggestion}()"),
+                    ));
+            }
+            TypeError::TransparentWrapper { wrapper, inner } => {
+                out = out
+                    .with_help(format!("write `{inner}`"))
+                    .with_note(
+                        "every value is heap-shared and reference-counted already, so a \
+                         pointer wrapper names no choice the writer has to make",
+                    )
+                    .with_suggestion(gossamer_diagnostics::Suggestion::replacement(
+                        location,
+                        format!("write `{inner}`"),
+                        inner.clone(),
+                    ));
+                let _ = wrapper;
             }
             TypeError::InvalidAssignTarget { target } => {
                 out = out
@@ -1896,6 +1977,17 @@ impl TypeDiagnostic {
                     .with_note(
                         "an assignment writes through a place; a literal, a call result, and \
                          any other temporary name none",
+                    );
+            }
+            TypeError::DerefWriteToNonReference { name } => {
+                out = out
+                    .with_help(format!(
+                        "write `{name}` directly, or declare it `&mut T` and pass `&mut` at \
+                         the call site"
+                    ))
+                    .with_note(
+                        "`*` reaches the place a reference names; over a value there is no \
+                         place to write, so the assignment would be discarded",
                     );
             }
             TypeError::AssignThroughSharedReference { name } => {
@@ -2121,9 +2213,9 @@ fn is_callable_ty_spelling(ty: &str) -> bool {
 /// the ascending one over a reversed key.
 fn sort_free_call_form(name: &str) -> Option<&'static str> {
     match name {
-        "sort_by" => Some("iter::sort_by(cmp, <sequence>)"),
-        "sort_by_key" => Some("iter::sort_by_key(key, <sequence>)"),
-        "sort_by_key_desc" => Some("iter::sort_by_key(|v| Reverse(key(v)), <sequence>)"),
+        "sort_by" => Some("iter::sort_by(<sequence>, cmp)"),
+        "sort_by_key" => Some("iter::sort_by_key(<sequence>, key)"),
+        "sort_by_key_desc" => Some("iter::sort_by_key(<sequence>, |v| Reverse(key(v)))"),
         _ => None,
     }
 }

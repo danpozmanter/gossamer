@@ -14,12 +14,12 @@ struct Record {
 
 enum Expr {
     Lit(i64)
-    Add(Box<Expr>, Box<Expr>)
-    Mul(Box<Expr>, Box<Expr>)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
 }
 
 enum Node {
-    Branch(Box<Node>, Box<Node>)
+    Branch(Node, Node)
     Empty
 }
 
@@ -36,7 +36,7 @@ fn array_sum(n: i64) -> i64 {
 }
 
 // Constant folding: a node whose operands are both literals collapses.
-fn fold(e: &Expr) -> Expr {
+fn fold(e: Expr) -> Expr {
     match e {
         Expr::Lit(v) => Expr::Lit(v)
         Expr::Add(l, r) => {
@@ -68,7 +68,7 @@ fn build_expr(depth: i64) -> Expr {
     Expr::Mul(build_expr(depth - 1), Expr::Lit(2))
 }
 
-fn expr_value(e: &Expr) -> i64 {
+fn expr_value(e: Expr) -> i64 {
     match e {
         Expr::Lit(v) => v
         Expr::Add(l, r) => expr_value(l) + expr_value(r)
@@ -112,7 +112,7 @@ fn dijkstra(n: i64, source: i64) -> i64 {
     total
 }
 
-fn edit_distance(a: &String, b: &String) -> i64 {
+fn edit_distance(a: String, b: String) -> i64 {
     let rows = a.len() + 1
     let cols = b.len() + 1
     let mut prev = #[0; 0]
@@ -140,7 +140,7 @@ fn build_node(depth: i64) -> Node {
     Node::Branch(build_node(depth - 1), build_node(depth - 1))
 }
 
-fn node_depth(n: &Node) -> i64 {
+fn node_depth(n: Node) -> i64 {
     match n {
         Node::Empty => 0
         Node::Branch(l, _) => 1 + node_depth(l)
@@ -152,7 +152,7 @@ fn tree_churn(rounds: i64, depth: i64) -> i64 {
     let mut total = 0
     for _ in 0..rounds {
         let tree = build_node(depth)
-        total += node_depth(&tree)
+        total += node_depth(tree)
     }
     total
 }
@@ -231,11 +231,11 @@ fn json_round_trip(n: i64) -> i64 {
     for i in 0..n {
         let record = Record {
             id: i
-            name: format!("row-{}", i)
+            name: format("row-{}", i)
             score: (i as f64) * 1.5
         }
-        let encoded = to_json::<Record>(&record).unwrap()
-        let decoded = from_json::<Record>(&encoded).unwrap()
+        let encoded = to_json::<Record>(record).unwrap()
+        let decoded = from_json::<Record>(encoded).unwrap()
         total += decoded.id + decoded.name.len() + (decoded.score as i64)
     }
     total
@@ -339,27 +339,27 @@ fn union_find(n: i64) -> i64 {
 }
 
 fn main() {
-    println!("array-sum {}", array_sum(500))
+    println("array-sum {}", array_sum(500))
 
-    let folded = fold(&build_expr(9))
-    println!("ast-rewrite {}", expr_value(&folded))
+    let folded = fold(build_expr(9))
+    println("ast-rewrite {}", expr_value(folded))
 
-    println!("dijkstra {}", dijkstra(32, 0))
-    println!("edit-distance {}", edit_distance(&"kitten sitting", &"sitting kitten"))
-    println!("gc-trees {}", tree_churn(16, 7))
-    println!("graph-bfs {}", graph_bfs(24))
-    println!("grid-stencil {:.6}", grid_stencil(9, 3))
-    println!("hash-join {}", hash_join(40, 40))
-    println!("json-serde {}", json_round_trip(12))
-    println!("matmul {}", matmul(12))
-    println!("prime-sieve {}", prime_sieve(500))
+    println("dijkstra {}", dijkstra(32, 0))
+    println("edit-distance {}", edit_distance("kitten sitting", "sitting kitten"))
+    println("gc-trees {}", tree_churn(16, 7))
+    println("graph-bfs {}", graph_bfs(24))
+    println("grid-stencil {:.6}", grid_stencil(9, 3))
+    println("hash-join {}", hash_join(40, 40))
+    println("json-serde {}", json_round_trip(12))
+    println("matmul {}", matmul(12))
+    println("prime-sieve {}", prime_sieve(500))
 
     let mut unsorted = #[]
     for i in 0..40 {
         unsorted.push((i * 7919 + 13) % 1000)
     }
     let sorted = radix_sort(unsorted)
-    println!("radix-sort {} {} {}", sorted[0], sorted[20], sorted[39])
+    println("radix-sort {} {} {}", sorted[0], sorted[20], sorted[39])
 
-    println!("union-find {}", union_find(32))
+    println("union-find {}", union_find(32))
 }

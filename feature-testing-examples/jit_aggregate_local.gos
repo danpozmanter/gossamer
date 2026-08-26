@@ -2,7 +2,7 @@
 // (uses_i128_repr does not veto String/Vec locals). Guards against a
 // regression that would exclude it.
 fn count_vowels(seed: i64) -> i64 {
-    let s = format!("the quick brown fox {}", seed)
+    let s = format("the quick brown fox {}", seed)
     let mut count = 0
     for b in s.as_bytes() {
         if b == 97 || b == 101 || b == 105 || b == 111 || b == 117 {
@@ -19,5 +19,5 @@ fn main() {
         total += count_vowels(i)
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }

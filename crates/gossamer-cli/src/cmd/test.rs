@@ -1182,6 +1182,12 @@ fn run_tests_isolated(
             let mut child = command
                 .spawn()
                 .map_err(|error| anyhow!("spawn isolated test `{}`: {error}", test.name))?;
+            // The worker leads a process group of its own so a timeout can end
+            // the whole tree it builds. That also puts it outside the terminal's
+            // foreground group, so this command owns its lifetime: an interrupt
+            // reaches it through the registry, and the guard drops the entry
+            // however this iteration ends.
+            let _child_guard = crate::child_processes::register(child.id());
             let stdout = child.stdout.take().map(|mut stream| {
                 std::thread::spawn(move || {
                     let mut bytes = Vec::new();
@@ -1456,7 +1462,7 @@ mod focused_tests {
         let cases: [(&str, &str, bool); 5] = [
             (
                 "goroutine.gos",
-                "fn main() {\n    for i in 0..8 { go work(i) }\n}\n",
+                "fn main() {\n    for i in 0..8 { spawn(|| work(i)) }\n}\n",
                 true,
             ),
             (
@@ -1471,12 +1477,12 @@ mod focused_tests {
             ),
             (
                 "sequential.gos",
-                "fn main() {\n    for i in 0..8 { println!(\"{}\", i) }\n}\n",
+                "fn main() {\n    for i in 0..8 { println(\"{}\", i) }\n}\n",
                 false,
             ),
             (
                 "mentions_go_in_a_comment.gos",
-                "fn main() {\n    // go through each item in order\n    println!(\"1\")\n}\n",
+                "fn main() {\n    // go through each item in order\n    println(\"1\")\n}\n",
                 false,
             ),
         ];
@@ -1893,11 +1899,9 @@ pub(crate) mod tier_parity {
         };
         source.lines().any(|line| {
             let code = line.split("//").next().unwrap_or(line).trim();
-            code == "go" || code.starts_with("go ") || code.contains(" go ") || {
-                ["spawn(", "select {", "select{"]
-                    .iter()
-                    .any(|form| code.contains(form))
-            }
+            ["spawn(", "select {", "select{"]
+                .iter()
+                .any(|form| code.contains(form))
         })
     }
 

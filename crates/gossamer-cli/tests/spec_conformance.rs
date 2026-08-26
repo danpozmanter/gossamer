@@ -141,7 +141,7 @@ fn check_message_format_json_emits_single_line_json() {
     // object with the documented schema fields.
     let src = r#"
 extern "C" { fn malloc(size: usize) -> *mut u8 }
-fn main() { println!("hi") }
+fn main() { println("hi") }
 "#;
     let path = write_temp_file("json_diag", src);
     let mut cmd = Command::new(gos_binary());
@@ -175,7 +175,7 @@ fn spec_12_extern_block_rejected_with_gp0016() {
 extern "C" {
     fn malloc(size: usize) -> *mut u8
 }
-fn main() { println!("hi") }
+fn main() { println("hi") }
 "#;
     let (ok, _stdout, stderr) = run_check("spec_12_extern_block", src);
     assert!(!ok, "extern \"C\" {{}} must not pass `gos check`");
@@ -216,7 +216,7 @@ fn spec_8_6_extern_inside_unsafe_block_is_still_rejected() {
 extern "C" {
     fn libc_malloc(n: i64) -> i64
 }
-fn main() { println!("hi") }
+fn main() { println("hi") }
 "#;
     let (ok_bare, _so, se_bare) = run_check("spec_8_6_bare", bare);
     assert!(!ok_bare);
@@ -243,20 +243,20 @@ fn spec_14_format_macro_subset_accepted() {
     // macro: the array literal `[...]` coerces to `Vec<T>` instead.
     let src = r#"
 fn main() {
-    println!("p")
+    println("p")
 
-    print!("p")
+    print("p")
 
-    eprintln!("e")
+    eprintln("e")
 
-    eprint!("e")
+    eprint("e")
 
-    let s = format!("f {}", 1)
+    let s = format("f {}", 1)
 
     let v = [1, 2, 3]
 
     if s.len() == 0 && v.len() == 0 {
-        panic!("unreachable")
+        panic("unreachable")
     }
 }
 "#;
@@ -270,22 +270,22 @@ fn spec_14_desugar_macros_accepted() {
     // are implemented desugar macros and must parse and check cleanly.
     let src = r#"
 fn maybe() -> i64 {
-    if false { todo!() } else if false { unimplemented!() } else { 1 }
+    if false { todo() } else if false { unimplemented() } else { 1 }
 }
 fn main() {
-    let m = matches!(Some(1), Some(_))
+    let m = matches(Some(1), Some(_))
 
     let n = maybe()
 
-    let d = dbg!(n + 1)
+    let d = dbg(n + 1)
 
     let label = match d {
         2 => "two",
-        _ => unreachable!(),
+        _ => unreachable(),
     }
 
     if m && label.len() == 0 {
-        println!("x")
+        println("x")
     }
 }
 "#;
@@ -325,7 +325,7 @@ fn spec_3_1_debug_overflow_panics_at_the_declared_width() {
         ("u64_add", "18446744073709551615u64 + 1u64", "add"),
     ];
     for (name, expression, operation) in cases {
-        let src = format!("fn main() {{ println!(\"{{}}\", {expression}) }}\n");
+        let src = format!("fn main() {{ println(\"{{}}\", {expression}) }}\n");
         let (ok, _stdout, stderr) = run_program(name, &src, &[]);
         assert!(!ok, "debug overflow case {name} must panic");
         assert!(
@@ -336,7 +336,7 @@ fn spec_3_1_debug_overflow_panics_at_the_declared_width() {
 
     let safe = r#"
 fn main() {
-    println!("{} {} {}", 100u8 + 20u8, -100i8 - 20i8, 200u16 * 300u16)
+    println("{} {} {}", 100u8 + 20u8, -100i8 - 20i8, 200u16 * 300u16)
 }
 "#;
     let (ok, stdout, stderr) = run_program("checked_arithmetic_safe", safe, &[]);
@@ -350,7 +350,7 @@ fn spec_3_1_native_profiles_check_then_wrap_overflow() {
 fn main() {
     let a: u8 = 200u8
     let b: u8 = 200u8
-    println!("{}", a + b)
+    println("{}", a + b)
 }
 "#;
     let (debug_ok, _debug_stdout, debug_stderr) =
@@ -436,7 +436,7 @@ fn main() {
         let r = &mut xs
         r[0] = 0
     }
-    if xs[0] != 0 { panic!("mutable reference did not write through") }
+    if xs[0] != 0 { panic("mutable reference did not write through") }
 }
 "#;
     let (ok, _stdout, stderr) = run_program("spec_7_5_write_through", src, &[]);
@@ -452,7 +452,7 @@ fn main() {
         let r = &mut value
         *r = 42i64
     }
-    if value != 42i64 { panic!("mutable reference did not write through") }
+    if value != 42i64 { panic("mutable reference did not write through") }
 }
 "#;
     let (ok, _stdout, stderr) = run_program("spec_7_5_scalar_write_through", src, &[]);
@@ -470,8 +470,8 @@ fn main() {
         r = &mut second
         *r = 42i64
     }
-    if first != 1i64 { panic!("rebind changed the old target") }
-    if second != 42i64 { panic!("rebind did not change the new target") }
+    if first != 1i64 { panic("rebind changed the old target") }
+    if second != 42i64 { panic("rebind did not change the new target") }
 }
 "#;
     let (ok, _stdout, stderr) = run_program("spec_7_5_reference_rebind", src, &[]);
@@ -489,7 +489,7 @@ fn main() {
     let b = &mut x
     *a = 2
     *b = 3
-    println!("{}", x)
+    println("{}", x)
 }
 "#;
     let (ok, _stdout, stderr) = run_check("spec_7_5_borrow", src);

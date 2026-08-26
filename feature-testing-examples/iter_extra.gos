@@ -18,7 +18,7 @@ fn main() {
     for (i, x) in iter::enumerate(xs) {
         esum += i * 100 + x
     }
-    println!("enumerate {}", esum)
+    println("enumerate {}", esum)
 
     // -- zip: stops at the shorter input.
     let ys = #[1, 2, 3]
@@ -26,7 +26,7 @@ fn main() {
     for (a, b) in iter::zip(xs, ys) {
         zsum += a + b
     }
-    println!("zip {}", zsum)
+    println("zip {}", zsum)
 
     // -- flatten: Vec<Vec<i64>> -> Vec<i64>.
     let nested = Vec::from([Vec::from([1, 2]), Vec::from([3]), Vec::from([4, 5, 6])])
@@ -34,7 +34,7 @@ fn main() {
     for v in iter::flatten(nested) {
         fsum += v
     }
-    println!("flatten {}", fsum)
+    println("flatten {}", fsum)
 
     // -- dedup: drop consecutive duplicates.
     let dups = #[1, 1, 2, 2, 2, 3, 1]
@@ -42,50 +42,50 @@ fn main() {
     for v in iter::dedup(dups) {
         dcount += 1
     }
-    println!("dedup {}", dcount)
+    println("dedup {}", dcount)
 
     // -- unzip: Vec<(i64, i64)> -> (Vec<i64>, Vec<i64>).
     let pairs = iter::zip(xs, ys)
-    let (lefts, rights) = iter::unzip(pairs)
-    println!("unzip {} {}", lefts[0], rights[0])
+    let lefts, rights = iter::unzip(pairs)
+    println("unzip {} {}", lefts[0], rights[0])
 
     // -- windows(n, xs): sliding width-2 windows.
     let mut wsum = 0
-    for w in iter::windows(2, xs) {
+    for w in iter::windows(xs, 2) {
         wsum += w[0] * w[1]
     }
-    println!("windows {}", wsum)
+    println("windows {}", wsum)
 
     // -- pairwise: successive overlapping pairs.
     let mut psum = 0
     for (a, b) in iter::pairwise(xs) {
         psum += b - a
     }
-    println!("pairwise {}", psum)
+    println("pairwise {}", psum)
 
     // -- chunks(n, xs): consecutive chunks, final may be short.
     let nine = #[1, 2, 3, 4, 5]
     let mut chunks = 0
     let mut last_first = 0
-    for c in iter::chunks(2, nine) {
+    for c in iter::chunks(nine, 2) {
         chunks += 1
         last_first = c[0]
     }
-    println!("chunks {} {}", chunks, last_first)
+    println("chunks {} {}", chunks, last_first)
 
     // -- rev-index idiom: indexing the heap-vec result directly,
     // with no `: [i64]` annotation (the SIGSEGV regression).
     let r = iter::rev(xs)
-    println!("rev {} {} {} {}", r[0], r[1], r[2], r[3])
+    println("rev {} {} {} {}", r[0], r[1], r[2], r[3])
 
     // -- same crash class for take / skip / step_by / chain / range / repeat.
-    let t = iter::take(2, xs)
-    let s = iter::skip(2, xs)
-    let st = iter::step_by(2, xs)
+    let t = iter::take(xs, 2)
+    let s = iter::skip(xs, 2)
+    let st = iter::step_by(xs, 2)
     let ch = iter::chain(ys, ys)
     let rg = iter::range(0, 4)
     let rp = iter::repeat(7, 3)
-    println!("take {} skip {} step_by {} chain {} range {} repeat {}"
+    println("take {} skip {} step_by {} chain {} range {} repeat {}"
         t[0], s[0], st[1], ch[3], rg[3], rp[2])
 
     // -- collect / once / empty as public free functions, plus method collect.
@@ -93,5 +93,5 @@ fn main() {
     let mc = xs.clone()
     let one = iter::once(99)
     let empty: Vec<i64> = iter::empty()
-    println!("collect {} {} once {} empty {}", c[3], mc[0], one[0], empty.len())
+    println("collect {} {} once {} empty {}", c[3], mc[0], one[0], empty.len())
 }

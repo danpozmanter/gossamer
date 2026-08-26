@@ -13,23 +13,23 @@ fn main() {
     // Pure arithmetic chain - piped value lands in last slot:
     // double(5)=10; add(3,10)=13; sub(1,13)=-12
     let a = 5 |> double |> |v| add(3, v) |> |v| sub(1, v)
-    println!("5*2+3-1 via pipe = {}", a)
+    println("5*2+3-1 via pipe = {}", a)
 
     // Mixed with clamp landing in last slot
     let b = 7 |> double |> |v| add(10, v) |> |v| clamp(0, 20, v)
-    println!("clamp(0,20, 7*2+10) = {}", b)
+    println("clamp(0,20, 7*2+10) = {}", b)
 
     // Closure inline in pipe
     let c = 4 |> |x| x * x |> |v| add(1, v)
-    println!("closure pipe result = {}", c)
+    println("closure pipe result = {}", c)
 
     // Nested pipe inside arithmetic
     let d = 2 |> double |> double |> |v| add(1, v)
-    println!("2*2*2+1 = {}", d)
+    println("2*2*2+1 = {}", d)
 
     // String pipeline
-    let greeting = "world" |> |s| format!("hello, {s}")
-    println!("{}", greeting)
+    let greeting = "world" |> |s| format("hello, {s}")
+    println("{}", greeting)
 
     // Multi-step numeric pipeline
     let result = 1
@@ -37,7 +37,7 @@ fn main() {
         |> double
         |> |v| sub(3, v)
         |> |v| clamp(0, 100, v)
-    println!("multi-step = {}", result)
+    println("multi-step = {}", result)
 }
 
 #[cfg(test)]
@@ -46,27 +46,27 @@ mod tests {
 
     #[test]
     fn double_fn() {
-        let _ = testing::check_eq(&super::double(5), &10, "double(5)=10")
-        let _ = testing::check_eq(&super::double(0), &0, "double(0)=0")
+        let _ = testing::check_eq(super::double(5), 10, "double(5)=10")
+        let _ = testing::check_eq(super::double(0), 0, "double(0)=0")
     }
 
     #[test]
     fn add_fn() {
-        let _ = testing::check_eq(&super::add(3, 4), &7, "add(3,4)=7")
-        let _ = testing::check_eq(&super::add(0, 0), &0, "add(0,0)=0")
+        let _ = testing::check_eq(super::add(3, 4), 7, "add(3,4)=7")
+        let _ = testing::check_eq(super::add(0, 0), 0, "add(0,0)=0")
     }
 
     #[test]
     fn clamp_fn() {
-        let _ = testing::check_eq(&super::clamp(0, 10, -5), &0, "below lo")
-        let _ = testing::check_eq(&super::clamp(0, 10, 15), &10, "above hi")
-        let _ = testing::check_eq(&super::clamp(0, 10, 7), &7, "in range")
+        let _ = testing::check_eq(super::clamp(0, 10, -5), 0, "below lo")
+        let _ = testing::check_eq(super::clamp(0, 10, 15), 10, "above hi")
+        let _ = testing::check_eq(super::clamp(0, 10, 7), 7, "in range")
     }
 
     #[test]
     fn pipe_chain() {
         // pipe sends value to last arg: double(5)=10; add(3,10)=13; sub(1,13)=-12
         let a = 5 |> super::double |> |v| super::add(3, v) |> |v| super::sub(1, v)
-        let _ = testing::check_eq(&a, &-12, "pipe chain = -12")
+        let _ = testing::check_eq(a, -12, "pipe chain = -12")
     }
 }

@@ -4,8 +4,8 @@
 
 use crate::common::{BinaryOp, UnaryOp};
 use crate::expr::{
-    ArrayExpr, Block, ClosureParam, Expr, ExprKind, FieldSelector, Label, Literal, MacroCall,
-    MatchArm, SelectArm, SelectOp, StructExprField,
+    ArrayExpr, Block, ClosureParam, Expr, ExprKind, FieldSelector, Label, Literal, MatchArm,
+    SelectArm, SelectOp, StructExprField,
 };
 use crate::stmt::{Stmt, StmtKind};
 
@@ -89,16 +89,11 @@ impl Printer {
                 self.write("unsafe ");
                 self.print_block(block);
             }
-            ExprKind::Go(body) => {
-                self.write("go ");
-                self.print_expr(body);
-            }
             ExprKind::Tuple(items) => self.print_tuple_expr(items),
             ExprKind::MapLiteral(entries) => self.print_map_literal(entries),
             ExprKind::SetLiteral(entries) => self.print_set_literal(entries),
             ExprKind::Array(array) => self.print_array(array),
             ExprKind::FixedArray(array) => self.print_fixed_array(array),
-            ExprKind::MacroCall(call) => self.print_macro_call(call),
             ExprKind::Select(arms) => self.print_select(arms),
             _ => self.print_expr_control(expr),
         }
@@ -569,15 +564,6 @@ impl Printer {
         self.write(",");
     }
 
-    fn print_macro_call(&mut self, call: &MacroCall) {
-        self.print_path_expr(&call.path);
-        self.write("!");
-        let (open, close) = call.delim.pair();
-        self.write(open);
-        self.write(&call.tokens);
-        self.write(close);
-    }
-
     /// Renders a literal, escaping string contents.
     pub fn print_literal(&mut self, literal: &Literal) {
         match literal {
@@ -661,10 +647,6 @@ impl Printer {
                 self.write("defer ");
                 self.print_expr(expr);
             }
-            StmtKind::Go(expr) => {
-                self.write("go ");
-                self.print_expr(expr);
-            }
         }
     }
 }
@@ -686,8 +668,7 @@ fn expr_precedence(expr: &Expr) -> Precedence {
         | ExprKind::Loop { .. }
         | ExprKind::While { .. }
         | ExprKind::For { .. }
-        | ExprKind::Select(_)
-        | ExprKind::MacroCall(_) => PREC_PRIMARY,
+        | ExprKind::Select(_) => PREC_PRIMARY,
         ExprKind::Call { .. }
         | ExprKind::MethodCall { .. }
         | ExprKind::FieldAccess { .. }
@@ -701,8 +682,7 @@ fn expr_precedence(expr: &Expr) -> Precedence {
         ExprKind::Return(_)
         | ExprKind::Break { .. }
         | ExprKind::Continue { .. }
-        | ExprKind::Closure { .. }
-        | ExprKind::Go(_) => PREC_STMT,
+        | ExprKind::Closure { .. } => PREC_STMT,
         ExprKind::Error => PREC_PRIMARY,
     }
 }

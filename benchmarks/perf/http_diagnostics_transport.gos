@@ -14,8 +14,8 @@ fn readiness_diagnostic(url: String) -> i64 {
             } else {
                 -1
             }
-        },
-        Err(_) => -1,
+        }
+        Err(_) => -1
     }
 }
 

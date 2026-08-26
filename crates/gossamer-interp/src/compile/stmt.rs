@@ -238,20 +238,6 @@ impl<'tcx> FnBuilder<'tcx> {
                 self.compile_expr_discarded(expr)?;
                 Ok(expr_diverges(expr))
             }
-            HirStmtKind::Go(expr) => {
-                // Native goroutine spawn: compile the callee and
-                // args directly into VM ops and emit `Op::Spawn`.
-                // The dispatcher creates a fresh `Vm` on the new
-                // thread that executes the call entirely in bytecode.
-                if self.try_compile_go_native(expr)? {
-                    return Ok(false);
-                }
-                // Non-call shapes (`go { block }`, `go` over a bare
-                // expression) lift the spawned expression into a
-                // zero-arg closure and spawn that closure natively.
-                self.compile_non_call_go(expr)?;
-                Ok(false)
-            }
             HirStmtKind::Defer(expr) => {
                 // Register for block-scoped execution: emitted LIFO when
                 // control leaves the enclosing block by any path.

@@ -111,9 +111,11 @@ pub(crate) fn cast_scalar(v: &Value, target: CastTarget) -> Option<Value> {
     match target {
         CastTarget::IntNarrow { width, signed } => {
             if let Value::Float(f) = v {
-                // SPEC: float → int saturates at i64 width with no
-                // narrow mask (`300.7 as u8 == 300`).
-                return Some(Value::Int(*f as i64));
+                // A float-to-integer cast saturates at the TARGET's range:
+                // `300.7 as u8` is `255` and `-1.5 as u8` is `0`. NaN reads
+                // as zero, which `as i64` already answers.
+                let (low, high) = gossamer_abi::int_range::bounds(u32::from(width), signed);
+                return Some(Value::Int((*f as i64).clamp(low, high)));
             }
             int_base(v).map(|n| Value::Int(trunc_extend(n, width, signed)))
         }
@@ -167,12 +169,20 @@ mod tests {
     }
 
     #[test]
-    fn float_to_int_saturates_without_narrow_mask() {
-        let narrow_u8 = CastTarget::IntNarrow {
+    fn float_to_int_saturates_at_the_target_range() {
+        let unsigned = CastTarget::IntNarrow {
             width: 8,
             signed: false,
         };
-        assert_eq!(cast_int(&Value::Float(300.7), narrow_u8), 300);
+        let signed = CastTarget::IntNarrow {
+            width: 8,
+            signed: true,
+        };
+        assert_eq!(cast_int(&Value::Float(300.7), unsigned), 255);
+        assert_eq!(cast_int(&Value::Float(-1.5), unsigned), 0);
+        assert_eq!(cast_int(&Value::Float(300.7), signed), 127);
+        assert_eq!(cast_int(&Value::Float(-300.7), signed), -128);
+        assert_eq!(cast_int(&Value::Float(5.9), unsigned), 5);
         assert_eq!(cast_int(&Value::Float(1e20), CastTarget::I64), i64::MAX);
         assert_eq!(cast_int(&Value::Float(f64::NAN), CastTarget::I64), 0);
         assert_eq!(cast_int(&Value::Float(-3.9), CastTarget::I64), -3);

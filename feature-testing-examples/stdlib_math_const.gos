@@ -5,14 +5,14 @@
 use std::math
 
 fn main() {
-    println!("{:.6}", math::PI)
-    println!("{:.6}", math::E)
-    println!("{:.6}", math::SQRT_2)
-    println!("{:.6}", math::LN_2)
-    println!("{:.6}", math::LN_10)
-    println!("{:.6}", math::PHI)
+    println("{:.6}", math::PI)
+    println("{:.6}", math::E)
+    println("{:.6}", math::SQRT_2)
+    println("{:.6}", math::LN_2)
+    println("{:.6}", math::LN_10)
+    println("{:.6}", math::PHI)
     let circle_area = math::PI * 4.0 * 4.0
     let scaled = math::E * 2.0 + math::SQRT_2
-    println!("{:.6}", circle_area)
-    println!("{:.6}", scaled)
+    println("{:.6}", circle_area)
+    println("{:.6}", scaled)
 }

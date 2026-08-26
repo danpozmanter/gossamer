@@ -8,31 +8,31 @@
 
 const GOOS: Vec<String> = Vec::from(["linux", "darwin"])
 
-fn is_goos(s: &String) -> bool {
+fn is_goos(s: String) -> bool {
     GOOS.contains(s)
 }
 
 fn found_then_loop() -> bool {
     let v = Vec::from(["bandwidth", "linux"])
     let last = &v[v.len() - 1]
-    let found = is_goos(last)
+    let found = is_goos(*last)
     let mut sum = 0
     for i in 0..v.len() {
         sum += i
     }
-    println!("sum {}", sum)
+    println("sum {}", sum)
     found
 }
 
 fn missing_then_loop() -> bool {
     let v = Vec::from(["bandwidth", "plan9"])
     let last = &v[v.len() - 1]
-    let found = is_goos(last)
+    let found = is_goos(*last)
     let mut sum = 0
     for i in 0..v.len() {
         sum += i
     }
-    println!("sum {}", sum)
+    println("sum {}", sum)
     found
 }
 
@@ -43,8 +43,8 @@ fn loop_then_found() -> bool {
     for i in 0..v.len() {
         sum += i
     }
-    println!("sum {}", sum)
-    is_goos(&v[v.len() - 1])
+    println("sum {}", sum)
+    is_goos(v[v.len() - 1])
 }
 
 // A membership test held across a nested loop, with the borrow taken from
@@ -52,20 +52,20 @@ fn loop_then_found() -> bool {
 fn nested_loops() -> bool {
     let v = Vec::from(["darwin", "bandwidth"])
     let first = &v[0]
-    let found = is_goos(first)
+    let found = is_goos(*first)
     let mut sum = 0
     for i in 0..3 {
         for j in 0..v.len() {
             sum += i * j
         }
     }
-    println!("sum {}", sum)
+    println("sum {}", sum)
     found
 }
 
 fn main() {
-    println!("found_then_loop {}", found_then_loop())
-    println!("missing_then_loop {}", missing_then_loop())
-    println!("loop_then_found {}", loop_then_found())
-    println!("nested_loops {}", nested_loops())
+    println("found_then_loop {}", found_then_loop())
+    println("missing_then_loop {}", missing_then_loop())
+    println("loop_then_found {}", loop_then_found())
+    println("nested_loops {}", nested_loops())
 }

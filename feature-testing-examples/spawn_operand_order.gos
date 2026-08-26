@@ -1,0 +1,51 @@
+// An operand computed at the spawn site is bound before the spawn, so the
+// goroutine runs the call and nothing else. Each case overwrites the source
+// of an argument immediately after the spawn, so a tier that read the
+// operand inside the child would report the overwritten value instead. The
+// shapes cover the ones that do not ride the direct-call spawn ABI: more
+// than six arguments, a method call, and an argument that is itself a call.
+
+use std::sync::channel
+
+struct Reading {
+    level: i64
+}
+
+impl Reading {
+    fn report(&self, sample: i64, tx: Sender<i64>) {
+        tx.send(self.level + sample)
+    }
+}
+
+fn wide(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, tx: Sender<i64>) {
+    tx.send(a)
+}
+
+fn head(xs: Vec<i64>) -> i64 {
+    xs[0]
+}
+
+fn main() {
+    let mut xs = #[11, 22, 33]
+
+    let tx_a, rx_a = channel()
+    let __spawn_arg_0 = xs[0]
+    spawn(|| wide(__spawn_arg_0, 0, 0, 0, 0, 0, tx_a))
+    xs[0] = 99
+    println("seven arguments: {}", rx_a.recv().unwrap_or(-1))
+
+    let r = Reading { level: 100 }
+    let tx_b, rx_b = channel()
+    let __spawn_arg_1 = xs[1]
+    spawn(|| r.report(__spawn_arg_1, tx_b))
+    xs[1] = 99
+    println("method call: {}", rx_b.recv().unwrap_or(-1))
+
+    let tx_c, rx_c = channel()
+    let __spawn_arg_2 = head(xs)
+    spawn(|| wide(__spawn_arg_2, 0, 0, 0, 0, 0, tx_c))
+    xs[0] = 77
+    println("call argument: {}", rx_c.recv().unwrap_or(-1))
+
+    println("source after the spawns: {:?}", xs)
+}

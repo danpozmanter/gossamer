@@ -21,16 +21,16 @@ fn healthz(_r: http::Request) -> Result<http::Response, errors::Error> {
 }
 
 fn main() {
-    go serve()
+    spawn(|| serve())
     time::sleep(300)
-    println!("before ready: {}", probe())
+    println("before ready: {}", probe())
     lifecycle::ready()
-    println!("after ready: {}", probe())
-    println!("shutting down: {}", lifecycle::is_shutting_down())
+    println("after ready: {}", probe())
+    println("shutting down: {}", lifecycle::is_shutting_down())
     lifecycle::shutdown()
     lifecycle::await_shutdown()
-    println!("shutting down: {}", lifecycle::is_shutting_down())
-    println!("ready after shutdown: {}", lifecycle::is_ready())
+    println("shutting down: {}", lifecycle::is_shutting_down())
+    println("ready after shutdown: {}", lifecycle::is_ready())
 }
 
 fn serve() {

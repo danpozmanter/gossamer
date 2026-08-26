@@ -15,8 +15,8 @@ trait Shape {
     fn area(&self) -> i64
 }
 
-fn report<T: Shape>(s: &T) -> String {
-    format!("{}: {}", s.name(), s.area())
+fn report<T: Shape>(s: T) -> String {
+    format("{}: {}", s.name(), s.area())
 }
 ```
 
@@ -55,7 +55,7 @@ impl<T> Wrapper<T> {
 fn main() {
     let n = Wrapper { value: 42 }
     let s = Wrapper { value: "hi" }
-    println!("{} {}", n.get(), s.get())   // 42 hi
+    println("{} {}", n.get(), s.get())   // 42 hi
 }
 ```
 
@@ -76,7 +76,7 @@ fn sum<const N: usize>(xs: [i64; N]) -> i64 {
 }
 
 fn main() {
-    println!("{} {}", sum([1, 2, 3]), sum([10, 20, 30, 40, 50]))  // 6 150
+    println("{} {}", sum([1, 2, 3]), sum([10, 20, 30, 40, 50]))  // 6 150
 }
 ```
 

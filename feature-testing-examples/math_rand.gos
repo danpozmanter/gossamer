@@ -12,29 +12,29 @@ use std::math::rand
 fn main() {
     let r = rand::Rng::new(424242)
 
-    println!("u64:")
+    println("u64:")
     for _ in 0..4 {
-        println!("  {}", r.next_u64())
+        println("  {}", r.next_u64())
     }
 
-    println!("u32:")
+    println("u32:")
     for _ in 0..4 {
-        println!("  {}", r.next_u32())
+        println("  {}", r.next_u32())
     }
 
-    println!("range [0,100):")
+    println("range [0,100):")
     for _ in 0..6 {
-        println!("  {}", r.range_u64(0, 100))
+        println("  {}", r.range_u64(0, 100))
     }
 
-    println!("f64:")
+    println("f64:")
     for _ in 0..4 {
-        println!("  {:.6}", r.next_f64())
+        println("  {:.6}", r.next_f64())
     }
 
     // Determinism: a second RNG with the same seed reproduces the
     // first draw exactly.
     let a = rand::Rng::new(7)
     let b = rand::Rng::new(7)
-    println!("replay match: {}", a.next_u64() == b.next_u64())
+    println("replay match: {}", a.next_u64() == b.next_u64())
 }

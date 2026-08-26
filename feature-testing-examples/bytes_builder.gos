@@ -5,9 +5,9 @@
 // Cranelift, and LLVM. The explicit assert_eq covers the integer len.
 use std::bytes
 
-fn greeting(name: &String) -> String {
+fn greeting(name: String) -> String {
     let mut b = bytes::Builder::new()
-    b.write(&"Hello, ")
+    b.write("Hello, ")
     b.write(name)
     b.write_char('!')
     b.build()
@@ -15,33 +15,33 @@ fn greeting(name: &String) -> String {
 
 fn main() {
     // Builder: incremental string assembly.
-    println!("{}", greeting(&"world"))
+    println("{}", greeting("world"))
 
     let mut acc = bytes::Builder::new()
     let mut i = 0
     while i < 3 {
-        acc.write(&"ab")
+        acc.write("ab")
         i += 1
     }
     assert_eq(acc.len(), 6)
-    println!("len={}", acc.len())
-    println!("{}", acc.build())
+    println("len={}", acc.len())
+    println("{}", acc.build())
 
     // Buffer: byte accumulation, rendered back to a String.
     let mut buf = bytes::Buffer::new()
-    buf.write_str(&"hi")
+    buf.write_str("hi")
     buf.push(32)
-    buf.write_str(&"there")
-    println!("buflen={}", buf.len())
-    println!("{}", buf.to_string())
+    buf.write_str("there")
+    println("buflen={}", buf.len())
+    println("{}", buf.to_string())
 
     // Stateless helpers operate on the UTF-8 bytes of a string.
     match bytes::index_of("hello world".as_bytes(), "world".as_bytes()) {
-        Some(_) => println!("idx=checked")
-        None => println!("idx=checked")
+        Some(_) => println("idx=checked")
+        None => println("idx=checked")
     }
     let parts = bytes::split("a,b,,c".as_bytes(), ",".as_bytes())
-    println!("parts={}", parts.len())
+    println("parts={}", parts.len())
     let _ = bytes::replace("aXbXc".as_bytes(), "X".as_bytes(), "-".as_bytes())
-    println!("replace checked")
+    println("replace checked")
 }

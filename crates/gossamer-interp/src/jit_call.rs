@@ -3214,9 +3214,18 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         .any(|k| matches!(k, JitKind::EnumPtr(idx) if shape_needs_deep_free(*idx)));
     let enum_return_deep =
         matches!(jit.returns, JitKind::EnumPtr(idx) if shape_needs_deep_free(idx));
+    // A two-word carrier return is decoded into its `Ok` / `Err` (or
+    // `Some` / `None`) arm on the native path; the scalar fast path has
+    // no decode step and would hand the caller the raw `[disc, payload]`
+    // pair as a tuple.
+    let carrier_return = matches!(
+        jit.returns,
+        JitKind::ResultScalar(_) | JitKind::OptionScalar(_)
+    );
     let has_native = native_return.is_some()
         || result_enum.is_some()
         || result_native_str
+        || carrier_return
         || tuple_return.is_some()
         || enum_param_deep
         || enum_return_deep

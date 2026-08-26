@@ -32,7 +32,7 @@ pub fn render_initial_manifest(id: &ProjectId, version: Version) -> String {
 #[must_use]
 pub fn render_main_source(id: &ProjectId) -> String {
     format!(
-        "fn main() {{\n    println!(\"hello from {tail}\")\n}}\n",
+        "fn main() {{\n    println(\"hello from {tail}\")\n}}\n",
         tail = id.tail()
     )
 }

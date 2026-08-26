@@ -1,8 +1,7 @@
 // Cross-tier regression for the stateless `http::router` pattern-lookup
 // helpers `router::new` / `router::add` / `router::lookup`. `add`
 // registers a (method, pattern) route; `lookup(method, path)` returns
-// `Option<i64>` - the index of the first route whose method (empty =
-// any) and RFC-style `{capture}` / `{rest...}` pattern match. The
+// `Option<i64>` - the index of the first route whose method (empty: // any) and RFC-style `{capture}` / `{rest...}` pattern match. The
 // compiled tier wires `gos_rt_router_add_pattern` / `gos_rt_router_lookup`
 // over the same `GosRouter` route table the serving Router uses; the
 // interp tier keeps an id-keyed registry. Matching is bit-identical on
@@ -18,29 +17,29 @@ fn main() {
     let _ = router::add(r, "GET", "/health")
 
     match router::lookup(r, "GET", "/users/42") {
-        Some(i) => println!("a={}", i)
-        None => println!("a=none")
+        Some(i) => println("a={}", i)
+        None => println("a=none")
     }
     match router::lookup(r, "POST", "/users") {
-        Some(i) => println!("b={}", i)
-        None => println!("b=none")
+        Some(i) => println("b={}", i)
+        None => println("b=none")
     }
     match router::lookup(r, "GET", "/files/docs/readme.md") {
-        Some(i) => println!("c={}", i)
-        None => println!("c=none")
+        Some(i) => println("c={}", i)
+        None => println("c=none")
     }
     match router::lookup(r, "GET", "/health") {
-        Some(i) => println!("d={}", i)
-        None => println!("d=none")
+        Some(i) => println("d={}", i)
+        None => println("d=none")
     }
     // No DELETE route registered -> None.
     match router::lookup(r, "DELETE", "/users/42") {
-        Some(i) => println!("e={}", i)
-        None => println!("e=none")
+        Some(i) => println("e={}", i)
+        None => println("e=none")
     }
     // Unknown path -> None.
     match router::lookup(r, "GET", "/missing") {
-        Some(i) => println!("f={}", i)
-        None => println!("f=none")
+        Some(i) => println("f={}", i)
+        None => println("f=none")
     }
 }

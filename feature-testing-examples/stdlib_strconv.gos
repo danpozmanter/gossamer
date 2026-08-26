@@ -5,14 +5,14 @@
 use std::strconv
 
 fn main() {
-    println!("parse_i64={}", strconv::parse_i64("123").unwrap())
-    println!("parse_i64_neg={}", strconv::parse_i64("-45").unwrap())
-    println!("parse_f64={:.4}", strconv::parse_f64("3.14159").unwrap())
-    println!("parse_bool={}", strconv::parse_bool("true").unwrap())
-    println!("format_i64={}", strconv::format_i64(789))
-    println!("format_i64_neg={}", strconv::format_i64(-256))
-    println!("parse_i64_1000={}", strconv::parse_i64("1000").unwrap())
-    println!("bad_parse={}", match strconv::parse_i64("nope") {
+    println("parse_i64={}", strconv::parse_i64("123").unwrap())
+    println("parse_i64_neg={}", strconv::parse_i64("-45").unwrap())
+    println("parse_f64={:.4}", strconv::parse_f64("3.14159").unwrap())
+    println("parse_bool={}", strconv::parse_bool("true").unwrap())
+    println("format_i64={}", strconv::format_i64(789))
+    println("format_i64_neg={}", strconv::format_i64(-256))
+    println("parse_i64_1000={}", strconv::parse_i64("1000").unwrap())
+    println("bad_parse={}", match strconv::parse_i64("nope") {
         Ok(_) => -1
         Err(_) => 0
     })

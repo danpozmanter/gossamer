@@ -30,10 +30,10 @@ fn channel_worker(tx: channel::Sender<i64>) {
 }
 
 fn counter_with_channel() -> i64 {
-    let (tx, rx) = channel(2)
+    let tx, rx = channel(2)
 
-    go channel_worker(tx)
-    go channel_worker(tx)
+    spawn(|| channel_worker(tx))
+    spawn(|| channel_worker(tx))
 
     // Allow the scheduler to run the goroutines before blocking on recv.
     time::sleep(50)
@@ -49,10 +49,10 @@ fn counter_with_channel() -> i64 {
 
 fn main() {
     let mutex_result = counter_with_mutex()
-    println!("mutex counter = {}", mutex_result)
+    println("mutex counter = {}", mutex_result)
 
     let channel_result = counter_with_channel()
-    println!("channel counter = {}", channel_result)
+    println("channel counter = {}", channel_result)
 }
 
 #[cfg(test)]
@@ -62,6 +62,6 @@ mod tests {
     #[test]
     fn channel_counter_reaches_200() {
         let result = super::counter_with_channel()
-        let _ = testing::check_eq(&result, &200, "channel counter = 200")
+        let _ = testing::check_eq(result, 200, "channel counter = 200")
     }
 }

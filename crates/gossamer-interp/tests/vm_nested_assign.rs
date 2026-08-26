@@ -22,9 +22,10 @@ fn capture_writer(text: &str) {
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("nested_assign.gos", source.to_string());
-    let (sf, parse_diags) = parse_with_autoderive(source, file);
+    let (mut sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -46,7 +47,7 @@ struct Outer { inner: Inner, tag: i64 }
 fn main() {
     let mut o = Outer { inner: Inner { v: 1 }, tag: 9 }
     o.inner.v = 42
-    println!("{} {}", o.inner.v, o.tag)
+    println("{} {}", o.inner.v, o.tag)
 }
 "#;
     assert_eq!(run_main(src), "42 9\n");
@@ -59,7 +60,7 @@ fn main() {
     let mut grid = [[1, 2], [3, 4]]
     grid[0][1] = 99
     grid[1][0] = 77
-    println!("{} {} {} {}", grid[0][0], grid[0][1], grid[1][0], grid[1][1])
+    println("{} {} {} {}", grid[0][0], grid[0][1], grid[1][0], grid[1][1])
 }
 "#;
     assert_eq!(run_main(src), "1 99 77 4\n");
@@ -72,7 +73,7 @@ struct Cell { v: i64 }
 fn main() {
     let mut row = [Cell { v: 1 }, Cell { v: 2 }]
     row[1].v = 55
-    println!("{} {}", row[0].v, row[1].v)
+    println("{} {}", row[0].v, row[1].v)
 }
 "#;
     assert_eq!(run_main(src), "1 55\n");

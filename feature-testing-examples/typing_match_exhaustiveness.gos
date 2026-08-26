@@ -30,7 +30,7 @@ fn unwrap_or(o: Option<Result<i64, String>>) -> i64 {
     }
 }
 
-fn area(s: &Shape) -> f64 {
+fn area(s: Shape) -> f64 {
     match s {
         Shape::Circle(r) => 3.0 * r * r
         Shape::Rect { w, h } => w * h
@@ -38,10 +38,10 @@ fn area(s: &Shape) -> f64 {
 }
 
 fn main() {
-    println!("{} {} {} {}", pair(true, true), pair(true, false), pair(false, true), pair(false, false))
-    println!("{}", ends([4, 5, 6]))
-    println!("{}", unwrap_or(Some(Ok(7))))
-    println!("{}", unwrap_or(None))
-    println!("{}", area(&Shape::Circle(2.0)))
-    println!("{}", area(&Shape::Rect { w: 3.0, h: 4.0 }))
+    println("{} {} {} {}", pair(true, true), pair(true, false), pair(false, true), pair(false, false))
+    println("{}", ends([4, 5, 6]))
+    println("{}", unwrap_or(Some(Ok(7))))
+    println("{}", unwrap_or(None))
+    println("{}", area(Shape::Circle(2.0)))
+    println("{}", area(Shape::Rect { w: 3.0, h: 4.0 }))
 }

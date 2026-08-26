@@ -44,7 +44,7 @@ impl Parser<'_> {
         if self.at_keyword(Keyword::Let) {
             return self.parse_let_stmt();
         }
-        if self.at_keyword(Keyword::Defer) {
+        if self.at_defer_stmt() {
             self.bump();
             let body = self.parse_expr();
             self.eat_statement_semicolon();
@@ -60,18 +60,16 @@ impl Parser<'_> {
         if self.at_arena_block() {
             return self.parse_arena_block();
         }
-        if self.at_keyword(Keyword::Go) {
-            self.bump();
-            let value = self.parse_expr();
-            self.eat_statement_semicolon();
-            return StmtKind::Go(Box::new(value));
-        }
         if is_item_start(self) {
             let item = self.parse_item();
             return StmtKind::Item(Box::new(item));
         }
         let before = self.tokens.checkpoint();
-        let expression = self.with_empty_braces_as_blocks(Self::parse_expr);
+        let mut expression = self.with_empty_braces_as_blocks(Self::parse_expr);
+        if self.at_punct(Punct::Comma) {
+            expression = self.parse_comma_assignment(expression);
+        }
+        self.reject_parenthesised_assign_targets(&expression);
         if self.tokens.checkpoint() == before && !is_stmt_start(self) {
             self.recover_in_block();
         }
@@ -80,6 +78,21 @@ impl Parser<'_> {
             expr: Box::new(expression),
             has_semi,
         }
+    }
+
+    /// `true` at the head of a `defer expr` statement. `defer` is
+    /// contextual, never reserved: what it defers has to have an effect,
+    /// so the word opens the statement only when a name, a keyword, or a
+    /// block follows it. Everywhere else - `defer(x)`, `defer.close()`,
+    /// `defer = 1`, `defer + 1`, a trailing `defer` - it is an ordinary
+    /// identifier.
+    fn at_defer_stmt(&self) -> bool {
+        use gossamer_lex::TokenKind;
+        self.at_contextual_word("defer")
+            && matches!(
+                self.peek_nth(1).kind,
+                TokenKind::Ident | TokenKind::Keyword(_) | TokenKind::Punct(Punct::LBrace)
+            )
     }
 
     /// `true` at the head of an `arena` block. A bare `arena` followed by
@@ -175,7 +188,7 @@ impl Parser<'_> {
 
     fn parse_let_stmt(&mut self) -> StmtKind {
         self.bump();
-        let pattern = self.parse_pattern();
+        let pattern = self.parse_let_pattern();
         let ty = if self.eat_punct(Punct::Colon) {
             Some(self.parse_type())
         } else {
@@ -188,7 +201,7 @@ impl Parser<'_> {
             if refutable {
                 self.enter_no_struct();
             }
-            let expr = self.parse_expr();
+            let expr = self.parse_comma_value_list();
             if refutable {
                 self.leave_no_struct();
             }
@@ -214,6 +227,111 @@ impl Parser<'_> {
                 StmtKind::Let { pattern, ty, init }
             }
         }
+    }
+
+    /// Completes a comma-separated assignment whose first place is already
+    /// parsed: `a, b = x, y` and `a, b += x, y` write the places element-wise
+    /// from the value on the right.
+    fn parse_comma_assignment(&mut self, first: Expr) -> Expr {
+        let start = first.span;
+        let mut places = vec![first];
+        while self.eat_punct(Punct::Comma) {
+            places.push(self.with_empty_braces_as_blocks(Self::parse_expr_no_assign));
+        }
+        let places_span = self.join(start, self.last_span());
+        let place = Expr::new(self.alloc_id(), places_span, ExprKind::Tuple(places));
+        let Some(op) = self.eat_assign_op() else {
+            self.record(
+                ParseError::unexpected("an assignment operator", self.peek_text()),
+                self.peek_span(),
+            );
+            return place;
+        };
+        let value = self.with_empty_braces_as_blocks(Self::parse_comma_value_list);
+        let span = self.join(start, value.span);
+        Expr::new(
+            self.alloc_id(),
+            span,
+            ExprKind::Assign {
+                op,
+                place: Box::new(place),
+                value: Box::new(value),
+            },
+        )
+    }
+
+    /// Parses the value side of a comma-separated binding or assignment: one
+    /// expression, or several gathered into the tuple they stand for.
+    pub(crate) fn parse_comma_value_list(&mut self) -> Expr {
+        let first = self.parse_expr();
+        if !self.at_punct(Punct::Comma) {
+            return first;
+        }
+        let start = first.span;
+        let mut elements = vec![first];
+        while self.eat_punct(Punct::Comma) {
+            elements.push(self.parse_expr_no_assign());
+        }
+        let span = self.join(start, self.last_span());
+        let id = self.alloc_id();
+        Expr::new(id, span, ExprKind::Tuple(elements))
+    }
+
+    /// Parses a `let` binding's target: one pattern, or several separated by
+    /// commas, which bind the elements of a tuple value element-wise.
+    ///
+    /// The comma-separated list is the one spelling here. Parentheses group a
+    /// tuple pattern where a pattern sits beside others - a `match` arm, a
+    /// `for` binding, a parameter - and a `let` target has no such neighbour,
+    /// so a parenthesised list at this position reports `GP0042` with the
+    /// paren-free rewrite.
+    fn parse_let_pattern(&mut self) -> Pattern {
+        let parenthesised = self.at_punct(Punct::LParen);
+        let first = self.parse_pattern();
+        if !self.at_punct(Punct::Comma) {
+            // A parenthesised pattern standing alone IS the target list, so
+            // it takes the paren-free rewrite. One followed by a comma is a
+            // nested element of that list and keeps its parentheses.
+            if parenthesised && matches!(first.kind, PatternKind::Tuple(_)) {
+                self.report_parenthesised_let_pattern(first.span);
+            }
+            return first;
+        }
+        let start = first.span;
+        let mut elements = vec![first];
+        while self.eat_punct(Punct::Comma) {
+            elements.push(self.parse_pattern());
+        }
+        let span = self.join(start, self.last_span());
+        let id = self.alloc_id();
+        Pattern::new(id, span, PatternKind::Tuple(elements))
+    }
+
+    /// Reports a parenthesised assignment target list, which reads the same
+    /// way a parenthesised `let` target does and takes the same rewrite.
+    fn reject_parenthesised_assign_targets(&mut self, expr: &Expr) {
+        let ExprKind::Assign { place, .. } = &expr.kind else {
+            return;
+        };
+        if !matches!(place.kind, ExprKind::Tuple(_)) {
+            return;
+        }
+        if !self.slice(place.span).starts_with('(') {
+            return;
+        }
+        self.report_parenthesised_let_pattern(place.span);
+    }
+
+    /// Reports a parenthesised `let` target, carrying the rewrite that drops
+    /// the outer parentheses.
+    fn report_parenthesised_let_pattern(&mut self, span: Span) {
+        let written = self.slice(span);
+        let inner = written
+            .strip_prefix('(')
+            .and_then(|rest| rest.strip_suffix(')'))
+            .map_or(written, str::trim);
+        let replacement = inner.to_string();
+        self.record(ParseError::LetPatternParens { replacement }, span);
     }
 
     fn desugar_let_else(&mut self, pattern: Pattern, init: Box<Expr>) -> StmtKind {
@@ -322,7 +440,7 @@ impl Parser<'_> {
 /// so `println value` cannot silently become two expression statements.
 fn requires_statement_separator(kind: &StmtKind) -> bool {
     match kind {
-        StmtKind::Let { .. } | StmtKind::Defer(_) | StmtKind::Go(_) => true,
+        StmtKind::Let { .. } | StmtKind::Defer(_) => true,
         StmtKind::Item(_) => false,
         StmtKind::Expr { has_semi: true, .. } => false,
         StmtKind::Expr {

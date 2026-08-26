@@ -27,46 +27,46 @@ fn tally(rounds: i64) -> i64 {
 }
 
 fn main() {
-    println!("tally {}", tally(3000))
+    println("tally {}", tally(3000))
 
     let nums = #{ 3, 1, 5, 2 }
-    println!("{:?}", nums)
-    println!("len {} has3 {} has9 {}", nums.len(), nums.contains(3), nums.contains(9))
-    for n in nums { print!("{} ", n) }
-    println!("")
+    println("{:?}", nums)
+    println("len {} has3 {} has9 {}", nums.len(), nums.contains(3), nums.contains(9))
+    for n in nums { print("{} ", n) }
+    println("")
     let mut ordered = nums.iter().collect()
     ordered.sort()
-    println!("sorted {:?}", ordered)
+    println("sorted {:?}", ordered)
 
     // Sequence operations are the iterator's, and read that same walk.
-    println!("take {:?}", nums.iter().take(2).collect())
-    println!("skip {:?}", nums.iter().skip(2).collect())
-    println!("enumerate {:?}", nums.iter().enumerate().collect())
-    println!("count {} sum {}", nums.iter().count(|n| n > 2), nums.iter().sum())
+    println("take {:?}", nums.iter().take(2).collect())
+    println("skip {:?}", nums.iter().skip(2).collect())
+    println("enumerate {:?}", nums.iter().enumerate().collect())
+    println("count {} sum {}", nums.iter().count(|n| n > 2), nums.iter().sum())
 
     let ranked: BTreeSet<i64> = #{ 3, 1, 5, 2 }
-    println!("{:?}", ranked)
-    for n in ranked { print!("{} ", n) }
-    println!("")
-    println!("btree take {:?}", ranked.iter().take(2).collect())
+    println("{:?}", ranked)
+    for n in ranked { print("{} ", n) }
+    println("")
+    println("btree take {:?}", ranked.iter().take(2).collect())
 
     let words = #{ "pear", "apple", "fig" }
-    println!("{:?}", words)
-    println!("words len {} has {}", words.len(), words.contains("fig"))
+    println("{:?}", words)
+    println("words len {} has {}", words.len(), words.contains("fig"))
 
     let mut cells: Set<Cell> = Set::new()
     cells.insert(Cell { row: 2, col: 1 })
     cells.insert(Cell { row: 1, col: 4 })
-    println!("cells {} has {}", cells.len(), cells.contains(Cell { row: 1, col: 4 }))
-    for c in cells { print!("{}:{} ", c.row, c.col) }
-    println!("")
+    println("cells {} has {}", cells.len(), cells.contains(Cell { row: 1, col: 4 }))
+    for c in cells { print("{}:{} ", c.row, c.col) }
+    println("")
 
     // Set algebra answers sets, and each result reads the way its receiver does.
     let left = #{ 1, 2, 3 }
     let right = #{ 3, 4 }
-    println!("union {:?}", left.union(right))
-    println!("intersection {:?}", left.intersection(right))
-    println!("difference {:?}", left.difference(right))
-    println!("symmetric {:?}", left.symmetric_difference(right))
-    println!("subset {} disjoint {}", #{ 1, 2 }.is_subset(left), left.is_disjoint(#{ 9 }))
+    println("union {:?}", left.union(right))
+    println("intersection {:?}", left.intersection(right))
+    println("difference {:?}", left.difference(right))
+    println("symmetric {:?}", left.symmetric_difference(right))
+    println("subset {} disjoint {}", #{ 1, 2 }.is_subset(left), left.is_disjoint(#{ 9 }))
 }

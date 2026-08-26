@@ -315,6 +315,26 @@ impl<'a> Builder<'a> {
         self.current = None;
     }
 
+    /// Registers the child layout of a lifted closure's environment and
+    /// answers the codegen symbol naming it.
+    ///
+    /// Word 0 holds the lifted body's address and is never a child, so
+    /// capture `i` is word `i + 1`. The record shape is the one an enum
+    /// variant uses, so release walks it with the machinery already in
+    /// place.
+    fn register_closure_env_meta(&mut self, name: &str, child_entries: &[i64]) -> String {
+        use gossamer_abi::rc::RC_KIND_STRUCT;
+        let sanitised: String = name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        let symbol = format!("gos_rc_meta_closure_{sanitised}");
+        let mut blob = vec![RC_KIND_STRUCT, 1, 0, child_entries.len() as i64];
+        blob.extend_from_slice(child_entries);
+        self.tcx.register_rc_meta(symbol.clone(), blob);
+        symbol
+    }
+
     pub(crate) fn lower_lifted_closure(
         &mut self,
         name: &Ident,
@@ -322,6 +342,37 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
+        use gossamer_abi::rc::{RC_CHILD_KIND_SHIFT, RC_CHILD_VEC};
+
+        // Lower the captures first: the environment owns a share of every
+        // RC-managed one, so its child layout is decided by their types.
+        let mut capture_locals = Vec::with_capacity(captures.len());
+        let mut vec_captures = vec![false; captures.len()];
+        let mut child_entries: Vec<i64> = Vec::new();
+        for (i, cap) in captures.iter().enumerate() {
+            let value_local = self.lower_expr(cap)?;
+            let value_ty = self.locals[value_local.0 as usize].ty;
+            let word = i as i64 + 1;
+            if self.tcx.is_rc_managed(value_ty) {
+                child_entries.push(word);
+            } else if matches!(
+                self.tcx.kind_of(value_ty),
+                gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
+            ) {
+                child_entries.push(word | (RC_CHILD_VEC << RC_CHILD_KIND_SHIFT));
+                vec_captures[i] = true;
+            }
+            capture_locals.push(value_local);
+        }
+        // A closure capturing nothing the environment must release takes the
+        // empty symbol, which lowers to a null meta pointer the runtime
+        // treats as a leaf.
+        let meta_symbol = if child_entries.is_empty() {
+            String::new()
+        } else {
+            self.register_closure_env_meta(&name.name, &child_entries)
+        };
+
         let size = i128::from((captures.len() + 1) as i64 * 8);
         let size_local = self.fresh(ty);
         self.emit_assign(
@@ -333,8 +384,11 @@ impl<'a> Builder<'a> {
         self.emit_assign(
             Place::local(env_local),
             Rvalue::CallIntrinsic {
-                name: "gos_alloc",
-                args: vec![Operand::Copy(Place::local(size_local))],
+                name: "gos_rc_alloc",
+                args: vec![
+                    Operand::Copy(Place::local(size_local)),
+                    Operand::Const(ConstValue::Str(meta_symbol)),
+                ],
             },
             span,
         );
@@ -366,7 +420,7 @@ impl<'a> Builder<'a> {
             },
             span,
         );
-        for (i, cap) in captures.iter().enumerate() {
+        for (i, value_local) in capture_locals.into_iter().enumerate() {
             let offset = (i as i64 + 1) * 8;
             let offset_local = self.fresh(ty);
             self.emit_assign(
@@ -374,7 +428,21 @@ impl<'a> Builder<'a> {
                 Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(offset)))),
                 span,
             );
-            let value_local = self.lower_expr(cap)?;
+            // The environment's own share of a Vec capture. An RC-managed
+            // capture is retained by the store, which the drop pass reads as
+            // an acquisition; a Vec carries its count outside the RC header,
+            // so its share is taken here, exactly as an enum payload's is.
+            if vec_captures[i] {
+                let retain_dest = self.fresh(ty);
+                self.emit_assign(
+                    Place::local(retain_dest),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_rt_vec_retain",
+                        args: vec![Operand::Copy(Place::local(value_local))],
+                    },
+                    span,
+                );
+            }
             let sink = self.fresh(ty);
             self.emit_assign(
                 Place::local(sink),

@@ -11,7 +11,7 @@ fn main() {
         thread::yield_now()
         sum += i
     }
-    println!("sum={}", sum)
+    println("sum={}", sum)
     thread::yield_now()
-    println!("done")
+    println("done")
 }

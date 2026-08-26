@@ -8,7 +8,7 @@
 
 fn classify(n: i64) -> Result<i64, String> {
     if n < 0 {
-        Err(format!("neg {n}"))
+        Err(format("neg {n}"))
     } else {
         Ok(n)
     }
@@ -32,12 +32,12 @@ fn main() {
     }
     let opt = if acc > 0 { Some(acc) } else { None }
     match opt {
-        Some(v) => println!("acc={v}")
-        None => println!("none")
+        Some(v) => println("acc={v}")
+        None => println("none")
     }
     let r = classify(-5)
     match r {
-        Ok(v) => println!("ok {v}")
-        Err(e) => println!("err {e}")
+        Ok(v) => println("ok {v}")
+        Err(e) => println("err {e}")
     }
 }

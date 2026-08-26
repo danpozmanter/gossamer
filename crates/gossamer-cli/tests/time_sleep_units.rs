@@ -137,9 +137,9 @@ fn time_sleep_one_second_actually_waits_at_least_900_ms_in_all_tiers() {
     let body = r#"
 use std::time
 fn main() {
-    println!("before")
+    println("before")
     time::sleep(1000)
-    println!("after")
+    println("after")
 }
 "#;
     let (dir, src) = write_source("sleep_one_second", body);
@@ -211,7 +211,7 @@ fn time_sleep_zero_does_not_block_in_all_tiers() {
 use std::time
 fn main() {
     time::sleep(0)
-    println!("done")
+    println("done")
 }
 "#;
     let (dir, src) = write_source("sleep_zero", body);
@@ -258,7 +258,7 @@ fn time_sleep_negative_is_rejected_in_all_tiers() {
 use std::time
 fn main() {
     time::sleep(-5)
-    println!("done")
+    println("done")
 }
 "#;
     let (dir, src) = write_source("sleep_negative", body);

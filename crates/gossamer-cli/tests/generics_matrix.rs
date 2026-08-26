@@ -186,11 +186,11 @@ fn map_f64(xs: Vec<f64>, f: Fn(f64) -> f64) -> Vec<f64> {
 fn main() {
     let ints: Vec<i64> = [1, 2, 3, 4].to_vec()
     let doubled = map_i64(ints, |x| x * 2)
-    println!("ints[3]={}", doubled[3])
+    println("ints[3]={}", doubled[3])
 
     let floats: Vec<f64> = [1.0, 2.0, 3.0, 4.0].to_vec()
     let halved = map_f64(floats, |x| x * 0.5)
-    println!("floats[3]={:.1}", halved[3])
+    println("floats[3]={:.1}", halved[3])
 }
 "#;
     assert_three_tier_parity("hof_two_concrete_types", src, "ints[3]=8\nfloats[3]=2.0");
@@ -211,8 +211,8 @@ fn main() {
     let bias = 10
     let f1 = |y: i64| y * scale
     let f2 = |y: i64| y + bias
-    println!("{} {}", apply(f1, 4), apply(f2, 4))
-    println!("{} {}", apply(f1, 7), apply(f2, 7))
+    println("{} {}", apply(f1, 4), apply(f2, 4))
+    println("{} {}", apply(f1, 7), apply(f2, 7))
 }
 "#;
     assert_three_tier_parity("hof_two_closure_shapes", src, "12 14\n21 17");
@@ -236,11 +236,11 @@ fn main() {
     labels.insert(1, "first")
     labels.insert(2, "second")
 
-    if let Some(c) = counts.get(&"apple") {
-        println!("apple={}", c)
+    if let Some(c) = counts.get("apple") {
+        println("apple={}", c)
     }
-    if let Some(l) = labels.get(&2) {
-        println!("two={}", l)
+    if let Some(l) = labels.get(2) {
+        println("two={}", l)
     }
 }
 "#;
@@ -265,11 +265,11 @@ fn main() {
     let mut nums: Vec<i64> = [1, 2, 3].to_vec()
     nums.push(4)
 
-    if let Some(c) = counts.get(&"b") {
-        println!("counts.b={}", c)
+    if let Some(c) = counts.get("b") {
+        println("counts.b={}", c)
     }
-    println!("nums[3]={}", nums[3])
-    println!("nums.len={}", nums.len())
+    println("nums[3]={}", nums[3])
+    println("nums.len={}", nums.len())
 }
 "#;
     assert_three_tier_parity(
@@ -299,9 +299,9 @@ fn main() {
     let xs: Vec<i64> = [1, 5, 2, 7, 3, 8].to_vec()
     let threshold = 4
     let n = count_over(xs, |x| x > threshold)
-    println!("over_{}={}", threshold, n)
+    println("over_{}={}", threshold, n)
     let even_n = count_over(xs, |x| x % 2 == 0)
-    println!("evens={}", even_n)
+    println("evens={}", even_n)
 }
 "#;
     assert_three_tier_parity("hof_closure_with_capture", src, "over_4=3\nevens=2");
@@ -334,7 +334,7 @@ fn main() {
     let s2 = apply(pair_sum, 2)
     let s3 = apply(pair_sum, 3)
     let total = s1 + s2 + s3
-    println!("total={}", total)
+    println("total={}", total)
 }
 "#;
     // 1*10 + 1*100 + 2*10 + 2*100 + 3*10 + 3*100 = 660

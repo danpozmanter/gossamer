@@ -30,8 +30,8 @@ fn main() {
     let mut stack = Stack::new()
     stack.push(5)
 
-    println!("in tuple: {:?}", (queue, 1))
-    println!("heap in tuple: {:?}", (heap, 2))
+    println("in tuple: {:?}", (queue, 1))
+    println("heap in tuple: {:?}", (heap, 2))
 
     let held = Holder {
         queue: queue
@@ -42,6 +42,6 @@ fn main() {
         heap: heap
         stack: stack
     }
-    println!("display: {}", held)
-    println!("debug: {:?}", held)
+    println("display: {}", held)
+    println("debug: {:?}", held)
 }

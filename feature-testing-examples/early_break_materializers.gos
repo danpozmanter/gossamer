@@ -16,7 +16,7 @@ fn first_hit() -> String {
     let re = match regex::compile("ab+") {
         Ok(p) => p
         Err(e) => {
-            println!("compile error: {}", e)
+            println("compile error: {}", e)
             return ""
         }
     }
@@ -32,7 +32,7 @@ fn first_piece() -> String {
     let re = match regex::compile(",") {
         Ok(p) => p
         Err(e) => {
-            println!("compile error: {}", e)
+            println("compile error: {}", e)
             return ""
         }
     }
@@ -48,7 +48,7 @@ fn first_full_match() -> String {
     let re = match regex::compile("(a)(b)?") {
         Ok(p) => p
         Err(e) => {
-            println!("compile error: {}", e)
+            println("compile error: {}", e)
             return ""
         }
     }
@@ -85,18 +85,18 @@ fn key_count_after_break() -> i64 {
 }
 
 fn main() {
-    println!("find_all first: {}", first_hit())
-    println!("split first: {}", first_piece())
-    println!("captures_all first: {}", first_full_match())
-    println!("strings split first: {}", first_split_field())
-    println!("keys seen after break: {}", key_count_after_break())
+    println("find_all first: {}", first_hit())
+    println("split first: {}", first_piece())
+    println("captures_all first: {}", first_full_match())
+    println("strings split first: {}", first_split_field())
+    println("keys seen after break: {}", key_count_after_break())
     // Full-iteration pass over a fresh materializer right after the
     // early breaks above: the frees from the broken loops must not
     // have corrupted the allocator.
     let re = match regex::compile("[0-9]+") {
         Ok(p) => p
         Err(e) => {
-            println!("compile error: {}", e)
+            println("compile error: {}", e)
             return
         }
     }
@@ -104,5 +104,5 @@ fn main() {
     for hit in regex::find_all(re, "7 and 22 and 333") {
         total += hit.1 - hit.0
     }
-    println!("digit span total: {}", total)
+    println("digit span total: {}", total)
 }

@@ -15,7 +15,7 @@ fn classify(xs: Vec<i64>) -> i64 {
 }
 
 fn main() {
-    println!("start")
-    println!("{}", classify(#[1, 2, 3]))
-    println!("unreached")
+    println("start")
+    println("{}", classify(#[1, 2, 3]))
+    println("unreached")
 }

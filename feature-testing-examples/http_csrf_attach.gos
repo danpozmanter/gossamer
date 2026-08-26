@@ -12,7 +12,7 @@
 
 use std::http
 
-fn header_of(headers: &[(String, String)], want: String) -> String {
+fn header_of(headers: [(String, String)], want: String) -> String {
     let mut found = ""
     for (name, value) in headers {
         if name.to_lowercase() == want { found = *value }
@@ -33,48 +33,48 @@ fn main() {
     let token = match http::csrf::issue_token(cfg.key) {
         Ok(t) => t
         Err(_) => {
-            println!("issue: err")
+            println("issue: err")
             return
         }
     }
 
     // Attach the CSRF cookie to a response, then read the Set-Cookie back.
     let resp = http::Response::text(200, "ok")
-    let resp = http::csrf::attach_cookie(resp, &token, &cfg)
-    let set_cookie = header_of(&resp.headers, "set-cookie")
-    println!("attach_prefix={}", set_cookie.starts_with("gos_csrf="))
-    println!("attach_attrs={}", set_cookie.contains("SameSite=Lax"))
+    let resp = http::csrf::attach_cookie(resp, token, cfg)
+    let set_cookie = header_of(resp.headers, "set-cookie")
+    println("attach_prefix={}", set_cookie.starts_with("gos_csrf="))
+    println("attach_attrs={}", set_cookie.contains("SameSite=Lax"))
 
     // A client-built request echoes the token in the cookie + header.
     let req = http::Client::new().post("http://app.example.com/do")
         .header("origin", "https://app.example.com")
         .header("cookie", "gos_csrf=" + &token)
-        .header("X-CSRF-Token", &token)
+        .header("X-CSRF-Token", token)
 
-    let supplied = match http::csrf::extract_token(req, &cfg) {
+    let supplied = match http::csrf::extract_token(req, cfg) {
         Some(t) => t
         None => ""
     }
-    println!("extract_match={}", supplied == token)
+    println("extract_match={}", supplied == token)
 
-    match http::csrf::check(req, http::csrf::RouteAuth::CookieSession, &cfg) {
-        Ok(_) => println!("check_valid=ok")
-        Err(_) => println!("check_valid=err")
+    match http::csrf::check(req, http::csrf::RouteAuth::CookieSession, cfg) {
+        Ok(_) => println("check_valid=ok")
+        Err(_) => println("check_valid=err")
     }
 
     // Bearer-only routes bypass the check entirely.
-    match http::csrf::check(req, http::csrf::RouteAuth::BearerOnly, &cfg) {
-        Ok(_) => println!("check_bearer=ok")
-        Err(_) => println!("check_bearer=err")
+    match http::csrf::check(req, http::csrf::RouteAuth::BearerOnly, cfg) {
+        Ok(_) => println("check_bearer=ok")
+        Err(_) => println("check_bearer=err")
     }
 
     // A request from an untrusted origin is rejected.
     let evil = http::Client::new().post("http://evil/")
         .header("origin", "https://evil.example.org")
         .header("cookie", "gos_csrf=" + &token)
-        .header("X-CSRF-Token", &token)
-    match http::csrf::check(evil, http::csrf::RouteAuth::CookieSession, &cfg) {
-        Ok(_) => println!("check_evil=ok")
-        Err(_) => println!("check_evil=err")
+        .header("X-CSRF-Token", token)
+    match http::csrf::check(evil, http::csrf::RouteAuth::CookieSession, cfg) {
+        Ok(_) => println("check_evil=ok")
+        Err(_) => println("check_evil=err")
     }
 }

@@ -350,7 +350,7 @@ fn is_valid_identifier(name: &str) -> bool {
 /// from the broader `KEYWORDS` constant (which feeds completion)
 /// so rename validation stays narrow and predictable.
 const RESERVED_KEYWORDS: &[&str] = &[
-    "as", "break", "const", "continue", "defer", "else", "enum", "false", "fn", "for", "go", "if",
+    "as", "break", "const", "continue", "defer", "else", "enum", "false", "fn", "for", "if",
     "impl", "in", "let", "loop", "match", "mod", "mut", "pub", "return", "select", "static",
     "struct", "trait", "true", "type", "unsafe", "use", "where", "while",
 ];

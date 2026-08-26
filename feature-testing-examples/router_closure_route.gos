@@ -14,6 +14,6 @@ fn echo(_q: http::Request) -> Result<http::Response, errors::Error> {
 
 fn main() -> Result<(), errors::Error> {
     let _r = router::Router::new().get("/ping", |_q| Ok(http::Response::text(200, "ok"))).post("/echo", echo)
-    println!("routes = {}", 2)
+    println("routes = {}", 2)
     Ok(())
 }

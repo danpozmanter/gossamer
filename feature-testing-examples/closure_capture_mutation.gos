@@ -10,22 +10,22 @@ fn main() {
     // Read-only capture
     let scale = 3
     let scaled = |y: i64| scale * y
-    println!("scaled(7) = {}", scaled(7))
-    println!("apply_twice(scaled, 2) = {}", apply_twice(scaled, 2))
+    println("scaled(7) = {}", scaled(7))
+    println("apply_twice(scaled, 2) = {}", apply_twice(scaled, 2))
 
     // Closure capturing immutable offset
     let offset = 10
     let add_offset = |z: i64| z + offset
-    println!("add_offset(5) = {}", add_offset(5))
-    println!("offset = {}", offset)
+    println("add_offset(5) = {}", add_offset(5))
+    println("offset = {}", offset)
 
     // Accumulation via direct loop (mutable state outside closure scope)
     let mut accumulator = 0
     for i in 1..5 {
         accumulator += i
-        println!("step {} => {}", i, accumulator)
+        println("step {} => {}", i, accumulator)
     }
-    println!("final accumulator = {}", accumulator)
+    println("final accumulator = {}", accumulator)
 
     // Filter using captured threshold
     let xs = #[1, 2, 3, 4, 5]
@@ -36,7 +36,7 @@ fn main() {
             filtered.push(n)
         }
     }
-    println!("filtered > {} = {:?}", threshold, filtered)
+    println("filtered > {} = {:?}", threshold, filtered)
 
     // Map using captured factor
     let factor = 2
@@ -44,7 +44,7 @@ fn main() {
     for n in xs {
         mapped.push(n * factor)
     }
-    println!("mapped * {} = {:?}", factor, mapped)
+    println("mapped * {} = {:?}", factor, mapped)
 }
 
 #[cfg(test)]
@@ -54,20 +54,20 @@ mod tests {
     #[test]
     fn apply_twice_scale() {
         let result = super::apply_twice(|y: i64| 3 * y, 2)
-        let _ = testing::check_eq(&result, &18, "3*3*2=18")
+        let _ = testing::check_eq(result, 18, "3*3*2=18")
     }
 
     #[test]
     fn apply_twice_add_one() {
         let result = super::apply_twice(|y: i64| y + 1, 10)
-        let _ = testing::check_eq(&result, &12, "10+1+1=12")
+        let _ = testing::check_eq(result, 12, "10+1+1=12")
     }
 
     #[test]
     fn captured_scale() {
         let scale = 5
         let f = |y: i64| scale * y
-        let _ = testing::check_eq(&f(4), &20, "5*4=20")
-        let _ = testing::check_eq(&f(0), &0, "5*0=0")
+        let _ = testing::check_eq(f(4), 20, "5*4=20")
+        let _ = testing::check_eq(f(0), 0, "5*0=0")
     }
 }

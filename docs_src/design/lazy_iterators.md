@@ -2,7 +2,7 @@
 
 Integer range expressions produce lazy iterators, and adapters applied to those
 iterator values remain lazy. A collection already holds its values, so it
-traverses them eagerly: `xs.map(f)` and `iter::map(f, xs)` answer a `Vec`, and
+traverses them eagerly: `xs.map(f)` and `iter::map(xs, f)` answer a `Vec`, and
 `xs.iter()` is how a caller asks for the lazy walk instead.
 
 ## Goals

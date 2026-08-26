@@ -8,7 +8,7 @@ fn main() {
         n = n * 2
     }
     let m = -n
-    println!("min={}", n)
-    println!("neg_min={}", m)
-    println!("eq={}", n == m)
+    println("min={}", n)
+    println("neg_min={}", m)
+    println("eq={}", n == m)
 }

@@ -3,7 +3,7 @@
 // passes, and a fixed-array histogram indexed by a value computed per element
 // then rewritten in place into a prefix sum.
 
-fn stencil_pass(src: &Vec<i64>, dst: &mut Vec<i64>, n: i64) {
+fn stencil_pass(src: Vec<i64>, dst: &mut Vec<i64>, n: i64) {
     for r in 1..(n - 1) {
         for c in 1..(n - 1) {
             let i = r * n + c
@@ -12,7 +12,7 @@ fn stencil_pass(src: &Vec<i64>, dst: &mut Vec<i64>, n: i64) {
     }
 }
 
-fn radix_pass(src: &Vec<i64>, dst: &mut Vec<i64>, shift: i64) {
+fn radix_pass(src: Vec<i64>, dst: &mut Vec<i64>, shift: i64) {
     let n = src.len()
     let mut count = [0; 256]
     for i in 0..n {
@@ -53,7 +53,7 @@ fn pingpong_sum(n: i64, passes: i64) -> i64 {
 fn main() {
     let mut hot = 0
     for _ in 0..200 { hot += pingpong_sum(16, 3) }
-    println!("hot={}", hot)
+    println("hot={}", hot)
 
     let n = 8
     let mut a: Vec<i64> = Vec::with_capacity(n * n)
@@ -64,25 +64,25 @@ fn main() {
     // Each pass reads what the previous wrote, so the rebind has to hand the
     // freshly written buffer to the next iteration.
     for _ in 0..4 {
-        stencil_pass(&a, &mut b, n)
+        stencil_pass(a, &mut b, n)
         let tmp = a
         a = b
         b = tmp
     }
     let mut checksum = 0
     for i in 0..(n * n) { checksum = (checksum + a[i] * (i + 1)) % 1000000007 }
-    println!("stencil={}", checksum)
+    println("stencil={}", checksum)
 
     let mut src: Vec<i64> = #[0; 12]
     let mut dst: Vec<i64> = #[0; 12]
     for i in 0..12 { src[i] = ((i * 2654435761) & 0xffff) ^ 0x5a5a }
     let mut pass = 0
     while pass < 2 {
-        radix_pass(&src, &mut dst, pass * 8)
+        radix_pass(src, &mut dst, pass * 8)
         let tmp = src
         src = dst
         dst = tmp
         pass += 1
     }
-    println!("radix={:?}", src)
+    println("radix={:?}", src)
 }

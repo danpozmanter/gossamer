@@ -30,9 +30,10 @@ fn capture_writer(text: &str) {
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("hof.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -55,21 +56,21 @@ fn for_each_runs_closure_once_per_element() {
 use std::iter
 fn main() {
     let xs = [1, 2, 3, 4, 5]
-    xs |> |v| iter::for_each(|n| println!("each={}", n), v)
+    xs |> |v| iter::for_each(v, |n| println("each={}", n))
 }
 "#;
     assert_eq!(run_main(src), "each=1\neach=2\neach=3\neach=4\neach=5\n");
 }
 
 #[test]
-fn pipe_into_format_macros_through_a_closure_step() {
+fn pipe_into_format_calls_through_a_closure_step() {
     let src = r#"
 fn main() {
-    "two" |> |v| println!("one {}", v)
-    let text = "four" |> |v| format!("three {}", v)
-    println!("{}", text)
-    println!("{:#x} {:#b} {:#o}", 255, 5, 8)
-    println("plain", "function")
+    "two" |> |v| println("one {}", v)
+    let text = "four" |> |v| format("three {}", v)
+    println("{}", text)
+    println("{:#x} {:#b} {:#o}", 255, 5, 8)
+    println("{} {}", "plain", "function")
 }
 "#;
     assert_eq!(
@@ -84,12 +85,12 @@ fn map_filter_fold_thread_closures_through_the_vm() {
 use std::iter
 fn main() {
     let xs = [1, 2, 3, 4, 5]
-    let doubled = xs |> |v| iter::map(|n| n * 2, v)
-    println!("doubled={:?}", doubled)
-    let evens = xs |> |v| iter::filter(|n| n % 2 == 0, v)
-    println!("evens={:?}", evens)
-    let product = xs |> |v| iter::fold(1, |acc, n| acc * n, v)
-    println!("product={}", product)
+    let doubled = xs |> |v| iter::map(v, |n| n * 2)
+    println("doubled={:?}", doubled)
+    let evens = xs |> |v| iter::filter(v, |n| n % 2 == 0)
+    println("evens={:?}", evens)
+    let product = xs |> |v| iter::fold(v, 1, |acc, n| acc * n)
+    println("product={}", product)
 }
 "#;
     assert_eq!(
@@ -104,7 +105,7 @@ fn closure_tuple_parameter_destructuring_runs_through_hof() {
 fn main() {
     let values = [1, 2, 3, 4]
     let shifted = values.iter().enumerate().map(|(i, value)| value + i).collect()
-    println!("{:?}", shifted)
+    println("{:?}", shifted)
 }
 "#;
     assert_eq!(run_main(src), "#[1, 3, 5, 7]\n");
@@ -120,8 +121,8 @@ use std::iter
 fn triple(n: i64) -> i64 { n * 3 }
 fn main() {
     let xs = [1, 2, 3, 4, 5]
-    let tripled = xs |> |v| iter::map(triple, v)
-    println!("tripled={:?}", tripled)
+    let tripled = xs |> |v| iter::map(v, triple)
+    println("tripled={:?}", tripled)
 }
 "#;
     assert_eq!(run_main(src), "tripled=#[3, 6, 9, 12, 15]\n");
@@ -135,11 +136,11 @@ fn sort_by_with_a_closure_comparator() {
 fn main() {
     let mut names = ["charlie", "alice", "bob"]
     names.sort_by(|a, b| if a < b { -1 } else if a > b { 1 } else { 0 })
-    println!("ascending={:?}", names)
+    println("ascending={:?}", names)
 
     let mut nums: [i64; 5] = [7, 2, 9, 1, 5]
     nums.sort_by(|a, b| if a > b { -1 } else if a < b { 1 } else { 0 })
-    println!("descending={:?}", nums)
+    println("descending={:?}", nums)
 }
 "#;
     assert_eq!(
@@ -156,12 +157,12 @@ fn result_map_and_option_map_callbacks_run_on_the_vm() {
 use std::{result, option}
 fn main() {
     let r: Result<i64, String> = Ok(21)
-    let mapped = r |> |value| result::map(|v| v * 2, value)
-    println!("result_map={:?}", mapped)
+    let mapped = r |> |value| result::map(value, |v| v * 2)
+    println("result_map={:?}", mapped)
 
     let o = Some(10)
-    let omap = o |> |value| option::map(|v| v + 5, value)
-    println!("option_map={:?}", omap)
+    let omap = o |> |value| option::map(value, |v| v + 5)
+    println("option_map={:?}", omap)
 }
 "#;
     assert_eq!(run_main(src), "result_map=Ok(42)\noption_map=Some(15)\n");
@@ -176,8 +177,8 @@ fn capturing_closure_through_a_hof_uses_native_capture() {
 use std::iter
 fn main() {
     let factor = 4
-    let scaled = [1, 2, 3] |> |v| iter::map(|n| n * factor, v)
-    println!("{:?}", scaled)
+    let scaled = [1, 2, 3] |> |v| iter::map(v, |n| n * factor)
+    println("{:?}", scaled)
 }
 "#;
     assert_eq!(run_main(src), "#[4, 8, 12]\n");

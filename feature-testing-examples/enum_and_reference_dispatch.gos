@@ -7,8 +7,8 @@ enum Collation { Exact, NoCase, RTrim }
 enum Expr {
     Literal(i64)
     Column(String, String)
-    Unary(String, Box<Expr>)
-    Binary(String, Box<Expr>, Box<Expr>)
+    Unary(String, Expr)
+    Binary(String, Expr, Expr)
     Call(String, Vec<Expr>, bool)
     Wildcard
 }
@@ -24,7 +24,7 @@ struct Store {
     name: String
 }
 
-fn kind(e: &Expr) -> i64 {
+fn kind(e: Expr) -> i64 {
     match e {
         Expr::Call(name, arguments, _) => 5 + name.len() + arguments.len()
         Expr::Unary(_, inner) => 3 + kind(inner)
@@ -33,7 +33,7 @@ fn kind(e: &Expr) -> i64 {
     }
 }
 
-fn collation_name(c: &Collation) -> String {
+fn collation_name(c: Collation) -> String {
     match c {
         Collation::Exact => "exact"
         Collation::NoCase => "nocase"
@@ -55,7 +55,7 @@ impl Store {
     }
 }
 
-fn first_payload(e: &Expr) -> String {
+fn first_payload(e: Expr) -> String {
     match e {
         Expr::Binary(op, _, _) => op.clone()
         Expr::Column(table, column) => table.clone() + column
@@ -65,7 +65,7 @@ fn first_payload(e: &Expr) -> String {
 
 // A payload read through an `Option` the arm did not take must not reach for
 // a node that is not there.
-fn numeric_of(e: &Expr) -> i64 {
+fn numeric_of(e: Expr) -> i64 {
     match narrow(e) {
         Some(Expr::Literal(n)) => n
         Some(Expr::Binary(op, _, _)) => op.len()
@@ -73,7 +73,7 @@ fn numeric_of(e: &Expr) -> i64 {
     }
 }
 
-fn narrow(e: &Expr) -> Option<Expr> {
+fn narrow(e: Expr) -> Option<Expr> {
     match e {
         Expr::Literal(n) => Some(Expr::Literal(*n))
         _ => None
@@ -97,7 +97,7 @@ fn walk(rounds: i64) -> i64 {
     let mut total = 0
     for i in 0..rounds {
         fill(&mut cache, i)
-        total += cache.pages.len() + numeric_of(&Expr::Literal(i))
+        total += cache.pages.len() + numeric_of(Expr::Literal(i))
     }
     total + cache.hits + cache.seen.len()
 }
@@ -109,33 +109,33 @@ fn overwrite() -> String {
     let mut rows: Vec<Vec<i64>> = #[#[1], #[2]]
     let mut nodes: Vec<Expr> = #[Expr::Wildcard, Expr::Wildcard]
     for i in 0..2 {
-        names[i] = format!("n{}", i)
+        names[i] = format("n{}", i)
         rows[i] = #[i, i + 1]
-        nodes[i] = Expr::Column("", format!("c{}", i))
+        nodes[i] = Expr::Column("", format("c{}", i))
     }
-    format!("{:?} {:?} {}", names, rows, first_payload(&nodes[1]))
+    format("{:?} {:?} {}", names, rows, first_payload(nodes[1]))
 }
 
 fn main() {
     let column = Expr::Column("", "v")
     let call = Expr::Call("count", #[Expr::Wildcard], false)
     let binary = Expr::Binary("=", Expr::Column("", "id"), Expr::Literal(1))
-    println!("kinds {} {} {}", kind(&column), kind(&call), kind(&binary))
-    println!("payloads {} {}", first_payload(&binary), first_payload(&column))
-    println!("collation {}", collation_name(&Collation::NoCase))
-    println!("absent {}", numeric_of(&Expr::Wildcard))
+    println("kinds {} {} {}", kind(column), kind(call), kind(binary))
+    println("payloads {} {}", first_payload(binary), first_payload(column))
+    println("collation {}", collation_name(Collation::NoCase))
+    println("absent {}", numeric_of(Expr::Wildcard))
 
     let mut store = Store {
         cache: Cache { pages: Map::new(), seen: Set::new(), hits: 0 }
         name: "store"
     }
-    println!("load {} {}", store.load(1), store.load(2))
-    println!("seen {} {}", store.cache.seen.len(), store.cache.hits)
+    println("load {} {}", store.load(1), store.load(2))
+    println("seen {} {}", store.cache.seen.len(), store.cache.hits)
 
     let mut empty: Set<i64> = #{}
-    println!("empty {} {}", empty.is_empty(), store.cache.seen.is_empty())
+    println("empty {} {}", empty.is_empty(), store.cache.seen.is_empty())
     empty.insert(3)
-    println!("filled {} {}", empty.is_empty(), empty.len())
-    println!("walk {} checksum {}", walk(5), checksum(12))
-    println!("overwrite {}", overwrite())
+    println("filled {} {}", empty.is_empty(), empty.len())
+    println("walk {} checksum {}", walk(5), checksum(12))
+    println("overwrite {}", overwrite())
 }

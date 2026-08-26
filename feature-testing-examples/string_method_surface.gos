@@ -13,41 +13,41 @@ fn main() {
     let s = "Hello World Foo"
 
     // split family
-    println!("{}", s.split_whitespace().len())
-    println!("{}", s.splitn(2, " ").len())
+    println("{}", s.split_whitespace().len())
+    println("{}", s.splitn(2, " ").len())
 
     // transform -> String
-    println!("{}", "hello world".to_title())
-    println!("{}", s.trim_matches("Hoo"))
-    println!("{}", "a,b,a,b".replacen("a", "X", 1))
-    println!("[{}]", "hi".pad_left(6, '.'))
-    println!("[{}]", "hi".pad_right(6, '*'))
-    println!("{}", s.to_lowercase())
-    println!("{}", s.to_uppercase())
+    println("{}", "hello world".to_title())
+    println("{}", s.trim_matches("Hoo"))
+    println("{}", "a,b,a,b".replacen("a", "X", 1))
+    println("[{}]", "hi".pad_left(6, '.'))
+    println("[{}]", "hi".pad_right(6, '*'))
+    println("{}", s.to_lowercase())
+    println("{}", s.to_uppercase())
 
     // predicates -> bool
-    println!("{}", s.contains_any("xW"))
-    println!("{}", s.contains("F"))
-    println!("{}", s.equal_fold("HELLO WORLD FOO"))
+    println("{}", s.contains_any("xW"))
+    println("{}", s.contains("F"))
+    println("{}", s.equal_fold("HELLO WORLD FOO"))
 
     // search -> Option<i64>
-    println!("{}", match s.find_any("WF") { Some(i) => i, None => -1 })
-    println!("{}", match s.find("W") { Some(i) => i, None => -1 })
-    println!("{}", match s.rfind_any("lo") { Some(i) => i, None => -1 })
+    println("{}", match s.find_any("WF") { Some(i) => i, None => -1 })
+    println("{}", match s.find("W") { Some(i) => i, None => -1 })
+    println("{}", match s.rfind_any("lo") { Some(i) => i, None => -1 })
 
     // strip -> Option<String>
-    println!("{}", match s.strip_prefix("Hello ") { Some(r) => r, None => "?" })
-    println!("{}", match s.strip_suffix(" Foo") { Some(r) => r, None => "?" })
+    println("{}", match s.strip_prefix("Hello ") { Some(r) => r, None => "?" })
+    println("{}", match s.strip_suffix(" Foo") { Some(r) => r, None => "?" })
 
     // Vec<String>.join - method form of strings::join
     let parts: Vec<String> = Vec::from(["a", "b", "c"])
-    println!("{}", parts.join("-"))
+    println("{}", parts.join("-"))
     let upper: Vec<String> = "one two three".split_whitespace()
-        |> |v| iter::map(|w: String| w.to_uppercase(), v)
-    println!("{}", upper.join("|"))
+        |> |v| iter::map(v, |w: String| w.to_uppercase())
+    println("{}", upper.join("|"))
 
     // `_.method` pipe placeholder over the wired surface
-    println!("{}", "  trimmed  ".trim().to_title())
+    println("{}", "  trimmed  ".trim().to_title())
 }
 
 #[cfg(test)]

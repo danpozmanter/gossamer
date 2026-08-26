@@ -1,0 +1,6 @@
+// ERROR: GP0053
+struct Point(i64)
+
+impl Display for Point {
+    fn to_string(&self) -> String { "p" }
+}

@@ -99,7 +99,7 @@ match http::stream("GET", url, "", []) {
             handle(chunk)
         }
     }
-    Err(e) => eprintln!("{}", e),
+    Err(e) => eprintln("{}", e),
 }
 ```
 

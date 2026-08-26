@@ -21,18 +21,6 @@ let mut seeded = Queue::from([10, 20])
 let seeded_first = seeded.pop()
 ```
 
-For small `i64` examples, `std::collections::queue` also offers a re-bind helper API over `Vec<i64>`:
-
-```gossamer
-use std::collections::queue
-
-let q = #[]
-let q = queue::push(q, 10)
-let q = queue::push(q, 20)
-let first = queue::peek(&q)
-let q = queue::pop(q)
-```
-
 ## Deque
 
 Use `Deque<i64>` when both ends matter.
@@ -50,17 +38,6 @@ let mut from_values = Deque::from([1, 2])
 from_values.push_front(0)
 ```
 
-For value-style `i64` code, the `std::collections::deque` module returns the updated vector from each mutator:
-
-```gossamer
-use std::collections::deque
-
-let d = #[]
-let d = deque::push_front(d, 1)
-let d = deque::push_back(d, 2)
-let front = deque::peek_front(&d)
-```
-
 ## Stack
 
 Use `Stack<i64>` when you need repeated LIFO operations. `Stack::from([a, b, c])`
@@ -75,18 +52,6 @@ stack.push(2)
 let depth = stack.len()
 let next = stack.peek()
 let top = stack.pop()
-```
-
-The `std::collections::stack` module is the re-bind helper form over `Vec<i64>`:
-
-```gossamer
-use std::collections::stack
-
-let s = #[]
-let s = stack::push(s, 1)
-let s = stack::push(s, 2)
-let top = stack::peek(&s)
-let s = stack::pop(s)
 ```
 
 ## Min Heap

@@ -521,7 +521,7 @@ const VEC_METHODS: &[BuiltinMethod] = &[
     },
     BuiltinMethod {
         name: "extend_from_slice",
-        signature: "fn extend_from_slice(&mut self, values: &[T])",
+        signature: "fn extend_from_slice(&mut self, values: [T])",
         doc: "Appends cloned values from a slice.",
         snippet: "extend_from_slice($0)",
     },
@@ -596,9 +596,9 @@ const ARRAY_SLICE_METHODS: &[BuiltinMethod] = &[
     },
     BuiltinMethod {
         name: "contains",
-        signature: "fn contains(&self, value: &T) -> bool",
+        signature: "fn contains(&self, value: T) -> bool",
         doc: "Returns true when the sequence contains an equal element.",
-        snippet: "contains(&$0)",
+        snippet: "contains($0)",
     },
     BuiltinMethod {
         name: "index_of",
@@ -701,13 +701,13 @@ const STRING_METHODS: &[BuiltinMethod] = &[
     },
     BuiltinMethod {
         name: "trim",
-        signature: "fn trim(&self) -> &str",
+        signature: "fn trim(&self) -> String",
         doc: "Returns the string with leading + trailing whitespace stripped.",
         snippet: "trim()$0",
     },
     BuiltinMethod {
         name: "split",
-        signature: "fn split(&self, sep: &str) -> Vec<String>",
+        signature: "fn split(&self, sep: String) -> Vec<String>",
         doc: "Splits on every occurrence of `sep`.",
         snippet: "split(\"$0\")",
     },
@@ -719,19 +719,19 @@ const STRING_METHODS: &[BuiltinMethod] = &[
     },
     BuiltinMethod {
         name: "starts_with",
-        signature: "fn starts_with(&self, prefix: &str) -> bool",
+        signature: "fn starts_with(&self, prefix: String) -> bool",
         doc: "True when the string begins with `prefix`.",
         snippet: "starts_with(\"$0\")",
     },
     BuiltinMethod {
         name: "ends_with",
-        signature: "fn ends_with(&self, suffix: &str) -> bool",
+        signature: "fn ends_with(&self, suffix: String) -> bool",
         doc: "True when the string ends with `suffix`.",
         snippet: "ends_with(\"$0\")",
     },
     BuiltinMethod {
         name: "contains",
-        signature: "fn contains(&self, needle: &str) -> bool",
+        signature: "fn contains(&self, needle: String) -> bool",
         doc: "True when `needle` appears anywhere in the string.",
         snippet: "contains(\"$0\")",
     },
@@ -764,9 +764,9 @@ const HASHMAP_METHODS: &[BuiltinMethod] = &[
     },
     BuiltinMethod {
         name: "get",
-        signature: "fn get(&self, key: &K) -> Option<&V>",
+        signature: "fn get(&self, key: K) -> Option<V>",
         doc: "Looks up `key`.",
-        snippet: "get(&$0)",
+        snippet: "get($0)",
     },
     BuiltinMethod {
         name: "get_or",
@@ -776,9 +776,9 @@ const HASHMAP_METHODS: &[BuiltinMethod] = &[
     },
     BuiltinMethod {
         name: "remove",
-        signature: "fn remove(&mut self, key: &K) -> Option<V>",
+        signature: "fn remove(&mut self, key: K) -> Option<V>",
         doc: "Removes `key`'s entry, returning the removed value.",
-        snippet: "remove(&$0)",
+        snippet: "remove($0)",
     },
     BuiltinMethod {
         name: "len",
@@ -794,9 +794,9 @@ const HASHMAP_METHODS: &[BuiltinMethod] = &[
     },
     BuiltinMethod {
         name: "contains_key",
-        signature: "fn contains_key(&self, key: &K) -> bool",
+        signature: "fn contains_key(&self, key: K) -> bool",
         doc: "Returns `true` when an entry for `key` exists.",
-        snippet: "contains_key(&$0)",
+        snippet: "contains_key($0)",
     },
     BuiltinMethod {
         name: "clear",

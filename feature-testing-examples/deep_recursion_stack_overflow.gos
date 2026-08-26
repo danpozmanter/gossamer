@@ -13,5 +13,5 @@ fn deep(n: i64) -> i64 {
 
 fn main() {
     let r = deep(0)
-    println!("unreachable {}", r)
+    println("unreachable {}", r)
 }

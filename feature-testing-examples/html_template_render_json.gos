@@ -12,7 +12,7 @@ fn main() {
     let data = "{\"name\":\"<b>\",\"link\":\"javascript:x\",\"attr\":\"a&b\",\"msg\":\"</script>\"}"
     match html::template::render_json(tpl, data) {
         Ok(out) => {
-            println!("{}", out)
+            println("{}", out)
             // Text context: angle brackets HTML-escaped.
             assert(out.contains("&lt;b&gt;"), "text context escaped")
             // URL context: the javascript: scheme is neutralised to '#'.
@@ -25,7 +25,7 @@ fn main() {
             assert(out.contains("u003c"), "js context unicode-escaped")
             assert(!out.contains("var m=</script>"), "no raw script breakout")
         }
-        Err(e) => panic!("render_json failed: {}", e)
+        Err(e) => panic("render_json failed: {}", e)
     }
-    println!("ok")
+    println("ok")
 }

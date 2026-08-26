@@ -7,7 +7,7 @@ fn seek(out: &mut Option<(i64, i64)>, depth: i64) {
         *out = Some((7, 9))
     }
     if out.is_some() {
-        println!("  depth {} sees {:?}", depth, out)
+        println("  depth {} sees {:?}", depth, out)
     }
     if depth < 4 {
         seek(out, depth + 1)
@@ -18,7 +18,7 @@ fn churn(rounds: i64) -> i64 {
     let mut acc = 0
     let mut i = 0
     while i < rounds {
-        let s = format!("filler {} {}", i, i * 3)
+        let s = format("filler {} {}", i, i * 3)
         acc += s.len()
         i += 1
     }
@@ -28,9 +28,9 @@ fn churn(rounds: i64) -> i64 {
 fn main() {
     let mut found: Option<(i64, i64)> = None
     seek(&mut found, 0)
-    println!("after seek {:?}", found)
-    println!("churn {}", churn(200))
-    println!("still  {:?}", found)
+    println("after seek {:?}", found)
+    println("churn {}", churn(200))
+    println("still  {:?}", found)
     let t = found.unwrap()
-    println!("payload {} {}", t.0, t.1)
+    println("payload {} {}", t.0, t.1)
 }

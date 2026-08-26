@@ -166,8 +166,8 @@ fn question_mark_propagation_through_nested_callers() {
     // surfaces.
     let src = r#"
 fn parse_positive(s: String) -> Result<i64, String> {
-    let n = s.parse::<i64>().map_err(|_| "not a number")?
-    if n <= 0 { Err(format!("{} is not positive", n)) } else { Ok(n) }
+    let n = s.to_i64().ok_or("not a number")?
+    if n <= 0 { Err(format("{} is not positive", n)) } else { Ok(n) }
 }
 
 fn double_positive(s: String) -> Result<i64, String> {
@@ -187,16 +187,16 @@ fn octa_positive(s: String) -> Result<i64, String> {
 
 fn main() {
     match octa_positive("3") {
-        Ok(v) => println!("ok={}", v),
-        Err(e) => println!("err={}", e),
+        Ok(v) => println("ok={}", v),
+        Err(e) => println("err={}", e),
     }
     match octa_positive("abc") {
-        Ok(v) => println!("unexpected={}", v),
-        Err(e) => println!("err={}", e),
+        Ok(v) => println("unexpected={}", v),
+        Err(e) => println("err={}", e),
     }
     match octa_positive("-5") {
-        Ok(v) => println!("unexpected={}", v),
-        Err(e) => println!("err={}", e),
+        Ok(v) => println("unexpected={}", v),
+        Err(e) => println("err={}", e),
     }
 }
 "#;
@@ -216,9 +216,9 @@ fn result_unwrap_or_with_inner_int_payload() {
     // re-surfaces this failure mode immediately.
     let src = r#"
 fn main() {
-    let parsed: i64 = "42".parse::<i64>().unwrap_or(-1)
-    let bad: i64 = "abc".parse::<i64>().unwrap_or(-1)
-    println!("parsed={} bad={}", parsed, bad)
+    let parsed: i64 = "42".to_i64().unwrap_or(-1)
+    let bad: i64 = "abc".to_i64().unwrap_or(-1)
+    println("parsed={} bad={}", parsed, bad)
 }
 "#;
     assert_three_tier_parity("result_unwrap_or_int", src, "parsed=42 bad=-1");
@@ -263,7 +263,7 @@ fn main() {
         Ok(v) => v,
         Err(_) => -1,
     }
-    println!("err_code={} ok_v={}", bad_code, good_v)
+    println("err_code={} ok_v={}", bad_code, good_v)
 }
 "#;
     assert_three_tier_parity("map_err_capturing_closure", src, "err_code=700 ok_v=11");
@@ -283,16 +283,16 @@ fn maybe_double(n: i64) -> Option<i64> {
 
 fn main() {
     match maybe_double(7) {
-        Some(v) => println!("a={}", v),
-        None => println!("a=none"),
+        Some(v) => println("a={}", v),
+        None => println("a=none"),
     }
     match maybe_double(-1) {
-        Some(v) => println!("b={}", v),
-        None => println!("b=none"),
+        Some(v) => println("b={}", v),
+        None => println("b=none"),
     }
     match maybe_double(0) {
-        Some(v) => println!("c={}", v),
-        None => println!("c=none"),
+        Some(v) => println("c={}", v),
+        None => println("c=none"),
     }
 }
 "#;
@@ -319,16 +319,16 @@ fn pipeline(seed: i64) -> Result<i64, String> {
 
 fn main() {
     match pipeline(4) {
-        Ok(v) => println!("a={}", v),
-        Err(e) => println!("a-err={}", e),
+        Ok(v) => println("a={}", v),
+        Err(e) => println("a-err={}", e),
     }
     match pipeline(0) {
-        Ok(v) => println!("b={}", v),
-        Err(e) => println!("b-err={}", e),
+        Ok(v) => println("b={}", v),
+        Err(e) => println("b-err={}", e),
     }
     match pipeline(-3) {
-        Ok(v) => println!("c={}", v),
-        Err(e) => println!("c-err={}", e),
+        Ok(v) => println("c={}", v),
+        Err(e) => println("c-err={}", e),
     }
 }
 "#;

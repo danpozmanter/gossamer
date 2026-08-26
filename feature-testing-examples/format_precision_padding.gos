@@ -6,7 +6,7 @@ fn left_pad(s: String, width: i64, fill: String) -> String {
     let mut result = s.clone()
     let mut cur = result.len() as i64
     while cur < width {
-        result = format!("{}{}", fill, result)
+        result = format("{}{}", fill, result)
         cur += 1
     }
     result
@@ -16,7 +16,7 @@ fn right_pad(s: String, width: i64, fill: String) -> String {
     let mut result = s.clone()
     let mut cur = result.len() as i64
     while cur < width {
-        result = format!("{}{}", result, fill)
+        result = format("{}{}", result, fill)
         cur += 1
     }
     result
@@ -26,48 +26,48 @@ fn format_table_row(label: String, value: f64, decimals: i64) -> String {
     // Right-align label in 12 chars, then value with requested decimals
     let padded = right_pad(label, 12, " ")
     if decimals == 0 {
-        format!("{}: {}", padded, value as i64)
+        format("{}: {}", padded, value as i64)
     } else if decimals == 1 {
-        format!("{}: {:.1}", padded, value)
+        format("{}: {:.1}", padded, value)
     } else if decimals == 2 {
-        format!("{}: {:.2}", padded, value)
+        format("{}: {:.2}", padded, value)
     } else if decimals == 3 {
-        format!("{}: {:.3}", padded, value)
+        format("{}: {:.3}", padded, value)
     } else {
-        format!("{}: {:.6}", padded, value)
+        format("{}: {:.6}", padded, value)
     }
 }
 
 fn main() {
     let pi: f64 = 3.14159265358979
 
-    println!("pi 0dp: {:.0}", pi)
-    println!("pi 2dp: {:.2}", pi)
-    println!("pi 4dp: {:.4}", pi)
-    println!("pi 6dp: {:.6}", pi)
+    println("pi 0dp: {:.0}", pi)
+    println("pi 2dp: {:.2}", pi)
+    println("pi 4dp: {:.4}", pi)
+    println("pi 6dp: {:.6}", pi)
 
     let e: f64 = 2.71828182845904
-    println!("e 3dp: {:.3}", e)
+    println("e 3dp: {:.3}", e)
 
     // Negative values
     let neg: f64 = -1.41421356
-    println!("neg 4dp: {:.4}", neg)
+    println("neg 4dp: {:.4}", neg)
 
     // Very small
     let tiny: f64 = 0.0000012345
-    println!("tiny 9dp: {:.9}", tiny)
+    println("tiny 9dp: {:.9}", tiny)
 
     // Manual padding
     let lp = left_pad("42", 6, "0")
-    println!("left-pad 42 to 6: {}", lp)
+    println("left-pad 42 to 6: {}", lp)
 
     let rp = right_pad("hi", 8, ".")
-    println!("right-pad hi to 8: {}", rp)
+    println("right-pad hi to 8: {}", rp)
 
     // Table formatting
-    println!("{}", format_table_row("pi", pi, 4))
-    println!("{}", format_table_row("e", e, 4))
-    println!("{}", format_table_row("sqrt2", 1.41421356, 4))
+    println("{}", format_table_row("pi", pi, 4))
+    println("{}", format_table_row("e", e, 4))
+    println("{}", format_table_row("sqrt2", 1.41421356, 4))
 }
 
 #[cfg(test)]
@@ -76,25 +76,25 @@ mod tests {
 
     #[test]
     fn float_two_decimal_places() {
-        let s = format!("{:.2}", 3.14159)
-        let _ = testing::check_eq(&s, &"3.14", "2dp")
+        let s = format("{:.2}", 3.14159)
+        let _ = testing::check_eq(s, "3.14", "2dp")
     }
 
     #[test]
     fn float_zero_decimal_places() {
-        let s = format!("{:.0}", 2.9)
-        let _ = testing::check_eq(&s, &"3", "0dp rounds up")
+        let s = format("{:.0}", 2.9)
+        let _ = testing::check_eq(s, "3", "0dp rounds up")
     }
 
     #[test]
     fn left_pad_shorter_string() {
         let s = super::left_pad("7", 3, "0")
-        let _ = testing::check_eq(&s, &"007", "zero-pad 7")
+        let _ = testing::check_eq(s, "007", "zero-pad 7")
     }
 
     #[test]
     fn right_pad_already_long() {
         let s = super::right_pad("hello", 3, ".")
-        let _ = testing::check_eq(&s, &"hello", "no padding needed")
+        let _ = testing::check_eq(s, "hello", "no padding needed")
     }
 }

@@ -17,9 +17,9 @@ absence of F# metaprogramming features.
 | `match x with | A -> ...` | `match x { A => ... }` | Exhaustive. |
 | record | `struct` | Construct with braces. |
 | discriminated union | `enum` | Tuple variants use parentheses. |
-| `async { ... }` | `go fn() { ... }()` | Goroutine. |
+| `async { ... }` | `spawn(|| { ... })` | Goroutine. |
 | `Task` result | channel receive or direct `Result` | Blocking calls are acceptable. |
-| `printfn "%d" n` | `println!("{n}")` | Format strings are Rust-like. |
+| `printfn "%d" n` | `println("{n}")` | Format strings are Rust-like. |
 
 ## Gossamer 0.47 Syntax At A Glance
 
@@ -112,14 +112,14 @@ argument list, not a fixed end.
 use std::iter
 
 [1, 2, 3, 4]
-    |> |v| iter::filter(|n: i64| n % 2 == 0, v)
-    |> |v| iter::sum_by(|n: i64| n * n, v)
+    |> |v| iter::filter(v, |n: i64| n % 2 == 0)
+    |> |v| iter::sum_by(v, |n: i64| n * n)
 ```
 
-Naming the slot is what lets one operator serve both stdlib
-conventions: `iter::`, `option::`, and `result::` take their data last,
-while `strings::`, `path::`, `bytes::`, and `sort::` take it first,
-mirroring the method receiver.
+Naming the slot is what lets one operator serve any callee, whatever
+its parameters. Every stdlib free function takes its data first,
+mirroring the method receiver, and a step reads the same when it pipes
+into a function this program declares or a package's.
 
 ```gos
 use std::strings
@@ -180,7 +180,7 @@ enum Tree {
     Node(i64, Tree, Tree)
 }
 
-fn sum(t: &Tree) -> i64 {
+fn sum(t: Tree) -> i64 {
     match t {
         Tree::Leaf => 0
         Tree::Node(v, l, r) => v + sum(l) + sum(r)
@@ -188,7 +188,7 @@ fn sum(t: &Tree) -> i64 {
 }
 ```
 
-Recursive enum variants are runtime-managed. Add `Box<T>` only when it
+Recursive enum variants are runtime-managed. Add `T` only when it
 makes a public type clearer.
 
 ## Option And Result
@@ -203,16 +203,16 @@ let parsed = input |> Option.bind tryParse |> Option.defaultValue 0
 use std::option
 
 let parsed = input
-    |> |v| option::and_then(try_parse, v)
-    |> |v| option::unwrap_or(0, v)
+    |> |v| option::and_then(v, try_parse)
+    |> |v| option::unwrap_or(v, 0)
 ```
 
 For fallible work, `?` is usually clearer than a pipeline:
 
 ```gos
-fn load(path: &String) -> Result<Config, errors::Error> {
+fn load(path: String) -> Result<Config, errors::Error> {
     let text = fs::read_to_string(path)?
-    parse_config(&text)
+    parse_config(text)
 }
 ```
 
@@ -223,18 +223,18 @@ expressions:
 
 ```gos
 let wg = sync::WaitGroup::new()
-let (tx, rx) = channel()
+let tx, rx = channel()
 
 for url in urls {
     wg.add(1)
     let tx = tx.clone()
-    go fn() {
+    spawn(|| {
         defer wg.done()
-        tx.send(http::get(&url, #[]))
+        tx.send(http::get(url, #[]))
     }()
 }
 
-go fn() {
+spawn(|| {
     wg.wait()
     tx.close()
 }()
@@ -306,7 +306,7 @@ impl Amount {
     fn normalize(&self) -> i64 { self.cents }   // private helper
 }
 
-pub(package) fn round_trip(a: &Amount) -> i64 { a.normalize() }
+pub(package) fn round_trip(a: Amount) -> i64 { a.normalize() }
 ```
 
 A `pub` type may keep private methods and private fields, so a struct with any
@@ -328,16 +328,16 @@ they appear.
 | `System.IO.File.WriteAllText` | `fs::write(path, data)` |
 | `Environment.GetEnvironmentVariable` | `env::var(name)` |
 | `Environment.GetCommandLineArgs` | `env::args()` |
-| `Console.WriteLine` | `println!(...)` |
-| `sprintf "%s %d" s n` | `format!("{s} {n}")` |
-| `List.map f xs` | `xs |> |v| iter::map(f, v)` |
-| `List.filter f xs` | `xs |> |v| iter::filter(f, v)` |
-| `List.fold f init xs` | `xs |> |v| iter::fold(init, f, v)` |
-| `Map.find k m` | `m.get(&k)` |
-| `Set.contains x s` | `s.contains(&x)` |
-| `String.trim s` | `strings::trim(&s)` |
-| `int.Parse s` | `strconv::parse_i64(&s)` |
-| `Task.Run` | `go fn() { ... }()` |
+| `Console.WriteLine` | `println(...)` |
+| `sprintf "%s %d" s n` | `format("{s} {n}")` |
+| `List.map f xs` | `xs |> |v| iter::map(v, f)` |
+| `List.filter f xs` | `xs |> |v| iter::filter(v, f)` |
+| `List.fold f init xs` | `xs |> |v| iter::fold(v, init, f)` |
+| `Map.find k m` | `m.get(k)` |
+| `Set.contains x s` | `s.contains(x)` |
+| `String.trim s` | `strings::trim(s)` |
+| `int.Parse s` | `strconv::parse_i64(s)` |
+| `Task.Run` | `spawn(|| { ... })` |
 | `Thread.Sleep(ms)` | `time::sleep(ms)` |
 | `HttpClient.GetAsync(url)` | `http::get(url, [])` |
 | `Regex(pattern)` | `regex::compile(pattern)` |

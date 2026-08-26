@@ -19,7 +19,7 @@ fn main() {
     for (_, v) in counts.iter() {
         total += v
     }
-    println!("{}", total)
+    println("{}", total)
 
     let mut pairs: Map<(i64, i64), i64> = Map::new()
     pairs.insert((1, 2), 10)
@@ -28,5 +28,5 @@ fn main() {
     for (_, v) in pairs.iter() {
         sum += v
     }
-    println!("{}", sum)
+    println("{}", sum)
 }

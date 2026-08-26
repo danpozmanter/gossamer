@@ -1,4 +1,4 @@
-// `fs::write(path, &Vec<u8>)` - the bytes-shaped variant
+// `fs::write(path, Vec<u8>)` - the bytes-shaped variant
 // chosen by the dispatcher when the contents argument types as
 // `Vec<u8>` / `&[u8]`. The c-string-shaped helper would truncate
 // at the first NUL byte and silently corrupt binary writes
@@ -21,12 +21,12 @@ fn main() -> Result<(), errors::Error> {
     // the c-string helper. NUL at index 5 truncates everything
     // after it; the length check below catches both shapes.
     let payload: Vec<u8> = Vec::from([72, 105, 33, 10, 0, 65, 66, 67, 10])
-    let tmp = path::join(&env::temp_dir(), &"gos_write_bytes_probe.bin")
-    fs::write(&tmp, &payload)?
-    let bytes = fs::read(&tmp)?
-    println!("wrote {} bytes", bytes.len())
-    println!("byte[4] = {}", bytes[4])
-    println!("byte[5] = {}", bytes[5])
-    fs::remove_file(&tmp)?
+    let tmp = path::join(env::temp_dir(), "gos_write_bytes_probe.bin")
+    fs::write(tmp, payload)?
+    let bytes = fs::read(tmp)?
+    println("wrote {} bytes", bytes.len())
+    println("byte[4] = {}", bytes[4])
+    println("byte[5] = {}", bytes[5])
+    fs::remove_file(tmp)?
     Ok(())
 }

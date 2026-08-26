@@ -21,12 +21,12 @@ fn gather() -> Result<(), errors::Error> {
     cohort {
         let a = spawn(|| fetch("one"))
         let b = spawn(|| fetch("two"))
-        println!("{} {}", a.join()??, b.join()??)
+        println("{} {}", a.join()??, b.join()??)
     }
 }
 
 fn main() {
-    println!("{:?}", gather())
+    println("{:?}", gather())
 }
 ```
 
@@ -43,34 +43,26 @@ fn stage() -> Result<(), errors::Error> {
 }
 ```
 
-## Two ways to start a goroutine
+## One way to start a goroutine
 
-Gossamer has both, and they mean different things.
-
-| | `spawn(f)` inside a `cohort` | `go f()` |
-|---|---|---|
-| Lifetime | bounded by the block | unbounded |
-| On failure | cancels siblings, becomes the block's `Err` | lost |
-| Joined | by the block, always | never |
-| Handle | `JoinHandle<T>` for the value | none |
+`spawn(f)` is it. There is no detached form: every goroutine attaches to
+the enclosing cohort, so the block waits for it, reports what went wrong,
+and hands back a `JoinHandle<T>` for the value.
 
 ```gossamer
-// Structured: the block waits, and reports what went wrong.
 let outcome = cohort {
     let _a = spawn(|| index_shard(0))
     let _b = spawn(|| index_shard(1))
 }
-
-// Detached: fire-and-forget, for work with no relationship to the
-// code that started it.
-go metrics_reporter()
 ```
 
-Reach for `cohort` by default. `go` is right when a goroutine genuinely
-should outlive the block that started it - a background reporter, a
-supervisor loop - and nothing is waiting on its result. A `go` written
-*inside* a cohort is almost always a mistake, and `gos lint` reports it
-as `GL0053`.
+A closure body runs on the child, so an operand that has to be read where
+the spawn is written is bound first:
+
+```gossamer
+let shard = shards[i]
+spawn(|| index_shard(shard))
+```
 
 ## `main` is already a cohort
 
@@ -116,7 +108,7 @@ so its `defer` frames and destructors run in order:
 
 ```gossamer
 fn worker(rx: Receiver<Job>) -> Result<(), errors::Error> {
-    defer println!("worker stopped")
+    defer println("worker stopped")
     // Ends on cancellation the same way it ends on a closed channel.
     while let Some(job) = rx.recv() {
         handle(job)?

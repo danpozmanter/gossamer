@@ -19,39 +19,39 @@ fn main() {
     let ms_before = time::now_ms()
     let _ = busy_work(100000)
     let ms_after = time::now_ms()
-    println!("wall ms before > 0: {}", ms_before > 0)
-    println!("wall ms after >= before: {}", ms_after >= ms_before)
+    println("wall ms before > 0: {}", ms_before > 0)
+    println("wall ms after >= before: {}", ms_after >= ms_before)
 
     // now() reads the wall clock in unix ms; sleep advances it
     let t1 = time::now()
     time::sleep(15)
     let t2 = time::now()
-    println!("sleep advanced time: {}", t2 > t1)
+    println("sleep advanced time: {}", t2 > t1)
 
     // RFC3339 round-trip
     match time::format_rfc3339(ms_before) {
         Ok(s) => {
-            println!("formatted has T: {}", s.contains("T"))
-            println!("formatted has Z: {}", s.contains("Z") || s.contains("+"))
+            println("formatted has T: {}", s.contains("T"))
+            println("formatted has Z: {}", s.contains("Z") || s.contains("+"))
             match time::parse_rfc3339(s) {
                 Ok(parsed_ms) => {
                     // Parsed ms should be close to original (within 1 second)
                     let diff = parsed_ms - ms_before
-                    println!("parse roundtrip diff < 1000ms: {}", diff < 1000)
+                    println("parse roundtrip diff < 1000ms: {}", diff < 1000)
                 }
-                Err(e) => println!("parse error: {}", e)
+                Err(e) => println("parse error: {}", e)
             }
         }
-        Err(e) => println!("format error: {}", e)
+        Err(e) => println("format error: {}", e)
     }
 
     // Duration from millis
     let d = time::Duration::from_millis(500)
-    println!("duration ok")
+    println("duration ok")
 
     // Duration from secs
     let ds = time::Duration::from_secs(2)
-    println!("secs duration ok")
+    println("secs duration ok")
 }
 
 #[cfg(test)]

@@ -2,16 +2,16 @@ use std::runtime
 use std::time
 
 fn my_hook(msg: String) {
-    println!("custom hook saw: {}", msg)
+    println("custom hook saw: {}", msg)
 }
 
 fn boom() {
-    panic!("hooked panic")
+    panic("hooked panic")
 }
 
 fn main() {
     runtime::set_panic_hook(my_hook)
-    go boom()
+    spawn(|| boom())
     time::sleep(100)
-    println!("done")
+    println("done")
 }

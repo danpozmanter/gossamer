@@ -2,9 +2,9 @@ use std::iter
 
 fn main() {
     let lazy = (0..100000)
-        |> |v| iter::map(|x| x + 1, v)
-        |> |v| iter::filter(|x| x % 2 == 0, v)
-        |> |v| iter::take(1000, v)
+        |> |v| iter::map(v, |x| x + 1)
+        |> |v| iter::filter(v, |x| x % 2 == 0)
+        |> |v| iter::take(v, 1000)
         |> iter::sum
 
     let eager = (0..100000)
@@ -14,5 +14,5 @@ fn main() {
         .take(1000)
         .sum()
 
-    println!("{lazy} {eager}")
+    println("{lazy} {eager}")
 }

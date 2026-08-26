@@ -155,6 +155,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/early_break_materializers.gos",
             "feature-testing-examples/elemty_btreemap_shapes.gos",
             "feature-testing-examples/fmt_tuple_map.gos",
+            "feature-testing-examples/format_spec_matrix.gos",
             "feature-testing-examples/goroutine_deque_handle.gos",
             "feature-testing-examples/goroutine_set_handle.gos",
             "feature-testing-examples/goroutine_shared_map.gos",
@@ -202,31 +203,6 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/winb_coll_set.gos",
             "feature-testing-examples/winb_coll_vec.gos",
         ],
-    ),
-    (
-        "std::collections::deque",
-        &["examples/containers_seq_demo.gos"],
-    ),
-    ("std::collections::heap", &["examples/heap_demo.gos"]),
-    (
-        "std::collections::ordered_map",
-        &["examples/containers_setmap_demo.gos"],
-    ),
-    (
-        "std::collections::ordered_set",
-        &["examples/containers_setmap_demo.gos"],
-    ),
-    (
-        "std::collections::ordered_vec",
-        &["examples/containers_ordered_demo.gos"],
-    ),
-    (
-        "std::collections::queue",
-        &["examples/containers_seq_demo.gos"],
-    ),
-    (
-        "std::collections::stack",
-        &["examples/containers_seq_demo.gos"],
     ),
     (
         "std::context",
@@ -341,6 +317,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/autoderive_int_widths.gos",
             "feature-testing-examples/binary_offset_accessors.gos",
             "feature-testing-examples/callable_carrier_return.gos",
+            "feature-testing-examples/carrier_return_tiers.gos",
             "feature-testing-examples/closure_payload_typing.gos",
             "feature-testing-examples/cohort_basics.gos",
             "feature-testing-examples/cohort_cancel.gos",
@@ -349,6 +326,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/entry_result_err.gos",
             "feature-testing-examples/entry_toplevel_err.gos",
             "feature-testing-examples/error_chain_inspection.gos",
+            "feature-testing-examples/format_spec_matrix.gos",
             "feature-testing-examples/from_json_infer.gos",
             "feature-testing-examples/fs_file_positional_io.gos",
             "feature-testing-examples/fs_temp_file_lifecycle.gos",
@@ -503,6 +481,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "examples/reverse_string.gos",
             "feature-testing-examples/aggr_enum_vec_combinators.gos",
             "feature-testing-examples/closure_env_container_capture.gos",
+            "feature-testing-examples/closure_env_ownership.gos",
             "feature-testing-examples/closure_payload_typing.gos",
             "feature-testing-examples/combinator_sweep.gos",
             "feature-testing-examples/elemty_aggregate_elements.gos",
@@ -745,6 +724,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/concurrent_atomic.gos",
             "feature-testing-examples/context_aware_waits.gos",
             "feature-testing-examples/context_lifecycle.gos",
+            "feature-testing-examples/contextual_keywords.gos",
             "feature-testing-examples/cycle_shared_goroutines.gos",
             "feature-testing-examples/go_stdlib_spawn.gos",
             "feature-testing-examples/goroutine_deque_handle.gos",
@@ -764,6 +744,7 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/select_default_timing.gos",
             "feature-testing-examples/select_multiplex.gos",
             "feature-testing-examples/shared_across_goroutines.gos",
+            "feature-testing-examples/spawn_operand_order.gos",
             "feature-testing-examples/sync_extra.gos",
             "feature-testing-examples/sync_map_demo.gos",
             "feature-testing-examples/sync_rwlock.gos",
@@ -1109,7 +1090,6 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         "lang::generics",
         "Type parameters on functions / impls / structs.",
     ),
-    lang("lang::go", "Goroutine spawn, detached."),
     lang(
         "lang::cohort",
         "Structured concurrency: `cohort { }` owns the goroutines `spawn`ed inside it, joins them on every exit path, and reports the first failure as its `Result`.",
@@ -1127,11 +1107,11 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     },
     lang(
         "lang::spawn",
-        "Goroutine join handle: `spawn(f)` -> `JoinHandle<T>`, `.join()` -> `Result<T, String>`.",
+        "Goroutine spawn: `spawn(f)` -> `JoinHandle<T>`, `.join()` -> `Result<T, String>`. The child attaches to the enclosing cohort, so nothing is detached.",
     ),
     lang(
-        "lang::macros",
-        "Built-in macros only - no user-defined macros: the format family (print/println/eprint/eprintln/format/panic), the desugar macros (matches!/todo!/unimplemented!/unreachable!/dbg!), and the build-time regex!/sql!/codegen!.",
+        "lang::builtin_calls",
+        "The compiler-known call names, written without a sigil: the format family (print/println/eprint/eprintln/format/panic), the desugaring calls (matches/todo/unimplemented/unreachable/dbg), and codegen. The set is closed and there are no user-defined macros.",
     ),
     lang(
         "lang::doctest",
@@ -1175,7 +1155,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     // Compile-time evaluation. Folds to a literal before the tiers split.
     lang(
         "lang::comptime",
-        "Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. `typeInfo::<T>()` reflects a struct's fields, a tuple struct's positions, or an enum's variants - substituting the arguments for a generic instantiation - and a `for (name, ty) in typeInfo::<T>()` loop unrolls into native per-field code, and `codegen!(...)` splices a `comptime fn`'s `String` back as source. Includes the `regex!` / `sql!` build-time validation macros.",
+        "Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. `typeInfo::<T>()` reflects a struct's fields, a tuple struct's positions, or an enum's variants - substituting the arguments for a generic instantiation - and a `for (name, ty) in typeInfo::<T>()` loop unrolls into native per-field code, and `codegen(...)` splices a `comptime fn`'s `String` back as source. Includes the `regex::compile` / `sql::statement` build-time literal validation.",
     ),
     // Caller-side argument spellings. Rewritten into declared order before
     // type checking, so every tier compiles the same positional call.
@@ -1560,7 +1540,7 @@ mod tests {
     #[test]
     fn language_features_present() {
         let entries = all_entries();
-        for path in ["lang::if_let", "lang::pipe", "lang::go", "lang::select"] {
+        for path in ["lang::if_let", "lang::pipe", "lang::spawn", "lang::select"] {
             assert!(
                 entries.iter().any(|e| e.path == path),
                 "missing language entry {path}",

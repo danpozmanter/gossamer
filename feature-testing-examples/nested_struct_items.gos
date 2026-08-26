@@ -15,10 +15,10 @@ fn main() {
         let Pair { left, right } = updated
         let wrapped = Wrapper { pair: updated, bias: 1 }
 
-        println!("{} {}", updated.left, updated.right)
-        println!("{} {} {}", wrapped.pair.left, wrapped.pair.right, wrapped.bias)
-        println!("{}", sum(wrapped.pair))
-        println!("{} {}", left, right)
+        println("{} {}", updated.left, updated.right)
+        println("{} {} {}", wrapped.pair.left, wrapped.pair.right, wrapped.bias)
+        println("{}", sum(wrapped.pair))
+        println("{} {}", left, right)
         sum(wrapped.pair) + wrapped.bias + left + right
     }
 
@@ -31,6 +31,6 @@ fn main() {
         pair.value + cell.0
     }
 
-    println!("{}", first)
-    println!("{}", second)
+    println("{}", first)
+    println("{}", second)
 }

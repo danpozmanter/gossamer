@@ -14,11 +14,11 @@ struct Order { id: i64, total: f64 }
 
 fn with_tax(o: Order) -> Order { Order { id: o.id, total: o.total * 1.2 } }
 fn discount(pct: f64, o: Order) -> Order { Order { id: o.id, total: o.total * (1.0 - pct) } }
-fn label(o: Order) -> String { format!("#{} {}", o.id, o.total) }
+fn label(o: Order) -> String { format("#{} {}", o.id, o.total) }
 
 fn main() {
     let o = Order { id: 1, total: 100.0 }
-    println!("{}", o |> with_tax |> |v| discount(0.1, v) |> label)
+    println("{}", o |> with_tax |> |v| discount(0.1, v) |> label)
 }
 ```
 
@@ -34,7 +34,7 @@ method call:
 ```gossamer
 fn main() {
     // write this
-    println!("{}", "  Ab  ".trim().to_lowercase())
+    println("{}", "  Ab  ".trim().to_lowercase())
 
     // not a pipe form of the same thing
 }
@@ -47,7 +47,7 @@ step, and a pipe step's result can be chained onto.
 fn exclaim(s: String) -> String { s + "!" }
 
 fn main() {
-    println!("{}", "  Ab  ".trim().to_lowercase() |> exclaim)
+    println("{}", "  Ab  ".trim().to_lowercase() |> exclaim)
 }
 ```
 
@@ -59,7 +59,7 @@ A **bare callable** takes the piped value as its only argument:
 fn double(n: i64) -> i64 { n * 2 }
 
 fn main() {
-    println!("{}", 3 |> double)
+    println("{}", 3 |> double)
 }
 ```
 
@@ -70,8 +70,8 @@ slot. The parameter may sit anywhere the body reaches:
 use std::{iter, strings}
 
 fn main() {
-    println!("{:?}", "a,b,c" |> |v| strings::split(v, ","))
-    println!("{}", #[1, 2, 3, 4] |> |v| iter::filter(|x| x % 2 == 0, v).len())
+    println("{:?}", "a,b,c" |> |v| strings::split(v, ","))
+    println("{}", #[1, 2, 3, 4] |> |v| iter::filter(v, |x| x % 2 == 0).len())
 }
 ```
 
@@ -86,35 +86,32 @@ The body needs no call at all - any expression over the parameter works:
 
 ```gossamer
 fn main() {
-    println!("{}", 3 |> |v| v * 2)
+    println("{}", 3 |> |v| v * 2)
 }
 ```
 
 ## Why the slot is named
 
-Gossamer's free functions do not share one argument convention. `iter::`,
-`option::`, and `result::` take their data last; `strings::`, `bytes::`,
-`path::`, `sort::`, and `fs::` take it first, mirroring the method
-receiver. An operator that assumed one convention would silently mis-fill
-the other, and those signatures are homogeneous enough that the type
-checker could not catch it - `strings::split(String, String)` accepts the
-arguments either way round.
-
-Naming the slot removes the assumption. Both conventions read the same,
-and the reader can see which argument the value fills:
+Every std free function takes its data first, so a step could in
+principle assume the leading slot. It does not, because a step may pipe
+into any callee - a function this program declares, a package's, or a
+method on an external receiver - and none of those owe the operator a
+convention. Naming the slot means the reader sees which argument the
+value fills without knowing anything about the callee:
 
 ```gossamer
 use std::{iter, strings}
 
 fn main() {
-    println!("{:?}", "a,b,c" |> |v| strings::split(v, ","))   // data first
-    println!("{:?}", #[1, 2] |> |value| iter::map(|v| v * 2, value))  // data last
+    println("{:?}", "a,b,c" |> |v| strings::split(v, ","))
+    println("{:?}", #[1, 2] |> |value| iter::map(value, |v| v * 2))
+    println("{}", 3 |> |v| clamp(0, 10, v))
 }
 ```
 
-An argument-taking step that is not a closure reports `GP0041`, and a
-formatting macro written as a step reports `GP0025` - write
-`value |> |v| println!("{}", v)`.
+An argument-taking step that is not a closure reports `GP0041`, whatever
+the callee is - a formatting call included, since `println` is an ordinary
+call. Write it as a closure: `value |> |v| println("{}", v)`.
 
 ## The retired `$`
 

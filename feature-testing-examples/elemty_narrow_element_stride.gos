@@ -8,24 +8,24 @@ fn is_odd(n: i64) -> bool { n % 2 == 1 }
 fn main() {
     let ns: Vec<i64> = #[0, 1, 2, 3, 4]
     let flags: Vec<bool> = ns.iter().map(is_odd).collect()
-    println!("flags {}", flags)
-    println!("flags-len {}", flags.len())
-    for i in 0..flags.len() { println!("flag {} {}", i, flags[i] as i64) }
+    println("flags {}", flags)
+    println("flags-len {}", flags.len())
+    for i in 0..flags.len() { println("flag {} {}", i, flags[i] as i64) }
     let kept: Vec<bool> = flags.iter().filter(|f| f).collect()
-    println!("kept {} {}", kept.len(), kept)
+    println("kept {} {}", kept.len(), kept)
 
     let bytes: Vec<u8> = #[1u8, 2u8, 3u8, 4u8]
-    println!("bytes {}", bytes)
+    println("bytes {}", bytes)
     let doubled: Vec<u8> = bytes.iter().map(|b: u8| -> u8 { b * 2 }).collect()
-    println!("doubled {} {}", doubled.len(), doubled)
-    for i in 0..doubled.len() { println!("byte {} {}", i, doubled[i] as i64) }
+    println("doubled {} {}", doubled.len(), doubled)
+    for i in 0..doubled.len() { println("byte {} {}", i, doubled[i] as i64) }
     let big: Vec<u8> = bytes.iter().filter(|b| b > 2u8).collect()
-    println!("big {} {} {}", big.len(), big, big[0] as i64)
+    println("big {} {} {}", big.len(), big, big[0] as i64)
     let widened: Vec<i64> = bytes.iter().map(|b: u8| -> i64 { (b as i64) * 10 }).collect()
-    println!("widened {}", widened)
+    println("widened {}", widened)
     let narrowed: Vec<u8> = ns.iter().map(|n: i64| -> u8 { (n + 1) as u8 }).collect()
-    println!("narrowed {} {}", narrowed.len(), narrowed)
-    println!("rev {}", doubled.iter().rev().collect())
-    println!("take {}", doubled.take(2))
-    println!("skip {}", doubled.iter().skip(2).collect())
+    println("narrowed {} {}", narrowed.len(), narrowed)
+    println("rev {}", doubled.iter().rev().collect())
+    println("take {}", doubled.take(2))
+    println("skip {}", doubled.iter().skip(2).collect())
 }

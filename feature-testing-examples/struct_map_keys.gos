@@ -16,7 +16,7 @@ struct User { name: String, id: i64 }
 #[derive(PartialEq, Eq, Debug)]
 struct Cell { at: Point, label: String }
 
-fn get_or(m: &Map<Point, i64>, k: &Point) -> i64 {
+fn get_or(m: Map<Point, i64>, k: Point) -> i64 {
     match m.get(k) {
         Some(v) => v
         None => -1
@@ -47,37 +47,37 @@ fn main() {
     m.insert(Point { x: 1, y: 2 }, 10)
     m.insert(Point { x: 3, y: 4 }, 20)
     m.insert(Point { x: 1, y: 2 }, 99)
-    println!("{}", get_or(&m, &Point { x: 1, y: 2 }))
-    println!("{}", get_or(&m, &Point { x: 9, y: 9 }))
-    println!("len {}", m.len())
+    println("{}", get_or(m, Point { x: 1, y: 2 }))
+    println("{}", get_or(m, Point { x: 9, y: 9 }))
+    println("len {}", m.len())
 
     // String-field struct key.
     let mut um: Map<User, i64> = Map::new()
     um.insert(User { name: "ada", id: 1 }, 100)
     um.insert(User { name: "bob", id: 2 }, 200)
     let ada = User { name: "ada", id: 1 }
-    println!("{}", match um.get(&ada) { Some(v) => v, None => -1 })
-    println!("ulen {}", um.len())
+    println("{}", match um.get(ada) { Some(v) => v, None => -1 })
+    println("ulen {}", um.len())
 
     // Nested-struct + String key.
     let mut cm: Map<Cell, i64> = Map::new()
     cm.insert(Cell { at: Point { x: 5, y: 6 }, label: "home" }, 7)
     let c = Cell { at: Point { x: 5, y: 6 }, label: "home" }
-    println!("{}", match cm.get(&c) { Some(v) => v, None => -1 })
+    println("{}", match cm.get(c) { Some(v) => v, None => -1 })
 
     // Tuple key.
     let mut tm: Map<(i64, i64), String> = Map::new()
     tm.insert((1, 2), "pair")
     let tk = (1, 2)
-    println!("{}", match tm.get(&tk) { Some(v) => v, None => "none" })
+    println("{}", match tm.get(tk) { Some(v) => v, None => "none" })
 
     // Set of structs.
     let mut seen: Set<Point> = Set::new()
     seen.insert(Point { x: 0, y: 0 })
     seen.insert(Point { x: 0, y: 0 })
-    println!("has {}", seen.contains(&Point { x: 0, y: 0 }))
-    println!("hasnt {}", seen.contains(&Point { x: 1, y: 1 }))
-    println!("slen {}", seen.len())
+    println("has {}", seen.contains(Point { x: 0, y: 0 }))
+    println("hasnt {}", seen.contains(Point { x: 1, y: 1 }))
+    println("slen {}", seen.len())
 }
 
 #[cfg(test)]

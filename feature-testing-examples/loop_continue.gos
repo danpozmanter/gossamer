@@ -52,16 +52,16 @@ fn count_evens_while(limit: i64) -> i64 {
 
 fn main() {
     let odd_sum = sum_odds_while(10)
-    println!("sum of odds 1..10 = {}", odd_sum)
+    println("sum of odds 1..10 = {}", odd_sum)
 
     let count = count_non_multiples_of_three(9)
-    println!("non-mult-3 in 1..=9 = {}", count)
+    println("non-mult-3 in 1..=9 = {}", count)
 
     let skipped = sum_skipping(5, 1, 3)
-    println!("0+2+4 (skip 1,3) = {}", skipped)
+    println("0+2+4 (skip 1,3) = {}", skipped)
 
     let evens = count_evens_while(20)
-    println!("even count 1..20 = {}", evens)
+    println("even count 1..20 = {}", evens)
 
     let mut acc = 0
     for i in 0..10 {
@@ -70,7 +70,7 @@ fn main() {
         }
         acc += i
     }
-    println!("sum skip mult4 = {}", acc)
+    println("sum skip mult4 = {}", acc)
 }
 
 #[cfg(test)]
@@ -80,25 +80,25 @@ mod tests {
     #[test]
     fn continue_while_skips_evens() {
         let s = super::sum_odds_while(9)
-        let _ = testing::check_eq(&s, &25, "1+3+5+7+9 == 25")
+        let _ = testing::check_eq(s, 25, "1+3+5+7+9 == 25")
     }
 
     #[test]
     fn continue_for_range() {
         let c = super::count_non_multiples_of_three(9)
-        let _ = testing::check_eq(&c, &6, "1,2,4,5,7,8 == 6 items")
+        let _ = testing::check_eq(c, 6, "1,2,4,5,7,8 == 6 items")
     }
 
     #[test]
     fn continue_skips_specific_values() {
         let s = super::sum_skipping(5, 1, 3)
-        let _ = testing::check_eq(&s, &6, "0+2+4 == 6")
+        let _ = testing::check_eq(s, 6, "0+2+4 == 6")
     }
 
     #[test]
     fn continue_while_evens() {
         let e = super::count_evens_while(20)
-        let _ = testing::check_eq(&e, &10, "10 even numbers in 1..20")
+        let _ = testing::check_eq(e, 10, "10 even numbers in 1..20")
     }
 
     #[test]
@@ -110,6 +110,6 @@ mod tests {
             }
             acc += i
         }
-        let _ = testing::check_eq(&acc, &33, "1+2+3+5+6+7+9 == 33, skip 0,4,8")
+        let _ = testing::check_eq(acc, 33, "1+2+3+5+6+7+9 == 33, skip 0,4,8")
     }
 }

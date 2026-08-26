@@ -27,7 +27,7 @@ fn main() {
     // free the same storage twice.
     let here: Option<Vec<String>> = Some(#["L", "12"])
     let joined = here.unwrap().join(",")
-    println!("here={}", joined)
+    println("here={}", joined)
 
     // The joined text then used as an element, which is what made the
     // second release observable.
@@ -35,11 +35,11 @@ fn main() {
     for part in #[joined, "n"] {
         widths.push(part.byte_len())
     }
-    println!("widths={:?}", widths)
+    println("widths={:?}", widths)
 
     // Built by a callee and carried out through the return.
-    println!("from_fn={}", make().unwrap().join(","))
-    println!("from_result={}", fallible().unwrap_or(#[]).join(","))
+    println("from_fn={}", make().unwrap().join(","))
+    println("from_result={}", fallible().unwrap_or(#[]).join(","))
 
     // An array of carriers, read by index.
     let defs: [Option<Vec<String>>; 3] = [
@@ -47,7 +47,7 @@ fn main() {
         Some(#["L", "8"])
         Some(#["L", "10"])
     ]
-    println!("indexed={}", defs[0].unwrap().join(","))
+    println("indexed={}", defs[0].unwrap().join(","))
 
     // Repeated wrap-and-unwrap: a leak or an over-release compounds here.
     let mut total = 0
@@ -57,5 +57,5 @@ fn main() {
         total += each.unwrap().join("-").byte_len()
         i += 1
     }
-    println!("total={}", total)
+    println("total={}", total)
 }

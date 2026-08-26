@@ -24,22 +24,22 @@ impl Shape for Rect {
 struct Wrapper<T> { value: T }
 
 impl<T: Shape> Wrapper<T> {
-    fn report(&self) -> String { format!("{}={}", self.value.name(), self.value.area()) }
+    fn report(&self) -> String { format("{}={}", self.value.name(), self.value.area()) }
     fn doubled(&self) -> f64 { self.value.area() * 2.0 }
 }
 
 // A bound carried by a `where` clause reads the same as one in the list.
-fn describe<T>(shape: &T) -> String where T: Shape {
-    format!("{} has area {}", shape.name(), shape.area())
+fn describe<T>(shape: T) -> String where T: Shape {
+    format("{} has area {}", shape.name(), shape.area())
 }
 
 fn main() {
     let sq = Wrapper { value: Square { side: 3.0 } }
     let rc = Wrapper { value: Rect { w: 2.0, h: 5.0 } }
-    println!("{}", sq.report())
-    println!("{}", rc.report())
-    println!("{}", sq.doubled())
-    println!("{}", rc.doubled())
-    println!("{}", describe(&Square { side: 4.0 }))
-    println!("{}", describe(&Rect { w: 3.0, h: 3.0 }))
+    println("{}", sq.report())
+    println("{}", rc.report())
+    println("{}", sq.doubled())
+    println("{}", rc.doubled())
+    println("{}", describe(Square { side: 4.0 }))
+    println("{}", describe(Rect { w: 3.0, h: 3.0 }))
 }

@@ -1,0 +1,58 @@
+// Width / fill / align / zero-pad placeholders across argument types and
+// template shapes.
+//
+// Two properties are load-bearing here. An integer argument takes a fused
+// render-and-pad path that no other type takes, so each spec is exercised as
+// the sole trailing placeholder, with trailing text, and beside a second
+// field. And an omitted alignment, like the `0` flag, reads differently on a
+// number than on anything else, so both are crossed with both kinds.
+
+struct Account { balance: f64 }
+
+fn main() {
+    println("i64 sole {:>8}", 42)
+    println("i64 sole neg {:>8}", -42)
+    println("i64 zero {:08}", 42)
+    println("i64 zero neg {:08}", -42)
+    println("i64 zero left {:<08}", -42)
+    println("i64 fill zero {:0>8}", -42)
+    println("i64 fill star {:*>8}", -42)
+    println("i64 left {:<8}", 42)
+    println("i64 centre {:^8}", -42)
+    println("i64 default {:8}", 42)
+    println("i64 radix width {:>8x}", 255)
+    println("i64 radix zero {:08x}", 255)
+    println("i64 radix bin {:>12b}", 255)
+    println("i64 radix oct {:>8o}", 255)
+    println("i64 alt zero {:#010b}", 5)
+    println("i64 trailing {:>8} end", 42)
+    println("i64 two {:>8} {}", 42, 7)
+    println("i64 three {:>8} {:08} {}", 1, 2, 3)
+    println("{:>8}", 42)
+    println("{:08}", 42)
+
+    println("f64 sole {:>8}", 1.5)
+    println("f64 default {:8}", 1.5)
+    println("f64 zero neg {:08}", -1.5)
+    println("f64 prec {:.2}", 1.5)
+    println("f64 width prec {:>10.2}", 1.5)
+    println("f64 zero prec {:08.2}", 1.5)
+
+    println("str sole {:>8}", "ab")
+    println("str default {:8}", "ab")
+    println("str zero {:08}", "ab")
+    println("bool default {:8}", true)
+    println("bool zero {:08}", true)
+    println("char default {:8}", 'z')
+    println("char zero {:08}", 'z')
+
+    let account = Account { balance: 12.5 }
+    println("field {account.balance:>10.2}")
+    let pair = (7, 9)
+    println("tuple pos {pair.0:03}")
+
+    let width = 42
+    println("capture {width:>8}")
+    println("debug {:?}", #[1, 2])
+    println("escapes {{{:>4}}}", 7)
+}

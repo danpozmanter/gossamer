@@ -7,7 +7,7 @@ fn doubled(value: i64) -> Result<i64, String> {
 
 fn main() {
     match doubled(21) {
-        Ok(value) => println!("result={}", value)
-        Err(err) => println!("error={}", err)
+        Ok(value) => println("result={}", value)
+        Err(err) => println("error={}", err)
     }
 }

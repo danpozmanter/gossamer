@@ -15,7 +15,7 @@ fn main() {
     // 2 is SIGINT on POSIX; on Windows the console-control bridge maps
     // Ctrl-C onto the same notifier.
     let n = signal::on(2)
-    println!("subscribed: true")
-    println!("fired: {}", signal::try_wait(n))
-    println!("method fired: {}", n.try_wait())
+    println("subscribed: true")
+    println("fired: {}", signal::try_wait(n))
+    println("method fired: {}", n.try_wait())
 }

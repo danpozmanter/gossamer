@@ -16,8 +16,8 @@ that calls it:
 use std::{encoding::base64, math}
 
 fn main() {
-    println!("{:?}", #[1.0, -2.0].map(math::abs))
-    println!("{:?}", #["ab", "cd"].map(base64::encode))
+    println("{:?}", #[1.0, -2.0].map(math::abs))
+    println("{:?}", #["ab", "cd"].map(base64::encode))
 }
 ```
 
@@ -25,11 +25,11 @@ Each of those is the closure `|v| math::abs(v)` / `|v| base64::encode(v)`.
 The parameter count comes from the function's own signature, so a std item
 with no fixed parameter list has no closure to stand for and reports
 `GT0015`. A macro is not a function at all: `fmt::format` reports `GR0018`
-and is written `format!(..)`, inside a closure of your own:
+and is written `format(..)`, inside a closure of your own:
 
 ```gossamer
 fn main() {
-    println!("{:?}", #[1, 2].map(|v| format!("<{}>", v)))
+    println("{:?}", #[1, 2].map(|v| format("<{}>", v)))
 }
 ```
 
@@ -42,11 +42,11 @@ and a tuple projection are each written as the closure they are:
 struct Person { name: String }
 
 fn main() {
-    println!("{:?}", #[" a ", " b "].map(|v| v.trim()))
-    println!("{:?}", #[(1, 2), (3, 4)].map(|t| t.0))
+    println("{:?}", #[" a ", " b "].map(|v| v.trim()))
+    println("{:?}", #[(1, 2), (3, 4)].map(|t| t.0))
 
     let people = #[Person { name: "ada" }, Person { name: "grace" }]
-    println!("{:?}", people.map(|p| p.name))
+    println("{:?}", people.map(|p| p.name))
 }
 ```
 

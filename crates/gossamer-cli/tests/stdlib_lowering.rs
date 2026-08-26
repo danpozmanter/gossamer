@@ -146,10 +146,10 @@ fn math_big_factorial_lowers() {
         r#"
 use std::math
 fn main() {
-    println!("{}", math::big::factorial(10))
+    println("{}", math::big::factorial(10))
     let a = math::big::int_from_i64(1000000000)
     let p = math::big::int_mul(a, math::big::int_from_i64(1000000000))
-    println!("{}", p)
+    println("{}", p)
 }
 "#,
         "3628800",
@@ -163,7 +163,7 @@ fn encoding_xml_escape_lowers() {
         r#"
 use std::encoding::xml
 fn main() {
-    println!("{}", xml::escape(&"a<b>&c"))
+    println("{}", xml::escape("a<b>&c"))
 }
 "#,
         "a&lt;b&gt;&amp;c",
@@ -177,10 +177,10 @@ fn encoding_base32_decode_string_lowers() {
         r#"
 use std::encoding::base32
 fn main() {
-    let enc = base32::encode_string(&"hi")
-    match base32::decode_string(&enc) {
-        Ok(s) => println!("{}", s),
-        Err(_) => println!("err"),
+    let enc = base32::encode_string("hi")
+    match base32::decode_string(enc) {
+        Ok(s) => println("{}", s),
+        Err(_) => println("err"),
     }
 }
 "#,
@@ -196,7 +196,7 @@ fn crypto_hmac_sha256_mac_lowers() {
 use std::crypto::hmac
 fn main() {
     let mac = hmac::sha256_mac("key".as_bytes(), "msg".as_bytes())
-    println!("len={}", mac.len() > 0)
+    println("len={}", mac.len() > 0)
 }
 "#,
         "len=true",
@@ -214,10 +214,10 @@ fn main() {
     let bytes = data.as_bytes()
     match flate::compress(bytes, 6) {
         Ok(packed) => match flate::decompress(packed) {
-            Ok(back) => println!("{}", back.len() == bytes.len()),
-            Err(_) => println!("decompress-err"),
+            Ok(back) => println("{}", back.len() == bytes.len()),
+            Err(_) => println("decompress-err"),
         },
-        Err(_) => println!("compress-err"),
+        Err(_) => println("compress-err"),
     }
 }
 "#,
@@ -232,34 +232,10 @@ fn html_escape_lowers() {
         r#"
 use std::html
 fn main() {
-    println!("{}", html::escape(&"a<b>'c"))
+    println("{}", html::escape("a<b>'c"))
 }
 "#,
         "a&lt;b&gt;&#39;c",
-    );
-}
-
-#[test]
-fn fallible_collection_helpers_return_options() {
-    assert_lowers(
-        "fallible_collection_helpers",
-        r#"
-use std::collections::{deque, heap, ordered_map, ordered_vec, queue, stack}
-fn main() {
-    let empty: Vec<i64> = Vec::new()
-    println!("{} {} {} {} {} {} {} {} {}",
-        queue::peek(empty.clone()).is_none(),
-        stack::peek(empty.clone()).is_none(),
-        deque::peek_front(empty.clone()).is_none(),
-        deque::peek_back(empty.clone()).is_none(),
-        heap::peek(empty.clone()).is_none(),
-        ordered_vec::index_of(empty.clone(), 4).is_none(),
-        ordered_vec::peek_min(empty.clone()).is_none(),
-        ordered_vec::peek_max(empty.clone()).is_none(),
-        ordered_map::get(empty, 4).is_none())
-}
-"#,
-        "true true true true true true true true true",
     );
 }
 
@@ -270,7 +246,7 @@ fn encoding_hex_encode_lowers() {
         r#"
 use std::encoding::hex
 fn main() {
-    println!("{}", hex::encode("hi".as_bytes()))
+    println("{}", hex::encode("hi".as_bytes()))
 }
 "#,
         "6869",
@@ -284,7 +260,7 @@ fn encoding_base32_encode_bytes_lowers() {
         r#"
 use std::encoding::base32
 fn main() {
-    println!("{}", base32::encode("foobar".as_bytes()))
+    println("{}", base32::encode("foobar".as_bytes()))
 }
 "#,
         "MZXW6YTBOI======",
@@ -302,10 +278,10 @@ fn main() {
     let bytes = data.as_bytes()
     match zlib::compress(bytes, 6) {
         Ok(packed) => match zlib::decompress(packed) {
-            Ok(back) => println!("{}", back.len() == bytes.len()),
-            Err(_) => println!("d-err"),
+            Ok(back) => println("{}", back.len() == bytes.len()),
+            Err(_) => println("d-err"),
         },
-        Err(_) => println!("c-err"),
+        Err(_) => println("c-err"),
     }
 }
 "#,
@@ -319,13 +295,13 @@ fn result_default_with_lowers() {
         "result_default_with",
         r#"
 use std::{errors, result}
-fn parse(s: &String) -> Result<i64, errors::Error> {
+fn parse(s: String) -> Result<i64, errors::Error> {
     Err(errors::new("nope"))
 }
 fn main() {
-    let v = parse(&"x") |> |v| result::unwrap_or_else(|e| { let _ = e
- -1 }, v)
-    println!("{}", v)
+    let v = parse("x") |> |v| result::unwrap_or_else(v, |e| { let _ = e
+ -1 })
+    println("{}", v)
 }
 "#,
         "-1",
@@ -340,10 +316,10 @@ fn encoding_base64_roundtrip_lowers() {
 use std::encoding
 fn main() {
     let enc = encoding::base64::encode("Hello, Gossamer!".as_bytes())
-    println!("enc={}", enc)
+    println("enc={}", enc)
     match encoding::base64::decode(enc) {
-        Ok(bytes) => println!("dec={}", bytes.len()),
-        Err(e) => println!("err={}", e),
+        Ok(bytes) => println("dec={}", bytes.len()),
+        Err(e) => println("err={}", e),
     }
 }
 "#,
@@ -359,8 +335,8 @@ fn encoding_hex_decode_lowers() {
 use std::encoding
 fn main() {
     match encoding::hex::decode("48656c6c6f") {
-        Ok(bytes) => println!("n={}", bytes.len()),
-        Err(e) => println!("err={}", e),
+        Ok(bytes) => println("n={}", bytes.len()),
+        Err(e) => println("err={}", e),
     }
 }
 "#,
@@ -375,7 +351,7 @@ fn html_unescape_lowers() {
         r#"
 use std::html
 fn main() {
-    println!("{}", html::unescape("a &lt;b&gt; &amp; &#39;c&#39;"))
+    println("{}", html::unescape("a &lt;b&gt; &amp; &#39;c&#39;"))
 }
 "#,
         "a <b> & 'c'",

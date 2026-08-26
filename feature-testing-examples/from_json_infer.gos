@@ -1,14 +1,14 @@
 // `from_json` infers its type argument from the binding annotation, so the
-// turbofish is optional: `let p: Point = from_json(&t)?`. Identical decode
+// turbofish is optional: `let p: Point = from_json(t)?`. Identical decode
 // on every tier.
 use std::errors
 
 struct Point { x: i64, y: i64 }
 fn main() -> Result<(), errors::Error> {
     let t = "{\"x\":3,\"y\":4}"
-    let p: Point = from_json(&t)?
-    let q: Result<Point, errors::Error> = from_json(&t)
-    println!("{} {}", p.x, p.y)
-    if let Ok(v) = q { println!("{}", v.x + v.y) }
+    let p: Point = from_json(t)?
+    let q: Result<Point, errors::Error> = from_json(t)
+    println("{} {}", p.x, p.y)
+    if let Ok(v) = q { println("{}", v.x + v.y) }
     Ok(())
 }

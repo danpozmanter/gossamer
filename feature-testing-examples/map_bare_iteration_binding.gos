@@ -1,0 +1,54 @@
+// A map walked directly binds its own key and value types.
+//
+// `for (k, v) in m` and `for (k, v) in m.iter()` describe the same walk, so
+// the bare form's binding carries the map's key and value types rather than a
+// pair the body has to re-derive. Anything that reads the binding's *declared*
+// type - a tuple built from indexed elements, a nested destructuring pattern,
+// `{:?}` dispatch - depends on that, and a compiled tier sizes its stack slots
+// from it.
+
+fn main() {
+    let mut nested: Map<String, Vec<((i64, i64), i64)>> = Map::new()
+    nested.or_insert("k", #[]).push(((1, 2), -1))
+    nested.or_insert("k", #[]).push(((3, 4), 1))
+    for (key, ends) in nested {
+        let (a, da), (b, db) = ends[0], ends[1]
+        println("{key}: {a} {da} {b} {db}")
+        let both = (ends[0], ends[1])
+        println("built: {both}")
+        println("debug: {both:?}")
+    }
+
+    let mut pairs: Map<String, Vec<(i64, i64)>> = Map::new()
+    pairs.or_insert("p", #[]).push((5, 6))
+    for (_, xs) in pairs {
+        let x, y = xs[0]
+        println("flat: {x} {y}")
+    }
+
+    let mut scores: Map<i64, String> = Map::new()
+    scores.or_insert(1, "one")
+    scores.or_insert(1, "unused")
+    scores.or_insert(2, "two")
+    for (id, name) in scores {
+        println("scalar key: {id} {name}")
+    }
+
+    let mut labels: Map<String, String> = Map::new()
+    labels.or_insert("a", "alpha")
+    labels.or_insert("a", "unused")
+    println("string values: {labels}")
+
+    let mut groups: Map<String, Map<String, i64>> = Map::new()
+    groups.or_insert("outer", Map::new()).or_insert("inner", 5)
+    for (name, inner) in groups {
+        println("nested map: {name} {inner}")
+    }
+
+    let mut counts: Map<i64, i64> = Map::new()
+    counts.or_insert(7, 0)
+    counts.inc(7)
+    for (key, count) in counts {
+        println("counter: {key} {count}")
+    }
+}

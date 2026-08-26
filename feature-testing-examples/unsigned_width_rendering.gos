@@ -20,66 +20,66 @@ fn wrapped(rounds: i64) -> u64 {
 }
 
 fn main() {
-    println!("hot {}", wrapped(2000))
+    println("hot {}", wrapped(2000))
 
     let big = 9223372036854775807 as u64 + 10 as u64
-    println!("scalar {} {:?}", big, big)
+    println("scalar {} {:?}", big, big)
 
     let xs: Vec<u64> = #[big, 1 as u64]
-    println!("vec {:?}", xs)
+    println("vec {:?}", xs)
 
     let sizes: Vec<usize> = #[big as usize]
-    println!("sizes {:?}", sizes)
+    println("sizes {:?}", sizes)
 
     let opt: Option<u64> = Some(big)
-    println!("opt {:?}", opt)
+    println("opt {:?}", opt)
 
     let ok: Result<u64, i64> = Ok(big)
     let err: Result<u64, i64> = Err(-9)
-    println!("res {:?} {:?}", ok, err)
+    println("res {:?} {:?}", ok, err)
 
-    println!("struct {:?}", Wide { id: big, tag: "w" })
-    println!("tuple struct {:?}", Pair(big, -1))
+    println("struct {:?}", Wide { id: big, tag: "w" })
+    println("tuple struct {:?}", Pair(big, -1))
 
     let nested: Vec<Wide> = #[Wide { id: big, tag: "n" }]
-    println!("vec of struct {:?}", nested)
+    println("vec of struct {:?}", nested)
 
     let held: Option<Wide> = Some(Wide { id: big, tag: "h" })
-    println!("opt struct {:?}", held)
+    println("opt struct {:?}", held)
 
     // A signed element keeps its own rendering.
     let signed: Vec<i64> = #[-5, 7]
     let signed_opt: Option<i64> = Some(-3)
-    println!("signed {:?} {:?}", signed, signed_opt)
+    println("signed {:?} {:?}", signed, signed_opt)
 
     // A slot container answers `Option<T>` in its element type.
     let mut q: Queue<u64> = Queue::new()
     q.push(big)
-    println!("queue {:?}", q.pop())
+    println("queue {:?}", q.pop())
 
     let mut d: Deque<usize> = Deque::new()
     d.push_front(big as usize)
-    println!("deque {:?}", d.pop_back())
+    println("deque {:?}", d.pop_back())
 
     // Nested positions read the same way.
-    println!("tuple {:?}", ("a", big))
+    println("tuple {:?}", ("a", big))
     let pairs: Vec<(String, u64)> = #[("a", big)]
-    println!("vec of tuple {:?}", pairs)
+    println("vec of tuple {:?}", pairs)
     let mut counts: Map<String, u64> = Map::new()
     counts.insert("k", big)
-    println!("map value {:?}", counts)
+    println("map value {:?}", counts)
     let ids: Map<u64, String> = { big: "v" }
-    println!("map key {:?}", ids)
+    println("map key {:?}", ids)
     let seen: Set<u64> = #{ big }
-    println!("set {:?}", seen)
+    println("set {:?}", seen)
     let ordered: BTreeSet<u64> = #{ big, 1 as u64 }
-    println!("btree set {:?}", ordered)
+    println("btree set {:?}", ordered)
     let held: Option<Vec<u64>> = Some(#[big])
-    println!("option of vec {:?}", held)
+    println("option of vec {:?}", held)
 
     // A signed element keeps the signed rendering in the same positions.
     let signed_pairs: Vec<(String, i64)> = #[("a", -5)]
     let signed_map: Map<i64, String> = { -5: "v" }
     let signed_set: Set<i64> = #{ -5 }
-    println!("signed nested {:?} {:?} {:?}", signed_pairs, signed_map, signed_set)
+    println("signed nested {:?} {:?} {:?}", signed_pairs, signed_map, signed_set)
 }

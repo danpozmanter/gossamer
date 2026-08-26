@@ -7,4 +7,4 @@ fn checked(n: i64) -> Result<i64, errors::Error> {
 
 let a = checked(20)?
 let b = checked(1)?
-println!("{}", a + b)
+println("{}", a + b)

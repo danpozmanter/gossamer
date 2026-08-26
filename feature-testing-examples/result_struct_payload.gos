@@ -18,20 +18,20 @@ struct Comic {
 }
 
 fn parse(idx: i64) -> Result<Comic, errors::Error> {
-    let body = format!(
+    let body = format(
         "{{\"month\":\"5\",\"num\":{},\"link\":\"\",\"year\":\"2006\",\"news\":\"\",\"title\":\"Family Circus\"}}"
         idx
     )
-    let c = from_json::<Comic>(&body)?
+    let c = from_json::<Comic>(body)?
     Ok(c)
 }
 
 fn parse_inline(idx: i64) -> Result<Comic, errors::Error> {
-    let body = format!(
+    let body = format(
         "{{\"month\":\"6\",\"num\":{},\"link\":\"l\",\"year\":\"2007\",\"news\":\"n\",\"title\":\"Barrel\"}}"
         idx
     )
-    Ok(from_json::<Comic>(&body)?)
+    Ok(from_json::<Comic>(body)?)
 }
 
 fn show(c: Comic) -> i64 {
@@ -43,17 +43,17 @@ fn main() {
     let mut i = 0
     while i < 300 {
         match parse(i) {
-            Err(e) => println!("error: {}", e.message())
+            Err(e) => println("error: {}", e.message())
             Ok(c) => {
                 total += show(c)
                 total += c.year.len()
             }
         }
         match parse_inline(i) {
-            Err(e) => println!("error: {}", e.message())
+            Err(e) => println("error: {}", e.message())
             Ok(c) => total += show(c)
         }
         i += 1
     }
-    println!("total = {}", total)
+    println("total = {}", total)
 }

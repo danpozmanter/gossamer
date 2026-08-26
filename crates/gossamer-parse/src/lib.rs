@@ -149,7 +149,7 @@ mod top_level_stmt_tests {
 
     #[test]
     fn top_level_statement_is_collected_not_error() {
-        let (sf, diags) = parse("println!(\"hi\")\n");
+        let (sf, diags) = parse("println(\"hi\")\n");
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
         assert_eq!(sf.top_level_stmts.len(), 1);
         assert!(sf.next_node_id > 0);
@@ -157,7 +157,7 @@ mod top_level_stmt_tests {
 
     #[test]
     fn top_level_items_still_parse_alongside_statements() {
-        let src = "fn helper() -> i64 { 1 }\nlet x = helper()\nprintln!(\"{}\", x)\n";
+        let src = "fn helper() -> i64 { 1 }\nlet x = helper()\nprintln(\"{}\", x)\n";
         let (sf, diags) = parse(src);
         assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
         assert_eq!(sf.items.len(), 1, "helper() should be a hoisted item");
@@ -166,7 +166,7 @@ mod top_level_stmt_tests {
 
     #[test]
     fn statement_in_mod_body_is_clear_error() {
-        let (_sf, diags) = parse("mod helper {\n    println!(\"no\")\n}\n");
+        let (_sf, diags) = parse("mod helper {\n    println(\"no\")\n}\n");
         assert!(!diags.is_empty(), "expected a diagnostic");
         assert!(
             diags
@@ -182,7 +182,6 @@ mod top_level_stmt_tests {
             "enum Nothing\nfn next() {}\n",
             "trait Missing\nfn next() {}\n",
             "impl Missing\nfn next() {}\n",
-            "mod missing\nfn next() {}\n",
         ] {
             let (sf, diags) = parse(source);
             assert_eq!(
@@ -198,21 +197,33 @@ mod top_level_stmt_tests {
         }
     }
 
+    /// `mod name` with no body names a file-backed module, so it is a
+    /// declaration rather than a missing body; the resolver reports
+    /// GR0010 when no file stands behind it.
     #[test]
-    fn a_format_macro_step_reports_that_a_macro_is_not_a_step() {
-        let (_sf, diags) = parse("\"two\" |> println!(\"one\")\n");
+    fn bodiless_mod_declaration_parses() {
+        let (sf, diags) = parse("mod missing\nfn next() {}\n");
+        assert!(diags.is_empty(), "{diags:?}");
+        assert_eq!(sf.items.len(), 2);
+    }
+
+    /// A formatting call is an ordinary call, so a step built from one is
+    /// judged by the rule every argument-taking step is judged by.
+    #[test]
+    fn a_format_step_with_arguments_reports_the_step_shape() {
+        let (_sf, diags) = parse("\"two\" |> println(\"one\")\n");
         assert!(
             diags
                 .iter()
-                .any(|diag| matches!(diag.error, ParseError::PipedFormatMacroStep)),
-            "expected the format-macro step diagnostic: {diags:?}"
+                .any(|diag| matches!(diag.error, ParseError::PipeStepNeedsClosure { .. })),
+            "expected the step-shape diagnostic: {diags:?}"
         );
     }
 
     #[test]
     fn a_dollar_reports_that_the_placeholder_is_retired() {
         let (_sf, diags) =
-            parse("fn main() { let xs = [7, 8, 9]\n println!(\"{}\", xs |> $[1]) }\n");
+            parse("fn main() { let xs = [7, 8, 9]\n println(\"{}\", xs |> $[1]) }\n");
         assert!(
             diags
                 .iter()
@@ -231,7 +242,7 @@ mod top_level_stmt_tests {
                 _ => None,
             })
             .expect("expected the closure-step diagnostic");
-        assert_eq!(step.as_deref(), Some("|v| two(100, v)"));
+        assert_eq!(step.as_deref(), Some("|v| two(v, 100)"));
     }
 
     #[test]

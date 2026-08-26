@@ -236,7 +236,7 @@ fn the_parity_walk_records_module_rows_a_feature_row_can_join() {
     let dir = scratch("module-rows");
     fs::write(
         dir.join("uses_strings.gos"),
-        "use std::strings\n\nfn main() {\n    println!(\"{}\", strings::trim(\"  x  \"))\n}\n",
+        "use std::strings\n\nfn main() {\n    println(\"{}\", strings::trim(\"  x  \"))\n}\n",
     )
     .expect("write fixture");
 
@@ -361,7 +361,7 @@ fn a_fixture_that_prints_its_own_path_is_not_a_divergence() {
         concat!(
             "use std::env\n\n",
             "fn main() {\n",
-            "    println!(\"program: {}\", env::program_name())\n",
+            "    println(\"program: {}\", env::program_name())\n",
             "}\n",
         ),
     )
@@ -396,12 +396,12 @@ fn a_nondeterministic_fixture_is_compared_on_exit_status_only() {
             "    tx.send(id)\n",
             "}\n\n",
             "fn main() {\n",
-            "    let (tx, rx) = channel()\n",
-            "    for i in 0..8 { go worker(tx, i) }\n",
+            "    let tx, rx = channel()\n",
+            "    for i in 0..8 { spawn(|| worker(tx, i)) }\n",
             "    let mut seen = 0\n",
             "    while seen < 8 {\n",
             "        match rx.recv() {\n",
-            "            Some(v) => { println!(\"got {}\", v); seen += 1 }\n",
+            "            Some(v) => { println(\"got {}\", v); seen += 1 }\n",
             "            None => { seen = 8 }\n",
             "        }\n",
             "    }\n",
@@ -433,7 +433,7 @@ fn a_fixture_that_fails_identically_on_every_tier_is_parity_passing() {
     let dir = scratch("agreeing-failure");
     fs::write(
         dir.join("exits_nonzero.gos"),
-        "use std::process\n\nfn main() {\n    println!(\"before\")\n    process::exit(3)\n}\n",
+        "use std::process\n\nfn main() {\n    println(\"before\")\n    process::exit(3)\n}\n",
     )
     .expect("write fixture");
 

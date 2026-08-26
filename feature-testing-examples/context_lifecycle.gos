@@ -13,45 +13,45 @@ fn produce(tx: Sender<i64>, value: i64) {
 
 fn main() {
     let root = context::Context::background()
-    let parent = context::Context::with_cancel(&root)
-    let child = context::Context::with_cancel(&parent)
-    println!("fresh {} {} {}", root.is_cancelled(), parent.is_cancelled(), child.is_cancelled())
+    let parent = context::Context::with_cancel(root)
+    let child = context::Context::with_cancel(parent)
+    println("fresh {} {} {}", root.is_cancelled(), parent.is_cancelled(), child.is_cancelled())
 
     parent.cancel()
-    println!("cancelled {} {} {}", root.is_cancelled(), parent.is_cancelled(), child.is_cancelled())
+    println("cancelled {} {} {}", root.is_cancelled(), parent.is_cancelled(), child.is_cancelled())
 
-    let late = context::Context::with_cancel(&parent)
-    println!("late-child {}", late.is_cancelled())
+    let late = context::Context::with_cancel(parent)
+    println("late-child {}", late.is_cancelled())
 
     parent.cancel()
-    println!("repeat {}", parent.is_cancelled())
-    println!("done-chan {:?}", parent.done_chan().recv())
+    println("repeat {}", parent.is_cancelled())
+    println("done-chan {:?}", parent.done_chan().recv())
 
     // Two properties, two contexts: a deadline no run reaches proves a
     // fresh one is not cancelled, and a short one proves a deadline
     // fires on its own. Reading a short deadline's freshness would race
     // the clock instead of testing either.
-    let pending = context::Context::with_timeout(&root, 3600000)
-    println!("timed-fresh {}", pending.is_cancelled())
+    let pending = context::Context::with_timeout(root, 3600000)
+    println("timed-fresh {}", pending.is_cancelled())
 
-    let timed = context::Context::with_timeout(&root, 20)
-    println!("timed-chan {:?}", timed.done_chan().recv())
-    println!("timed-after {}", timed.is_cancelled())
+    let timed = context::Context::with_timeout(root, 20)
+    println("timed-chan {:?}", timed.done_chan().recv())
+    println("timed-after {}", timed.is_cancelled())
 
-    let live = context::Context::with_cancel(&root)
-    let (tx, rx) = channel()
-    go produce(tx, 7)
-    println!("recv-live {:?}", rx.recv_ctx(&live))
+    let live = context::Context::with_cancel(root)
+    let tx, rx = channel()
+    spawn(|| produce(tx, 7))
+    println("recv-live {:?}", rx.recv_ctx(live))
 
     // A context that has already fired short-circuits the receive, so the
     // answer does not depend on whether a sender reached the channel first:
     // a queued value stays queued and is still there for a plain receive.
-    let dead = context::Context::with_cancel(&root)
+    let dead = context::Context::with_cancel(root)
     dead.cancel()
-    let (tx2, rx2) = channel_unbounded::<i64>()
+    let tx2, rx2 = channel_unbounded::<i64>()
     tx2.send(9)
-    println!("recv-cancelled {:?}", rx2.recv_ctx(&dead))
-    println!("recv-after-cancel {:?}", rx2.recv())
+    println("recv-cancelled {:?}", rx2.recv_ctx(dead))
+    println("recv-after-cancel {:?}", rx2.recv())
 
-    println!("root {}", root.is_cancelled())
+    println("root {}", root.is_cancelled())
 }

@@ -220,7 +220,7 @@ mod synthesis_tests {
                       struct Outer { i: Inner }\n\
                       fn main() {\n\
                       \x20   let o = Outer { i: Inner { m: {} } }\n\
-                      \x20   println!(\"{}\", json::to_json::<Outer>(o))\n\
+                      \x20   println(\"{}\", json::to_json::<Outer>(o))\n\
                       }\n";
         let doc = analysed(source);
         assert!(

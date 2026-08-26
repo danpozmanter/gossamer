@@ -4,17 +4,17 @@ The entry file may skip the `fn main` wrapper. Write statements at file
 scope and the file becomes the body of an implicit `fn main()`:
 
 ```gossamer
-println!("Hello World")
+println("Hello World")
 ```
 
 Functions and other items declared alongside top-level statements are
 hoisted to file scope, exactly as if you had written them outside `main`:
 
 ```gossamer
-fn greet(name: &String) -> String { format!("hi, {name}") }
+fn greet(name: String) -> String { format("hi, {name}") }
 
 let who = "ada"
-println!("{}", greet(&who))
+println("{}", greet(who))
 ```
 
 ## Mental model
@@ -32,8 +32,8 @@ If any top-level statement uses `?`, the implicit `main` returns
 ```gossamer
 use std::fs
 
-let text = fs::read_to_string(&"config.toml")?
-println!("{}", text)
+let text = fs::read_to_string("config.toml")?
+println("{}", text)
 ```
 
 Otherwise `main` returns `()`. To set a process exit code, call
@@ -43,7 +43,7 @@ Otherwise `main` returns `()`. To set a process exit code, call
 use std::process
 
 if bad_input {
-    eprintln!("usage: tool <path>")
+    eprintln("usage: tool <path>")
     process::exit(2)
 }
 ```

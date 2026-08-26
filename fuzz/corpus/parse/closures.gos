@@ -2,7 +2,7 @@ fn main() {
     let add = |a, b| a + b
     let curry = |a| |b| a + b
     let capture = || x + 1
-    let typed = |a: i64, b: i64| -> i64 { a * b }
+    let typed = |a: i64, b = i64| -> i64 { a * b }
     let block = |x| {
         let y = x * 2
         y + 1

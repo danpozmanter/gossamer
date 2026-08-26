@@ -6,8 +6,8 @@ fn main() {
     let b = "beautiful "
     let c = "world"
     let s = a + b + c + "!"
-    println!("{}", s)
+    println("{}", s)
     let name = "Ada"
-    println!("{}", "Dear " + name + ", welcome")
-    println!("{}", "x" + "y")
+    println("{}", "Dear " + name + ", welcome")
+    println("{}", "x" + "y")
 }

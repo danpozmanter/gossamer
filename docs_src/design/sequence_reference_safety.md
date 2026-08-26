@@ -26,7 +26,7 @@ Nested Vec elements are cloned recursively. Named Vec values sent to a
 goroutine or channel are cloned before publication, and every reachable
 String, RC node, nested Vec, or aggregate-owned child is switched to shared
 atomic RC before the handoff. GT0055 rejects every inline struct, tuple, or
-array passed directly to `go` because that compiled spawn ABI cannot yet copy
+array passed directly to a spawned call because that compiled spawn ABI cannot yet copy
 arbitrary inline layouts. Channels support scalar-only aggregates but reject
 aggregates containing nested Vec storage until their child-ownership
 descriptor is complete. Publish supported fields separately and reconstruct
@@ -42,7 +42,7 @@ GT0052 rejects a reference that would:
 - enter an owned field, tuple, array, Vec, map, channel, or inferred container;
 - borrow a temporary into a named local;
 - be captured or returned by a closure;
-- cross `go` or a channel boundary;
+- cross a `spawn` or a channel boundary;
 - be rebound to an alias whose backing place has a shorter lexical scope.
 
 A direct call may borrow a temporary because the view cannot leave that call.
@@ -94,8 +94,8 @@ references.
 | Shared and writable views do not overlap source access | GT0053 lexical named-root exclusion and duplicate mutable-argument checks. |
 | A view never drops borrowed elements | Borrowed array headers are untagged non-owning views and are not element owners. |
 | Nested Vec copies do not share growable child headers | `gos_rt_vec_clone` recursively clones nested Vec slots. |
-| Reference values do not cross concurrency boundaries | GT0052 checks `go`, closure capture, channel types, and channel sends. |
-| Nested growable storage does not dangle or double-release across concurrency | GT0055 rejects all inline aggregate `go` arguments and aggregate-with-Vec channel sends; top-level Vec publication clones storage and marks every managed child shared. |
+| Reference values do not cross concurrency boundaries | GT0052 checks `spawn`, closure capture, channel types, and channel sends. |
+| Nested growable storage does not dangle or double-release across concurrency | GT0055 rejects all inline aggregate spawned-call arguments and aggregate-with-Vec channel sends; top-level Vec publication clones storage and marks every managed child shared. |
 | Bounds and offset arithmetic are checked | Sequence indexing and `.slice` use checked integer bounds before runtime access. |
 | Backends agree on owned parameter behavior | MIR inserts Vec clones before compiled by-value calls; parity tests cover VM, JIT, and LLVM. |
 

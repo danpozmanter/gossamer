@@ -647,7 +647,7 @@ mod tests {
         // the LSP must analyse it cleanly, not report it as malformed items.
         let doc = analyse(
             "file:///t.gos",
-            "println!(\"hi\")\nlet x = 1\nprintln!(\"{}\", x)\n",
+            "println(\"hi\")\nlet x = 1\nprintln(\"{}\", x)\n",
         );
         assert!(
             doc.diagnostics.is_empty(),
@@ -663,7 +663,7 @@ mod tests {
             "use std::{env, fs}\n\
              let root = env::args().first()\n\
              let exists = fs::exists(\".\")\n\
-             println!(\"{} {:?}\", exists, root)\n",
+             println(\"{} {:?}\", exists, root)\n",
         );
         assert!(
             doc.diagnostics
@@ -679,7 +679,7 @@ mod tests {
         let src = "use std::errors\n\
                    fn f() -> Result<i64, errors::Error> { Ok(1) }\n\
                    let n = f()?\n\
-                   println!(\"{}\", n)\n";
+                   println(\"{}\", n)\n";
         let doc = analyse("file:///t.gos", src);
         assert!(
             doc.diagnostics.is_empty(),
@@ -712,7 +712,7 @@ mod tests {
         // error alone; the editor must agree.
         let doc = analyse(
             "file:///parse-gate.gos",
-            "struct Point(i64)\n             println!(\"{}\", Point(1).fmt())\n             println!({}, Point(1))\n",
+            "struct Point(i64)\n             println(\"{}\", Point(1).fmt())\n             println({}, Point(1))\n",
         );
         let codes: Vec<&str> = doc
             .diagnostics
@@ -731,7 +731,7 @@ mod tests {
     fn defaulted_and_named_arguments_type_check() {
         let doc = analyse(
             "file:///named-args.gos",
-            "fn volume(width: i64, height: i64 = 2) -> i64 { width * height }\n             println!(\"{}\", volume(2))\n             println!(\"{}\", volume(width = 2, height = 3))\n",
+            "fn volume(width: i64, height: i64 = 2) -> i64 { width * height }\n             println(\"{}\", volume(2))\n             println(\"{}\", volume(width: 2, height: 3))\n",
         );
         assert!(
             doc.diagnostics.is_empty(),
@@ -742,7 +742,7 @@ mod tests {
 
     #[test]
     fn mixing_top_level_statements_with_explicit_main_is_reported() {
-        let doc = analyse("file:///t.gos", "println!(\"hi\")\nfn main() { }\n");
+        let doc = analyse("file:///t.gos", "println(\"hi\")\nfn main() { }\n");
         assert!(
             !doc.diagnostics.is_empty(),
             "expected a conflict diagnostic for mixed entry forms"

@@ -18,13 +18,13 @@ impl Holder for Label {
     }
 }
 
-fn shout<T: Holder>(holder: &T) -> T::Item {
+fn shout<T: Holder>(holder: T) -> T::Item {
     holder.get()
 }
 
 fn main() {
     let label = Label { text: "gossamer" }
-    let item: String = shout(&label)
-    println!("{}", item.to_uppercase())
-    println!("{}", item.len())
+    let item: String = shout(label)
+    println("{}", item.to_uppercase())
+    println("{}", item.len())
 }

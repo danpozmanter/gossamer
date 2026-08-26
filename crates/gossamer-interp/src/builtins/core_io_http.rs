@@ -390,9 +390,16 @@ fn builtin_fmt_prec(args: &[Value]) -> RuntimeResult<Value> {
     let f = match value {
         Value::Float(f) => f,
         Value::Int(n) => n as f64,
+        // Precision bounds how much of a value is shown, so on text it
+        // takes the first `prec` scalars - the unit a string's length is
+        // counted in everywhere else in the language.
+        Value::String(text) => {
+            let taken: String = text.as_str().chars().take(prec).collect();
+            return Ok(Value::String(taken.into()));
+        }
         other => {
             return Err(RuntimeError::Type(format!(
-                "__fmt_prec expected a numeric first argument, got {other}"
+                "__fmt_prec expected a numeric or text first argument, got {other}"
             )));
         }
     };
@@ -431,7 +438,8 @@ fn builtin_fmt_upper(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 /// `__fmt_pad(s, width, fill, align)` - pads a rendered string to `width`.
-/// `align`: 0 = right (pad left), 1 = left (pad right), 2 = center.
+/// `align`: 0 = right (pad left), 1 = left (pad right), 2 = center,
+/// 3 = zeros between the number's sign (and radix prefix) and its digits.
 fn builtin_fmt_pad(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
     let width = args.get(1).and_then(value_to_int).unwrap_or(0);
@@ -454,6 +462,14 @@ fn builtin_fmt_pad(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(Value::String(text.into()));
     }
     let total = width - count;
+    if align == gossamer_ast::PAD_ALIGN_SIGN_AWARE_ZERO {
+        let split = gossamer_ast::sign_aware_prefix_len(text);
+        let mut out = String::with_capacity(text.len() + total);
+        out.push_str(&text[..split]);
+        out.extend(std::iter::repeat_n('0', total));
+        out.push_str(&text[split..]);
+        return Ok(Value::String(out.into()));
+    }
     let (left, right) = match align {
         1 => (0, total),
         2 => (total / 2, total - total / 2),

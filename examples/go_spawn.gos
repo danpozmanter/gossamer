@@ -10,16 +10,16 @@
 
 fn worker(id: i64, reps: i64) {
     for i in 0..reps {
-        println!("worker {} tick {}", id, i)
+        println("worker {} tick {}", id, i)
     }
 }
 
 fn main() {
     // Spawn three workers. Scheduler runs them cooperatively;
     // output order is not guaranteed.
-    go worker(1, 2)
-    go worker(2, 2)
-    go worker(3, 2)
+    spawn(|| worker(1, 2))
+    spawn(|| worker(2, 2))
+    spawn(|| worker(3, 2))
 
-    println!("main is done dispatching")
+    println("main is done dispatching")
 }

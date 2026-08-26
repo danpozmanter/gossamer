@@ -164,7 +164,7 @@ pub fn walk_stmt_mut<V: VisitorMut + ?Sized>(visitor: &mut V, stmt: &mut Stmt) {
                 visitor.visit_expr(expr);
             }
         }
-        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+        StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => {
             visitor.visit_expr(expr);
         }
         StmtKind::Item(item) => visitor.visit_item(item),
@@ -177,7 +177,7 @@ pub fn walk_expr_mut<V: VisitorMut + ?Sized>(visitor: &mut V, expr: &mut Expr) {
         ExprKind::Literal(lit) => visitor.visit_literal(lit),
         ExprKind::Path(path) => visitor.visit_path_expr(path),
         ExprKind::Block(block) | ExprKind::Unsafe(block) => visitor.visit_block(block),
-        ExprKind::Try(inner) | ExprKind::Go(inner) => visitor.visit_expr(inner),
+        ExprKind::Try(inner) => visitor.visit_expr(inner),
         ExprKind::Unary { operand, .. }
         | ExprKind::FieldAccess {
             receiver: operand, ..
@@ -194,7 +194,7 @@ pub fn walk_expr_mut<V: VisitorMut + ?Sized>(visitor: &mut V, expr: &mut Expr) {
                 visitor.visit_select_arm(arm);
             }
         }
-        ExprKind::Continue { .. } | ExprKind::MacroCall(_) => {}
+        ExprKind::Continue { .. } => {}
         _ => walk_expr_mut_compound(visitor, expr),
     }
 }

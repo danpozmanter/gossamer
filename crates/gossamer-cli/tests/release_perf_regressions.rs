@@ -92,7 +92,7 @@ fn json_serde_like_release_work_stays_linear_and_fast() {
         r#"
 use std::{encoding::json, env}
 
-let n: i64 = env::args()[0].parse().unwrap_or(3000)
+let n: i64 = env::args()[0].to_i64().unwrap_or(3000)
 let mut text = String::with_capacity(1024)
 text.push_str("[")
 for i in 0..n {
@@ -100,19 +100,19 @@ for i in 0..n {
     text.push_str("{\"id\":")
     text.push_str(i.to_string())
     text.push_str(",\"name\":\"user-")
-    text.push_str(format!("{:06}", i))
+    text.push_str(format("{:06}", i))
     text.push_str("\",\"tags\":[\"a\",\"b\"]}")
 }
 text.push_str("]")
-let parsed = json::parse(&text)?
-let rendered = json::render(&parsed)
+let parsed = json::parse(text)?
+let rendered = json::render(parsed)
 let mut checksum = 0
 let mut i = 0
 while i < rendered.len() {
     checksum += rendered.byte_at(i)
     i += 1
 }
-println!("{} {}", rendered.len(), checksum)
+println("{} {}", rendered.len(), checksum)
 "#,
     );
     let small = timed(&binary, 3_000);
@@ -127,7 +127,7 @@ fn radix_sort_like_release_work_stays_linear_and_fast() {
         r#"
 use std::env
 
-let n: i64 = env::args()[0].parse().unwrap_or(500000)
+let n: i64 = env::args()[0].to_i64().unwrap_or(500000)
 let mut src: Vec<i64> = Vec::with_capacity(n)
 let mut dst: Vec<i64> = Vec::with_capacity(n)
 for i in 0..n {
@@ -156,7 +156,7 @@ while pass < 8 {
     dst = tmp
     pass += 1
 }
-println!("{}", src[0])
+println("{}", src[0])
 "#,
     );
     let small = timed(&binary, 500_000);

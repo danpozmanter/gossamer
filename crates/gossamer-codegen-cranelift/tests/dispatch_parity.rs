@@ -85,7 +85,6 @@ const RUST_ONLY: &[&str] = &[
     "gos_rt_install_trace_hook",
     "gos_rt_concat_f64_prec",
     "gos_rt_gc_reset",
-    "gos_rt_go_spawn",
     "gos_rt_heap_i64_free",
     "gos_rt_heap_u8_free",
     // RC inspection/release helpers used by the interpreter and build

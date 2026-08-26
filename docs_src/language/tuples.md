@@ -9,7 +9,7 @@ parenthesised list of its element types, so `(1, "two", 3.0)` has type
 
 ```gossamer
 let entry = (1, "two", 3.0)
-println!("{} {} {}", entry.0, entry.1, entry.2)
+println("{} {} {}", entry.0, entry.1, entry.2)
 ```
 
 Unlike a `Vec<T>`, a tuple's length is part of its type and its elements do not
@@ -35,7 +35,7 @@ tuples:
 
 ```gossamer
 let nested = ((1, 2), "outer")
-println!("{}", nested.0.1)   // 2
+println("{}", nested.0.1)   // 2
 ```
 
 A `mut` binding assigns positionally, including through a nested tuple:
@@ -53,19 +53,19 @@ A tuple pattern binds every element at once, in `let`, in `for`, in `match`, and
 in a function's parameter list:
 
 ```gossamer
-let (id, name, weight) = (1, "two", 3.0)
+let id, name, weight = (1, "two", 3.0)
 
 for (key, value) in map.iter() {
-    println!("{key}={value}")
+    println("{key}={value}")
 }
 
 fn label((rank, name): (i64, String)) -> String {
-    format!("{rank}: {name}")
+    format("{rank}: {name}")
 }
 
 match point {
-    (0, 0) => println!("origin"),
-    (x, _) => println!("x = {x}"),
+    (0, 0) => println("origin"),
+    (x, _) => println("x = {x}"),
 }
 ```
 
@@ -76,8 +76,8 @@ Tuples compare structurally, element by element in declaration order, with no
 lexicographic, so the first differing element decides.
 
 ```gossamer
-println!("{}", (1, 2) < (1, 3))     // true
-println!("{}", (1, "a") == (1, "a")) // true
+println("{}", (1, 2) < (1, 3))     // true
+println("{}", (1, "a") == (1, "a")) // true
 ```
 
 That ordering is what `sort` uses on a sequence of tuples, which makes a tuple
@@ -94,7 +94,7 @@ A tuple is an ordinary value: it can be a function return, a struct field, a
 `Vec` element, a `Map` key, or a channel payload.
 
 ```gossamer
-fn min_max(xs: &[i64]) -> (i64, i64) {
+fn min_max(xs: [i64]) -> (i64, i64) {
     (xs.min().unwrap_or(0), xs.max().unwrap_or(0))
 }
 
@@ -108,14 +108,15 @@ let by_position: Map<(i64, i64), String> = Map::new()
 
 ## Destructuring assignment
 
-A tuple on the left of `=` writes each element to its own target, so several
-places update from one right-hand side. The right-hand side is evaluated in
-full before the first write, which is what makes a swap need no temporary:
+A comma-separated list on the left of `=` writes each element to its own
+target, so several places update from one right-hand side. The right-hand
+side is evaluated in full before the first write, which is what makes a swap
+need no temporary:
 
 ```gossamer
 let mut a = 1
 let mut b = 2
-(a, b) = (b, a)
+a, b = b, a
 ```
 
 Every target follows the rules a scalar assignment follows: it must be a
@@ -125,19 +126,24 @@ dereference. Targets may nest, and `_` discards the element opposite it:
 ```gossamer
 let mut point = Point { x: 0, y: 0 }
 let mut cells = #[0, 0]
-(point.x, cells[1]) = (5, 6)
+point.x, cells[1] = 5, 6
 
 let mut head = 0
 let mut left = 0
 let mut right = 0
-(head, (left, right)) = (1, (2, 3))
+head, (left, right) = 1, (2, 3)
 
 let mut kept = 0
-(_, kept) = (99, 42)
+_, kept = 99, 42
 ```
 
-Only plain `=` destructures. `(a, b) += (1, 2)` is rejected: write the
-elements individually, or `(a, b) = (a + 1, b + 2)`.
+A compound operator pairs element-wise: each place is read, combined with its
+own element of the right-hand value, and written back, so `x, y += 2, 3` is
+`x += 2` and `y += 3`.
+
+Parentheses group a pattern only where one sits beside others - a `match`
+arm, a `for` binding, a parameter, or a nested element of the list itself.
+A parenthesised target list reports `GP0042` and carries the rewrite.
 
 ## Methods
 

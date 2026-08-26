@@ -10,20 +10,20 @@ fn main() {
     assert_eq(d.as_millis(), time::Duration::as_millis(d), "millis from_millis")
     assert_eq(d.as_secs(), time::Duration::as_secs(d), "secs from_millis")
     assert_eq(d.as_micros(), time::Duration::as_micros(d), "micros from_millis")
-    println!("from_millis: {} {} {}", d.as_millis(), d.as_secs(), d.as_micros())
+    println("from_millis: {} {} {}", d.as_millis(), d.as_secs(), d.as_micros())
 
     let s = time::Duration::from_secs(3)
     assert_eq(s.as_millis(), 3000, "secs to millis")
-    println!("from_secs: {} {} {}", s.as_millis(), s.as_secs(), s.as_micros())
+    println("from_secs: {} {} {}", s.as_millis(), s.as_secs(), s.as_micros())
 
     let u = time::Duration::from_micros(4000)
     assert_eq(u.as_millis(), 4, "micros to millis")
-    println!("from_micros: {} {} {}", u.as_millis(), u.as_secs(), u.as_micros())
+    println("from_micros: {} {} {}", u.as_millis(), u.as_secs(), u.as_micros())
 
     // Method form chains directly off the constructor, and the
     // accessor result threads through ordinary integer arithmetic.
     let chained = time::Duration::from_secs(2).as_millis()
-    println!("chained: {}", chained)
+    println("chained: {}", chained)
     let doubled = d.as_millis() * 2
-    println!("doubled: {}", doubled)
+    println("doubled: {}", doubled)
 }

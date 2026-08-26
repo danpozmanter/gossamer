@@ -30,15 +30,15 @@ impl Source for Greeting {
     }
 }
 
-fn sum_of<T: Source<Item = i64>>(source: &T) -> T::Item {
+fn sum_of<T: Source<Item = i64>>(source: T) -> T::Item {
     source.take() + 1
 }
 
-fn text_of<T: Source<Item = String>>(source: &T) -> T::Item {
+fn text_of<T: Source<Item = String>>(source: T) -> T::Item {
     source.take()
 }
 
 fn main() {
-    println!("{}", sum_of(&Counter { value: 41 }))
-    println!("{}", text_of(&Greeting { word: "hello" }).to_uppercase())
+    println("{}", sum_of(Counter { value: 41 }))
+    println("{}", text_of(Greeting { word: "hello" }).to_uppercase())
 }

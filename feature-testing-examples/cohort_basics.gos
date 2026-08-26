@@ -19,14 +19,14 @@ fn main() {
         let _b = spawn(|| work(2))
         let _c = spawn(|| work(3))
     }
-    println!("all ok: {:?}", all_ok)
+    println("all ok: {:?}", all_ok)
 
     // A child fails: fail-fast reports that child's error.
     let one_failed = cohort {
         let _a = spawn(|| work(1))
         let _b = spawn(|| work(-2))
     }
-    println!("one failed: {:?}", one_failed)
+    println("one failed: {:?}", one_failed)
 
     // The lowest-index failure is the reported one, whichever child
     // happens to finish first, so this answer never varies.
@@ -34,12 +34,12 @@ fn main() {
         let _a = spawn(|| work(-1))
         let _b = spawn(|| work(-2))
     }
-    println!("two failed: {:?}", two_failed)
+    println("two failed: {:?}", two_failed)
 
     // A cohort's value composes with `?` like any fallible call.
     match run_stage() {
-        Ok(()) => println!("stage: ok")
-        Err(e) => println!("stage: {}", e)
+        Ok(()) => println("stage: ok")
+        Err(e) => println("stage: {}", e)
     }
 
     // Nested cohorts: the inner one is joined before the outer sees it.
@@ -48,21 +48,21 @@ fn main() {
         let inner = cohort {
             let _x = spawn(|| work(5))
         }
-        println!("inner: {:?}", inner)
+        println("inner: {:?}", inner)
     }
-    println!("nested: {:?}", nested)
+    println("nested: {:?}", nested)
 
     // A child that panics fails its cohort rather than the process.
     let panicked = cohort {
         let _p = spawn(|| -> Result<i64, errors::Error> {
-            panic!("child gave up")
+            panic("child gave up")
         })
     }
-    println!("panicked: {}", panicked.is_err())
+    println("panicked: {}", panicked.is_err())
 
     // An empty cohort has nothing to wait for.
     let empty = cohort {}
-    println!("empty: {:?}", empty)
+    println("empty: {:?}", empty)
 }
 
 fn run_stage() -> Result<(), errors::Error> {

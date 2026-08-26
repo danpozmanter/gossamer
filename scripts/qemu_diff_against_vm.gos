@@ -26,10 +26,10 @@ const FIXTURE_LIST: String = "scripts/cross_fixtures.txt"
 fn repo_root() -> String {
     let mut directory = env::current_dir().unwrap_or(".")
     loop {
-        if fs::is_file(&path::join(&directory, &FIXTURE_LIST)) {
+        if fs::is_file(path::join(directory, FIXTURE_LIST)) {
             return directory
         }
-        match path::parent(&directory) {
+        match path::parent(directory) {
             Some(parent) => directory = parent
             None => return "."
         }
@@ -39,9 +39,9 @@ fn repo_root() -> String {
 /// The first directory on `PATH` holding an executable named `name`,
 /// or "" when it is on none.
 fn on_path(name: String) -> String {
-    for directory in env::var(&"PATH").unwrap_or("").split(":") {
-        let candidate = path::join(&directory, &name)
-        if fs::is_file(&candidate) {
+    for directory in env::var("PATH").unwrap_or("").split(":") {
+        let candidate = path::join(directory, name)
+        if fs::is_file(candidate) {
             return candidate
         }
     }
@@ -67,7 +67,7 @@ fn runner_for(arch: String) -> String {
 }
 
 /// The fixture paths in `list`, without its comments and blank lines.
-fn fixtures(list: &String) -> Vec<String> {
+fn fixtures(list: String) -> Vec<String> {
     let mut paths = #[]
     for line in list.lines() {
         let entry = line.trim()
@@ -82,7 +82,7 @@ fn fixtures(list: &String) -> Vec<String> {
 /// The directories directly under `parent`, sorted by name. A path
 /// that cannot be listed contributes none, which the caller reports as
 /// the missing binaries it then finds.
-fn subdirectories(parent: &String) -> Vec<String> {
+fn subdirectories(parent: String) -> Vec<String> {
     let mut names = #[]
     for entry in fs::read_dir(parent).unwrap_or(#[]) {
         if entry.is_dir {
@@ -93,7 +93,7 @@ fn subdirectories(parent: &String) -> Vec<String> {
 }
 
 /// What a child printed, or "" when it could not be run.
-fn output_of(program: &String, arguments: &Vec<String>) -> Option<String> {
+fn output_of(program: String, arguments: Vec<String>) -> Option<String> {
     match process::run(program, arguments) {
         Ok(result) => Some(result.stdout)
         Err(_) => None
@@ -103,70 +103,70 @@ fn output_of(program: &String, arguments: &Vec<String>) -> Option<String> {
 fn main() {
     let args = env::args()
     if args.len() != 1 {
-        eprintln!("usage: gos run scripts/qemu_diff_against_vm.gos <bins-root>")
+        eprintln("usage: gos run scripts/qemu_diff_against_vm.gos <bins-root>")
         process::exit(2)
     }
     let bins_root = args[0]
     let root = repo_root()
-    let gos = env::var(&"GOS_BIN").unwrap_or(path::join(&root, &"target/debug/gos"))
-    let list = match fs::read_to_string(&path::join(&root, &FIXTURE_LIST)) {
+    let gos = env::var("GOS_BIN").unwrap_or(path::join(root, "target/debug/gos"))
+    let list = match fs::read_to_string(path::join(root, FIXTURE_LIST)) {
         Ok(text) => text
         Err(e) => {
-            eprintln!("qemu diff: reading the fixture list: {}", e)
+            eprintln("qemu diff: reading the fixture list: {}", e)
             process::exit(2)
         }
     }
-    let sources = fixtures(&list)
+    let sources = fixtures(list)
 
     let mut failed = false
-    for artifact in subdirectories(&bins_root) {
-        let artifact_dir = path::join(&bins_root, &artifact)
-        for triple in subdirectories(&artifact_dir) {
-            let triple_dir = path::join(&artifact_dir, &triple)
+    for artifact in subdirectories(bins_root) {
+        let artifact_dir = path::join(bins_root, artifact)
+        for triple in subdirectories(artifact_dir) {
+            let triple_dir = path::join(artifact_dir, triple)
             let arch = triple.split_once("-").map(|(arch, _)| arch).unwrap_or(triple)
             let runner = runner_for(arch)
             if runner == "SKIP" {
-                println!("::notice::skip {} (no runner for {} on {})", triple, arch, os::arch())
+                println("::notice::skip {} (no runner for {} on {})", triple, arch, os::arch())
                 continue
             }
             for src in sources {
-                let stem = path::file_stem(&src).unwrap_or(src)
-                let binary = path::join(&triple_dir, &stem)
+                let stem = path::file_stem(src).unwrap_or(src)
+                let binary = path::join(triple_dir, stem)
                 // `actions/upload-artifact` and `download-artifact` do
                 // not preserve Unix file permissions - every downloaded
                 // file lands as 644 - so the executable bit set at
                 // cross-build time never survives the round trip and is
                 // restored here.
-                if fs::is_file(&binary) {
-                    let _ = fs::set_permissions(&binary, 0o755)
+                if fs::is_file(binary) {
+                    let _ = fs::set_permissions(binary, 0o755)
                 } else {
-                    println!("::error::missing binary {}", binary)
+                    println("::error::missing binary {}", binary)
                     failed = true
                     continue
                 }
-                let Some(vm_out) = output_of(&gos, &#["run", path::join(&root, &src)]) else {
-                    println!("::error::the VM could not run {}", src)
+                let Some(vm_out) = output_of(gos, #["run", path::join(root, src)]) else {
+                    println("::error::the VM could not run {}", src)
                     failed = true
                     continue
                 }
                 let native = if runner.is_empty() {
-                    output_of(&binary, &#[])
+                    output_of(binary, #[])
                 } else {
-                    output_of(&runner, &#[binary])
+                    output_of(runner, #[binary])
                 }
                 let Some(run_out) = native else {
-                    println!("::error::could not run {}", binary)
+                    println("::error::could not run {}", binary)
                     failed = true
                     continue
                 }
                 if vm_out == run_out {
-                    println!("ok   {}: {} {}", artifact, triple, src)
+                    println("ok   {}: {} {}", artifact, triple, src)
                 } else {
-                    println!("::error::{}: {} {} cross output != VM", artifact, triple, src)
+                    println("::error::{}: {} {} cross output != VM", artifact, triple, src)
                     // Trailing newlines trimmed from the report only:
                     // the comparison above is bit-exact, which is what
                     // the harness promises.
-                    eprintln!("VM:\n{}\nRUN:\n{}", vm_out.trim_end(), run_out.trim_end())
+                    eprintln("VM:\n{}\nRUN:\n{}", vm_out.trim_end(), run_out.trim_end())
                     failed = true
                 }
             }

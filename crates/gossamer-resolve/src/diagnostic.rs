@@ -42,12 +42,12 @@ fn std_macro_help(
     name: &str,
 ) -> gossamer_diagnostics::Diagnostic {
     out.with_note(
-        "the macro set is fixed and expands at parse time, so a macro has no \
+        "the set is fixed and expands where it is written, so it has no \
          function to call or pass as a value"
             .to_string(),
     )
     .with_help(format!(
-        "write `{name}!(..)`; the macro is in scope without an import"
+        "write `{name}(..)`; it is in scope without an import"
     ))
 }
 
@@ -180,10 +180,10 @@ pub enum ResolveError {
         /// The canonical name to import instead.
         replacement: String,
     },
-    /// A std macro named as a value path (`fmt::println(..)`). The
-    /// macro expands at parse time and the runtime binds no callable
-    /// for it, so the path has nothing to call.
-    #[error("`{path}` is a macro; it is written `{name}!(..)`")]
+    /// A compiler-known call named as a value path (`fmt::println(..)`).
+    /// It expands at parse time and the runtime binds no callable for
+    /// it, so the path has nothing to call.
+    #[error("`{path}` is a compiler-known call; it is written `{name}(..)`")]
     StdMacroAsValue {
         /// The path as written, `std::`-relative.
         path: String,
@@ -199,6 +199,25 @@ pub enum ResolveError {
         /// `::`-joined path of the module the item is private to.
         module: String,
         /// Item shape, for the message.
+        kind: &'static str,
+    },
+    /// A std free function called with its data argument in the slot it
+    /// occupied before every module took its data first.
+    #[error("`{callee}` takes its data first")]
+    DataLastCallOrder {
+        /// The call as written, module-qualified.
+        callee: String,
+        /// The parameter list in the order the function declares it.
+        params: String,
+    },
+    /// A declaration under one of the compiler-known call names. The
+    /// parser expands `println(..)` where it is written, so a `fn` or a
+    /// binding under that name could never be reached.
+    #[error("`{name}` is a compiler-known call and cannot be declared")]
+    ReservedCallName {
+        /// The name as written.
+        name: String,
+        /// What was being declared, for the message.
         kind: &'static str,
     },
     /// A `typeInfo::<T>()` naming a type this unit does not declare, or
@@ -336,12 +355,14 @@ impl ResolveError {
             Self::UnresolvedName { .. } => "unresolved-name",
             Self::WrongNamespace { .. } => "wrong-namespace",
             Self::DuplicateItem { .. } => "duplicate-item",
+            Self::DataLastCallOrder { .. } => "data-last-call-order",
             Self::DuplicateImport { .. } => "duplicate-import",
             Self::UnknownStdItem { .. } => "unknown-std-item",
             Self::RemovedStdItem { .. } => "removed-std-item",
             Self::StdMacroAsValue { .. } => "std-macro-as-value",
             Self::PrivateItem { .. } => "private-item",
             Self::UnreflectableType { .. } => "unreflectable-type",
+            Self::ReservedCallName { .. } => "reserved-call-name",
             Self::UnknownNamedArgument { .. } => "unknown-named-argument",
             Self::DuplicateNamedArgument { .. } => "duplicate-named-argument",
             Self::PositionalAfterNamed => "positional-after-named",
@@ -380,6 +401,7 @@ impl ResolveError {
             | Self::AmbiguousVariant { name, .. }
             | Self::MissingModuleSource { name }
             | Self::UnreflectableType { name }
+            | Self::ReservedCallName { name, .. }
             | Self::UnknownNamedArgument { name, .. }
             | Self::DuplicateNamedArgument { name }
             | Self::NamedArgumentTarget { name, .. }
@@ -388,6 +410,7 @@ impl ResolveError {
             Self::PositionalAfterNamed
             | Self::MissingRequiredArgument { .. }
             | Self::LoopControlOutsideLoop { .. }
+            | Self::DataLastCallOrder { .. }
             | Self::UnknownLoopLabel { .. } => return false,
             Self::DependencyNotImported { module, .. } => module,
             Self::DependencyModuleCollision { module, .. } => module,
@@ -440,6 +463,8 @@ impl ResolveError {
             Self::LoopControlOutsideLoop { .. } | Self::UnknownLoopLabel { .. } => "GR0017",
             Self::StdMacroAsValue { .. } => "GR0018",
             Self::DependencyModuleCollision { .. } => "GR0019",
+            Self::ReservedCallName { .. } => "GR0020",
+            Self::DataLastCallOrder { .. } => "GR0021",
         }
     }
 }
@@ -583,6 +608,10 @@ impl ResolveDiagnostic {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per diagnostic that carries a help line"
+    )]
     fn with_error_specific_help(
         &self,
         out: gossamer_diagnostics::Diagnostic,
@@ -600,6 +629,27 @@ impl ResolveDiagnostic {
             error @ (ResolveError::LoopControlOutsideLoop { .. }
             | ResolveError::UnknownLoopLabel { .. }) => loop_control_help(out, location, error),
             ResolveError::StdMacroAsValue { name, .. } => std_macro_help(out, name),
+            ResolveError::DataLastCallOrder { callee, params } => out
+                .with_note(format!(
+                    "every std free function takes its data first, so `{callee}` reads \
+                     as the method it stands for: `{params}`"
+                ))
+                .with_help("move the data argument to the front".to_string()),
+            ResolveError::ReservedCallName { name, kind } => out
+                .with_note(
+                    if gossamer_parse::builtin_macros::is_spawn_primitive(name) {
+                        format!(
+                            "`spawn(f)` is the one way to start a goroutine, so this {kind} \
+                         would take concurrency away from every call in the file"
+                        )
+                    } else {
+                        format!(
+                            "`{name}(..)` expands where it is written, so this {kind} \
+                         would have no way to be called"
+                        )
+                    },
+                )
+                .with_help(format!("give the {kind} a name of its own")),
             ResolveError::UnknownNamedArgument { .. }
             | ResolveError::DuplicateNamedArgument { .. }
             | ResolveError::PositionalAfterNamed

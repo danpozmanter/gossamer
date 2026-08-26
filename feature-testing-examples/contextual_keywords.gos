@@ -1,0 +1,66 @@
+// The block words are contextual, never reserved.
+//
+// `arena`, `cohort`, `comptime`, `defer`, `newtype`, `packed`, and
+// `select` open their construct where one can start and are ordinary
+// identifiers everywhere else, so each may also name a binding, a field,
+// a parameter, a method, or a function.
+
+use std::sync::channel
+
+struct Query { select: String, defer: i64, comptime: bool }
+
+newtype Cohort = i64
+
+packed enum Arena { Small, Large }
+
+comptime fn doubled(n: i64) -> i64 { n * 2 }
+
+impl Query {
+    fn select(&self, n: i64) -> i64 { self.defer + n }
+    fn defer(&self) -> String { self.select.clone() }
+}
+
+fn packed(count: i64) -> i64 { count + 1 }
+
+fn main() {
+    let q = Query { select: "rows", defer: 4, comptime: true }
+    println("{} {} {}", q.select, q.defer, q.comptime)
+    println("{} {}", q.select(3), q.defer())
+
+    let mut select = 10
+    select += 5
+    println("{}", select)
+
+    let defer = "not a statement"
+    println("{}", defer.len())
+
+    let comptime = 7
+    println("{}", comptime)
+    println("{}", comptime { doubled(21) })
+
+    let mut arena = 1
+    arena += 1
+    println("{}", arena)
+    arena {
+        let scratch = #[1, 2, 3]
+        println("{}", scratch.len())
+    }
+
+    let cohort: Cohort = 3.into()
+    println("{}", cohort)
+    println("{}", packed(41))
+    println("{:?}", Arena::Large)
+
+    defer println("last")
+
+    let tx, rx = channel()
+    let _ = cohort {
+        spawn(|| {
+            tx.send(99)
+            tx.close()
+        })
+        select {
+            v = rx.recv() => println("received {:?}", v)
+        }
+    }
+}

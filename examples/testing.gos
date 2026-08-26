@@ -30,12 +30,12 @@ fn fibonacci(n: u64) -> u64 {
 }
 
 // A fallible helper used below to show `check_ok` integration.
-fn parse_sequence(text: &String) -> Result<Vec<u64>, errors::Error> {
+fn parse_sequence(text: String) -> Result<Vec<u64>, errors::Error> {
     let mut out: Vec<u64> = #[]
     for piece in text.split(',') {
         let trimmed = piece.trim()
-        let n: u64 = trimmed.parse()
-            .map_err(|_| errors::new(format!("bad number: {trimmed}")))?
+        let n: u64 = trimmed.to_i64()
+            .ok_or_else(|| errors::new(format("bad number: {trimmed}")))? as u64
         out.push(n)
     }
     Ok(out)
@@ -55,7 +55,7 @@ mod tests {
         for i in 0..10 {
             let got = super::fibonacci(i)
             let want = expected[i]
-            let _ = testing::check_eq(&got, &want, &format!("fib({i})"))
+            let _ = testing::check_eq(got, want, format("fib({i})"))
         }
     }
 
@@ -69,17 +69,17 @@ mod tests {
         /* `check_ok` keeps the unwrapping path because subsequent
          * assertions inspect `values`. */
         let values = testing::check_ok(
-            super::parse_sequence(&"1, 2, 3, 5")
+            super::parse_sequence("1, 2, 3, 5")
             "parse happy path"
         ).expect("parse failed")
-        let _ = testing::check_eq(&values.len(), &4, "parsed length matches input")
+        let _ = testing::check_eq(values.len(), 4, "parsed length matches input")
     }
 
     #[test]
     fn parse_sequence_reports_bad_input() {
-        let result = super::parse_sequence(&"1, nope, 3")
+        let result = super::parse_sequence("1, nope, 3")
         match result {
-            Ok(_) => panic!("expected failure")
+            Ok(_) => panic("expected failure")
             Err(e) => {
                 let _ = testing::check(
                     e.message().contains("bad number")
@@ -93,5 +93,5 @@ mod tests {
 // When run directly (not via `gos test`), demonstrate the
 // function so the example is still useful.
 for i in 0..8 {
-    println!("fib({i}) = {}", fibonacci(i as u64))
+    println("fib({i}) = {}", fibonacci(i as u64))
 }

@@ -28,9 +28,10 @@ fn capture_writer(text: &str) {
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("custom_iter.gos", source.to_string());
-    let (sf, parse_diags) = parse_with_autoderive(source, file);
+    let (mut sf, parse_diags) = parse_with_autoderive(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -62,7 +63,7 @@ fn main() {
     let mut c = Counter { next_value: 0, end: 5 }
     let mut total = 0
     for x in c { total = total + x }
-    println!("total={}", total)
+    println("total={}", total)
 }
 "#;
     assert_eq!(run_main(src), "total=10\n");
@@ -86,7 +87,7 @@ fn main() {
     let mut c = Counter { next_value: 3, end: 3 }
     let mut count = 0
     for _x in c { count = count + 1 }
-    println!("count={}", count)
+    println("count={}", count)
 }
 "#;
     assert_eq!(run_main(src), "count=0\n");
@@ -105,7 +106,7 @@ fn main() {
     m.insert(3, 30)
     let mut sum = 0
     for (k, v) in m.iter() { sum = sum + k + v }
-    println!("sum={}", sum)
+    println("sum={}", sum)
 }
 "#;
     assert_eq!(run_main(src), "sum=66\n");
@@ -131,7 +132,7 @@ fn main() {
     for (key, value) in tree {
         tree_sum = tree_sum + key + value
     }
-    println!("hash={} tree={}", hash_sum, tree_sum)
+    println("hash={} tree={}", hash_sum, tree_sum)
 }
 "#;
     assert_eq!(run_main(src), "hash=32 tree=33\n");
@@ -149,7 +150,7 @@ fn main() {
     for k in m.keys() { ks = ks + k }
     let mut vs = 0
     for v in m.values() { vs = vs + v }
-    println!("ks={} vs={}", ks, vs)
+    println("ks={} vs={}", ks, vs)
 }
 "#;
     assert_eq!(run_main(src), "ks=3 vs=300\n");
@@ -176,7 +177,7 @@ fn main() {
         let mut inner = Range2 { cur: 0, end: 3 }
         for j in inner { acc = acc + i * j }
     }
-    println!("acc={}", acc)
+    println("acc={}", acc)
 }
 "#;
     // sum over i,j in 0..3 of i*j = (0+1+2)^2 = 9

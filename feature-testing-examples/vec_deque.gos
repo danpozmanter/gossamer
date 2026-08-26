@@ -6,12 +6,12 @@ fn main() {
     q.push_back(2)
     q.push_back(3)
 
-    println!("len: {}", q.len())
-    println!("empty: {}", q.is_empty())
+    println("len: {}", q.len())
+    println("empty: {}", q.is_empty())
 
     while let Some(v) = q.pop_front() {
-        println!("got {}", v)
+        println("got {}", v)
     }
 
-    println!("empty after drain: {}", q.is_empty())
+    println("empty after drain: {}", q.is_empty())
 }

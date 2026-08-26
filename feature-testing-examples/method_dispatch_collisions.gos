@@ -9,11 +9,11 @@ fn main() {
     let v = #["a", "b", "c"]
     let nums = #[3, 1, 2]
 
-    println!("{}", s.len())            // String length: 11
-    println!("{}", v.len())            // Vec length: 3
-    println!("{}", nums.len())         // 3
-    println!("{}", s.contains("wor"))  // String contains: true
-    println!("{}", v.contains(&"b"))   // Vec contains: true
-    println!("{}", v.join(","))        // Vec<String> join -> a,b,c
-    println!("{}", strings::join(&v, "/"))
+    println("{}", s.len())            // String length: 11
+    println("{}", v.len())            // Vec length: 3
+    println("{}", nums.len())         // 3
+    println("{}", s.contains("wor"))  // String contains: true
+    println("{}", v.contains("b"))   // Vec contains: true
+    println("{}", v.join(","))        // Vec<String> join -> a,b,c
+    println("{}", strings::join(v, "/"))
 }

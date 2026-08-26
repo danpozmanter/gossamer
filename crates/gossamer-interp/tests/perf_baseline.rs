@@ -38,8 +38,9 @@ fn scale() -> i64 {
 fn compile(src: &str) -> (gossamer_hir::HirProgram, TyCtxt) {
     let mut map = SourceMap::new();
     let file = map.add_file("perf.gos", src.to_string());
-    let (sf, _) = parse_source_file(src, file);
+    let (mut sf, _) = parse_source_file(src, file);
     let (res, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &res);
     let mut tcx = TyCtxt::new();
     let (tbl, _) = typecheck_source_file(&sf, &res, &mut tcx);
     let program = lower_source_file(&sf, &res, &tbl, &mut tcx);

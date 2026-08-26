@@ -17,21 +17,21 @@ use std::sync
 use std::time
 
 fn worker(
-    target: String,
-    stop_at: i64,
-    total: sync::AtomicU64,
-    errors: sync::AtomicU64,
-    wg: sync::WaitGroup,
+    target: String
+    stop_at: i64
+    total: sync::AtomicU64
+    errors: sync::AtomicU64
+    wg: sync::WaitGroup
 ) {
     let body = "{\"body\":\"hello\"}"
     while time::now_ms() < stop_at {
-        match http::get(&target, #[]) {
-            Ok(_) => total.fetch_add(1),
-            Err(_) => errors.fetch_add(1),
+        match http::get(target, #[]) {
+            Ok(_) => total.fetch_add(1)
+            Err(_) => errors.fetch_add(1)
         }
-        match http::post(&target, &body, "application/json") {
-            Ok(_) => total.fetch_add(1),
-            Err(_) => errors.fetch_add(1),
+        match http::post(target, body, "application/json") {
+            Ok(_) => total.fetch_add(1)
+            Err(_) => errors.fetch_add(1)
         }
     }
     wg.done()
@@ -44,7 +44,7 @@ fn main() {
     let duration = fs.int("duration", 60, "seconds to run")
     let _ = fs.parse(env::args())
 
-    let target = format!("http://127.0.0.1:{}/notes", port)
+    let target = format("http://127.0.0.1:{}/notes", port)
 
     let wg = sync::WaitGroup::new()
     let total = sync::AtomicU64::new(0)
@@ -54,15 +54,15 @@ fn main() {
 
     for _ in 0..connections {
         wg.add(1)
-        go worker(target, stop_at, total, errors, wg)
+        spawn(|| worker(target, stop_at, total, errors, wg))
     }
 
     wg.wait()
 
-    println!(
-        "[harness] total_requests={} errors={}",
-        total.load(),
+    println(
+        "[harness] total_requests={} errors={}"
+        total.load()
         errors.load()
     )
-    println!("[harness] scheduler={}", runtime::scheduler_stats_json())
+    println("[harness] scheduler={}", runtime::scheduler_stats_json())
 }

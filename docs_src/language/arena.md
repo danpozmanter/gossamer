@@ -11,11 +11,11 @@ fn main() {
     while i < 1000 {
         arena {
             let tree = build_tree(16)
-            total += check(&tree)
+            total += check(tree)
         }
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 ```
 
@@ -30,7 +30,7 @@ counting does work the program does not need. Inside an arena:
   no per-object walk;
 - **small-enum nodes are headerless**: an enum with at most 4 variants
   keeps its discriminant in pointer tag bits, so
-  `Node(Box<Tree>, Box<Tree>)` costs exactly 16 bytes;
+  `Node(Tree, Tree)` costs exactly 16 bytes;
 - **retain/release are no-ops** for arena values (a two-instruction
   range check at the accounting entries).
 
@@ -48,7 +48,7 @@ build-and-discard code gets the bulk-free path with no source change:
 let mut total = 0
 for _ in 0..iterations {
     let tree = build_tree(depth)   // auto-regioned: bump-allocated,
-    total += check(&tree)          // freed wholesale at the iteration end
+    total += check(tree)          // freed wholesale at the iteration end
 }
 ```
 
@@ -58,7 +58,7 @@ iteration perform the same:
 
 ```gossamer
 // Same bulk-free as the loop above.
-let total = (0..iterations).map(|_| check(&build_tree(depth))).sum()
+let total = (0..iterations).map(|_| check(build_tree(depth))).sum()
 ```
 
 A closure qualifies only when the value it hands back cannot point into
@@ -130,7 +130,7 @@ Compute summaries inside, keep survivors outside:
 let mut best = 0
 arena {
     let g = build_graph(n)
-    best = score(&g)      // scalar out: fine
+    best = score(g)      // scalar out: fine
 }
 // `g` is gone; `best` survives.
 ```

@@ -28,9 +28,10 @@ fn capture_writer(text: &str) {
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("select.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -49,13 +50,13 @@ fn ready_recv_arm_beats_default() {
     let src = r#"
 use std::sync::channel
 fn main() {
-    let (tx, rx) = channel::unbounded()
+    let tx, rx = channel::unbounded()
     tx.send(7)
     let v = select {
         x = rx.recv() => x,
         default => -1,
     }
-    println!("v={}", v)
+    println("v={}", v)
 }
 "#;
     assert_eq!(run_main(src), "v=7\n");
@@ -66,13 +67,13 @@ fn send_arm_on_unbounded_channel_is_ready() {
     let src = r#"
 use std::sync::channel
 fn main() {
-    let (tx, rx) = channel::unbounded()
+    let tx, rx = channel::unbounded()
     select {
-        tx.send(99) => println!("sent"),
-        default => println!("not sent"),
+        tx.send(99) => println("sent"),
+        default => println("not sent"),
     }
     if let Some(got) = rx.recv() {
-        println!("got={}", got)
+        println("got={}", got)
     }
 }
 "#;
@@ -84,12 +85,12 @@ fn default_fires_when_nothing_ready() {
     let src = r#"
 use std::sync::channel
 fn main() {
-    let (_tx, rx) = channel()
+    let _tx, rx = channel()
     let v = select {
         x = rx.recv() => x,
         default => -1,
     }
-    println!("v={}", v)
+    println("v={}", v)
 }
 "#;
     assert_eq!(run_main(src), "v=-1\n");
@@ -112,12 +113,12 @@ fn producer(tx: channel::Sender<i64>) {
 }
 
 fn main() {
-    let (tx, rx) = channel()
-    go producer(tx)
+    let tx, rx = channel()
+    spawn(|| producer(tx))
     let v = select {
         x = rx.recv() => x,
     }
-    println!("got={}", v)
+    println("got={}", v)
 }
 "#;
     assert_eq!(run_main(src), "got=42\n");
@@ -134,7 +135,7 @@ fn main() {
     let v = select {
         _ = ctx.done_chan().recv() => 1,
     }
-    println!("timeout={}", v)
+    println("timeout={}", v)
 }
 "#;
     assert_eq!(run_main(src), "timeout=1\n");
@@ -149,10 +150,10 @@ use std::sync::channel
 fn main() {
     let root = context::Context::background()
     let ctx = context::Context::with_timeout(root, 1)
-    let (_tx, rx) = channel()
+    let _tx, rx = channel()
     match rx.recv_ctx(ctx) {
-        Some(_) => println!("value"),
-        None => println!("cancelled"),
+        Some(_) => println("value"),
+        None => println("cancelled"),
     }
 }
 "#;

@@ -29,7 +29,7 @@ outermost wrap down to the root cause:
 let root = errors::new("no such file")
 let mid  = errors::wrap(root, "open /etc/app.toml")
 let top  = errors::wrap(mid, "reading config")
-println!("{}", top)
+println("{}", top)
 // reading config: open /etc/app.toml: no such file
 ```
 

@@ -14,5 +14,5 @@ fn main() {
         total += dist2(i % 17)
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }

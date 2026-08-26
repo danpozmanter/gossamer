@@ -6,21 +6,21 @@ fn main() {
         zeros.push(0)
         flags.push(false)
     }
-    println!("{}", zeros.len())
-    println!("{}", flags.len())
-    println!("{}", zeros[2])
-    println!("{}", flags[3])
+    println("{}", zeros.len())
+    println("{}", flags.len())
+    println("{}", zeros[2])
+    println("{}", flags[3])
 
     // Verify elements via iteration
     let mut sum = 0
     for v in zeros {
         sum += v
     }
-    println!("{}", sum)
+    println("{}", sum)
 
     let mut trues = 0
     for f in flags {
         if f { trues += 1 }
     }
-    println!("{}", trues)
+    println("{}", trues)
 }

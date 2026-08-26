@@ -69,12 +69,12 @@ fn shadowed_const(n: i64) -> i64 {
 }
 
 fn main() {
-    println!("{}", exclusive_sum(1000))
-    println!("{}", inclusive_sum(1000))
-    println!("{}", with_continue(100))
-    println!("{}", with_break(100))
-    println!("{}", labeled_nested(12))
-    println!("{}", empty_and_single())
-    println!("{}", negative_bounds())
-    println!("{}", shadowed_const(50))
+    println("{}", exclusive_sum(1000))
+    println("{}", inclusive_sum(1000))
+    println("{}", with_continue(100))
+    println("{}", with_break(100))
+    println("{}", labeled_nested(12))
+    println("{}", empty_and_single())
+    println("{}", negative_bounds())
+    println("{}", shadowed_const(50))
 }

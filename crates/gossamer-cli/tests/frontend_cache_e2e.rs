@@ -42,7 +42,7 @@ impl Project {
         .expect("write module");
         fs::write(
             root.join("src").join("main.gos"),
-            "fn main() { println!(\"{}\", util::double(21)) }\n",
+            "fn main() { println(\"{}\", util::double(21)) }\n",
         )
         .expect("write entry");
         Self { root, cache }
@@ -123,7 +123,7 @@ fn editing_the_entry_invalidates_the_entry_and_a_fix_clears_it() {
 
     project.write(
         "main.gos",
-        "fn main() { println!(\"{}\", util::double(21)) }\n",
+        "fn main() { println(\"{}\", util::double(21)) }\n",
     );
     let fixed = project.check();
     assert_ok(&fixed, "check after the fix");

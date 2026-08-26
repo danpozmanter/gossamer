@@ -23,8 +23,8 @@ fn shift_byte(b: i64, key: i64) -> i64 {
     }
 }
 
-fn shift_codes(codes: &[i64], key: i64) -> Vec<i64> {
-    codes |> |v| iter::map(|c: i64| shift_byte(c, key), v)
+fn shift_codes(codes: [i64], key: i64) -> Vec<i64> {
+    codes |> |v| iter::map(v, |c: i64| shift_byte(c, key))
 }
 
 // "Hello, world!" as ASCII codes.
@@ -32,17 +32,17 @@ let plain = #[72, 101, 108, 108, 111, 44, 32
     119, 111, 114, 108, 100, 33]
 let key: i64 = 7
 
-let encrypted = shift_codes(&plain, key)
-let decrypted = shift_codes(&encrypted, -key)
+let encrypted = shift_codes(plain, key)
+let decrypted = shift_codes(encrypted, -key)
 
-println!("plain     length = {}", plain.len())
-println!("plain[0..5] codes = {} {} {} {} {}"
+println("plain     length = {}", plain.len())
+println("plain[0..5] codes = {} {} {} {} {}"
     plain[0], plain[1], plain[2], plain[3], plain[4])
-println!("encrypted[0..5]   = {} {} {} {} {}"
+println("encrypted[0..5]   = {} {} {} {} {}"
     encrypted[0], encrypted[1], encrypted[2], encrypted[3], encrypted[4])
 
 if plain == decrypted {
-    println!("round-trip: ok")
+    println("round-trip: ok")
 } else {
-    println!("round-trip: mismatch")
+    println("round-trip: mismatch")
 }

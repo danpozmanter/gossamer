@@ -13,7 +13,7 @@ fn churn() -> i64 {
     let mut acc = 0
     let mut i = 0
     while i < 8000 {
-        let s = format!("x-{}", i)
+        let s = format("x-{}", i)
         acc += s.len()
         i += 1
     }
@@ -24,7 +24,7 @@ fn main() {
     let mut m: Map<i64, Rec> = Map::new()
     let mut k = 1
     while k <= 5 {
-        m.insert(k, Rec { label: format!("rec-{}", k), weight: k * 10 })
+        m.insert(k, Rec { label: format("rec-{}", k), weight: k * 10 })
         k += 1
     }
     let _ = churn()
@@ -50,7 +50,7 @@ fn main() {
     // qualified Map::get
     let got = match Map::get(m, 3) {
         Some(r) => r.label
-        None => format!("missing")
+        None => format("missing")
     }
 
     // qualified Map::pop
@@ -59,7 +59,7 @@ fn main() {
         None => -1
     }
 
-    println!(
+    println(
         "iter={} values={} keys={} got={} popped={} remaining={}"
         iter_sum, values_sum, keys_sum, got, popped, m.len()
     )

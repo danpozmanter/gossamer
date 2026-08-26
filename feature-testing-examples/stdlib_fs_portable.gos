@@ -5,59 +5,59 @@
 // decides - is never assumed.
 use std::{env, errors, fs, path}
 
-fn write_file(dir: &String, name: &String, body: &String) -> Result<String, errors::Error> {
+fn write_file(dir: String, name: String, body: String) -> Result<String, errors::Error> {
     let target = path::join(dir, name)
-    fs::write(&target, &body.as_bytes())?
+    fs::write(target, body.as_bytes())?
     Ok(target)
 }
 
 fn main() -> Result<(), errors::Error> {
     let root = fs::temp_dir("gos-fs-portable")?
-    assert(fs::is_dir(&root), "temp_dir creates a directory")
+    assert(fs::is_dir(root), "temp_dir creates a directory")
 
-    let nested = path::join(&root, "a")
-    let deep = path::join(&nested, "b")
-    fs::create_dir_all(&deep)?
-    assert(fs::is_dir(&deep), "create_dir_all builds every level")
+    let nested = path::join(root, "a")
+    let deep = path::join(nested, "b")
+    fs::create_dir_all(deep)?
+    assert(fs::is_dir(deep), "create_dir_all builds every level")
 
-    let hello = write_file(&root, "hello.txt", "hello")?
-    assert(fs::exists(&hello), "a written file exists")
-    assert(fs::is_file(&hello), "a written file is a file")
-    assert(!fs::is_dir(&hello), "a file is not a directory")
-    assert(fs::read_to_string(&hello).unwrap_or("") == "hello", "content round-trips")
-    assert(fs::file_size(&hello) == 5, "size counts bytes, not characters")
+    let hello = write_file(root, "hello.txt", "hello")?
+    assert(fs::exists(hello), "a written file exists")
+    assert(fs::is_file(hello), "a written file is a file")
+    assert(!fs::is_dir(hello), "a file is not a directory")
+    assert(fs::read_to_string(hello).unwrap_or("") == "hello", "content round-trips")
+    assert(fs::file_size(hello) == 5, "size counts bytes, not characters")
 
     // Bytes, not text: no platform rewrites a newline on the way through.
-    let raw = write_file(&root, "raw.bin", "a\nb")?
-    assert(fs::file_size(&raw) == 3, "a newline is one byte on every host")
+    let raw = write_file(root, "raw.bin", "a\nb")?
+    assert(fs::file_size(raw) == 3, "a newline is one byte on every host")
 
     // A name with a space and a non-ASCII character crosses the UTF-16
     // boundary on Windows and the normalisation boundary on macOS. Reading
     // back through the same path string is what every host must honour;
     // how the directory spells it back is the filesystem's business, so
     // the assertion is about content, not the name.
-    let unicode = write_file(&root, "caf\u{e9} note.txt", "unicode")?
-    assert(fs::is_file(&unicode), "a non-ASCII name with a space is a file")
-    assert(fs::read_to_string(&unicode).unwrap_or("") == "unicode", "it reads back")
+    let unicode = write_file(root, "caf\u{e9} note.txt", "unicode")?
+    assert(fs::is_file(unicode), "a non-ASCII name with a space is a file")
+    assert(fs::read_to_string(unicode).unwrap_or("") == "unicode", "it reads back")
 
     // CRLF survives the round trip byte for byte: no host opens these in a
     // text mode that would rewrite the pair.
-    let crlf = write_file(&root, "crlf.txt", "a\r\nb")?
-    assert(fs::file_size(&crlf) == 4, "CRLF is two bytes, unrewritten")
-    assert(fs::read_to_string(&crlf).unwrap_or("").byte_len() == 4, "and reads back as four")
+    let crlf = write_file(root, "crlf.txt", "a\r\nb")?
+    assert(fs::file_size(crlf) == 4, "CRLF is two bytes, unrewritten")
+    assert(fs::read_to_string(crlf).unwrap_or("").byte_len() == 4, "and reads back as four")
 
-    let copied = path::join(&root, "copy.txt")
-    fs::copy(&hello, &copied)?
-    assert(fs::read_to_string(&copied).unwrap_or("") == "hello", "copy duplicates content")
+    let copied = path::join(root, "copy.txt")
+    fs::copy(hello, copied)?
+    assert(fs::read_to_string(copied).unwrap_or("") == "hello", "copy duplicates content")
 
-    let renamed = path::join(&root, "renamed.txt")
-    fs::rename(&copied, &renamed)?
-    assert(!fs::exists(&copied), "rename removes the source")
-    assert(fs::exists(&renamed), "rename creates the destination")
+    let renamed = path::join(root, "renamed.txt")
+    fs::rename(copied, renamed)?
+    assert(!fs::exists(copied), "rename removes the source")
+    assert(fs::exists(renamed), "rename creates the destination")
 
     // Entries carry their own metadata; the count is stable but the order
     // is the filesystem's, so only membership is asserted.
-    let entries = fs::read_dir(&root)?
+    let entries = fs::read_dir(root)?
     let mut files = 0
     let mut dirs = 0
     let mut saw_hello = false
@@ -77,26 +77,26 @@ fn main() -> Result<(), errors::Error> {
     // The visitor accumulates into a `Vec`, which a closure shares with the
     // scope that declared it.
     let mut walked: Vec<String> = #[]
-    fs::walk_dir(&root, |entry| {
+    fs::walk_dir(root, |entry| {
         if entry.is_file { walked.push(entry.name) }
         Ok(())
     })?
     assert(walked.len() == 5, "walk_dir reaches every file below the root")
 
-    let real = fs::canonicalize(&hello).unwrap_or("")
+    let real = fs::canonicalize(hello).unwrap_or("")
     assert(real.byte_len() >= hello.byte_len(), "canonicalize returns an absolute path")
-    assert(fs::is_file(&real), "the canonical path names the same file")
+    assert(fs::is_file(real), "the canonical path names the same file")
 
-    fs::remove_file(&hello)?
-    assert(!fs::exists(&hello), "remove_file deletes")
+    fs::remove_file(hello)?
+    assert(!fs::exists(hello), "remove_file deletes")
 
-    fs::remove_dir_all(&root)?
-    assert(!fs::exists(&root), "remove_dir_all deletes a populated tree")
+    fs::remove_dir_all(root)?
+    assert(!fs::exists(root), "remove_dir_all deletes a populated tree")
 
     // The system temp directory is where the above lived, and is readable
     // on every host without configuration.
-    assert(fs::is_dir(&env::temp_dir()), "the system temp directory exists")
+    assert(fs::is_dir(env::temp_dir()), "the system temp directory exists")
 
-    println!("fs portable ok")
+    println("fs portable ok")
     Ok(())
 }

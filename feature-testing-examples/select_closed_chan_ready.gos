@@ -12,12 +12,12 @@ use std::sync::channel
 
 fn main() {
     // 1. Open + empty channel: the recv arm is not ready, default fires.
-    let (tx, rx) = channel()
+    let tx, rx = channel()
     let open = select {
         v = rx.recv() => v
         default => -1
     }
-    println!("open empty = {}", open)
+    println("open empty = {}", open)
 
     // 2. After close, the same channel's recv arm is ready with the
     //    zero value, chosen over the default.
@@ -26,11 +26,11 @@ fn main() {
         v = rx.recv() => v
         default => -1
     }
-    println!("closed = {}", closed)
+    println("closed = {}", closed)
 
     // 3. A closed channel still drains its buffered values in order,
     //    then yields the zero value once empty.
-    let (tx2, rx2) = channel::unbounded()
+    let tx2, rx2 = channel::unbounded()
     tx2.send(7)
     tx2.send(8)
     tx2.close()
@@ -46,9 +46,9 @@ fn main() {
         v = rx2.recv() => v
         default => -1
     }
-    println!("buffered first = {}", first)
-    println!("buffered second = {}", second)
-    println!("buffered third = {}", third)
+    println("buffered first = {}", first)
+    println("buffered second = {}", second)
+    println("buffered third = {}", third)
 }
 
 #[cfg(test)]
@@ -58,7 +58,7 @@ mod select_closed_tests {
 
     #[test]
     fn open_empty_recv_arm_falls_to_default() {
-        let (_tx, rx) = channel()
+        let _tx, rx = channel()
         let chosen = select {
             v = rx.recv() => v
             default => -1
@@ -68,7 +68,7 @@ mod select_closed_tests {
 
     #[test]
     fn closed_recv_arm_is_ready_with_zero() {
-        let (tx, rx) = channel::unbounded()
+        let tx, rx = channel::unbounded()
         tx.close()
         let chosen = select {
             v = rx.recv() => v
@@ -79,7 +79,7 @@ mod select_closed_tests {
 
     #[test]
     fn closed_channel_drains_before_zero() {
-        let (tx, rx) = channel()
+        let tx, rx = channel()
         tx.send(42)
         tx.close()
         let a = select {
@@ -90,7 +90,7 @@ mod select_closed_tests {
             v = rx.recv() => v
             default => -1
         }
-        let _ = testing::check_eq(&a, &42, "buffered value drains first")
-        let _ = testing::check_eq(&b, &0, "zero value once drained")
+        let _ = testing::check_eq(a, 42, "buffered value drains first")
+        let _ = testing::check_eq(b, 0, "zero value once drained")
     }
 }

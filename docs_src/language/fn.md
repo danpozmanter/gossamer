@@ -15,7 +15,7 @@ be forwarded as-is. Passing a bare value never grants a callee mutable access.
 
 ```gossamer
 fn area(w: i64, h: i64) -> i64 { w * h }
-fn greet(name: &String) { println!("hi, {name}") }
+fn greet(name: String) { println("hi, {name}") }
 ```
 
 ## Parameter pattern destructuring
@@ -35,6 +35,6 @@ fn diff(Pair { left, right }: Pair) -> i64 { left - right }
 ## Generics
 
 A function may take type parameters (`fn id<T>(x: T) -> T`), a trait bound
-(`fn report<T: Shape>(s: &T)`), or a const-generic array length
+(`fn report<T: Shape>(s: T)`), or a const-generic array length
 (`fn sum<const N: usize>(xs: [i64; N])`). Each instantiation is
 monomorphised - see [generics](generics.md).

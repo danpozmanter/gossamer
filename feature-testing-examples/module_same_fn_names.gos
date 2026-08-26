@@ -12,6 +12,6 @@ mod beta {
 }
 
 fn main() {
-    println!("{} {}", alpha::add(1, 2), beta::add(1, 2))
-    println!("{} {}", alpha::scale(4), beta::scale(4))
+    println("{} {}", alpha::add(1, 2), beta::add(1, 2))
+    println("{} {}", alpha::scale(4), beta::scale(4))
 }

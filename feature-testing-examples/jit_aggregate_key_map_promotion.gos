@@ -127,12 +127,12 @@ fn string_values(n: i64) -> i64 {
 }
 
 fn main() {
-    println!("tuple {}", tuple_keys(4000))
-    println!("struct {}", struct_keys(3000))
-    println!("labelled {}", labelled_keys(3000))
-    println!("array {}", array_keys(2000))
-    println!("enum {}", enum_keys(2000))
-    println!("ordered {}", ordered_tuple_keys(2000))
-    println!("set {}", tuple_set(2000))
-    println!("string values {}", string_values(2000))
+    println("tuple {}", tuple_keys(4000))
+    println("struct {}", struct_keys(3000))
+    println("labelled {}", labelled_keys(3000))
+    println("array {}", array_keys(2000))
+    println("enum {}", enum_keys(2000))
+    println("ordered {}", ordered_tuple_keys(2000))
+    println("set {}", tuple_set(2000))
+    println("string values {}", string_values(2000))
 }

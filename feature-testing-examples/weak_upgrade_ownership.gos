@@ -38,7 +38,7 @@ fn main() {
     for _ in 0..1000 {
         total += leaf_value(w)
     }
-    println!("loop_total={}", total)
+    println("loop_total={}", total)
 
     // Bound once, matched twice: the two matches read the same pinned
     // payload; only the single shadow reference is released.
@@ -57,11 +57,11 @@ fn main() {
         }
         None => -1
     }
-    println!("rematch={} {}", first, second)
+    println("rematch={} {}", first, second)
 
     // Discarded upgrade result: the pin is still released at scope end.
     let _ = w.upgrade()
-    println!("discard_ok={}", leaf_value(w))
+    println("discard_ok={}", leaf_value(w))
 
     // Dead referent: no retain happens on the None path.
     let dead = make_dead_weak()
@@ -69,7 +69,7 @@ fn main() {
     for _ in 0..100 {
         dead_total += leaf_value(dead)
     }
-    println!("dead_total={}", dead_total)
+    println("dead_total={}", dead_total)
 
     // if-let over a fresh upgrade inside a loop body.
     let mut hits = 0
@@ -80,6 +80,6 @@ fn main() {
             }
         }
     }
-    println!("iflet_hits={}", hits)
+    println("iflet_hits={}", hits)
     let _keep_strong_alive = strong
 }

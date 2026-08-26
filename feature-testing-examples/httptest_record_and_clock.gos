@@ -14,7 +14,7 @@ use std::httptest
 use std::time
 
 fn greet(r: http::Request) -> Result<http::Response, errors::Error> {
-    Ok(http::Response::text(200, format!("{} {} body={}", r.method, r.path, r.body)))
+    Ok(http::Response::text(200, format("{} {} body={}", r.method, r.path, r.body)))
 }
 
 fn expiring(r: http::Request) -> Result<http::Response, errors::Error> {
@@ -23,29 +23,29 @@ fn expiring(r: http::Request) -> Result<http::Response, errors::Error> {
     if time::now_ms() >= 2_000_000 {
         Ok(http::Response::text(401, "expired"))
     } else {
-        Ok(http::Response::text(200, format!("valid for {}", r.path)))
+        Ok(http::Response::text(200, format("valid for {}", r.path)))
     }
 }
 
 fn main() {
     match httptest::record(greet, "POST", "/hello", "hi") {
-        Ok(r) => println!("recorded status={} body={}", r.status, r.body)
-        Err(e) => println!("recorded error: {}", e)
+        Ok(r) => println("recorded status={} body={}", r.status, r.body)
+        Err(e) => println("recorded error: {}", e)
     }
 
     time::freeze(1_000_000)
-    println!("frozen={} now={}", time::is_frozen(), time::now_ms())
+    println("frozen={} now={}", time::is_frozen(), time::now_ms())
     match httptest::record(expiring, "GET", "/token", "") {
-        Ok(r) => println!("before status={} body={}", r.status, r.body)
-        Err(e) => println!("before error: {}", e)
+        Ok(r) => println("before status={} body={}", r.status, r.body)
+        Err(e) => println("before error: {}", e)
     }
 
-    println!("advanced={}", time::advance(1_500_000))
+    println("advanced={}", time::advance(1_500_000))
     match httptest::record(expiring, "GET", "/token", "") {
-        Ok(r) => println!("after status={} body={}", r.status, r.body)
-        Err(e) => println!("after error: {}", e)
+        Ok(r) => println("after status={} body={}", r.status, r.body)
+        Err(e) => println("after error: {}", e)
     }
 
     time::unfreeze()
-    println!("frozen={}", time::is_frozen())
+    println("frozen={}", time::is_frozen())
 }

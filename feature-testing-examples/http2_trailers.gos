@@ -13,13 +13,13 @@
 // They are written as literal `i64` here so the program is
 // independent of the runtime binding registry on any tier.
 
-fn announce(name: &String, value: i64) {
-    println!("{}={}", name, value)
+fn announce(name: String, value: i64) {
+    println("{}={}", name, value)
 }
 
 fn main() {
-    announce(&"max_concurrent_streams", 100)
-    announce(&"max_frame_size", 16384)
-    announce(&"trailers_enabled", 1)
-    println!("done")
+    announce("max_concurrent_streams", 100)
+    announce("max_frame_size", 16384)
+    announce("trailers_enabled", 1)
+    println("done")
 }

@@ -27,11 +27,11 @@ fn workspace(tag: &str) -> PathBuf {
 const SOURCE: &str = r#"use std::fs
 
 comptime fn embed(name: String) -> String {
-    fs::read_to_string(format!("profiles/{}.toml", name)).unwrap_or("missing")
+    fs::read_to_string(format("profiles/{}.toml", name)).unwrap_or("missing")
 }
 
 fn main() {
-    println!("{}", embed("standard").trim())
+    println("{}", embed("standard").trim())
 }
 "#;
 
@@ -121,7 +121,7 @@ comptime fn profile_count() -> i64 {
 }
 
 fn main() {
-    println!("{}", profile_count())
+    println("{}", profile_count())
 }
 "#,
     )

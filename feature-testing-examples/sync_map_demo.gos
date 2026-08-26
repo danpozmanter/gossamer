@@ -12,29 +12,29 @@ fn main() {
     sync::Map::insert(m, "alpha", "1")
     sync::Map::insert(m, "beta", "2")
     sync::Map::insert(m, "gamma", "3")
-    println!("len: {}", sync::Map::len(m))
+    println("len: {}", sync::Map::len(m))
 
     match sync::Map::get(m, "beta") {
-        Some(v) => println!("beta = {}", v)
-        None => println!("beta missing")
+        Some(v) => println("beta = {}", v)
+        None => println("beta missing")
     }
 
     match sync::Map::get(m, "delta") {
-        Some(_) => println!("delta unexpected")
-        None => println!("delta = None")
+        Some(_) => println("delta unexpected")
+        None => println("delta = None")
     }
 
-    println!("contains alpha: {}", sync::Map::contains_key(m, "alpha"))
-    println!("contains delta: {}", sync::Map::contains_key(m, "delta"))
+    println("contains alpha: {}", sync::Map::contains_key(m, "alpha"))
+    println("contains delta: {}", sync::Map::contains_key(m, "delta"))
 
     sync::Map::remove(m, "alpha")
-    println!("after remove len: {}", sync::Map::len(m))
-    println!("contains alpha: {}", sync::Map::contains_key(m, "alpha"))
+    println("after remove len: {}", sync::Map::len(m))
+    println("contains alpha: {}", sync::Map::contains_key(m, "alpha"))
 
     // Re-insert the removed key and confirm.
     sync::Map::insert(m, "alpha", "99")
     match sync::Map::get(m, "alpha") {
-        Some(v) => println!("alpha = {}", v)
-        None => println!("alpha missing after re-insert")
+        Some(v) => println("alpha = {}", v)
+        None => println("alpha missing after re-insert")
     }
 }

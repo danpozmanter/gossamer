@@ -32,9 +32,9 @@ fn parallel_histogram(data: Vec<Vec<i64>>, tx: channel::Sender<i64>) {
 
 fn main() {
     // Channel-based counter: no shared mutable state
-    let (tx, rx) = channel::unbounded()
-    go increment_via_channel(tx, 50)
-    go increment_via_channel(tx, 50)
+    let tx, rx = channel::unbounded()
+    spawn(|| increment_via_channel(tx, 50))
+    spawn(|| increment_via_channel(tx, 50))
     time::sleep(40)
     tx.close()
 
@@ -42,12 +42,13 @@ fn main() {
     while let Some(v) = rx.recv() {
         total += v
     }
-    println!("channel counter total = {}", total)
-    println!("expected 100: {}", total == 100)
+    println("channel counter total = {}", total)
+    println("expected 100: {}", total == 100)
 
     // Histogram via channel fan-out
-    let (htx, hrx) = channel::unbounded()
-    go parallel_histogram(Vec::from([Vec::from([1, 2, 3]), Vec::from([4, 5, 6]), Vec::from([7, 8, 9])]), htx)
+    let htx, hrx = channel::unbounded()
+    let __spawn_arg_0 = Vec::from([Vec::from([1, 2, 3]), Vec::from([4, 5, 6]), Vec::from([7, 8, 9])])
+    spawn(|| parallel_histogram(__spawn_arg_0, htx))
     time::sleep(80)
     htx.close()
 
@@ -55,10 +56,10 @@ fn main() {
     while let Some(v) = hrx.recv() {
         sums.push(v)
     }
-    println!("histogram chunks = {}", sums.len())
+    println("histogram chunks = {}", sums.len())
 
     let grand_total = sums[0] + sums[1] + sums[2]
-    println!("grand total = {}", grand_total)
+    println("grand total = {}", grand_total)
 
     // Sequential atomic-style update via closure
     let mut shared = 0
@@ -66,12 +67,12 @@ fn main() {
     for delta in updates {
         shared += delta
     }
-    println!("sequential total = {}", shared)
+    println("sequential total = {}", shared)
 
     // Verify idempotency: reading shared state multiple times
     let snap1 = shared
     let snap2 = shared
-    println!("snapshots equal: {}", snap1 == snap2)
+    println("snapshots equal: {}", snap1 == snap2)
 }
 
 #[cfg(test)]
@@ -82,29 +83,29 @@ mod tests {
 
     #[test]
     fn channel_counter_reaches_target() {
-        let (tx, rx) = channel::unbounded()
-        go super::increment_via_channel(tx, 20)
+        let tx, rx = channel::unbounded()
+        spawn(|| super::increment_via_channel(tx, 20))
         time::sleep(20)
         tx.close()
         let mut n = 0
         while let Some(_) = rx.recv() {
             n += 1
         }
-        let _ = testing::check_eq(&n, &20, "20 increments")
+        let _ = testing::check_eq(n, 20, "20 increments")
     }
 
     #[test]
     fn two_goroutines_sum_correctly() {
-        let (tx, rx) = channel::unbounded()
-        go super::increment_via_channel(tx, 30)
-        go super::increment_via_channel(tx, 30)
+        let tx, rx = channel::unbounded()
+        spawn(|| super::increment_via_channel(tx, 30))
+        spawn(|| super::increment_via_channel(tx, 30))
         time::sleep(30)
         tx.close()
         let mut total = 0
         while let Some(v) = rx.recv() {
             total += v
         }
-        let _ = testing::check_eq(&total, &60, "two goroutines sum 60")
+        let _ = testing::check_eq(total, 60, "two goroutines sum 60")
     }
 
     #[test]
@@ -114,6 +115,6 @@ mod tests {
         for v in vals {
             sum += v
         }
-        let _ = testing::check_eq(&sum, &55, "1..10 sum = 55")
+        let _ = testing::check_eq(sum, 55, "1..10 sum = 55")
     }
 }

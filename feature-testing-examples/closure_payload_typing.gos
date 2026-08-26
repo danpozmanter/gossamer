@@ -5,7 +5,7 @@
 // raw pointers. Covers map_err / option::map / iter::map / filter /
 // result::unwrap_or_else over String payloads, the
 // `map_err(errors::new)` eta shape (std fn as a value), a live
-// `http::request(...).map_err(|e| format!(...))` against a refused
+// `http::request(...).map_err(|e| format(...))` against a refused
 // loopback port (23907 - reserved, never bound), and a GT-clean
 // is_ok / is_err bool print.
 
@@ -13,46 +13,46 @@ use std::{errors, http, iter, option, result, strings}
 
 fn main() {
     let bad: Result<i64, String> = Err("boom")
-    let wrapped = bad.map_err(|e| format!("wrapped: {e}"))
+    let wrapped = bad.map_err(|e| format("wrapped: {e}"))
     if let Err(msg) = wrapped {
-        println!("map_err={}", msg)
+        println("map_err={}", msg)
     }
 
     let name: Option<String> = Some("ada")
-    let loud = name |> |v| option::map(|s| strings::to_uppercase(&s), v) |> |v| option::unwrap_or("none", v)
-    println!("option_map={}", loud)
+    let loud = name |> |v| option::map(v, |s| strings::to_uppercase(s)) |> |v| option::unwrap_or(v, "none")
+    println("option_map={}", loud)
 
     let words = #["alpha", "be", "gamma"]
-    let banged = words |> |v| iter::map(|w| w + "!", v)
+    let banged = words |> |v| iter::map(v, |w| w + "!")
     for w in banged {
-        println!("iter_map={}", w)
+        println("iter_map={}", w)
     }
-    let long = words |> |v| iter::filter(|w| w.len() > 2, v)
+    let long = words |> |v| iter::filter(v, |w| w.len() > 2)
     for w in long {
-        println!("iter_filter={}", w)
+        println("iter_filter={}", w)
     }
 
     let failing: Result<i64, errors::Error> = Err(errors::new("nope"))
-    failing |> |v| result::unwrap_or_else(|e| println!("unwrap_or_else={e}"), v)
+    failing |> |v| result::unwrap_or_else(v, |e| println("unwrap_or_else={e}"))
 
     let eta: Result<i64, String> = Err("raw")
     let lifted = eta.map_err(errors::new)
     if let Err(e) = lifted {
-        println!("eta={}", e.message())
+        println("eta={}", e.message())
     }
 
     match http::request("GET", "http://127.0.0.1:23907/never", "", Vec::from([])) {
-        Ok(r) => println!("unexpected status={}", r.status)
+        Ok(r) => println("unexpected status={}", r.status)
         Err(e) => {
-            let rendered = format!("net: {e}")
-            println!(
+            let rendered = format("net: {e}")
+            println(
                 "refused_prefix={} refused_class={}"
-                strings::starts_with(&rendered, "net: http: transport:")
-                strings::contains(&rendered, "onnection refused")
+                strings::starts_with(rendered, "net: http: transport:")
+                strings::contains(rendered, "onnection refused")
             )
         }
     }
 
     let good: Result<i64, String> = Ok(1)
-    println!("is_ok={} is_err={}", good |> result::is_ok, bad |> result::is_err)
+    println("is_ok={} is_err={}", good |> result::is_ok, bad |> result::is_err)
 }

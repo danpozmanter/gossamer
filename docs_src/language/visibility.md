@@ -65,7 +65,7 @@ pub fn public() -> i64 { shared() + 1 }          // this package's API
 use util::{shared, public}
 
 fn main() {
-    println!("{} {}", shared(), public())
+    println("{} {}", shared(), public())
 }
 ```
 
@@ -149,7 +149,7 @@ mod deep {
     mod nest { pub fn nested() -> i64 { 1 } }   // `nest` is private
 }
 
-fn main() { println!("{}", deep::nest::nested()) }
+fn main() { println("{}", deep::nest::nested()) }
 // error[GR0008]: module `nest` is private to module `deep`
 ```
 

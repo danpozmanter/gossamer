@@ -15,8 +15,8 @@ fn format_macro_result_is_typed_as_string() {
 fn main() {
     let a = "foo"
     let b = "bar"
-    let combined = format!("{}{}", a, b)
-    println!("len = {}", combined.len())
+    let combined = format("{}{}", a, b)
+    println("len = {}", combined.len())
 }
 "#;
     let dir = fresh_dir("format_len_typed");
@@ -65,11 +65,11 @@ fn above_threshold(v: f64) -> bool {
 }
 
 fn main() {
-    println!("MAX_RETRIES = {}", MAX_RETRIES)
-    println!("THRESHOLD = {}", THRESHOLD)
-    println!("GREETING = {}", GREETING)
-    println!("above(0.5) = {}", above_threshold(0.5))
-    println!("above(0.8) = {}", above_threshold(0.8))
+    println("MAX_RETRIES = {}", MAX_RETRIES)
+    println("THRESHOLD = {}", THRESHOLD)
+    println("GREETING = {}", GREETING)
+    println("above(0.5) = {}", above_threshold(0.5))
+    println("above(0.8) = {}", above_threshold(0.8))
 }
 "#;
     let dir = fresh_dir("static_items_typed");
@@ -128,14 +128,14 @@ fn const_vec_string_contains_reads_the_real_vector_across_tiers() {
     let src = r#"
 const GOOS: Vec<String> = Vec::from(["linux", "darwin"])
 
-fn is_goos(s: &String) -> bool {
+fn is_goos(s: String) -> bool {
     GOOS.contains(s)
 }
 
 fn check() -> bool {
     let v = Vec::from(["bandwidth", "linux"])
     let last = &v[v.len() - 1]
-    let found = is_goos(last)
+    let found = is_goos(*last)
     let mut sum = 0
     for i in 0..v.len() {
         sum = sum + i
@@ -144,7 +144,7 @@ fn check() -> bool {
 }
 
 fn main() {
-    println!("detected: {}", check())
+    println("detected: {}", check())
 }
 "#;
     let expected = "detected: true\n";
@@ -276,7 +276,7 @@ use std::strconv
 
 fn main() {
     let args = env::args()
-    println(strconv::parse_i64(&args[0]).unwrap_or(9))
+    println(strconv::parse_i64(args[0]).unwrap_or(9))
 }
 ";
     let dir = fresh_dir("indexed_string_shared_borrow");
@@ -334,9 +334,9 @@ fn static_mut_assignment_does_not_error_at_runtime() {
 static mut N: i64 = 7
 
 fn main() {
-    println!("start = {}", N)
+    println("start = {}", N)
     N = 42
-    println!("after = {}", N)
+    println("after = {}", N)
 }
 "#;
     let dir = fresh_dir("static_mut_assign");
@@ -387,17 +387,17 @@ fn at_binding_subpattern_actually_filters_match_arms() {
     let src = r#"
 fn classify(n: i64) -> String {
     match n {
-        x @ 0 => format!("zero ({})", x),
-        x @ 1..=3 => format!("small {}", x),
-        x @ 4..=10 => format!("medium {}", x),
-        x => format!("other {}", x),
+        x @ 0 => format("zero ({})", x),
+        x @ 1..=3 => format("small {}", x),
+        x @ 4..=10 => format("medium {}", x),
+        x => format("other {}", x),
     }
 }
 
 fn main() {
     let inputs = [0, 1, 2, 3, 4, 7, 10, 11, -1]
     for n in inputs {
-        println!("{}", classify(n))
+        println("{}", classify(n))
     }
 }
 "#;
@@ -442,7 +442,7 @@ fn main() {
         }
         acc = acc + *x
     }
-    println!("acc={}", acc)
+    println("acc={}", acc)
 }
 "#;
     let dir = fresh_dir("continue_for_vec_iter");
@@ -490,13 +490,13 @@ fn pick(o: Option<i64>) -> &str {
 }
 
 fn main() {
-    println!("{}", classify(Ok(1)))
-    println!("{}", classify(Ok(2)))
-    println!("{}", classify(Ok(99)))
-    println!("{}", classify(Err(0)))
-    println!("{}", pick(Some(10)))
-    println!("{}", pick(Some(20)))
-    println!("{}", pick(None))
+    println("{}", classify(Ok(1)))
+    println("{}", classify(Ok(2)))
+    println("{}", classify(Ok(99)))
+    println("{}", classify(Err(0)))
+    println("{}", pick(Some(10)))
+    println("{}", pick(Some(20)))
+    println("{}", pick(None))
 }
 "#;
     let expected = "one\ntwo\nother-ok\nerr\nten\ntwenty\nnone\n";
@@ -527,16 +527,16 @@ use std::{iter, strings}
 
 fn main() {
     let s = "alpha\nbeta"
-    &s |> strings::lines |> |v| iter::for_each(|l| println!("{}", l), v)
+    &s |> strings::lines |> |v| iter::for_each(v, |l| println("{}", l))
 
     let n = 5
     -n
-    println!("post-neg")
+    println("post-neg")
 
     let v = 42
     let p = &v
     *p
-    println!("post-deref={}", *p)
+    println("post-deref={}", *p)
 }
 "#;
     let expected = "alpha\nbeta\npost-neg\npost-deref=42\n";
@@ -559,13 +559,13 @@ fn try_operator_in_macro_arg_propagates_early_return() {
     let src = r#"
 use std::{errors, fs}
 
-fn cat(f: &String) -> Result<(), errors::Error> {
-    Ok(print!("{}", fs::read_to_string(f)?))
+fn cat(f: String) -> Result<(), errors::Error> {
+    Ok(print("{}", fs::read_to_string(f)?))
 }
 
 fn main() {
-    if let Err(e) = cat(&"/nonexistent-regression") {
-        println!("caught: {e}")
+    if let Err(e) = cat("/nonexistent-regression") {
+        println("caught: {e}")
     }
 }
 "#;
@@ -591,7 +591,7 @@ fn cmp(a: i64, b: i64) -> i64 { a - b }
 fn main() {
     let mut xs = [5, 2, 4, 1, 3].to_vec()
     xs.sort_by(cmp)
-    for x in xs.iter() { println!("{}", *x) }
+    for x in xs.iter() { println("{}", *x) }
 }
 "#;
     let dir = fresh_dir("llvm_sortby_named_fn");
@@ -621,7 +621,7 @@ fn main() {
     xs.push((2, 2.5))
     let i: i64 = 1
     let p = xs[i]
-    println!("{} {}", p.0, p.1)
+    println("{} {}", p.0, p.1)
 }
 "#;
     let dir = fresh_dir("llvm_vec_tuple_index");
@@ -649,7 +649,7 @@ fn make() -> ([f64; 4], f64) {
 }
 fn main() {
     let pair = make()
-    println!("{} {} {} {} | {}", pair.0[0], pair.0[1], pair.0[2], pair.0[3], pair.1)
+    println("{} {} {} {} | {}", pair.0[0], pair.0[1], pair.0[2], pair.0[3], pair.1)
 }
 "#;
     let dir = fresh_dir("llvm_tuple_arr_scalar");
@@ -681,7 +681,7 @@ struct Boxy {
 }
 
 fn make_name(n: i64) -> String {
-    format!("n={}", n)
+    format("n={}", n)
 }
 
 fn make_pair(a: i64) -> [i64; 2] {
@@ -701,7 +701,7 @@ fn main() {
     b.map.insert("a", b.inner.xs[0])
     b.set.insert(b.inner.xs[1])
     b.tree.insert(4)
-    println!("{} {} {} {}", b.inner.name, b.map.get("a").unwrap(), b.set.contains(9), b.tree.contains(4))
+    println("{} {} {} {}", b.inner.name, b.map.get("a").unwrap(), b.set.contains(9), b.tree.contains(4))
 }
 "#;
     let expected = "n=7 3 true true\n";
@@ -726,8 +726,8 @@ fn main() {
     let mut xs = #[(1, 2), (3, 4)]
     let _ = xs.swap(0, 1)
     match xs.pop() {
-        Some(v) => println!("{} {}", v.0, v.1),
-        None => println!("none"),
+        Some(v) => println("{} {}", v.0, v.1),
+        None => println("none"),
     }
 }
 "#;
@@ -797,7 +797,7 @@ fn fannkuch(_n: i64) -> (i64, i64) {
 }
 fn main() {
     let r = fannkuch(5)
-    println!("max={} checksum={}", r.0, r.1)
+    println("max={} checksum={}", r.0, r.1)
 }
 "#;
     let dir = fresh_dir("llvm_nested_loop_tuple_ret");
@@ -831,9 +831,9 @@ struct Info { num: i64, label: String }
 
 fn show(item: Info, as_json: bool) {
     if as_json {
-        println!("{}", json::render(&item))
+        println("{}", json::render(item))
     } else {
-        println!("num={} label={}", item.num, item.label)
+        println("num={} label={}", item.num, item.label)
     }
 }
 
@@ -875,7 +875,7 @@ fn jit_pre_interns_array_index_label_string() {
                        sum += xs[i]\n\
                        i += 1\n\
                    }\n\
-                   println!(\"{}\", sum)\n\
+                   println(\"{}\", sum)\n\
                }\n";
     let dir = fresh_dir("jit_array_index_pre_intern");
     let path = write_source(&dir, "jit_array_index_pre_intern", src);
@@ -924,15 +924,15 @@ fn local_var_shadowing_module_does_not_capture_qualified_path() {
         "mod prov;\n\
          fn main() {\n\
              let prov = \"local-string\"\n\
-             let s = prov::greet(&prov)\n\
-             println!(\"{}\", s)\n\
+             let s = prov::greet(prov)\n\
+             println(\"{}\", s)\n\
          }\n",
     )
     .expect("write main.gos");
     fs::write(
         src_dir.join("prov.gos"),
-        "pub fn greet(who: &String) -> String {\n\
-             format!(\"hello, {}\", who)\n\
+        "pub fn greet(who: String) -> String {\n\
+             format(\"hello, {}\", who)\n\
          }\n",
     )
     .expect("write prov.gos");
@@ -974,7 +974,7 @@ fn aggregate_alloc_loop_reclaims_deterministically() {
                        total += p.a + p.b\n\
                        i += 1\n\
                    }\n\
-                   println!(\"{}\", total)\n\
+                   println(\"{}\", total)\n\
                }\n";
     let expected = (0i64..10000).map(|i| i + i * 2).sum::<i64>();
     let dir = fresh_dir("tracing_gc_loop");
@@ -1064,7 +1064,7 @@ fn sum(p: Pair) -> i64 {
 
 fn main() {
     let p = Pair { left: 20i64, right: 22i64 }
-    println!("{}", sum(p))
+    println("{}", sum(p))
 }
 "#;
     let dir = fresh_dir("named_struct_ctor");
@@ -1099,12 +1099,12 @@ use std::collections::BTreeSet
 struct Rec { name: String, nums: Vec<i64> }
 
 fn main() {
-    println!("{}", (1, "x", true))
+    println("{}", (1, "x", true))
     let mut m = {"a": 1, "b": 2}
-    println!("{}", (m, #[1, 2, 3]))
-    println!("{}", #{3, 1, 2})
-    println!("{}", BTreeSet::from([3, 1, 2]))
-    println!("{:?}", Rec { name: "r", nums: #[1, 2] })
+    println("{}", (m, #[1, 2, 3]))
+    println("{}", #{3, 1, 2})
+    println("{}", BTreeSet::from([3, 1, 2]))
+    println("{:?}", Rec { name: "r", nums: #[1, 2] })
 }
 "#;
     let expected = "\
@@ -1151,7 +1151,7 @@ fn aggregate_return_chain_outlives_callee_frame() {
                        sum += p.0 + p.1\n\
                        i += 1\n\
                    }\n\
-                   println!(\"{}\", sum)\n\
+                   println(\"{}\", sum)\n\
                }\n";
     let expected = (0i64..5000).map(|i| i + i * 7).sum::<i64>();
     let dir = fresh_dir("tracing_gc_return_chain");
@@ -1241,12 +1241,12 @@ fn main() {
     m.bump()
     let mut loop_total = 0
     for v in xs { loop_total += v.twice() }
-    println!("local {}", x.twice())
-    println!("element {}", xs[0].twice())
-    println!("loop {}", loop_total)
-    println!("mut {}", m)
-    println!("generic-scalar {}", sum_twice(#[1, 2, 3]))
-    println!("generic-aggregate {}", first_area(#[Square { side: 4 }]))
+    println("local {}", x.twice())
+    println("element {}", xs[0].twice())
+    println("loop {}", loop_total)
+    println("mut {}", m)
+    println("generic-scalar {}", sum_twice(#[1, 2, 3]))
+    println("generic-aggregate {}", first_area(#[Square { side: 4 }]))
 }
 "#;
     let dir = fresh_dir("ref_self_primitive");

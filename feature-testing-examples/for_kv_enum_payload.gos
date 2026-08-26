@@ -24,9 +24,9 @@ fn total(d: Doc) -> i64 {
     }
 }
 
-fn render(d: &Doc, out: &mut String) {
+fn render(d: Doc, out: &mut String) {
     match d {
-        Doc::Leaf(n) => *out += format!("{}", n)
+        Doc::Leaf(n) => *out += format("{}", n)
         Doc::Obj(pairs) => {
             *out += "{"
             let mut first = true
@@ -49,7 +49,7 @@ fn main() {
         (String::from("body"), Doc::Obj(inner))
     ]))
     let mut out = String::new()
-    render(&doc, &mut out)
-    println!("{}", out)
-    println!("{}", total(doc))
+    render(doc, &mut out)
+    println("{}", out)
+    println("{}", total(doc))
 }

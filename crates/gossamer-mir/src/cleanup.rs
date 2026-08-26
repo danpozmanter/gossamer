@@ -56,6 +56,11 @@ pub const HEAP_ALLOCATOR_PAIRS: &[(&str, &str)] = &[
     ("U8Vec::new", "gos_rt_heap_u8_free"),
     ("heap_u8::new", "gos_rt_heap_u8_free"),
     ("gos_rt_chan_new", "gos_rt_chan_drop"),
+    // A spawn handle is a one-shot channel shared with the child. The
+    // drop releases the handle's share; the child releases its own as
+    // it leaves, and whichever party is last reclaims the storage.
+    ("gos_rt_spawn", "gos_rt_chan_drop"),
+    ("gos_rt_spawn_ex", "gos_rt_chan_drop"),
     // String allocators reachable from user code. The owning
     // pointer returned by `read_to_string` (and friends) lives in
     // the runtime's `Box<[u8]>::into_raw` domain; `gos_rt_str_free`
@@ -526,8 +531,9 @@ mod tests {
     fn build(source: &str) -> Vec<Body> {
         let mut map = SourceMap::new();
         let file = map.add_file("t.gos", source.to_string());
-        let (sf, _) = parse_source_file(source, file);
+        let (mut sf, _) = parse_source_file(source, file);
         let (res, _) = resolve_source_file(&sf);
+        let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &res);
         let mut tcx = TyCtxt::new();
         let (tbl, _) = typecheck_source_file(&sf, &res, &mut tcx);
         let hir = lower_source_file(&sf, &res, &tbl, &mut tcx);
@@ -539,5 +545,24 @@ mod tests {
         let bodies = build("fn f() -> i64 { 1i64 + 2i64 }\n");
         let plan = plan(&bodies[0]);
         assert!(plan.is_empty());
+    }
+
+    #[test]
+    fn a_joined_spawn_handle_is_dropped_at_its_last_use() {
+        let bodies = build(
+            "fn work() -> i64 { 7 }\nfn f() -> i64 {\n    let h = spawn(work)\n    h.join().unwrap_or(0)\n}\n",
+        );
+        let body = bodies
+            .iter()
+            .find(|b| b.name.ends_with('f'))
+            .expect("body f");
+        let plan = plan(body);
+        assert!(
+            plan.entries()
+                .iter()
+                .any(|e| e.free_fn == "gos_rt_chan_drop"),
+            "spawn handle has no drop: {:?}",
+            plan.entries()
+        );
     }
 }

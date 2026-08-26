@@ -26,12 +26,12 @@ fn main() -> Result<(), errors::Error> {
     let opts = opts.create(true)
     let f = opts.open(path)?
     if mode == "hold" {
-        println!("held {}", f.try_lock_exclusive()?)
+        println("held {}", f.try_lock_exclusive()?)
         let mut line = ""
         let _ = io::stdin().read_line(&mut line)
         f.unlock()?
     } else {
-        println!("acquired {}", f.try_lock_exclusive()?)
+        println("acquired {}", f.try_lock_exclusive()?)
     }
     f.close()
     Ok(())
@@ -135,12 +135,12 @@ fn main() -> Result<(), errors::Error> {
     let opts = opts.create(true)
     let f = opts.open(path)?
     if mode == "hold" {
-        println!("held {}", f.try_lock_range(0, 16, true)?)
+        println("held {}", f.try_lock_range(0, 16, true)?)
         let mut line = ""
         let _ = io::stdin().read_line(&mut line)
         f.unlock_range(0, 16)?
     } else {
-        println!("same {} disjoint {}", f.try_lock_range(0, 16, true)?, f.try_lock_range(64, 16, true)?)
+        println("same {} disjoint {}", f.try_lock_range(0, 16, true)?, f.try_lock_range(64, 16, true)?)
     }
     f.close()
     Ok(())

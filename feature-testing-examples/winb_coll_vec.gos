@@ -10,8 +10,8 @@ struct Item { id: i64, tag: String }
 
 fn show_opt_i64(label: String, o: Option<i64>) {
     match o {
-        Some(v) => println!("{} Some({})", label, v)
-        None => println!("{} None", label)
+        Some(v) => println("{} Some({})", label, v)
+        None => println("{} None", label)
     }
 }
 
@@ -21,9 +21,9 @@ fn main() {
     xs.push(10)
     xs.push(20)
     xs.push(30)
-    println!("len {}", xs.len())
+    println("len {}", xs.len())
     show_opt_i64("pop", xs.pop())
-    println!("after pop len {}", xs.len())
+    println("after pop len {}", xs.len())
 
     // pop on empty -> None.
     let mut empty: Vec<i64> = Vec::new()
@@ -31,10 +31,10 @@ fn main() {
 
     // contains / index_of / count_of with duplicates and misses.
     let ds = #[1, 2, 2, 3, 2]
-    println!("contains 2 {} contains 9 {}", ds.contains(&2), ds.contains(&9))
-    show_opt_i64("index_of 2", ds.index_of(&2))
-    show_opt_i64("index_of 9", ds.index_of(&9))
-    println!("count_of 2 {} count_of 9 {}", ds.count_of(&2), ds.count_of(&9))
+    println("contains 2 {} contains 9 {}", ds.contains(2), ds.contains(9))
+    show_opt_i64("index_of 2", ds.index_of(2))
+    show_opt_i64("index_of 9", ds.index_of(9))
+    println("count_of 2 {} count_of 9 {}", ds.count_of(2), ds.count_of(9))
 
     // first / last on populated, single, empty.
     show_opt_i64("first", ds.first())
@@ -49,45 +49,45 @@ fn main() {
     // rev (non-mutating) then original unchanged.
     let r: Vec<i64> = Vec::from([1, 2, 3, 4])
     let rr = r.iter().rev().collect()
-    print!("rev ")
-    for v in rr { print!("{} ", v) }
-    println!("")
-    print!("orig-after-rev ")
-    for v in r { print!("{} ", v) }
-    println!("")
+    print("rev ")
+    for v in rr { print("{} ", v) }
+    println("")
+    print("orig-after-rev ")
+    for v in r { print("{} ", v) }
+    println("")
 
     // sort / sort_by in place.
     let mut s = #[5, 3, 1, 4, 2]
     s.sort()
-    print!("sorted ")
-    for v in s { print!("{} ", v) }
-    println!("")
+    print("sorted ")
+    for v in s { print("{} ", v) }
+    println("")
     let mut sd = #[5, 3, 1, 4, 2]
     sd.sort_by(|a, b| b - a)
-    print!("sorted-desc ")
-    for v in sd { print!("{} ", v) }
-    println!("")
+    print("sorted-desc ")
+    for v in sd { print("{} ", v) }
+    println("")
 
     // swap.
     let mut sw = #[1, 2, 3]
     sw.swap(0, 2)
-    print!("swapped ")
-    for v in sw { print!("{} ", v) }
-    println!("")
+    print("swapped ")
+    for v in sw { print("{} ", v) }
+    println("")
 
     // slice: in-range and out-of-range (Result).
     let sl = #[10, 20, 30, 40]
     match sl.slice(1, 3) {
-        Ok(part) => { print!("slice 1..3 ")
-            for v in part { print!("{} ", v) }
-            println!("") }
-        Err(e) => println!("slice err {}", e)
+        Ok(part) => { print("slice 1..3 ")
+            for v in part { print("{} ", v) }
+            println("") }
+        Err(e) => println("slice err {}", e)
     }
     match sl.slice(2, 99) {
-        Ok(part) => { print!("slice 2..99 ")
-            for v in part { print!("{} ", v) }
-            println!("") }
-        Err(_) => println!("slice oob err")
+        Ok(part) => { print("slice 2..99 ")
+            for v in part { print("{} ", v) }
+            println("") }
+        Err(_) => println("slice oob err")
     }
 
     // Qualified Vec::insert / Vec::remove are checked and mutate through &mut.
@@ -96,32 +96,32 @@ fn main() {
     iv.push(2)
     iv.push(3)
     let _ = Vec::insert(&mut iv, 1, 99)
-    print!("insert ")
-    for v in iv { print!("{} ", v) }
-    println!("")
+    print("insert ")
+    for v in iv { print("{} ", v) }
+    println("")
     let mut rv: Vec<i64> = Vec::new()
     rv.push(1)
     rv.push(2)
     rv.push(3)
     rv.push(4)
     match Vec::remove(&mut rv, 0) {
-        Ok(removed) => println!("removed {}", removed)
-        Err(_) => println!("remove failed")
+        Ok(removed) => println("removed {}", removed)
+        Err(_) => println("remove failed")
     }
-    print!("after remove ")
-    for v in rv { print!("{} ", v) }
-    println!("")
+    print("after remove ")
+    for v in rv { print("{} ", v) }
+    println("")
 
     // Vec of struct elements: contains / index_of by value equality.
     let items = #[Item { id: 1, tag: "a" }, Item { id: 2, tag: "b" }, Item { id: 3, tag: "c" }]
-    println!("has b {}", items.contains(&Item { id: 2, tag: "b" }))
-    println!("has z {}", items.contains(&Item { id: 9, tag: "z" }))
-    show_opt_i64("struct index_of", items.index_of(&Item { id: 3, tag: "c" }))
+    println("has b {}", items.contains(Item { id: 2, tag: "b" }))
+    println("has z {}", items.contains(Item { id: 9, tag: "z" }))
+    show_opt_i64("struct index_of", items.index_of(Item { id: 3, tag: "c" }))
 
     // Vec of struct: iterate and read fields.
-    print!("items ")
-    for it in items { print!("{}:{} ", it.id, it.tag) }
-    println!("")
+    print("items ")
+    for it in items { print("{}:{} ", it.id, it.tag) }
+    println("")
 
     // Large collection sum to exercise growth and iteration.
     let mut big: Vec<i64> = Vec::new()
@@ -132,5 +132,5 @@ fn main() {
     }
     let mut total = 0
     for v in big { total += v }
-    println!("big sum {} len {}", total, big.len())
+    println("big sum {} len {}", total, big.len())
 }

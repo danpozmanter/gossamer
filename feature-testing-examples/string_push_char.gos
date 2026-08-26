@@ -1,21 +1,21 @@
 fn main() {
     let mut s = "hello"
     s.push_char('!')
-    println!("{}", s)
+    println("{}", s)
 
     let mut t = ""
     t.push_char('A')
     t.push_char('B')
     t.push_char('C')
-    println!("{}", t)
+    println("{}", t)
 
     let mut u = "byte"
     u.push_byte(33)
-    println!("{}", u)
+    println("{}", u)
 
     let mut original = String::with_capacity(16)
     original.push_str("copy")
     let snapshot = original.clone()
     original.push('!')
-    println!("{} {}", original, snapshot)
+    println("{} {}", original, snapshot)
 }

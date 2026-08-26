@@ -12,7 +12,7 @@
 
 use std::http
 
-fn header_of(headers: &[(String, String)], want: String) -> String {
+fn header_of(headers: [(String, String)], want: String) -> String {
     let mut found = ""
     for (name, value) in headers {
         if name.to_lowercase() == want {
@@ -27,23 +27,23 @@ fn main() {
         .with_header("X-Tag", "v1")
         .with_header("x-tag", "v2")
         .with_header("x-extra", "e")
-    println!("r_status={} r_body={} r_ct={}", r.status, r.body, r.content_type)
+    println("r_status={} r_body={} r_ct={}", r.status, r.body, r.content_type)
     let headers: Vec<(String, String)> = r.headers
-    println!(
+    println(
         "x-tag={} x-extra={}"
-        header_of(&headers, "x-tag")
-        header_of(&headers, "x-extra")
+        header_of(headers, "x-tag")
+        header_of(headers, "x-extra")
     )
 
     let s = http::Response::text(202, "lit").with_header("x-k", "kv")
-    println!("s_status={} s_body={} s_ct={}", s.status, s.body, s.content_type)
+    println("s_status={} s_body={} s_ct={}", s.status, s.body, s.content_type)
 
     let strict = http::Client::builder().max_redirects(0).timeout_ms(5000).build()
     let _ = strict
-    println!("client=built")
+    println("client=built")
 
     match http::request("BOGUS", "http://127.0.0.1:23905/never", "", Vec::from([])) {
-        Ok(resp) => println!("unexpected status={}", resp.status)
-        Err(e) => println!("err={}", e)
+        Ok(resp) => println("unexpected status={}", resp.status)
+        Err(e) => println("err={}", e)
     }
 }

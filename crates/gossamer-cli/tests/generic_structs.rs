@@ -95,7 +95,7 @@ fn generic_pair_two_distinct_params() {
 struct Pair<A, B> { fst: A, snd: B }
 fn main() {
     let p = Pair { fst: 42, snd: "answer" }
-    println!("{} = {}", p.fst, p.snd)
+    println("{} = {}", p.fst, p.snd)
 }
 "#;
     assert_vm("pair_two_params", src, "42 = answer");
@@ -109,9 +109,9 @@ fn main() {
     let a = Pair { fst: 1, snd: 2 }
     let b = Pair { fst: "x", snd: "y" }
     let c = Pair { fst: 7, snd: "seven" }
-    println!("{}/{}", a.fst, a.snd)
-    println!("{}/{}", b.fst, b.snd)
-    println!("{}/{}", c.fst, c.snd)
+    println("{}/{}", a.fst, a.snd)
+    println("{}/{}", b.fst, b.snd)
+    println("{}/{}", c.fst, c.snd)
 }
 "#;
     assert_vm("pair_multi_instantiation", src, "1/2\nx/y\n7/seven");
@@ -129,7 +129,7 @@ fn field_arithmetic_on_concrete_instance() {
 struct Pair<A, B> { fst: A, snd: B }
 fn main() {
     let p = Pair { fst: 10, snd: 32 }
-    println!("{}", p.fst + p.snd)
+    println("{}", p.fst + p.snd)
 }
 "#;
     assert_vm("pair_arith", src, "42");
@@ -143,7 +143,7 @@ struct Cell<T> { value: T }
 fn main() {
     let c = Cell { value: 99 }
     let s = Cell { value: "ninety-nine" }
-    println!("{} {}", c.value, s.value)
+    println("{} {}", c.value, s.value)
 }
 "#;
     assert_vm("cell_single_param", src, "99 ninety-nine");
@@ -157,7 +157,7 @@ fn triple_param_generic_struct() {
 struct Triple<A, B, C> { a: A, b: B, c: C }
 fn main() {
     let t = Triple { a: 1, b: "two", c: 3 }
-    println!("{} {} {}", t.a, t.b, t.c)
+    println("{} {} {}", t.a, t.b, t.c)
 }
 "#;
     assert_vm("triple_params", src, "1 two 3");
@@ -173,7 +173,7 @@ fn same_param_twice_in_struct() {
 struct SameType<A> { left: A, right: A }
 fn main() {
     let pair = SameType { left: 7, right: 13 }
-    println!("{} + {} = {}", pair.left, pair.right, pair.left + pair.right)
+    println("{} + {} = {}", pair.left, pair.right, pair.left + pair.right)
 }
 "#;
     assert_vm("same_type_twice", src, "7 + 13 = 20");

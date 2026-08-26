@@ -60,7 +60,7 @@ fn grouped_stdlib_imports_used_by_top_level_statements_are_not_unused() {
         "use std::{env, fs}\n\
          let root = env::args().first()\n\
          let exists = fs::exists(\".\")\n\
-         println!(\"{} {:?}\", exists, root)\n",
+         println(\"{} {:?}\", exists, root)\n",
     );
     assert!(!has_code(&diags, "GL0002"), "got {:?}", diags_codes(&diags));
 }
@@ -229,7 +229,7 @@ fn item_allow_silences_only_that_item() {
     let source = concat!(
         "pub enum K { A, B }\n",
         "pub struct S { pub k: K }\n",
-        "fn free(k: &K) -> i64 {\n",
+        "fn free(k: K) -> i64 {\n",
         "    match k {\n        K::A => 1,\n        K::B => 1,\n    }\n",
         "}\n",
         "impl S {\n",
@@ -260,7 +260,7 @@ fn free_fn_allow_does_not_silence_a_method() {
         "pub enum K { A, B }\n",
         "pub struct S { pub k: K }\n",
         "#[lint(allow(match_same_arms))]\n",
-        "fn free(k: &K) -> i64 {\n",
+        "fn free(k: K) -> i64 {\n",
         "    match k {\n        K::A => 1,\n        K::B => 1,\n    }\n",
         "}\n",
         "impl S {\n",
@@ -315,7 +315,7 @@ fn file_allow_covers_the_file_and_an_item_may_deny() {
 #[test]
 fn import_named_by_another_use_path_is_not_unused() {
     let diags =
-        lint("use std::encoding\nuse encoding::json\nfn main() { let _ = json::parse(&\"1\") }\n");
+        lint("use std::encoding\nuse encoding::json\nfn main() { let _ = json::parse(\"1\") }\n");
     assert!(!has_code(&diags, "GL0002"), "got {:?}", diags_codes(&diags));
 }
 
@@ -360,7 +360,7 @@ fn match_same_arms_ignores_same_length_different_bodies() {
 
 #[test]
 fn match_same_arms_ignores_desugared_matches_bang() {
-    let diags = lint("fn f(b: i64) -> bool { matches!(b, 65 | 97) }\n");
+    let diags = lint("fn f(b: i64) -> bool { matches(b, 65 | 97) }\n");
     assert!(!has_code(&diags, "GL0037"), "got {:?}", diags_codes(&diags));
 }
 
@@ -396,13 +396,13 @@ fn match_same_arms_ignores_desugared_while_let() {
 
 #[test]
 fn consecutive_assignment_fires_on_identical_statements() {
-    let diags = lint("fn f() { let mut x = 0\n    x = 1\n    x = 1\n    println!(\"{x}\") }\n");
+    let diags = lint("fn f() { let mut x = 0\n    x = 1\n    x = 1\n    println(\"{x}\") }\n");
     assert!(has_code(&diags, "GL0039"), "got {:?}", diags_codes(&diags));
 }
 
 #[test]
 fn consecutive_assignment_ignores_same_length_different_values() {
-    let diags = lint("fn f() { let mut x = 0\n    x = 1\n    x = 2\n    println!(\"{x}\") }\n");
+    let diags = lint("fn f() { let mut x = 0\n    x = 1\n    x = 2\n    println(\"{x}\") }\n");
     assert!(!has_code(&diags, "GL0039"), "got {:?}", diags_codes(&diags));
 }
 

@@ -18,20 +18,20 @@ fn main() {
     let mut unrouted = 0
 
     for _ in 0..4 {
-        if pprof::goroutine_profile().starts_with(&HEADER) { text_profiles += 1 }
-        if pprof::mutex_profile().starts_with(&HEADER) { text_profiles += 1 }
-        if pprof::block_profile().starts_with(&HEADER) { text_profiles += 1 }
+        if pprof::goroutine_profile().starts_with(HEADER) { text_profiles += 1 }
+        if pprof::mutex_profile().starts_with(HEADER) { text_profiles += 1 }
+        if pprof::block_profile().starts_with(HEADER) { text_profiles += 1 }
         // Sampled profiles carry whatever the timer and the allocator
         // caught, which differs every run; only the shape is comparable.
-        if pprof::cpu_profile(0).starts_with(&HEADER) { text_profiles += 1 }
-        if pprof::heap_profile(0).starts_with(&HEADER) { text_profiles += 1 }
+        if pprof::cpu_profile(0).starts_with(HEADER) { text_profiles += 1 }
+        if pprof::heap_profile(0).starts_with(HEADER) { text_profiles += 1 }
 
         let trace = pprof::execution_trace(0)
         if trace.starts_with("{\"traceEvents\":[") && trace.ends_with("]}") { traces += 1 }
 
         match pprof::route("/debug/pprof/block", "") {
             Some(body) => {
-                if body.starts_with(&HEADER) { routed += 1 }
+                if body.starts_with(HEADER) { routed += 1 }
             }
             None => unrouted += 1
         }
@@ -41,20 +41,20 @@ fn main() {
         }
     }
 
-    println!("text profiles: {}", text_profiles)
-    println!("traces: {}", traces)
-    println!("routed: {}", routed)
-    println!("unrouted: {}", unrouted)
+    println("text profiles: {}", text_profiles)
+    println("traces: {}", traces)
+    println("routed: {}", routed)
+    println("unrouted: {}", unrouted)
 
     match pprof::route("/debug/pprof/", "") {
         Some(index) => {
-            println!("index lists goroutine: {}", index.contains("goroutine"))
-            println!("index lists trace: {}", index.contains("trace"))
+            println("index lists goroutine: {}", index.contains("goroutine"))
+            println("index lists trace: {}", index.contains("trace"))
         }
-        None => println!("index missing")
+        None => println("index missing")
     }
     match pprof::route("/healthz", "") {
-        Some(_) => println!("foreign path routed")
-        None => println!("foreign path: None")
+        Some(_) => println("foreign path routed")
+        None => println("foreign path: None")
     }
 }

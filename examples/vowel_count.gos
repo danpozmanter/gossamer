@@ -8,7 +8,7 @@
  */
 
 fn is_vowel(b: i64) -> bool {
-    matches!(b, 65 | 69 | 73 | 79 | 85 | 97 | 101 | 105 | 111 | 117)
+    matches(b, 65 | 69 | 73 | 79 | 85 | 97 | 101 | 105 | 111 | 117)
 }
 
 fn is_letter(b: i64) -> bool {
@@ -20,7 +20,7 @@ struct LetterCounts {
     consonants: i64
 }
 
-fn count_vowels(text: &String) -> LetterCounts {
+fn count_vowels(text: String) -> LetterCounts {
     let mut vowels: i64 = 0
     let mut consonants: i64 = 0
     for byte in text.as_bytes() {
@@ -38,6 +38,6 @@ let lines = #[
     "AEIOU"
 ]
 for s in lines {
-    let counts = count_vowels(&s)
-    println!("{}: vowels={}, consonants={}", s, counts.vowels, counts.consonants)
+    let counts = count_vowels(s)
+    println("{}: vowels={}, consonants={}", s, counts.vowels, counts.consonants)
 }

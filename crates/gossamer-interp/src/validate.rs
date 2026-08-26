@@ -862,21 +862,6 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_i(op_idx, key_i)?;
             }
 
-            Op::Spawn { callee, args, argc } => {
-                check_v(op_idx, callee)?;
-                check_v_span(op_idx, args, argc)?;
-            }
-            Op::SpawnMethod {
-                receiver,
-                name_idx,
-                args,
-                argc,
-            } => {
-                check_v(op_idx, receiver)?;
-                check_pool(op_idx, u32::from(name_idx), globals_len, PoolKind::Globals)?;
-                check_v_span(op_idx, args, argc)?;
-            }
-
             Op::IndexGet { dst, base, index } | Op::IndexGetChecked { dst, base, index } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, base)?;
@@ -2160,19 +2145,6 @@ pub(crate) fn register_effects(
         | Op::VecRemoveAt {
             receiver, index, ..
         } => effect.v_reads.extend([receiver, index]),
-        Op::Spawn { callee, args, argc } => {
-            effect.v_reads.push(callee);
-            add_v_span(&mut effect.v_reads, args, argc);
-        }
-        Op::SpawnMethod {
-            receiver,
-            args,
-            argc,
-            ..
-        } => {
-            effect.v_reads.push(receiver);
-            add_v_span(&mut effect.v_reads, args, argc);
-        }
         Op::BuildIntArray { first_i, count, .. } | Op::BuildByteArray { first_i, count, .. } => {
             add_i_span(&mut effect.i_reads, first_i, count);
         }

@@ -42,8 +42,8 @@ let empty = Empty {}
 let empty_tuple = EmptyTuple()
 let p = Pt { x: 3, y: 4 }     // keyed fields, any order
 let pair = Pair("row", 4)
-println!("{} {}", p.x, p.y)
-println!("{} {}", pair.0, pair.1)
+println("{} {}", p.x, p.y)
+println("{} {}", pair.0, pair.1)
 let Pt { x, y } = p
 ```
 
@@ -81,8 +81,8 @@ struct Point { x: i64, y: i64 }
 
 let a = Point { x: 1, y: 2 }
 let b = a.clone()                          // `clone` is a universal builtin
-println!("{}", a == b)                     // true, no derive
-println!("{}", a < Point { x: 1, y: 3 })   // true (lexicographic by field)
+println("{}", a == b)                     // true, no derive
+println("{}", a < Point { x: 1, y: 3 })   // true (lexicographic by field)
 ```
 
 A user `impl` of `eq` / `cmp` overrides the synthesized comparison.

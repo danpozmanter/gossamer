@@ -7,6 +7,8 @@
 
 /// Reference-counting type-meta ABI (kind tags + blob layout) shared by
 /// the MIR lowerer and the runtime.
+pub mod format_pad;
+pub mod int_range;
 pub mod rc;
 /// ABI registry - the typed list of all `gos_rt_*` symbols.
 pub mod registry;

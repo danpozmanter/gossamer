@@ -357,7 +357,7 @@ fn manifest_modules_expose_a_reachable_item() {
             let leaf = path.rsplit("::").next().unwrap_or(path);
             let reachable = m.items.iter().any(|it| match it.kind {
                 gossamer_std::registry::StdItemKind::Function
-                | gossamer_std::registry::StdItemKind::Macro
+                | gossamer_std::registry::StdItemKind::Builtin
                 | gossamer_std::registry::StdItemKind::Const => true,
                 _ => {
                     let full = format!("{path}::{}::", it.name);

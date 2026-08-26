@@ -17,16 +17,16 @@ struct ServerConfig {
 
 fn main() -> Result<(), errors::Error> {
     let yaml_text = "name: gossamer\nport: 8080\ndebug: true\n"
-    let cfg = from_yaml::<ServerConfig>(&yaml_text)?
-    println!("parsed name={} port={} debug={}", cfg.name, cfg.port, cfg.debug)
+    let cfg = from_yaml::<ServerConfig>(yaml_text)?
+    println("parsed name={} port={} debug={}", cfg.name, cfg.port, cfg.debug)
 
     let round_trip = to_yaml::<ServerConfig>(cfg)?
-    let again = from_yaml::<ServerConfig>(&round_trip)?
-    println!("round trip name={} port={} debug={}", again.name, again.port, again.debug)
+    let again = from_yaml::<ServerConfig>(round_trip)?
+    println("round trip name={} port={} debug={}", again.name, again.port, again.debug)
 
     let as_json = to_json::<ServerConfig>(cfg)?
-    let from_json_text = from_json::<ServerConfig>(&as_json)?
-    println!("via json name={}", from_json_text.name)
+    let from_json_text = from_json::<ServerConfig>(as_json)?
+    println("via json name={}", from_json_text.name)
 
     Ok(())
 }

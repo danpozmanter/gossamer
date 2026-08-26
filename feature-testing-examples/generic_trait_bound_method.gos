@@ -10,7 +10,7 @@ impl Arg for String {
     fn to_arg(&self) -> String { self.clone() }
 }
 
-fn encode<T: Arg>(v: &T) -> String { v.to_arg() }
+fn encode<T: Arg>(v: T) -> String { v.to_arg() }
 
 struct Cmd {
     args: Vec<String>
@@ -27,15 +27,15 @@ impl Cmd {
 fn widths(rounds: i64) -> i64 {
     let mut total = 0
     for _ in 0..rounds {
-        total += encode(&7).len()
+        total += encode(7).len()
     }
     total
 }
 
 fn main() {
-    println!("{}", encode(&7))
-    println!("{}", encode(&"hi"))
+    println("{}", encode(7))
+    println("{}", encode("hi"))
     let c = Cmd { args: #[] }.arg(1).arg("two")
-    println!("{:?}", c.args)
-    println!("{}", widths(200))
+    println("{:?}", c.args)
+    println("{}", widths(200))
 }

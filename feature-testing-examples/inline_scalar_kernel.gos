@@ -33,7 +33,7 @@ fn main() {
             sum += mat_a(i, j)
         }
     }
-    println!("{:.9}", sum)
+    println("{:.9}", sum)
 
     // One-argument inlining and several inlinable calls in one
     // expression (`square`, `quad`, and another `square`).
@@ -41,8 +41,8 @@ fn main() {
     for k in 0..20 {
         acc += square(k) + quad(k) - square(k - 1)
     }
-    println!("acc = {}", acc)
+    println("acc = {}", acc)
 
     // An inlined call result fed straight into an intrinsic transform.
-    println!("{:.9}", math::sqrt(mat_a(3, 4) + mat_a(4, 3)))
+    println("{:.9}", math::sqrt(mat_a(3, 4) + mat_a(4, 3)))
 }

@@ -13,7 +13,7 @@ use std::runtime
 
 enum Tree {
     Leaf(i64)
-    Node(Box<Tree>, Box<Tree>)
+    Node(Tree, Tree)
 }
 
 fn build(depth: i64, seed: i64) -> Tree {
@@ -23,14 +23,14 @@ fn build(depth: i64, seed: i64) -> Tree {
     Tree::Node(Box::new(build(depth - 1, seed * 2 + 1)), Box::new(build(depth - 1, seed * 2 + 3)))
 }
 
-fn sum(t: &Tree) -> i64 {
+fn sum(t: Tree) -> i64 {
     match t {
         Tree::Leaf(v) => *v
         Tree::Node(l, r) => sum(l) + sum(r)
     }
 }
 
-fn count(t: &Tree) -> i64 {
+fn count(t: Tree) -> i64 {
     match t {
         Tree::Leaf(_) => 1
         Tree::Node(l, r) => 1 + count(l) + count(r)
@@ -46,10 +46,10 @@ fn main() {
         // only the i64 accumulations escape.
         runtime::arena_push()
         let t = build(8, round + 1)
-        total_sum += sum(&t)
-        total_count += count(&t)
+        total_sum += sum(t)
+        total_count += count(t)
         runtime::arena_pop()
         round += 1
     }
-    println!("sum={} count={}", total_sum, total_count)
+    println("sum={} count={}", total_sum, total_count)
 }

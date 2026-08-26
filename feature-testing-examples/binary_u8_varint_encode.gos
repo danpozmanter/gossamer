@@ -12,13 +12,13 @@ fn main() {
     for v in [0, 1, 127, 128, 200, 255] {
         let b = encoding::binary::put_u8(empty, v)
         match encoding::binary::get_u8(b) {
-            Ok(got) => println!("u8 {} -> len {} -> {}", v, b.len(), got)
-            Err(e) => println!("u8 {} err {}", v, e)
+            Ok(got) => println("u8 {} -> len {} -> {}", v, b.len(), got)
+            Err(e) => println("u8 {} err {}", v, e)
         }
     }
     match encoding::binary::get_u8(empty) {
-        Ok(_) => println!("get_u8 empty: ok?!")
-        Err(_) => println!("get_u8 empty: err")
+        Ok(_) => println("get_u8 empty: ok?!")
+        Err(_) => println("get_u8 empty: err")
     }
 
     // --- unsigned varint encode -> decode round-trip ---
@@ -26,8 +26,8 @@ fn main() {
         let enc = encoding::binary::put_uvarint(empty, x)
         let hex = encoding::hex::encode(enc)
         match encoding::binary::uvarint(enc) {
-            Ok((v, n)) => println!("uvarint {} = {} (len {}, rt {} consumed {})", x, hex, enc.len(), v, n)
-            Err(e) => println!("uvarint {} err {}", x, e)
+            Ok((v, n)) => println("uvarint {} = {} (len {}, rt {} consumed {})", x, hex, enc.len(), v, n)
+            Err(e) => println("uvarint {} err {}", x, e)
         }
     }
 
@@ -35,8 +35,8 @@ fn main() {
     for x in [0, -1, 1, -64, 63, -1000000, 2147483647] {
         let enc = encoding::binary::put_varint(empty, x)
         match encoding::binary::varint(enc) {
-            Ok((v, n)) => println!("varint {} = {} (len {}, consumed {})", x, v, enc.len(), n)
-            Err(e) => println!("varint {} err {}", x, e)
+            Ok((v, n)) => println("varint {} = {} (len {}, consumed {})", x, v, enc.len(), n)
+            Err(e) => println("varint {} err {}", x, e)
         }
     }
 }

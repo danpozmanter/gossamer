@@ -1072,7 +1072,7 @@ pub(super) fn lower_intrinsic_call_handles(
         //
         // The frontend types `channel()` as a tuple
         // `(Sender<T>, Receiver<T>)` - two slots - so the user's
-        // `let (tx, rx) = channel()` / `pair.0` / `pair.1`
+        // `let tx, rx = channel()` / `pair.0` / `pair.1`
         // pattern projects with a 0/8-byte offset. We allocate
         // a 16-byte stack slot here and store the channel
         // pointer at *both* offsets so subsequent

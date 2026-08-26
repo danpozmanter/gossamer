@@ -31,10 +31,10 @@ const TIME_BINARY: String = "/usr/bin/time"
 fn repo_root() -> String {
     let mut directory = env::current_dir().unwrap_or(".")
     loop {
-        if fs::is_file(&path::join(&directory, &"benchmarks/idle/empty.gos")) {
+        if fs::is_file(path::join(directory, "benchmarks/idle/empty.gos")) {
             return directory
         }
-        match path::parent(&directory) {
+        match path::parent(directory) {
             Some(parent) => directory = parent
             None => return "."
         }
@@ -42,40 +42,40 @@ fn repo_root() -> String {
 }
 
 /// Milliseconds named by a `<seconds>.<hundredths>` reading.
-fn millis_of(seconds: &String) -> Option<i64> {
-    let (whole, fraction) = seconds.split_once(".").unwrap_or((*seconds, "0"))
+fn millis_of(seconds: String) -> Option<i64> {
+    let whole, fraction = seconds.split_once(".").unwrap_or((*seconds, "0"))
     let whole_ms = whole.to_i64()? * 1000
     let mut scaled = fraction
     while scaled.len() < 3 {
-        scaled = format!("{}0", scaled)
+        scaled = format("{}0", scaled)
     }
     Some(whole_ms + scaled.substring(0, 3).to_i64().unwrap_or(0))
 }
 
 fn main() {
     let root = repo_root()
-    let gos = env::var(&"GOS").unwrap_or(path::join(&root, &"target/release/gos"))
-    let threshold_ms = env::var(&"IDLE_CPU_THRESHOLD_MS").unwrap_or("400").to_i64().unwrap_or(400)
-    if !fs::is_file(&gos) {
-        eprintln!("error: gos binary not found at {} - set GOS or build first", gos)
+    let gos = env::var("GOS").unwrap_or(path::join(root, "target/release/gos"))
+    let threshold_ms = env::var("IDLE_CPU_THRESHOLD_MS").unwrap_or("400").to_i64().unwrap_or(400)
+    if !fs::is_file(gos) {
+        eprintln("error: gos binary not found at {} - set GOS or build first", gos)
         process::exit(2)
     }
-    if !fs::is_file(&TIME_BINARY) {
-        eprintln!("error: {} is required to measure the child's CPU", TIME_BINARY)
+    if !fs::is_file(TIME_BINARY) {
+        eprintln("error: {} is required to measure the child's CPU", TIME_BINARY)
         process::exit(2)
     }
 
-    let program = path::join(&root, &"benchmarks/idle/empty.gos")
+    let program = path::join(root, "benchmarks/idle/empty.gos")
     let arguments = #["-f", "%U %S", gos, "run", program]
-    let measured = match process::run(&TIME_BINARY, &arguments) {
+    let measured = match process::run(TIME_BINARY, arguments) {
         Ok(measured) => measured
         Err(e) => {
-            eprintln!("error: idle benchmark command failed: {}", e)
+            eprintln("error: idle benchmark command failed: {}", e)
             process::exit(2)
         }
     }
     if measured.code != 0 {
-        eprintln!(
+        eprintln(
             "error: idle benchmark command failed with status {}:\n{}"
             measured.code
             measured.stderr
@@ -88,18 +88,18 @@ fn main() {
     let reading = measured.stderr.trim().lines().last().unwrap_or("")
     let fields = reading.split_whitespace()
     if fields.len() != 2 {
-        eprintln!("error: could not parse the CPU reading:\n{}", measured.stderr)
+        eprintln("error: could not parse the CPU reading:\n{}", measured.stderr)
         process::exit(2)
     }
     let user = fields[0]
     let system = fields[1]
-    let (Some(user_ms), Some(system_ms)) = (millis_of(&user), millis_of(&system)) else {
-        eprintln!("error: could not parse the CPU reading:\n{}", measured.stderr)
+    let Some(user_ms), Some(system_ms) = (millis_of(user), millis_of(system)) else {
+        eprintln("error: could not parse the CPU reading:\n{}", measured.stderr)
         process::exit(2)
     }
     let total_ms = user_ms + system_ms
 
-    println!(
+    println(
         "idle empty.gos: user={}s sys={}s total={}ms (threshold={}ms)"
         user
         system
@@ -107,8 +107,8 @@ fn main() {
         threshold_ms
     )
     if total_ms > threshold_ms {
-        eprintln!("FAIL: idle CPU above threshold - runtime is busy-polling somewhere")
+        eprintln("FAIL: idle CPU above threshold - runtime is busy-polling somewhere")
         process::exit(1)
     }
-    println!("ok")
+    println("ok")
 }

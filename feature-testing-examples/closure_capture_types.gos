@@ -13,7 +13,7 @@ fn main() {
             .map(|x| { let cell = (x, y); if cell.0 == cell.1 % 4 { "#" } else { "." } })
             .collect()
             .join("")
-        println!("{} {}", y, row)
+        println("{} {}", y, row)
         y += 1
     }
 
@@ -29,7 +29,7 @@ fn main() {
             for _ in r { n += 1 }
             n })
                 .collect()
-    println!(
+    println(
         "{:?} {:?} {:?} {:?}"
         through_vec
         through_array
@@ -43,20 +43,20 @@ fn main() {
     let bias = 0.5
     let label = "n"
     let mixed = (1..=3)
-        .map(|x| { let t = (x, scale, bias, label); format!("{}{}", t.3, x * t.1) })
+        .map(|x| { let t = (x, scale, bias, label); format("{}{}", t.3, x * t.1) })
         .collect()
-    println!("{:?}", mixed)
+    println("{:?}", mixed)
 
     // A String capture stays a String: it is retained and released as
     // one across every element.
     let prefix = "row-"
     let labelled = (0..4).map(|x| { let t = (prefix, x); t.0 }).collect()
-    println!("{:?}", labelled)
+    println("{:?}", labelled)
 
     // A map keyed by a captured tuple, the shape the whole chain was
     // found through.
     let mut panels: Map<(i64, i64), i64> = {}
     panels.insert((1, 2), 7)
     let looked_up = (0..3).map(|x| panels.get_or((x, 2), 0)).collect()
-    println!("{:?} {}", looked_up, panels.len())
+    println("{:?} {}", looked_up, panels.len())
 }

@@ -14,94 +14,94 @@ fn count_matches(pattern: String, text: String) -> i64 {
 fn main() {
     // Unicode scalar classes, Unicode-aware \w, and case folding.
     let greek = regex::compile("(?iu)\\p{Greek}+").unwrap()
-    println!("greek={}", regex::is_match(greek, "prefix ΔέΛΤΑ suffix"))
+    println("greek={}", regex::is_match(greek, "prefix ΔέΛΤΑ suffix"))
     let words = regex::compile("\\w+").unwrap()
     let unicode_words = regex::find_all(words, "café 東京")
-    println!("words={} first={} second={}", unicode_words.len(), unicode_words[0].2, unicode_words[1].2)
+    println("words={} first={} second={}", unicode_words.len(), unicode_words[0].2, unicode_words[1].2)
     let accent = regex::compile("é").unwrap()
     match regex::find(accent, "aé") {
-        Some((start, end, text)) => println!("accent={}..{} {}", start, end, text)
-        None => println!("accent=missing")
+        Some((start, end, text)) => println("accent={}..{} {}", start, end, text)
+        None => println("accent=missing")
     }
 
     // Basic match
     let digit_pat = match regex::compile("[0-9]+") {
         Ok(p) => p
         Err(e) => {
-            println!("compile error: {}", e)
+            println("compile error: {}", e)
             return
         }
     }
-    println!("digits in abc123def456: {}", regex::find_all(digit_pat, "abc123def456").len())
+    println("digits in abc123def456: {}", regex::find_all(digit_pat, "abc123def456").len())
 
     // Named positions via find
     match regex::find(digit_pat, "offset 42 here") {
         Some((start, end, text)) => {
-            println!("found '{}' start={} end={}", text, start, end)
+            println("found '{}' start={} end={}", text, start, end)
         }
-        None => println!("no match")
+        None => println("no match")
     }
 
     // Email-like pattern
     let email_pat = match regex::compile("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}") {
         Ok(p) => p
         Err(e) => {
-            println!("compile error: {}", e)
+            println("compile error: {}", e)
             return
         }
     }
-    println!("valid email: {}", regex::is_match(email_pat, "user@example.com"))
-    println!("invalid email: {}", regex::is_match(email_pat, "notanemail"))
+    println("valid email: {}", regex::is_match(email_pat, "user@example.com"))
+    println("invalid email: {}", regex::is_match(email_pat, "notanemail"))
 
     // Capture groups
     let date_pat = match regex::compile("(\\d{4})-(\\d{2})-(\\d{2})") {
         Ok(p) => p
         Err(e) => {
-            println!("compile error: {}", e)
+            println("compile error: {}", e)
             return
         }
     }
     match regex::captures(date_pat, "date: 2024-03-15") {
         Some(caps) => {
-            println!("capture count = {}", caps.len())
+            println("capture count = {}", caps.len())
             // caps[0] is full match, caps[1..] are groups
         }
-        None => println!("no date found")
+        None => println("no date found")
     }
 
     // Replace all
     let space_pat = match regex::compile("\\s+") {
         Ok(p) => p
         Err(e) => {
-            println!("compile error: {}", e)
+            println("compile error: {}", e)
             return
         }
     }
     let normalized = regex::replace_all(space_pat, "hello   world  foo", " ")
-    println!("normalized: '{}'", normalized)
+    println("normalized: '{}'", normalized)
 
     // Split
     let sep_pat = match regex::compile("#[,;]+") {
         Ok(p) => p
         Err(e) => {
-            println!("compile error: {}", e)
+            println("compile error: {}", e)
             return
         }
     }
     let parts = regex::split(sep_pat, "a,b;;c,d")
-    println!("split count = {}", parts.len())
-    println!("parts[0] = {}", parts[0])
+    println("split count = {}", parts.len())
+    println("parts[0] = {}", parts[0])
 
     // Word count via find_all
     let word_pat = match regex::compile("[A-Za-z]+") {
         Ok(p) => p
         Err(e) => {
-            println!("compile error: {}", e)
+            println("compile error: {}", e)
             return
         }
     }
     let words = regex::find_all(word_pat, "the quick brown fox jumps")
-    println!("word count = {}", words.len())
+    println("word count = {}", words.len())
 }
 
 #[cfg(test)]
@@ -131,8 +131,8 @@ mod tests {
                 return
             }
         }
-        let matches = regex::find_all(p, "1 22 333")
-        let _ = testing::check_eq(&(matches.len() as i64), &3, "three digit groups")
+        let found = regex::find_all(p, "1 22 333")
+        let _ = testing::check_eq((found.len() as i64), 3, "three digit groups")
     }
 
     #[test]
@@ -145,7 +145,7 @@ mod tests {
             }
         }
         let r = regex::replace_all(p, "a  b   c", "_")
-        let _ = testing::check_eq(&r, &"a_b_c", "compressed spaces")
+        let _ = testing::check_eq(r, "a_b_c", "compressed spaces")
     }
 
     #[test]

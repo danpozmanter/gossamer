@@ -13,13 +13,13 @@
 
 use std::compress
 
-fn show_roundtrip(name: &str, compressed: Result<Vec<u8>, compress::Error>, original_len: i64) {
+fn show_roundtrip(name: str, compressed: Result<Vec<u8>, compress::Error>, original_len: i64) {
     match compressed {
         Ok(bytes) => {
             let ratio = bytes.len() * 100 / original_len
-            println!("{}: {} -> {} bytes ({}%)", name, original_len, bytes.len(), ratio)
+            println("{}: {} -> {} bytes ({}%)", name, original_len, bytes.len(), ratio)
         }
-        Err(e) => println!("{}: error: {}", name, e)
+        Err(e) => println("{}: error: {}", name, e)
     }
 }
 
@@ -49,14 +49,14 @@ fn main() {
             match restored {
                 Ok(bytes) => {
                     if bytes.len() == n {
-                        println!("gzip roundtrip: ok ({} bytes)", n)
+                        println("gzip roundtrip: ok ({} bytes)", n)
                     } else {
-                        println!("gzip roundtrip: size mismatch")
+                        println("gzip roundtrip: size mismatch")
                     }
                 }
-                Err(e) => println!("gzip decode err: {}", e)
+                Err(e) => println("gzip decode err: {}", e)
             }
         }
-        Err(e) => println!("gzip encode err: {}", e)
+        Err(e) => println("gzip encode err: {}", e)
     }
 }

@@ -20,7 +20,7 @@ Gossamer is pre-1.0.0, so the public API may still change before 1.0.
 
 ```gossamer
 fn main() {
-    println!("hello, world")
+    println("hello, world")
 }
 ```
 
@@ -29,7 +29,7 @@ wrapper: bare statements at file scope become the body of an implicit
 `fn main()`, so this is a complete program too:
 
 ```gossamer
-println!("hello, world")
+println("hello, world")
 ```
 
 See [Top-level statements](language/top_level_statements.md).
@@ -42,10 +42,10 @@ use std::sync::channel
 fn add(a: i64, b: i64) -> i64 { a + b }
 
 fn main() {
-    let (tx, rx) = channel::<i64>()
-    go fn() { tx.send(40 |> |v| add(2, v)) }()
+    let tx, rx = channel::<i64>()
+    spawn(|| { tx.send(40 |> |v| add(2, v)) })
     if let Some(answer) = rx.recv() {
-        println!("answer: {}", answer)
+        println("answer: {}", answer)
     }
 }
 ```
@@ -58,7 +58,7 @@ data-processing script reads top to bottom:
 
 ```gossamer
 let nums = [4, 8, 15, 16, 23, 42]
-println!("sum of evens: {}", nums.filter(|n| n % 2 == 0).sum())
+println("sum of evens: {}", nums.filter(|n| n % 2 == 0).sum())
 ```
 
 See [Top-level statements](language/top_level_statements.md).
@@ -76,7 +76,7 @@ Raspberry Pi OS 64-bit), Apple Silicon macOS, and Windows x86_64. Linux-musl
 AOT deployment is Tier 2 with QEMU-backed VM differential evidence. See the
 [supported target matrix](supported_targets.md) for artifact-only and
 unsupported registered triples.
-- **Go-style goroutines** - (`go expr`) with typed channels.
+- **Go-style goroutines** - (`spawn(|| expr)`) with typed channels.
 - **Go-style async** - Colorless functions and stackful coroutines.
 - **Rust-style type system** - statically-typed, generics with
   trait bounds, pattern-matching, `Option<T>` / `Result<T, E>`.

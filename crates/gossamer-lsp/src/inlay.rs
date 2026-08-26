@@ -215,11 +215,9 @@ impl Walker<'_> {
                     self.walk_select_arm(arm);
                 }
             }
-            ExprKind::Go(inner) => self.walk_expr(inner),
             ExprKind::Literal(_)
             | ExprKind::Path(_)
             | ExprKind::Continue { .. }
-            | ExprKind::MacroCall(_)
             | ExprKind::Error => {}
         }
     }
@@ -243,7 +241,7 @@ impl Walker<'_> {
                     self.emit_pattern_hint(pattern);
                 }
             }
-            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => {
                 self.walk_expr(expr);
             }
             StmtKind::Item(item) => self.walk_item(item),

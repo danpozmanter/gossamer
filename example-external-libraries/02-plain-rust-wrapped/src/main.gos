@@ -3,8 +3,8 @@ use unic_segment::grapheme_count
 
 fn main() {
     let s = "naïve cafe"
-    println("count:", grapheme_count(s))
+    println("count: {}", grapheme_count(s))
     for g in graphemes(s) {
-        println("grapheme:", g)
+        println("grapheme: {}", g)
     }
 }

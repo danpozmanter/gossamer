@@ -3,8 +3,8 @@
  *
  * `enum List { Cons(i64, List), Nil }` is the idiomatic shape: every
  * variant payload is heap-shared, so a recursive enum needs no
- * indirection marker. `Box<T>` / `Arc<T>` / `Rc<T>` are transparent
- * in a fully GC'd language, so the Rust spelling `Cons(i64, Box<List>)`
+ * indirection marker. `T` / `T` / `T` are transparent
+ * in a fully GC'd language, so the Rust spelling `Cons(i64, List)`
  * (built with `Box::new`) works just as well. Construct with `cons` /
  * `Nil`, walk with `match`.
  */
@@ -16,35 +16,35 @@ enum List {
 
 fn cons(v: i64, rest: List) -> List { List::Cons(v, rest) }
 
-fn length(list: &List) -> i64 {
+fn length(list: List) -> i64 {
     match list {
         List::Nil => 0
         List::Cons(_, rest) => 1 + length(rest)
     }
 }
 
-fn sum(list: &List) -> i64 {
+fn sum(list: List) -> i64 {
     match list {
         List::Nil => 0
         List::Cons(v, rest) => *v + sum(rest)
     }
 }
 
-fn print_list(list: &List) {
-    print!("[")
+fn print_list(list: List) {
+    print("[")
     let mut cursor = list
     let mut first = true
     while let List::Cons(v, rest) = cursor {
-        if !first { print!(", ") }
-        print!("{}", v)
+        if !first { print(", ") }
+        print("{}", v)
         first = false
         cursor = rest
     }
-    println!("]")
+    println("]")
 }
 
 let xs = cons(1, cons(2, cons(3, cons(4, cons(5, List::Nil)))))
-println!("length = {}", length(&xs))
-println!("sum    = {}", sum(&xs))
-print!("xs     = ")
-print_list(&xs)
+println("length = {}", length(xs))
+println("sum    = {}", sum(xs))
+print("xs     = ")
+print_list(xs)

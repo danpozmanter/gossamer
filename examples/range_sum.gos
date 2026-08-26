@@ -8,27 +8,27 @@
 
 use std::iter
 
-fn sum(xs: &[i64]) -> i64 {
-    xs |> |v| iter::sum_by(|n: i64| n, v)
+fn sum(xs: [i64]) -> i64 {
+    xs |> |v| iter::sum_by(v, |n: i64| n)
 }
 
-fn product(xs: &[i64]) -> i64 {
-    xs |> |v| iter::fold(1, |acc, n| acc * n, v)
+fn product(xs: [i64]) -> i64 {
+    xs |> |v| iter::fold(v, 1, |acc, n| acc * n)
 }
 
-fn maximum(xs: &[i64]) -> Option<i64> {
+fn maximum(xs: [i64]) -> Option<i64> {
     xs |> iter::max
 }
 
 let xs: [i64; 9] = #[4, 9, 1, 7, 3, 8, 2, 6, 5]
-println!("sum     = {}", sum(&xs))
-println!("product = {}", product(&xs))
+println("sum     = {}", sum(xs))
+println("product = {}", product(xs))
 
-if let Some(v) = maximum(&xs) { println!("maximum = {}", v) }
+if let Some(v) = maximum(xs) { println("maximum = {}", v) }
 
 let empty: Vec<i64> = #[]
-if let Some(v) = maximum(&empty) {
-    println!("maximum of empty = {}", v)
+if let Some(v) = maximum(empty) {
+    println("maximum of empty = {}", v)
 } else {
-    println!("maximum of empty: undefined (None)")
+    println("maximum of empty: undefined (None)")
 }

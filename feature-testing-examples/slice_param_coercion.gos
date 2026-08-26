@@ -15,11 +15,11 @@
 
 struct Tag { name: String, count: i64 }
 
-fn make_tag(prefix: &String, n: i64) -> Tag {
-    Tag { name: format!("{}-{}", prefix, n), count: n }
+fn make_tag(prefix: String, n: i64) -> Tag {
+    Tag { name: format("{}-{}", prefix, n), count: n }
 }
 
-fn total(xs: &[i64]) -> i64 {
+fn total(xs: [i64]) -> i64 {
     let mut t = 0
     for x in xs {
         t += *x
@@ -27,7 +27,7 @@ fn total(xs: &[i64]) -> i64 {
     t
 }
 
-fn first_gt(xs: &[i64], n: i64) -> i64 {
+fn first_gt(xs: [i64], n: i64) -> i64 {
     for x in xs {
         if *x > n {
             return *x
@@ -36,7 +36,7 @@ fn first_gt(xs: &[i64], n: i64) -> i64 {
     -1
 }
 
-fn longest_name(tags: &[Tag]) -> i64 {
+fn longest_name(tags: [Tag]) -> i64 {
     let mut best = 0
     for i in 0..tags.len() {
         let len = tags[i].name.len()
@@ -49,13 +49,13 @@ fn longest_name(tags: &[Tag]) -> i64 {
 
 fn main() {
     let xs = #[10, 20, 7]
-    println!("{}", total(&xs))
-    println!("{}", total(&[1, 2, 3, 4]))
-    println!("{}", first_gt(&xs, 15))
+    println("{}", total(xs))
+    println("{}", total([1, 2, 3, 4]))
+    println("{}", first_gt(xs, 15))
 
-    let tags = #[make_tag(&"alpha", 1), make_tag(&"beta", 22), make_tag(&"gamma", 333)]
-    println!("{}", longest_name(&tags))
+    let tags = #[make_tag("alpha", 1), make_tag("beta", 22), make_tag("gamma", 333)]
+    println("{}", longest_name(tags))
     // The named array is read again after the borrow: it must still own its
     // strings here, so the borrowed slice above did not free them.
-    println!("{}", tags[0].name)
+    println("{}", tags[0].name)
 }

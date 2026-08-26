@@ -32,7 +32,7 @@ fn main() {
     c.bump(5)
     c.bump(c.value) // argument reads the live receiver (15), not 0
     c.double()
-    println!(
+    println(
         "c.value={} c.hits={} snap.value={} snap.hits={}"
         c.value, c.hits, snapshot.value, snapshot.hits
     )
@@ -44,5 +44,5 @@ fn main() {
         bag.add(i * i)
         i += 1
     }
-    println!("bag.total={} bag.len={}", bag.total, bag.items.len())
+    println("bag.total={} bag.len={}", bag.total, bag.items.len())
 }

@@ -38,11 +38,11 @@ const SHAPES: &[(&str, &str)] = &[
     (
         "enum_tree_control",
         r#"
-enum Tree { Node(i64, Box<Tree>, Box<Tree>), Leaf }
+enum Tree { Node(i64, Tree, Tree), Leaf }
 fn build(d: i64) -> Tree {
-    if d == 0 { Tree::Leaf } else { Tree::Node(d, Box::new(build(d - 1)), Box::new(build(d - 1))) }
+    if d == 0 { Tree::Leaf } else { Tree::Node(d, build(d - 1), build(d - 1)) }
 }
-fn count(t: &Tree) -> i64 {
+fn count(t: Tree) -> i64 {
     match t { Tree::Node(v, l, r) => v + count(l) + count(r), Tree::Leaf => 0 }
 }
 fn main() {
@@ -50,10 +50,10 @@ fn main() {
     let mut i: i64 = 0
     while i < 200000 {
         let t = build(12)
-        total += count(&t)
+        total += count(t)
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     ),
@@ -64,18 +64,18 @@ fn main() {
     let mut total: i64 = 0
     let mut i: i64 = 0
     while i < 4000000 {
-        let s = format!("value-{}", i)
+        let s = format("value-{}", i)
         total += s.len()
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     ),
     (
         "returned_string",
         r#"
-fn make(i: i64) -> String { format!("value-{}", i) }
+fn make(i: i64) -> String { format("value-{}", i) }
 fn main() {
     let mut total: i64 = 0
     let mut i: i64 = 0
@@ -84,7 +84,7 @@ fn main() {
         total += s.len()
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     ),
@@ -96,11 +96,11 @@ fn main() {
     let mut total: i64 = 0
     let mut i: i64 = 0
     while i < 4000000 {
-        let h = Holder { s: format!("value-{}", i) }
+        let h = Holder { s: format("value-{}", i) }
         total += h.s.len()
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     ),
@@ -112,11 +112,11 @@ fn main() {
     let mut total: i64 = 0
     let mut i: i64 = 0
     while i < 4000000 {
-        let e = E::S(format!("value-{}", i))
+        let e = E::S(format("value-{}", i))
         match e { E::S(s) => total += s.len(), E::N => {} }
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     ),
@@ -127,11 +127,11 @@ fn main() {
     let mut total: i64 = 0
     let mut i: i64 = 0
     while i < 4000000 {
-        let o: Option<String> = Some(format!("value-{}", i))
+        let o: Option<String> = Some(format("value-{}", i))
         match o { Some(s) => total += s.len(), None => {} }
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     ),
@@ -143,12 +143,12 @@ fn main() {
     let mut i: i64 = 0
     while i < 1500000 {
         let mut v: Vec<String> = Vec::from([])
-        v.push(format!("key-{}", i))
-        v.push(format!("val-{}", i))
+        v.push(format("key-{}", i))
+        v.push(format("val-{}", i))
         total += v[0].len() + v[1].len()
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     ),
@@ -161,12 +161,12 @@ fn main() {
     while i < 1000000 {
         let mut outer: Vec<Vec<String>> = Vec::from([])
         let mut inner: Vec<String> = Vec::from([])
-        inner.push(format!("value-{}", i))
+        inner.push(format("value-{}", i))
         outer.push(inner)
         total += outer[0][0].len()
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     ),
@@ -182,7 +182,7 @@ fn main() {
 struct Inner { name: String, tag: String }
 struct Outer { inner: Inner, id: i64 }
 fn make(i: i64) -> i64 {
-    let o = Outer { inner: Inner { name: format!("n-{}", i), tag: format!("t-{}", i) }, id: i }
+    let o = Outer { inner: Inner { name: format("n-{}", i), tag: format("t-{}", i) }, id: i }
     o.id
 }
 fn main() {
@@ -192,7 +192,7 @@ fn main() {
         total += make(i)
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 "#,
     ),

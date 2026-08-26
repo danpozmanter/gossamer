@@ -360,10 +360,10 @@ mod tests {
             "    if excited { line + \"!\" } else { line }\n",
             "}\n\n",
             "fn main() {\n",
-            "    println!(\"{}\", greet(\"world\"))\n",
-            "    println!(\"{}\", greet(\"world\", \"hi\"))\n",
-            "    println!(\"{}\", greet(\"world\", excited = true))\n",
-            "    println!(\"{}\", greet(greeting = \"hey\", name = \"g\", excited = true))\n",
+            "    println(\"{}\", greet(\"world\"))\n",
+            "    println(\"{}\", greet(\"world\", \"hi\"))\n",
+            "    println(\"{}\", greet(\"world\", excited: true))\n",
+            "    println(\"{}\", greet(greeting: \"hey\", name: \"g\", excited: true))\n",
             "}\n",
         );
         let mut map = gossamer_lex::SourceMap::new();

@@ -21,7 +21,7 @@ fn fill_i64(cap: i64, count: i64) -> i64 {
 fn build_strings(cap: i64, count: i64) -> i64 {
     let mut parts: Vec<String> = Vec::with_capacity(cap)
     for i in 0..count {
-        parts.push(format!("item-{}", i))
+        parts.push(format("item-{}", i))
     }
     let mut total: i64 = 0
     for p in parts {
@@ -32,18 +32,18 @@ fn build_strings(cap: i64, count: i64) -> i64 {
 
 fn main() {
     // Stays within the inline buffer.
-    println!("small: {}", fill_i64(4, 3))
+    println("small: {}", fill_i64(4, 3))
     // Grows past the inline buffer into a split buffer.
-    println!("grow: {}", fill_i64(2, 20))
+    println("grow: {}", fill_i64(2, 20))
     // Reserved larger than the inline buffer (split from birth).
-    println!("large: {}", fill_i64(64, 40))
+    println("large: {}", fill_i64(64, 40))
     // Turbofish spelling.
     let mut w: Vec<i64> = Vec::<i64>::with_capacity(8)
     w.push(7)
     w.push(11)
-    println!("turbofish: {} {}", w[0], w[1])
+    println("turbofish: {} {}", w[0], w[1])
     // Typed (String) element vec, deep-freed.
-    println!("strings: {}", build_strings(3, 12))
+    println("strings: {}", build_strings(3, 12))
     // Build and drop many vecs to exercise both free paths.
     let mut acc: i64 = 0
     for r in 0..500 {
@@ -52,5 +52,5 @@ fn main() {
             acc += build_strings(2, 5)
         }
     }
-    println!("loop: {}", acc)
+    println("loop: {}", acc)
 }

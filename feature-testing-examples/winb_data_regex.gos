@@ -6,7 +6,7 @@
 use std::regex
 
 fn cap_line(caps: Vec<Option<String>>) -> String {
-    let mut out = format!("n={}", caps.len())
+    let mut out = format("n={}", caps.len())
     for c in caps {
         match c {
             Some(s) => { out += " <" + &s + ">" }
@@ -18,95 +18,99 @@ fn cap_line(caps: Vec<Option<String>>) -> String {
 
 fn main() {
     // --- compile error path ---
-    match regex::compile("(unclosed") {
-        Ok(_) => println!("compile bad: ok?!")
-        Err(_) => println!("compile bad: err")
+    // A literal reaching `regex::compile` is validated while the program
+    // is compiled, so the failing pattern is built at run time: that is
+    // the shape whose error a program can still handle.
+    let bad = "(unclos" + "ed"
+    match regex::compile(bad) {
+        Ok(_) => println("compile bad: ok?!")
+        Err(_) => println("compile bad: err")
     }
 
     let digits = match regex::compile("\\d+") {
         Ok(p) => p
-        Err(e) => { println!("bad: {}", e)
+        Err(e) => { println("bad: {}", e)
             return }
     }
 
     // --- is_match / find / find_all ---
-    println!("is_match abc123 = {}", regex::is_match(&digits, &"abc123"))
-    println!("is_match abc = {}", regex::is_match(&digits, &"abc"))
-    println!("is_match empty = {}", regex::is_match(&digits, &""))
-    match regex::find(&digits, &"x 42 y 7") {
-        Some((s, e, t)) => println!("find = {} [{},{})", t, s, e)
-        None => println!("find = none")
+    println("is_match abc123 = {}", regex::is_match(digits, "abc123"))
+    println("is_match abc = {}", regex::is_match(digits, "abc"))
+    println("is_match empty = {}", regex::is_match(digits, ""))
+    match regex::find(digits, "x 42 y 7") {
+        Some((s, e, t)) => println("find = {} [{},{})", t, s, e)
+        None => println("find = none")
     }
-    println!("find_all count = {}", regex::find_all(&digits, &"1 22 333").len())
-    for hit in regex::find_all(&digits, &"1 22 333") {
-        println!("  hit {} [{},{})", hit.2, hit.0, hit.1)
+    println("find_all count = {}", regex::find_all(digits, "1 22 333").len())
+    for hit in regex::find_all(digits, "1 22 333") {
+        println("  hit {} [{},{})", hit.2, hit.0, hit.1)
     }
 
     // --- anchors + alternation ---
     let anchored = match regex::compile("^(cat|dog)$") {
         Ok(p) => p
-        Err(_) => { println!("anchor bad")
+        Err(_) => { println("anchor bad")
             return }
     }
-    println!("anchor cat = {}", regex::is_match(&anchored, &"cat"))
-    println!("anchor cats = {}", regex::is_match(&anchored, &"cats"))
+    println("anchor cat = {}", regex::is_match(anchored, "cat"))
+    println("anchor cats = {}", regex::is_match(anchored, "cats"))
 
     // --- unicode classes (UTF-8 byte offsets vs char offsets) ---
     let letters = match regex::compile("\\p{L}+") {
         Ok(p) => p
-        Err(_) => { println!("uni bad")
+        Err(_) => { println("uni bad")
             return }
     }
-    match regex::find(&letters, &"  café ") {
-        Some((s, e, t)) => println!("uni find = {} [{},{})", t, s, e)
-        None => println!("uni find = none")
+    match regex::find(letters, "  café ") {
+        Some((s, e, t)) => println("uni find = {} [{},{})", t, s, e)
+        None => println("uni find = none")
     }
 
     // --- captures with optional + multiple groups ---
     let date = match regex::compile("(\\d{4})-(\\d{2})(-(\\d{2}))?") {
         Ok(p) => p
-        Err(_) => { println!("date bad")
+        Err(_) => { println("date bad")
             return }
     }
-    match regex::captures(&date, &"2024-03-15") {
-        Some(caps) => println!("caps full: {}", cap_line(caps))
-        None => println!("caps full: none")
+    match regex::captures(date, "2024-03-15") {
+        Some(caps) => println("caps full: {}", cap_line(caps))
+        None => println("caps full: none")
     }
-    match regex::captures(&date, &"2024-03") {
-        Some(caps) => println!("caps partial: {}", cap_line(caps))
-        None => println!("caps partial: none")
+    match regex::captures(date, "2024-03") {
+        Some(caps) => println("caps partial: {}", cap_line(caps))
+        None => println("caps partial: none")
     }
-    let kvs = regex::captures_all(&date, &"2024-03-15 and 1999-12")
-    println!("captures_all count = {}", kvs.len())
+    let kvs = regex::captures_all(date, "2024-03-15 and 1999-12")
+    println("captures_all count = {}", kvs.len())
 
     // --- replace / replace_all with $N ---
     let kv = match regex::compile("(\\w+)=(\\d+)") {
         Ok(p) => p
-        Err(_) => { println!("kv bad")
+        Err(_) => { println("kv bad")
             return }
     }
-    println!("replace = {}", regex::replace(&kv, &"a=1 b=2", &"$2:$1"))
-    println!("replace_all = {}", regex::replace_all(&kv, &"a=1 b=2", &"$2:$1"))
+    println("replace = {}", regex::replace(kv, "a=1 b=2", "$2:$1"))
+    println("replace_all = {}", regex::replace_all(kv, "a=1 b=2", "$2:$1"))
 
     // --- split: empty matches, leading/trailing separators ---
     let ws = match regex::compile("\\s+") {
         Ok(p) => p
-        Err(_) => { println!("ws bad")
+        Err(_) => { println("ws bad")
             return }
     }
-    let parts = regex::split(&ws, &" a  b   c ")
-    println!("split count = {}", parts.len())
+    let parts = regex::split(ws, " a  b   c ")
+    println("split count = {}", parts.len())
     let mut i = 0
     for p in parts {
-        println!("  part[{}] = <{}>", i, p)
+        println("  part[{}] = <{}>", i, p)
         i += 1
     }
 
     // --- zero-width pattern split ---
     let empty_pat = match regex::compile("") {
         Ok(p) => p
-        Err(_) => { println!("empty bad")
+        Err(_) => { println("empty bad")
             return }
     }
-    println!("empty split count = {}", regex::split(&empty_pat, &"ab").len())
+    println("empty split count = {}", regex::split(empty_pat, "ab").len())
 }

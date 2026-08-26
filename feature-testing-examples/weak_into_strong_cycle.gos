@@ -17,7 +17,7 @@ use std::runtime
 
 struct Node {
     id: i64
-    next: Option<Box<Node>>
+    next: Option<Node>
 }
 
 fn probe(w: Weak<Node>) -> i64 {
@@ -27,13 +27,13 @@ fn probe(w: Weak<Node>) -> i64 {
 // Walks at most `steps` links and reports the ids reached, so the shape's
 // real topology is part of the output rather than an assumption.
 fn walk(start: Node, steps: i64) -> String {
-    let mut out = format!("{}", start.id)
+    let mut out = format("{}", start.id)
     let mut cur = start.next
     let mut i = 0
     while i < steps {
         match cur {
             Some(n) => {
-                out += format!(">{}", n.id)
+                out += format(">{}", n.id)
                 cur = n.next
             }
             None => {
@@ -61,16 +61,16 @@ fn main() {
     let mut b = Node { id: 2, next: None }
     b.next = Some(Box::new(a))
     a.next = Some(Box::new(b))
-    println!("shape={}", walk(a, 6))
+    println("shape={}", walk(a, 6))
 
     let wa = a.downgrade()
     let wb = b.downgrade()
-    println!("before_collect={} {}", probe(wa), probe(wb))
+    println("before_collect={} {}", probe(wa), probe(wb))
     runtime::collect_cycles()
-    println!("after_collect={} {}", probe(wa), probe(wb))
+    println("after_collect={} {}", probe(wa), probe(wb))
     runtime::collect_cycles()
-    println!("after_second_collect={} {}", probe(wa), probe(wb))
-    println!("still_reachable={} {}", a.id, b.id)
+    println("after_second_collect={} {}", probe(wa), probe(wb))
+    println("still_reachable={} {}", a.id, b.id)
 
     // Three-node ring shape, same guarantees.
     let mut c = Node { id: 3, next: None }
@@ -81,22 +81,22 @@ fn main() {
     c.next = Some(Box::new(d))
     let wc = c.downgrade()
     runtime::collect_cycles()
-    println!("ring={} {}", walk(c, 6), probe(wc))
+    println("ring={} {}", walk(c, 6), probe(wc))
 
     // Self-referential node.
     let mut s = Node { id: 9, next: None }
     s.next = Some(Box::new(s))
     let ws = s.downgrade()
     runtime::collect_cycles()
-    println!("self={} {}", walk(s, 4), probe(ws))
+    println("self={} {}", walk(s, 4), probe(ws))
 
     // The weak's pin died with the frame that took it, so the referent is
     // reclaimed and the weak reads dead - before and after an explicit
     // collection alike.
     let escaped = escaped_cycle_weak()
-    println!("escaped_before={}", probe(escaped))
+    println("escaped_before={}", probe(escaped))
     runtime::collect_cycles()
-    println!("escaped_after={}", probe(escaped))
+    println("escaped_after={}", probe(escaped))
 
     // A weak taken inside an arena observes its referent for the rest of the
     // block; the escape check rejects any program that could observe it
@@ -106,7 +106,7 @@ fn main() {
         let n = Node { id: 77, next: None }
         in_arena = probe(n.downgrade())
     }
-    println!("arena={}", in_arena)
+    println("arena={}", in_arena)
 
     // Repeated build / observe / collect over a live cycle shape: the answer
     // never drifts as the collector runs between rounds.
@@ -122,7 +122,7 @@ fn main() {
         live_total += probe(wp)
         round += 1
     }
-    println!("live_total={}", live_total)
+    println("live_total={}", live_total)
 
     // Same loop over the escaped (already reclaimed) weak.
     let mut dead_total = 0
@@ -132,5 +132,5 @@ fn main() {
         dead_total += probe(escaped_cycle_weak())
         dead_round += 1
     }
-    println!("dead_total={}", dead_total)
+    println("dead_total={}", dead_total)
 }

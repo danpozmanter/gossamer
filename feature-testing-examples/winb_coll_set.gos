@@ -26,28 +26,28 @@ fn main() {
     s.insert("b")
     s.insert("b")
     s.insert("c")
-    println!("len {} has_b {} has_z {}", s.len(), s.contains("b"), s.contains("z"))
+    println("len {} has_b {} has_z {}", s.len(), s.contains("b"), s.contains("z"))
 
     // remove (present + absent), is_empty.
     s.remove("b")
     s.remove("zz")
-    println!("after remove len {} has_b {}", s.len(), s.contains("b"))
-    println!("is_empty {}", s.is_empty())
+    println("after remove len {} has_b {}", s.len(), s.contains("b"))
+    println("is_empty {}", s.is_empty())
 
     // String elements.
     let mut ss: Set<String> = Set::new()
     ss.insert("foo")
     ss.insert("bar")
     ss.insert("foo")
-    println!("str len {} has_foo {} has_baz {}", ss.len(), ss.contains("foo"), ss.contains("baz"))
+    println("str len {} has_foo {} has_baz {}", ss.len(), ss.contains("foo"), ss.contains("baz"))
 
     // Struct elements: equal-by-value collide, lookup hits.
     let mut tags: Set<Tag> = Set::new()
     tags.insert(Tag { id: 1 })
     tags.insert(Tag { id: 1 })
     tags.insert(Tag { id: 2 })
-    println!("tag len {} has1 {} has3 {}", tags.len()
-        tags.contains(&Tag { id: 1 }), tags.contains(&Tag { id: 3 }))
+    println("tag len {} has1 {} has3 {}", tags.len()
+        tags.contains(Tag { id: 1 }), tags.contains(Tag { id: 3 }))
 
     // Algebra over String sets (cardinality + membership only).
     let mut a: Set<String> = Set::new()
@@ -59,13 +59,13 @@ fn main() {
     b.insert("z")
     b.insert("w")
     let u = a.union(b)
-    println!("union len {} has_w {} has_x {}", u.len(), u.contains("w"), u.contains("x"))
+    println("union len {} has_w {} has_x {}", u.len(), u.contains("w"), u.contains("x"))
     let i = a.intersection(b)
-    println!("inter len {} has_y {} has_x {}", i.len(), i.contains("y"), i.contains("x"))
+    println("inter len {} has_y {} has_x {}", i.len(), i.contains("y"), i.contains("x"))
     let d = a.difference(b)
-    println!("diff len {} has_x {} has_y {}", d.len(), d.contains("x"), d.contains("y"))
+    println("diff len {} has_x {} has_y {}", d.len(), d.contains("x"), d.contains("y"))
     let sd = a.symmetric_difference(b)
-    println!("symdiff len {} has_x {} has_w {} has_y {}"
+    println("symdiff len {} has_x {} has_w {} has_y {}"
         sd.len(), sd.contains("x"), sd.contains("w"), sd.contains("y"))
 
     // Predicates: subset / superset / disjoint, incl empty-set edges.
@@ -76,8 +76,8 @@ fn main() {
     let mut far: Set<String> = Set::new()
     far.insert("p")
     far.insert("q")
-    println!("subset {} superset {} disjoint {}"
+    println("subset {} superset {} disjoint {}"
         sub.is_subset(a), a.is_superset(sub), a.is_disjoint(far))
-    println!("empty subset {} a-disjoint-empty {}"
+    println("empty subset {} a-disjoint-empty {}"
         empty.is_subset(a), a.is_disjoint(empty))
 }

@@ -396,6 +396,29 @@ fn wait_for_drain(node: &Arc<CohortNode>) {
     }
 }
 
+/// How long the root drain waits at exit before it reports what is still
+/// running and lets the process end. Matches the compiled tiers'
+/// `ROOT_DRAIN_DEADLINE`; see the comment there for why a `cohort { }`
+/// block keeps its unbounded wait and only the root gets a deadline.
+const ROOT_DRAIN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Waits for `node`'s children with a deadline. Answers the number still
+/// outstanding, which is zero when they all finished.
+fn wait_for_drain_bounded(node: &Arc<CohortNode>, deadline: std::time::Duration) -> i64 {
+    let until = std::time::Instant::now() + deadline;
+    let mut state = node.state.lock();
+    while state.outstanding > 0 {
+        let now = std::time::Instant::now();
+        if now >= until {
+            return state.outstanding;
+        }
+        if node.progress.wait_for(&mut state, until - now).timed_out() && state.outstanding > 0 {
+            return state.outstanding;
+        }
+    }
+    0
+}
+
 fn outcome_message(node: &Arc<CohortNode>) -> Option<String> {
     let mut state = node.state.lock();
     state.joined = true;
@@ -471,7 +494,16 @@ pub fn close_root() {
     let Some(node) = node_of(id) else {
         return;
     };
-    wait_for_drain(&node);
+    // The root drain runs after the program's own work is done: a
+    // goroutine still running here is one nothing joined.
+    let outstanding = wait_for_drain_bounded(&node, ROOT_DRAIN_DEADLINE);
+    if outstanding > 0 {
+        eprintln!(
+            "gossamer: {outstanding} spawned goroutine(s) had not finished {} seconds after \
+             `main` returned; exiting without them",
+            ROOT_DRAIN_DEADLINE.as_secs()
+        );
+    }
     let orphaned: Vec<String> = {
         let state = node.state.lock();
         state

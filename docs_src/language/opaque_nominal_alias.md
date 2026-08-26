@@ -9,8 +9,8 @@ An **opaque** alias puts `new` before the target and declares a type of
 its own:
 
 ```gossamer
-type UserId = new i64
-type Score = new i64
+newtype UserId = i64
+newtype Score = i64
 ```
 
 `UserId` and `i64` are now different types, and so are `UserId` and
@@ -66,7 +66,7 @@ made of is the whole point, so the representation's API is not part of
 the alias:
 
 ```gossamer
-type Name = new String
+newtype Name = String
 
 let n: Name = "ada".into()
 n.len()          // error[GT0002]: no method named `len` found for type `Name`
@@ -88,7 +88,7 @@ print:
 ```gossamer
 let mut seats: Map<UserId, String> = Map::new()
 seats.insert(a, "front")
-println!("{} {} {}", a < b, a == b, a)   // true false 1
+println("{} {} {}", a < b, a == b, a)   // true false 1
 ```
 
 ## Its own impl
@@ -114,7 +114,7 @@ impl Add for UserId {
 | Want | Use |
 | --- | --- |
 | A shorter spelling of an existing type | `type Id = i64` |
-| A distinct type over the same representation | `type Id = new i64` |
+| A distinct type over the same representation | `newtype Id = i64` |
 | Named fields, or a layout of its own | `struct Id { .. }` |
 
 ## Serialization
@@ -124,10 +124,10 @@ decoding converts back, so an alias is usable in the types a program
 actually exchanges:
 
 ```gossamer
-type UserId = new i64
+newtype UserId = i64
 
 struct Rec { id: UserId, n: i64 }
 
 let text = to_json::<Rec>(Rec { id: 7.into(), n: 2 })?   // {"id":7,"n":2}
-let back = from_json::<Rec>(&text)?                      // back.id is a UserId
+let back = from_json::<Rec>(text)?                      // back.id is a UserId
 ```

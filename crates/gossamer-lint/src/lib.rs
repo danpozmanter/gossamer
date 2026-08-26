@@ -172,7 +172,6 @@ pub const DAY_ONE_LINTS: &[&str] = &[
     // Batch 5 (conciseness nudges).
     "fill_loop",
     "substring_byte_scan",
-    "detached_go_in_cohort",
 ];
 
 /// Runs every enabled lint over `source_file` (parsed from `src`) and
@@ -351,7 +350,6 @@ pub fn lint_code(id: &str) -> Code {
         "empty_loop" => Code("GL0050"),
         "fill_loop" => Code("GL0051"),
         "substring_byte_scan" => Code("GL0052"),
-        "detached_go_in_cohort" => Code("GL0053"),
         "i64_only_container_family" => Code("GL0054"),
         _ => Code("GL9999"),
     }

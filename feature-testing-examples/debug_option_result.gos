@@ -5,19 +5,19 @@
 // `i128` enum is decoded by `gos_rt_debug_option` / `gos_rt_debug_result`.
 
 fn main() {
-    println!("{:?}", Some(5))
-    println!("{:?}", Some("hi"))
+    println("{:?}", Some(5))
+    println("{:?}", Some("hi"))
     let none: Option<i64> = None
-    println!("{:?}", none)
-    println!("{:?}", Some(3.5))
-    println!("{:?}", Some(true))
-    println!("{:?}", Some('z'))
+    println("{:?}", none)
+    println("{:?}", Some(3.5))
+    println("{:?}", Some(true))
+    println("{:?}", Some('z'))
 
     let ok: Result<i64, String> = Ok(7)
-    println!("{:?}", ok)
+    println("{:?}", ok)
     let err: Result<i64, String> = Err("bad")
-    println!("{:?}", err)
+    println("{:?}", err)
 
-    let combined = format!("{:?} and {:?}", Some(1), none)
-    println!("{}", combined)
+    let combined = format("{:?} and {:?}", Some(1), none)
+    println("{}", combined)
 }

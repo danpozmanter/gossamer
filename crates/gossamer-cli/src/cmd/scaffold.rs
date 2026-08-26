@@ -136,7 +136,7 @@ fn lib_template_source(project: &gossamer_pkg::ProjectId) -> String {
          //! publishing.\n\
          \n\
          /// Returns a greeting addressed to `name`.\n\
-         pub fn greet(name: &str) -> String {{\n\
+         pub fn greet(name: str) -> String {{\n\
          \x20\x20\x20\x20\"hello, \" + name\n\
          }}\n",
     )
@@ -155,7 +155,7 @@ fn service_template_source(project: &gossamer_pkg::ProjectId) -> String {
          struct App {{ }}\n\
          \n\
          impl http::Handler for App {{\n\
-         \x20\x20\x20\x20fn serve(&self, request: http::Request) -> Result<http::Response, http::Error> {{\n\
+         \x20\x20\x20\x20fn serve(self, request: http::Request) -> Result<http::Response, http::Error> {{\n\
          \x20\x20\x20\x20\x20\x20\x20\x20match request.path() {{\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\"/health\" => Ok(http::Response::text(200, \"ok\")),\n\
          \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20_ => Ok(http::Response::text(404, \"not found\")),\n\
@@ -165,7 +165,7 @@ fn service_template_source(project: &gossamer_pkg::ProjectId) -> String {
          \n\
          fn main() -> Result<(), http::Error> {{\n\
          \x20\x20\x20\x20let app = App {{ }}\n\
-         \x20\x20\x20\x20println!(\"listening on 0.0.0.0:8080\")\n\
+         \x20\x20\x20\x20println(\"listening on 0.0.0.0:8080\")\n\
          \x20\x20\x20\x20http::serve(\"0.0.0.0:8080\", app)\n\
          }}\n",
     )
@@ -179,7 +179,7 @@ fn lib_template_test_source() -> String {
      \n\
      #[test]\n\
      fn greet_includes_name() {\n\
-     \x20\x20\x20\x20testing::check_eq(&greet(\"gossamer\"), &\"hello, gossamer\", \"greet round-trips\").expect(\"mismatch\")\n\
+     \x20\x20\x20\x20testing::check_eq(greet(\"gossamer\"), \"hello, gossamer\", \"greet round-trips\").expect(\"mismatch\")\n\
      }\n"
         .to_string()
 }
@@ -248,7 +248,7 @@ fn binding_template_lib_rs(crate_name: &str) -> String {
          \n\
          \x20\x20\x20\x20/// Greet the supplied name.\n\
          \x20\x20\x20\x20pub fn greet(name: String) -> String {{\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20format!(\"hello, {{name}}\")\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20format(\"hello, {{name}}\")\n\
          \x20\x20\x20\x20}}\n\
          \n\
          \x20\x20\x20\x20/// Fallible example: parse an integer.\n\

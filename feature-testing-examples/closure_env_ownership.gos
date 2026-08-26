@@ -1,0 +1,80 @@
+// A closure environment owns a share of every capture it holds, and the
+// frame that built it releases that share when the closure's live range
+// ends. Every shape a closure reaches from is covered: called directly,
+// handed to a combinator, stored in a container, returned, run on a
+// goroutine, and built inside an arena.
+
+use std::iter
+
+struct Point { x: i64, y: i64 }
+
+fn apply(f: Fn() -> i64) -> i64 { f() }
+
+fn make_adder(base: String) -> Fn(i64) -> i64 {
+    |n| base.len() + n
+}
+
+fn main() {
+    // Called directly: a String, a Vec, and a struct capture.
+    let text = "captured"
+    let items = #[1, 2, 3]
+    let point = Point { x: 4, y: 5 }
+    let direct = || text.len() + items.len() + point.x + point.y
+    println("{}", direct())
+    println("{}", direct())
+
+    // Through a parameter typed as the callable.
+    println("{}", apply(direct))
+
+    // A nested closure whose inner environment captures the outer's.
+    let outer = "outer"
+    let nested = || {
+        let inner = || outer.len() + 1
+        inner() + outer.len()
+    }
+    println("{}", nested())
+
+    // A capture reaching a combinator's callback.
+    let scale = 3
+    let names = #["a", "bb", "ccc"]
+    println("{}", iter::map(names, |n| n.len() * scale))
+    println("{}", names.iter().filter(|n| n.len() >= 2).count())
+
+    // Returned from a function, so the environment outlives the frame.
+    let adder = make_adder("base")
+    println("{}", adder(6))
+
+    // Stored in a container and read back.
+    let mut fns: Vec<Fn() -> i64> = #[]
+    fns.push(direct)
+    println("{}", fns[0]())
+
+    // On a goroutine: the captures cross to another worker.
+    let shared = #["x", "y"]
+    let label = "job"
+    let handle = spawn(|| shared.len() + label.len())
+    println("{:?}", handle.join())
+
+    // A closure built outside an arena, called inside one: the arena
+    // frees what it allocated at the pop, and the environment's own
+    // captures are the enclosing frame's to release.
+    let held = #[9, 8, 7]
+    let counted = || held.len()
+    arena {
+        let scratch = #[counted(), counted()]
+        println("{}", scratch.len() + counted())
+    }
+
+    // Rebuilt in a loop, which is where a missing release shows up as
+    // growth rather than as a wrong answer.
+    let mut total = 0
+    let mut i = 0
+    while i < 200 {
+        let body = format("row-{}", i)
+        let row = #[body, "tail"]
+        let step = || row.len() + body.len()
+        total += step()
+        i += 1
+    }
+    println("{}", total)
+}

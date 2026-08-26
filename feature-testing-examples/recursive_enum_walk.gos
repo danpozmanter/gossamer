@@ -4,24 +4,24 @@
 
 enum Tree {
     Leaf(i64)
-    Node(i64, Box<Tree>, Box<Tree>)
+    Node(i64, Tree, Tree)
 }
 
-fn sum(tree: &Tree) -> i64 {
+fn sum(tree: Tree) -> i64 {
     match tree {
         Tree::Leaf(v) => *v
         Tree::Node(v, left, right) => *v + sum(left) + sum(right)
     }
 }
 
-fn count(tree: &Tree) -> i64 {
+fn count(tree: Tree) -> i64 {
     match tree {
         Tree::Leaf(_) => 1
         Tree::Node(_, left, right) => 1 + count(left) + count(right)
     }
 }
 
-fn max_depth(tree: &Tree) -> i64 {
+fn max_depth(tree: Tree) -> i64 {
     match tree {
         Tree::Leaf(_) => 1
         Tree::Node(_, left, right) => {
@@ -47,33 +47,33 @@ fn main() {
         ))
     )
 
-    println!("sum = {}", sum(&tree))
-    println!("count = {}", count(&tree))
-    println!("max_depth = {}", max_depth(&tree))
+    println("sum = {}", sum(tree))
+    println("count = {}", count(tree))
+    println("max_depth = {}", max_depth(tree))
 
     // Walk with while let on a list built from the same enum shape
     let list = cons(1, cons(2, cons(3, cons(4, Nil))))
-    println!("list_sum = {}", list_sum(&list))
-    println!("list_len = {}", list_len(&list))
+    println("list_sum = {}", list_sum(list))
+    println("list_len = {}", list_len(list))
 }
 
 enum List {
     Nil
-    Cons(i64, Box<List>)
+    Cons(i64, List)
 }
 
 fn cons(v: i64, rest: List) -> List {
     List::Cons(v, Box::new(rest))
 }
 
-fn list_sum(list: &List) -> i64 {
+fn list_sum(list: List) -> i64 {
     match list {
         List::Nil => 0
         List::Cons(v, rest) => *v + list_sum(rest)
     }
 }
 
-fn list_len(list: &List) -> i64 {
+fn list_len(list: List) -> i64 {
     match list {
         List::Nil => 0
         List::Cons(_, rest) => 1 + list_len(rest)
@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn leaf_sum() {
         let t = super::Tree::Leaf(42)
-        let _ = testing::check_eq(&super::sum(&t), &42, "leaf sum=42")
+        let _ = testing::check_eq(super::sum(t), 42, "leaf sum=42")
     }
 
     #[test]
@@ -97,22 +97,22 @@ mod tests {
             Box::new(super::Tree::Leaf(5))
             Box::new(super::Tree::Leaf(7))
         )
-        let _ = testing::check_eq(&super::sum(&t), &22, "10+5+7=22")
-        let _ = testing::check_eq(&super::count(&t), &3, "3 nodes")
-        let _ = testing::check_eq(&super::max_depth(&t), &2, "depth 2")
+        let _ = testing::check_eq(super::sum(t), 22, "10+5+7=22")
+        let _ = testing::check_eq(super::count(t), 3, "3 nodes")
+        let _ = testing::check_eq(super::max_depth(t), 2, "depth 2")
     }
 
     #[test]
     fn list_sum_len() {
         let l = super::cons(1, super::cons(2, super::cons(3, super::List::Nil)))
-        let _ = testing::check_eq(&super::list_sum(&l), &6, "1+2+3=6")
-        let _ = testing::check_eq(&super::list_len(&l), &3, "len=3")
+        let _ = testing::check_eq(super::list_sum(l), 6, "1+2+3=6")
+        let _ = testing::check_eq(super::list_len(l), 3, "len=3")
     }
 
     #[test]
     fn empty_list() {
         let l = super::List::Nil
-        let _ = testing::check_eq(&super::list_sum(&l), &0, "nil sum=0")
-        let _ = testing::check_eq(&super::list_len(&l), &0, "nil len=0")
+        let _ = testing::check_eq(super::list_sum(l), 0, "nil sum=0")
+        let _ = testing::check_eq(super::list_len(l), 0, "nil len=0")
     }
 }

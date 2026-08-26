@@ -253,6 +253,23 @@ fn write_terminal_direct(fd: i32, bytes: &[u8]) -> std::io::Result<()> {
     }
 }
 
+/// Drives the process's own stdout buffer out to the descriptor.
+///
+/// A native Gossamer binary enters at `main` and returns from it, so
+/// nothing runs the flush a Rust program's entry shim performs on the
+/// way out. Text that ends in a newline leaves the line buffer on its
+/// own; a `print` with no terminator would otherwise sit there until
+/// the process was gone.
+fn flush_terminal_stdout() {
+    use std::io::Write;
+
+    if stdout_lock_is_held() {
+        let _ = std::io::stdout().lock().flush();
+        return;
+    }
+    let _ = crate::sched_global::run_blocking("stdout-flush", || std::io::stdout().lock().flush());
+}
+
 pub fn raw_write_stdout(bytes: &[u8]) {
     write_terminal(1, bytes);
 }
@@ -346,6 +363,7 @@ pub unsafe extern "C" fn gos_rt_flush_stdout() {
             }
         }
         flush_stdout_buffer();
+        flush_terminal_stdout();
     });
 }
 

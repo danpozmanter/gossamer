@@ -20,7 +20,7 @@ const CONNECT_FAILED: i64 = -1
 const READ_FAILED: i64 = -2
 
 fn client(path: String, tx: Sender<i64>) {
-    let stream = match net::UnixStream::connect(&path) {
+    let stream = match net::UnixStream::connect(path) {
         Ok(s) => s
         Err(_) => { tx.send(CONNECT_FAILED)
             return }
@@ -38,42 +38,42 @@ fn client(path: String, tx: Sender<i64>) {
 
 fn main() {
     let path = "/tmp/gos_unix_echo_fixture.sock"
-    let _ = fs::remove_file(&path)
-    let listener = match net::UnixListener::bind(&path) {
+    let _ = fs::remove_file(path)
+    let listener = match net::UnixListener::bind(path) {
         Ok(l) => l
-        Err(e) => { println!("bind failed: {}", e)
+        Err(e) => { println("bind failed: {}", e)
             return }
     }
-    let (tx, rx) = channel()
-    go client(path, tx)
-    let (stream, _peer) = match listener.accept() {
+    let tx, rx = channel()
+    spawn(|| client(path, tx))
+    let stream, _peer = match listener.accept() {
         Ok(p) => p
-        Err(e) => { println!("accept failed: {}", e)
+        Err(e) => { println("accept failed: {}", e)
             return }
     }
     let req = match stream.read(64) {
         Ok(b) => b
-        Err(e) => { println!("server read failed: {}", e)
+        Err(e) => { println("server read failed: {}", e)
             return }
     }
-    let _ = stream.write(&req)
+    let _ = stream.write(req)
     let _ = stream.close()
     let _ = listener.close()
     let code = match rx.recv() {
         Some(c) => c
-        None => { println!("no client result")
+        None => { println("no client result")
             return }
     }
-    let _ = fs::remove_file(&path)
+    let _ = fs::remove_file(path)
     if code == OK {
-        println!("unix echo ok")
+        println("unix echo ok")
     } else if code == MISMATCH {
-        println!("unix echo MISMATCH")
+        println("unix echo MISMATCH")
     } else if code == CONNECT_FAILED {
-        println!("client connect failed")
+        println("client connect failed")
     } else if code == READ_FAILED {
-        println!("client read failed")
+        println("client read failed")
     } else {
-        println!("unix echo error {}", code)
+        println("unix echo error {}", code)
     }
 }

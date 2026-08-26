@@ -14,7 +14,7 @@ use std::process::{Command, Stdio};
 fn diagnostics(source: &str) -> Vec<String> {
     let mut map = SourceMap::new();
     let file = map.add_file("comprehensive_assignment_tests.gos", source.to_string());
-    let (parsed, parse_diagnostics) = parse_source_file(source, file);
+    let (mut parsed, parse_diagnostics) = parse_source_file(source, file);
     if !parse_diagnostics.is_empty() {
         // Guidance lives in the rendered help, so a case is matched on the
         // whole diagnostic rather than its summary line alone.
@@ -32,6 +32,7 @@ fn diagnostics(source: &str) -> Vec<String> {
             .collect();
     }
     let (resolutions, resolve_diagnostics) = resolve_source_file(&parsed);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut parsed, &resolutions);
     if !resolve_diagnostics.is_empty() {
         return resolve_diagnostics
             .into_iter()
@@ -189,38 +190,38 @@ fn assignment_places_distinguish_binding_mutability_from_reference_mutability() 
 fn destructuring_assignment_targets_follow_the_scalar_assignment_rules() {
     assert_accepted(
         "mutable bindings",
-        "    let mut a = 1\n    let mut b = 2\n    (a, b) = (b, a)",
+        "    let mut a = 1\n    let mut b = 2\n    a, b = (b, a)",
     );
     assert_accepted(
         "field, index, and tuple-position targets",
-        "    let mut xs = #[0, 0]\n    let mut t = (0, 0)\n    (xs[0], t.1) = (1, 2)",
+        "    let mut xs = #[0, 0]\n    let mut t = (0, 0)\n    xs[0], t.1 = (1, 2)",
     );
     assert_accepted(
         "nested tuple targets",
-        "    let mut a = 0\n    let mut b = 0\n    let mut c = 0\n    (a, (b, c)) = (1, (2, 3))",
+        "    let mut a = 0\n    let mut b = 0\n    let mut c = 0\n    a, (b, c) = 1, (2, 3)",
     );
     assert_accepted(
         "`_` discards an element",
-        "    let mut a = 0\n    (_, a) = (1, 2)",
+        "    let mut a = 0\n    _, a = (1, 2)",
     );
     assert_rejected(
         "immutable element",
-        "    let a = 1\n    let mut b = 2\n    (a, b) = (3, 4)",
+        "    let a = 1\n    let mut b = 2\n    a, b = (3, 4)",
         "GT0030",
     );
     assert_rejected(
         "write through a shared reference element",
-        "    let plain = 1\n    let mut b = 2\n    let shared = &plain\n    (*shared, b) = (3, 4)",
+        "    let plain = 1\n    let mut b = 2\n    let shared = &plain\n    *shared, b = (3, 4)",
         "GT0031",
     );
     assert_rejected(
         "arity mismatch",
-        "    let mut a = 1\n    let mut b = 2\n    (a, b) = (1, 2, 3)",
+        "    let mut a = 1\n    let mut b = 2\n    a, b = (1, 2, 3)",
         "GT0001",
     );
     assert_rejected(
         "element type mismatch",
-        "    let mut a = 1\n    let mut b = \"s\"\n    (a, b) = (1, 2)",
+        "    let mut a = 1\n    let mut b = \"s\"\n    a, b = (1, 2)",
         "GT0001",
     );
 }
@@ -230,7 +231,7 @@ fn an_assignment_target_that_names_no_place_is_rejected() {
     assert_rejected("literal target", "    5 = 1", "GT0078");
     assert_rejected(
         "literal element in a destructuring target",
-        "    let mut a = 0\n    (a, 5) = (1, 2)",
+        "    let mut a = 0\n    a, 5 = 1, 2",
         "GT0078",
     );
     assert_rejected(

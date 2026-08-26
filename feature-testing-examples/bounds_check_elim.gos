@@ -19,7 +19,7 @@ fn scale_and_sum(xs: &mut [i64], factor: i64) -> i64 {
 // Negative: the bound `n` is a parameter the pass cannot prove equals
 // `xs.len()`, so the indexed reads stay bounds-checked. The result is
 // identical regardless.
-fn sum_prefix(xs: &[i64], n: i64) -> i64 {
+fn sum_prefix(xs: [i64], n: i64) -> i64 {
     let mut total = 0
     for i in 0..n {
         total = total + xs[i]
@@ -29,7 +29,7 @@ fn sum_prefix(xs: &[i64], n: i64) -> i64 {
 
 fn main() {
     let mut xs = #[2, 4, 6, 8]
-    println!("scaled = {}", scale_and_sum(&mut xs, 5))
+    println("scaled = {}", scale_and_sum(&mut xs, 5))
     let ys = #[10, 20, 30, 40, 50]
-    println!("prefix = {}", sum_prefix(&ys, 3))
+    println("prefix = {}", sum_prefix(ys, 3))
 }

@@ -127,15 +127,6 @@ struct HeapState {
 }
 
 pub(crate) fn install_container_heap(globals: &mut Vec<(&'static str, Value)>) {
-    for (short, call) in [
-        ("push", builtin_heap_push as BuiltinFnPub),
-        ("pop", builtin_heap_pop),
-        ("peek", builtin_heap_peek),
-        ("len", builtin_heap_len),
-    ] {
-        let q: &'static str = Box::leak(format!("heap::{short}").into_boxed_str());
-        globals.push((q, crate::builtins::builtin_pub(q, call)));
-    }
     for (name, call) in [
         ("MaxHeap::new", builtin_max_heap_new as BuiltinFnPub),
         ("collections::MaxHeap::new", builtin_max_heap_new),
@@ -339,31 +330,6 @@ pub(crate) fn heap_to_value(xs: Vec<i64>) -> Value {
     Value::IntArray(Arc::new(xs))
 }
 
-pub(crate) fn builtin_heap_push(args: &[Value]) -> RuntimeResult<Value> {
-    let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    let value = match args.get(1) {
-        Some(Value::Int(n)) => *n,
-        _ => 0,
-    };
-    Ok(heap_to_value(gossamer_std::container_heap::push(xs, value)))
-}
-
-pub(crate) fn builtin_heap_pop(args: &[Value]) -> RuntimeResult<Value> {
-    let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(heap_to_value(gossamer_std::container_heap::pop(xs)))
-}
-
-pub(crate) fn builtin_heap_peek(args: &[Value]) -> RuntimeResult<Value> {
-    let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(gossamer_std::container_heap::peek(&xs)
-        .map_or_else(none_variant, |value| some_variant(Value::Int(value))))
-}
-
-pub(crate) fn builtin_heap_len(args: &[Value]) -> RuntimeResult<Value> {
-    let xs = heap_extract_i64s(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(gossamer_std::container_heap::len(&xs)))
-}
-
 fn binary_heap_new(owner: &'static str, order: HeapOrder) -> Value {
     let id = next_binary_heap_handle();
     BINARY_HEAP_REGISTRY.with(|r| {
@@ -499,24 +465,4 @@ mod tests {
         assert!(matches!(&value, Value::IntArray(xs) if xs.as_slice() == [1, 3, 2]));
         assert_eq!(heap_extract_i64s(&value), [1, 3, 2]);
     }
-
-    #[test]
-    fn heap_operations_preserve_typed_storage_and_order() {
-        let empty = heap_to_value(Vec::new());
-        let one = builtin_heap_push(&[empty, Value::Int(5)]).unwrap();
-        let two = builtin_heap_push(&[one, Value::Int(1)]).unwrap();
-        let peeked = builtin_heap_peek(std::slice::from_ref(&two)).unwrap();
-        assert!(matches!(
-            &peeked,
-            Value::Variant(inner)
-                if inner.name == "Some"
-                    && matches!(inner.fields.as_slice(), [Value::Int(1)])
-        ));
-        let popped = builtin_heap_pop(&[two]).unwrap();
-        assert!(matches!(&popped, Value::IntArray(xs) if xs.as_slice() == [5]));
-    }
 }
-
-// ----------------------------------------------------------------------
-// container::queue / stack / deque - all share Vec<i64> shape with
-// the same `heap_extract_i64s` / `heap_to_value` helpers above.

@@ -13,13 +13,13 @@ fn main() {
             child.write_stdin("mango\n")
             child.close_stdin()
             while let Some(line) = child.read_line() {
-                println!("line: {}", line)
+                println("line: {}", line)
             }
             match child.wait() {
-                Ok(code) => println!("exit: {}", code)
-                Err(e) => println!("wait error: {}", e)
+                Ok(code) => println("exit: {}", code)
+                Err(e) => println("wait error: {}", e)
             }
         }
-        Err(e) => println!("spawn error: {}", e)
+        Err(e) => println("spawn error: {}", e)
     }
 }

@@ -80,6 +80,7 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
         ids: HirIdGenerator::new(),
         env_ty,
         scalar_tys,
+        pending: Vec::new(),
     };
     for item in &mut program.items {
         match &mut item.kind {
@@ -184,19 +185,6 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
 /// closure params that hold aggregates (tuples / structs / arrays)
 /// stay pointer-shaped - the runtime sort / iter comparators hand
 /// the body raw element pointers and the projections walk off them.
-/// True when `go <inner>` is the MIR builder's direct named-function
-/// spawn fast path (`gos_rt_go_spawn_call_N`): a call whose callee is
-/// a resolved path (`def: Some`) with at most six arguments. Must stay
-/// in lockstep with the predicate the MIR `Go` lowering uses.
-fn is_go_call_fast_path(inner: &HirExpr) -> bool {
-    if let HirExprKind::Call { callee, args } = &inner.kind {
-        if let HirExprKind::Path { def: Some(_), .. } = &callee.kind {
-            return args.len() <= 6;
-        }
-    }
-    false
-}
-
 fn collect_aggregate_param_uses(block: &HirBlock, out: &mut std::collections::HashSet<String>) {
     for stmt in &block.stmts {
         match &stmt.kind {
@@ -204,8 +192,7 @@ fn collect_aggregate_param_uses(block: &HirBlock, out: &mut std::collections::Ha
                 init: Some(value), ..
             }
             | HirStmtKind::Expr { expr: value, .. }
-            | HirStmtKind::Defer(value)
-            | HirStmtKind::Go(value) => {
+            | HirStmtKind::Defer(value) => {
                 collect_aggregate_in_expr(value, out);
             }
             HirStmtKind::Let { init: None, .. } | HirStmtKind::Item(_) => {}
@@ -336,6 +323,10 @@ struct Lifter {
     /// Scalar Ty handles for eta-expanding `[rust-bindings]`
     /// references; minted once so the visitor does not need `tcx`.
     scalar_tys: ScalarTys,
+    /// `let` bindings a `spawn` hoisted out of its call, waiting for
+    /// [`Lifter::visit_block`] to splice them in ahead of the statement
+    /// they came from.
+    pending: Vec<HirStmt>,
 }
 
 /// Pre-minted Ty handles for the binding-declared scalar types.
@@ -380,11 +371,18 @@ impl Lifter {
     }
 
     fn visit_block(&mut self, block: &mut HirBlock) {
-        for stmt in &mut block.stmts {
-            self.visit_stmt(stmt);
+        let mut stmts = Vec::with_capacity(block.stmts.len());
+        for mut stmt in block.stmts.drain(..) {
+            self.visit_stmt(&mut stmt);
+            // A spawn's hoisted operands are evaluated where the spawn is
+            // written, so they precede the statement that produced them.
+            stmts.append(&mut self.pending);
+            stmts.push(stmt);
         }
+        block.stmts = stmts;
         if let Some(tail) = &mut block.tail {
             self.visit_expr(tail);
+            block.stmts.append(&mut self.pending);
         }
     }
 
@@ -398,7 +396,6 @@ impl Lifter {
                 self.bind(&pattern);
             }
             HirStmtKind::Expr { expr, .. } => self.visit_expr(expr),
-            HirStmtKind::Go(inner) => self.lift_go_inner(inner),
             HirStmtKind::Defer(inner) => self.visit_expr(inner),
             HirStmtKind::Item(_) => {}
         }
@@ -474,7 +471,6 @@ impl Lifter {
                 value: Some(inner), ..
             }
             | HirExprKind::Cast { value: inner, .. } => self.visit_expr(inner),
-            HirExprKind::Go(inner) => self.lift_go_inner(inner),
             HirExprKind::Return(None) | HirExprKind::Break { value: None, .. } => {}
             HirExprKind::Tuple(elems) => {
                 for e in elems {
@@ -567,46 +563,6 @@ impl Lifter {
                 }
             }
         }
-    }
-
-    /// Prepares the spawned expression of a `go` for MIR lowering.
-    ///
-    /// `go f(args)` where `f` is a resolved named function with at
-    /// most six arguments is the MIR builder's direct fast path
-    /// (`gos_rt_go_spawn_call_N`); it is left as a call and only its
-    /// arguments are walked for nested closures. Every other shape - a
-    /// stdlib free call (`go http::get(url)`), a method call, a call
-    /// with more than six arguments, a block - cannot ride that fast
-    /// path, so it is wrapped in a zero-argument closure that the
-    /// closure-lift below turns into a real top-level body. The MIR
-    /// builder spawns that closure fire-and-forget, so the wrapped
-    /// call runs on its own goroutine with its own calling convention,
-    /// matching the bytecode VM's `compile_non_call_go`.
-    fn lift_go_inner(&mut self, inner: &mut HirExpr) {
-        if is_go_call_fast_path(inner) {
-            self.visit_expr(inner);
-            return;
-        }
-        let placeholder = HirExpr {
-            id: inner.id,
-            span: inner.span,
-            ty: inner.ty,
-            kind: HirExprKind::Placeholder,
-        };
-        let body = std::mem::replace(inner, placeholder);
-        let body_ty = body.ty;
-        let body_span = body.span;
-        *inner = HirExpr {
-            id: self.ids.next(),
-            span: body_span,
-            ty: self.env_ty,
-            kind: HirExprKind::Closure {
-                params: Vec::new(),
-                ret: Some(body_ty),
-                body: Box::new(body),
-            },
-        };
-        self.visit_expr(inner);
     }
 
     /// Ty for a binding-declared parameter / return. Scalars map to
@@ -1079,7 +1035,6 @@ fn is_closed<S: std::hash::BuildHasher + Clone, H: std::hash::BuildHasher>(
             start.as_ref().is_none_or(|s| is_closed(s, bound, shadowed))
                 && end.as_ref().is_none_or(|e| is_closed(e, bound, shadowed))
         }
-        HirExprKind::Go(inner) => is_closed(inner, bound, shadowed),
     }
 }
 
@@ -1274,7 +1229,6 @@ fn walk_free<S: std::hash::BuildHasher + Clone, H: std::hash::BuildHasher>(
                 walk_free(e, bound, shadowed, out, seen);
             }
         }
-        HirExprKind::Go(inner) => walk_free(inner, bound, shadowed, out, seen),
     }
 }
 
@@ -1304,7 +1258,7 @@ fn walk_free_block<S: std::hash::BuildHasher + Clone, H: std::hash::BuildHasher>
                 }
                 collect_pattern_names(pattern, &mut local);
             }
-            HirStmtKind::Expr { expr, .. } | HirStmtKind::Go(expr) | HirStmtKind::Defer(expr) => {
+            HirStmtKind::Expr { expr, .. } | HirStmtKind::Defer(expr) => {
                 walk_free(expr, &local, shadowed, out, seen);
             }
             HirStmtKind::Item(_) => {}
@@ -1331,7 +1285,7 @@ fn is_closed_block<S: std::hash::BuildHasher + Clone, H: std::hash::BuildHasher>
                 }
                 collect_pattern_names(pattern, &mut local);
             }
-            HirStmtKind::Expr { expr, .. } | HirStmtKind::Go(expr) | HirStmtKind::Defer(expr) => {
+            HirStmtKind::Expr { expr, .. } | HirStmtKind::Defer(expr) => {
                 if !is_closed(expr, &local, shadowed) {
                     return false;
                 }

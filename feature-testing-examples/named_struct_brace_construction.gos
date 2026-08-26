@@ -9,9 +9,9 @@ fn main() {
     let point = Point { x: 3, y: 4 }
     let pair = Pair("row", 7)
 
-    println!("{}:{} {}", keyed.owner, keyed.balance, keyed)
-    println!("{}:{} {}", positional.owner, positional.balance, positional)
-    println!("{}:{} {}", mixed.owner, mixed.balance, mixed)
-    println!("{} {} {}", point.x, point.y, point)
-    println!("{} {} {}", pair.0, pair.1, pair)
+    println("{}:{} {}", keyed.owner, keyed.balance, keyed)
+    println("{}:{} {}", positional.owner, positional.balance, positional)
+    println("{}:{} {}", mixed.owner, mixed.balance, mixed)
+    println("{} {} {}", point.x, point.y, point)
+    println("{} {} {}", pair.0, pair.1, pair)
 }

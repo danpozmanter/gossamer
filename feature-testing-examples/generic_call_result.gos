@@ -1,5 +1,5 @@
 // A generic function's call result keeps its instantiated concrete type
-// when used directly (no `let` binding), so a `println!("{}", id(s))`
+// when used directly (no `let` binding), so a `println("{}", id(s))`
 // selects the correct formatter on every tier. Before the fix the MIR
 // builder overrode the instantiated type with the callee's raw `Param`
 // return, printing a String/f64 result as a raw integer on the compiled
@@ -17,30 +17,30 @@ struct Point { x: i64, y: i64 }
 
 fn main() {
     // Inline generic results across scalar / string / float, no binding.
-    println!("{}", id(42))
-    println!("{}", id("hi"))
-    println!("{}", id(3.5))
+    println("{}", id(42))
+    println("{}", id("hi"))
+    println("{}", id(3.5))
 
     // Let-bound result (the type laundered through the binding).
     let q = id("bound")
-    println!("{}", q)
+    println("{}", q)
 
     // Float arithmetic over inline generic results.
     let sum = id(2.5) + id(3.0)
-    println!("{}", sum)
+    println("{}", sum)
 
     // Multi-parameter: each parameter instantiates independently.
-    println!("{}", first(7, "x"))
-    println!("{}", second(7, "x"))
-    println!("{}", first("p", 9))
+    println("{}", first(7, "x"))
+    println("{}", second(7, "x"))
+    println("{}", first("p", 9))
 
     // Struct result, inline field access and via a binding.
     let p = id(Point { x: 1, y: 2 })
-    println!("{} {}", p.x, p.y)
-    println!("{}", id(Point { x: 3, y: 4 }).x)
+    println("{} {}", p.x, p.y)
+    println("{}", id(Point { x: 3, y: 4 }).x)
 
     // Recursion through a generic helper, every instantiation.
-    println!("{}", twice(5))
-    println!("{}", twice("ok"))
-    println!("{}", twice(1.5))
+    println("{}", twice(5))
+    println("{}", twice("ok"))
+    println("{}", twice(1.5))
 }

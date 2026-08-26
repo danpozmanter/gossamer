@@ -13,7 +13,7 @@ fn main() {
     let mut acc = 0
     let mut i = 0
     while i < 200 {
-        r = Rec::V(format!("n{}", i), i, i * 2, i * 3, i * 4)
+        r = Rec::V(format("n{}", i), i, i * 2, i * 3, i * 4)
         acc += match r {
             Rec::V(s, a, b, _, _) => s.len() as i64 + a + b
             Rec::Nil => 0
@@ -31,5 +31,5 @@ fn main() {
         }
         j += 1
     }
-    println!("{}", acc)
+    println("{}", acc)
 }

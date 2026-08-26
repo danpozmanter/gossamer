@@ -6,14 +6,14 @@
 fn main() {
     let s = "7a42"
     let bytes = s.as_bytes()
-    println!("{}", bytes[0] - b'0')
-    println!("{}", b'a' + 1)
-    println!("{}", b'0' + bytes[0])
+    println("{}", bytes[0] - b'0')
+    println("{}", b'a' + 1)
+    println("{}", b'0' + bytes[0])
     let mut n = 0
     for i in 0..bytes.len() {
         if bytes[i] >= b'0' && bytes[i] <= b'9' {
             n = n * 10 + (bytes[i] - b'0') as i64
         }
     }
-    println!("{}", n)
+    println("{}", n)
 }

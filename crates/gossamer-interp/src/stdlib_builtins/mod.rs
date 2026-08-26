@@ -195,9 +195,6 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_image(globals);
     install_encoding_toml(globals);
     install_container_heap(globals);
-    install_container_seq(globals);
-    install_container_ordered(globals);
-    install_container_set_map(globals);
     install_deque(globals);
     install_url_escape(globals);
     #[cfg(not(target_arch = "wasm32"))]
@@ -254,9 +251,6 @@ pub mod bytes_builder;
 pub mod cohort;
 pub mod compress;
 pub mod container_heap;
-pub mod container_ordered;
-pub mod container_seq;
-pub mod container_set_map;
 pub mod context;
 pub mod crypto;
 #[cfg(not(target_arch = "wasm32"))]
@@ -364,12 +358,6 @@ pub(crate) use compress::install_compress;
 pub use compress::*;
 pub(crate) use container_heap::install_container_heap;
 pub use container_heap::*;
-pub(crate) use container_ordered::install_container_ordered;
-pub use container_ordered::*;
-pub(crate) use container_seq::install_container_seq;
-pub use container_seq::*;
-pub(crate) use container_set_map::install_container_set_map;
-pub use container_set_map::*;
 pub(crate) use context::install_context;
 pub use context::*;
 pub(crate) use crypto::install_crypto;

@@ -17,11 +17,11 @@ fn produce(tx: Sender<i64>) {
     tx.close()
 }
 
-let (tx, rx) = channel()
-go produce(tx)
+let tx, rx = channel()
+spawn(|| produce(tx))
 
 let mut total = 0
 while let Some(v) = rx.recv() {
     total += v
 }
-println!("drained three values, total = {}", total)
+println("drained three values, total = {}", total)

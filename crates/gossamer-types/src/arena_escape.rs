@@ -305,10 +305,6 @@ impl Scan<'_> {
                 }
             }
             StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => self.expr(expr),
-            StmtKind::Go(expr) => {
-                self.unsafe_now = true;
-                self.expr(expr);
-            }
             StmtKind::Item(_) => {}
         }
     }
@@ -325,10 +321,6 @@ impl Scan<'_> {
     )]
     fn expr(&mut self, expr: &Expr) {
         match &expr.kind {
-            ExprKind::Go(inner) => {
-                self.unsafe_now = true;
-                self.expr(inner);
-            }
             ExprKind::Select(arms) => {
                 self.unsafe_now = true;
                 for arm in arms {
@@ -469,7 +461,6 @@ impl Scan<'_> {
             ExprKind::Literal(_)
             | ExprKind::Path(_)
             | ExprKind::Continue { .. }
-            | ExprKind::MacroCall(_)
             | ExprKind::Error => {}
         }
     }
@@ -568,7 +559,7 @@ impl Finder<'_> {
                     self.walk_expr(init);
                 }
             }
-            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => {
                 self.walk_expr(expr);
             }
             StmtKind::Item(item) => self.walk_items(std::slice::from_ref(item)),
@@ -608,7 +599,6 @@ impl Finder<'_> {
                 receiver: operand, ..
             }
             | ExprKind::Try(operand)
-            | ExprKind::Go(operand)
             | ExprKind::Cast { value: operand, .. } => self.walk_expr(operand),
             ExprKind::If {
                 condition,
@@ -690,7 +680,6 @@ impl Finder<'_> {
             ExprKind::Literal(_)
             | ExprKind::Path(_)
             | ExprKind::Continue { .. }
-            | ExprKind::MacroCall(_)
             | ExprKind::Error => {}
         }
     }
@@ -764,7 +753,6 @@ impl Analyzer<'_> {
                 }
             }
             StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => self.expr(expr),
-            StmtKind::Go(expr) => self.check_capture(expr, stmt.span),
             StmtKind::Item(_) => {}
         }
     }
@@ -985,7 +973,6 @@ impl Analyzer<'_> {
                 }
             }
             ExprKind::Closure { body, .. } => self.check_capture(body, expr.span),
-            ExprKind::Go(inner) => self.check_capture(inner, expr.span),
             ExprKind::Select(arms) => self.sink_select(arms),
             ExprKind::While {
                 condition, body, ..
@@ -1077,7 +1064,6 @@ impl Analyzer<'_> {
             ExprKind::Literal(_)
             | ExprKind::Path(_)
             | ExprKind::Continue { .. }
-            | ExprKind::MacroCall(_)
             | ExprKind::Error => {}
         }
     }
@@ -1121,7 +1107,6 @@ fn walk_paths(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
             receiver: operand, ..
         }
         | ExprKind::Try(operand)
-        | ExprKind::Go(operand)
         | ExprKind::Cast { value: operand, .. } => walk_paths(operand, visit),
         ExprKind::If {
             condition,
@@ -1162,7 +1147,7 @@ fn walk_paths(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
                             walk_paths(init, visit);
                         }
                     }
-                    StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+                    StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => {
                         walk_paths(expr, visit);
                     }
                     StmtKind::Item(_) => {}
@@ -1224,11 +1209,7 @@ fn walk_paths(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
                 walk_paths(&arm.body, visit);
             }
         }
-        ExprKind::Literal(_)
-        | ExprKind::Path(_)
-        | ExprKind::Continue { .. }
-        | ExprKind::MacroCall(_)
-        | ExprKind::Error => {}
+        ExprKind::Literal(_) | ExprKind::Path(_) | ExprKind::Continue { .. } | ExprKind::Error => {}
     }
 }
 

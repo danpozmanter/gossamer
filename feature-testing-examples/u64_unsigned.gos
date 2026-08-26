@@ -6,26 +6,26 @@
 fn main() {
     let big: u64 = 18000000000000000000
     let small: u64 = 5
-    println!("{}", big)
-    println!("{}", big > small)
-    println!("{}", big < small)
-    println!("{}", small > big)
-    println!("{}", big / 3)
-    println!("{}", big % 7)
-    println!("{}", big >> 1)
+    println("{}", big)
+    println("{}", big > small)
+    println("{}", big < small)
+    println("{}", small > big)
+    println("{}", big / 3)
+    println("{}", big % 7)
+    println("{}", big >> 1)
 
     let ubig: usize = 18000000000000000000
-    println!("{}", ubig)
-    println!("{}", ubig > 7)
-    println!("{}", ubig / 3)
-    println!("{}", ubig % 7)
+    println("{}", ubig)
+    println("{}", ubig > 7)
+    println("{}", ubig / 3)
+    println("{}", ubig % 7)
 
     let neg: i64 = -5
     let three: i64 = 3
-    println!("{}", neg)
-    println!("{}", neg > three)
-    println!("{}", neg < three)
-    println!("{}", neg >> 1)
-    println!("{:x}", -1i64)
-    println!("{:b}", -2i64)
+    println("{}", neg)
+    println("{}", neg > three)
+    println("{}", neg < three)
+    println("{}", neg >> 1)
+    println("{:x}", -1i64)
+    println("{:b}", -2i64)
 }

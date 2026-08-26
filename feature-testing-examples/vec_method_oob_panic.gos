@@ -6,11 +6,11 @@
 fn main() {
     let mut xs = Vec::from([1, 2, 3])
     let _ = xs.insert(3, 4)
-    println!("before {}", xs.len())
+    println("before {}", xs.len())
     match xs.insert(5, 99) {
-        Ok(_) => println!("unexpected ok")
-        Err(_) => println!("insert oob err len={}", xs.len())
+        Ok(_) => println("unexpected ok")
+        Err(_) => println("insert oob err len={}", xs.len())
     }
     xs.swap(0, 3)
-    println!("swapped {:?}", xs)
+    println("swapped {:?}", xs)
 }

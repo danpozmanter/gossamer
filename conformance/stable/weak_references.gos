@@ -27,7 +27,7 @@ fn orphan_link() -> Weak<Link> {
 
 fn describe(w: Weak<Record>) -> String {
     match w.upgrade() {
-        Some(r) => format!("{}:{}", r.id, r.name)
+        Some(r) => format("{}:{}", r.id, r.name)
         None => "dead"
     }
 }
@@ -35,31 +35,31 @@ fn describe(w: Weak<Record>) -> String {
 fn main() {
     let live = Record { id: 1, name: "alpha" }
     let w = live.downgrade()
-    println!("live={}", describe(w))
+    println("live={}", describe(w))
     let _hold_live = live
 
     let copied = Record { id: 2, name: "beta" }
     let wa = copied.downgrade()
     let wb = wa
-    println!("copied={}", describe(wb))
+    println("copied={}", describe(wb))
     let _hold_copied = copied
 
-    println!("orphan={}", describe(orphan_record()))
+    println("orphan={}", describe(orphan_record()))
 
     let step = Link::Step(7)
     let ws = step.downgrade()
     match ws.upgrade() {
         Some(l) => match l {
-            Link::End => println!("link=end")
-            Link::Step(n) => println!("link={n}")
+            Link::End => println("link=end")
+            Link::Step(n) => println("link={n}")
         }
-        None => println!("link=dead")
+        None => println("link=dead")
     }
     let _hold_step = step
 
     match orphan_link().upgrade() {
-        Some(_) => println!("orphan_link=alive")
-        None => println!("orphan_link=dead")
+        Some(_) => println("orphan_link=alive")
+        None => println("orphan_link=dead")
     }
 
     let mut alive = 0
@@ -70,6 +70,6 @@ fn main() {
             alive += 1
         }
     }
-    println!("alive={alive}")
+    println("alive={alive}")
     let _hold_held = held
 }

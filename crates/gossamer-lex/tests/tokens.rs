@@ -35,16 +35,32 @@ fn empty_source_yields_eof() {
 #[test]
 fn every_keyword_is_recognized() {
     let keywords = [
-        "as", "async", "await", "break", "const", "continue", "crate", "defer", "else", "enum",
-        "extern", "false", "fn", "for", "go", "if", "impl", "in", "let", "loop", "match", "mod",
-        "mut", "package", "pub", "return", "select", "self", "Self", "static", "struct", "super",
-        "trait", "true", "type", "unsafe", "use", "where", "while", "yield",
+        "as", "async", "await", "break", "const", "continue", "crate", "else", "enum", "extern",
+        "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "mut", "package",
+        "pub", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type",
+        "unsafe", "use", "where", "while", "yield",
     ];
     for word in keywords {
         assert!(
             Keyword::from_ident(word).is_some(),
             "keyword {word} should be recognized",
         );
+    }
+}
+
+/// The block words are contextual: each opens its construct where the
+/// parser expects one and stays an ordinary identifier everywhere else,
+/// so a binding, field, or function may carry any of these names.
+#[test]
+fn block_words_are_contextual_not_reserved() {
+    for word in [
+        "select", "defer", "comptime", "cohort", "arena", "spawn", "newtype", "packed",
+    ] {
+        assert!(
+            Keyword::from_ident(word).is_none(),
+            "`{word}` should stay an identifier",
+        );
+        assert_eq!(kinds_of(word), vec![TokenKind::Ident]);
     }
 }
 
@@ -294,7 +310,7 @@ fn stray_backtick_is_invalid() {
 /// The full pipe chain from SUMMARY.md tokenises without diagnostics.
 #[test]
 fn summary_pipe_chain_tokenises() {
-    let source = "1..=100 |> |v| iter::filter(|n| n % 2 == 0, v) |> |v| iter::map(|n| n * n, v)";
+    let source = "1..=100 |> |v| iter::filter(v, |n| n % 2 == 0) |> |v| iter::map(v, |n| n * n)";
     let (_, diagnostics) = tokenize(source, test_file());
     assert!(
         diagnostics.is_empty(),

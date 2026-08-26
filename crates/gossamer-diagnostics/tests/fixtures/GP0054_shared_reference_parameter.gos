@@ -1,0 +1,4 @@
+// ERROR: GP0054
+fn measure(s: &String) -> i64 { s.len() }
+
+fn main() { println("{}", measure("ab")) }

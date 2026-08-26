@@ -7,27 +7,27 @@ fn main() {
     s.insert("cherry")
     let v = s.to_vec()
     for x in v {
-        println!("v {}", x)
+        println("v {}", x)
     }
     for x in s.iter() {
-        println!("iter {}", x)
+        println("iter {}", x)
     }
     for x in s {
-        println!("bare {}", x)
+        println("bare {}", x)
     }
     s.clear()
-    println!("len {}", s.len())
+    println("len {}", s.len())
 
     let mut n: Set<i64> = Set::new()
     n.insert(30)
     n.insert(10)
     n.insert(20)
     for x in n.to_vec() {
-        println!("n {}", x)
+        println("n {}", x)
     }
     for x in n {
-        println!("nbare {}", x)
+        println("nbare {}", x)
     }
     n.clear()
-    println!("nlen {}", n.len())
+    println("nlen {}", n.len())
 }

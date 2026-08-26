@@ -10,7 +10,7 @@ enum Rank {
     King
 }
 
-fn card_value(r: &Rank) -> i64 {
+fn card_value(r: Rank) -> i64 {
     match r {
         Rank::Ace => 11
         Rank::Number(n) => *n
@@ -33,12 +33,12 @@ struct Point3 {
     z: i64
 }
 
-fn on_axis(p: &Point3) -> String {
+fn on_axis(p: Point3) -> String {
     match p {
-        Point3 { x, y: 0, z: 0 } => format!("x-axis at {}", x)
-        Point3 { x: 0, y, z: 0 } => format!("y-axis at {}", y)
-        Point3 { x: 0, y: 0, z } => format!("z-axis at {}", z)
-        Point3 { x, .. } => format!("off-axis x={}", x)
+        Point3 { x, y: 0, z: 0 } => format("x-axis at {}", x)
+        Point3 { x: 0, y, z: 0 } => format("y-axis at {}", y)
+        Point3 { x: 0, y: 0, z } => format("z-axis at {}", z)
+        Point3 { x, .. } => format("off-axis x={}", x)
     }
 }
 
@@ -49,7 +49,7 @@ enum Signal {
 }
 
 // Or-pattern alternatives binding the same name into one shared slot.
-fn intensity(s: &Signal) -> i64 {
+fn intensity(s: Signal) -> i64 {
     match s {
         Signal::Red(n) | Signal::Green(n) => *n
         Signal::Yellow(n) => *n + 1000
@@ -57,11 +57,11 @@ fn intensity(s: &Signal) -> i64 {
 }
 
 // A binding or-pattern fronted by a guard that reads the shared binding.
-fn describe(s: &Signal) -> String {
+fn describe(s: Signal) -> String {
     match s {
-        Signal::Red(n) | Signal::Green(n) if *n > 0 => format!("lit {}", n)
-        Signal::Red(n) | Signal::Green(n) => format!("dark {}", n)
-        Signal::Yellow(n) => format!("warn {}", n)
+        Signal::Red(n) | Signal::Green(n) if *n > 0 => format("lit {}", n)
+        Signal::Red(n) | Signal::Green(n) => format("dark {}", n)
+        Signal::Yellow(n) => format("warn {}", n)
     }
 }
 
@@ -71,7 +71,7 @@ enum Cell {
 }
 
 // Binding or-pattern nested under an enclosing variant pattern.
-fn cell_intensity(c: &Cell) -> i64 {
+fn cell_intensity(c: Cell) -> i64 {
     match c {
         Cell::Filled(Signal::Red(n)) | Cell::Filled(Signal::Green(n)) => *n
         Cell::Filled(Signal::Yellow(n)) => *n + 1000
@@ -110,12 +110,12 @@ fn option_result(v: Option<Result<i64, i64>>) -> i64 {
 fn main() {
     let ranks = #[Rank::Ace, Rank::Number(7), Rank::Jack, Rank::Queen, Rank::King]
     for r in ranks {
-        println!("value = {}", card_value(&r))
+        println("value = {}", card_value(r))
     }
 
     let nums = #[0, 1, 2, 3, 5, 7, 4, -1]
     for n in nums {
-        println!("{} -> {}", n, classify_int(n))
+        println("{} -> {}", n, classify_int(n))
     }
 
     let pts = #[
@@ -125,12 +125,12 @@ fn main() {
         Point3 { x: 1, y: 2, z: 3 }
     ]
     for p in pts {
-        println!("{}", on_axis(&p))
+        println("{}", on_axis(p))
     }
 
     let sigs = #[Signal::Red(3), Signal::Yellow(4), Signal::Green(0), Signal::Red(-2)]
     for s in sigs {
-        println!("int={} {}", intensity(&s), describe(&s))
+        println("int={} {}", intensity(s), describe(s))
     }
 
     let cells = #[
@@ -140,17 +140,17 @@ fn main() {
         Cell::Blank
     ]
     for c in cells {
-        println!("cell={}", cell_intensity(&c))
+        println("cell={}", cell_intensity(c))
     }
 
-    println!("collapse_ok={}", collapse_result(Ok(5)))
-    println!("collapse_err={}", collapse_result(Err(9)))
-    println!("option_wrap_a={}", option_wrap(Some(Wrap::A(11))))
-    println!("option_wrap_b={}", option_wrap(Some(Wrap::B(22))))
-    println!("option_wrap_none={}", option_wrap(None))
-    println!("option_result_ok={}", option_result(Some(Ok(33))))
-    println!("option_result_err={}", option_result(Some(Err(44))))
-    println!("option_result_none={}", option_result(None))
+    println("collapse_ok={}", collapse_result(Ok(5)))
+    println("collapse_err={}", collapse_result(Err(9)))
+    println("option_wrap_a={}", option_wrap(Some(Wrap::A(11))))
+    println("option_wrap_b={}", option_wrap(Some(Wrap::B(22))))
+    println("option_wrap_none={}", option_wrap(None))
+    println("option_result_ok={}", option_result(Some(Ok(33))))
+    println("option_result_err={}", option_result(Some(Err(44))))
+    println("option_result_none={}", option_result(None))
 }
 
 #[cfg(test)]
@@ -159,80 +159,80 @@ mod tests {
 
     #[test]
     fn face_cards_worth_ten() {
-        let _ = testing::check_eq(&super::card_value(&super::Rank::Jack), &10, "jack=10")
-        let _ = testing::check_eq(&super::card_value(&super::Rank::Queen), &10, "queen=10")
-        let _ = testing::check_eq(&super::card_value(&super::Rank::King), &10, "king=10")
+        let _ = testing::check_eq(super::card_value(super::Rank::Jack), 10, "jack=10")
+        let _ = testing::check_eq(super::card_value(super::Rank::Queen), 10, "queen=10")
+        let _ = testing::check_eq(super::card_value(super::Rank::King), 10, "king=10")
     }
 
     #[test]
     fn or_pattern_classify() {
-        let _ = testing::check_eq(&super::classify_int(0), &"tiny", "0 is tiny")
-        let _ = testing::check_eq(&super::classify_int(1), &"tiny", "1 is tiny")
-        let _ = testing::check_eq(&super::classify_int(3), &"small-prime", "3 is small-prime")
-        let _ = testing::check_eq(&super::classify_int(4), &"other", "4 is other")
-        let _ = testing::check_eq(&super::classify_int(-5), &"negative", "-5 is negative")
+        let _ = testing::check_eq(super::classify_int(0), "tiny", "0 is tiny")
+        let _ = testing::check_eq(super::classify_int(1), "tiny", "1 is tiny")
+        let _ = testing::check_eq(super::classify_int(3), "small-prime", "3 is small-prime")
+        let _ = testing::check_eq(super::classify_int(4), "other", "4 is other")
+        let _ = testing::check_eq(super::classify_int(-5), "negative", "-5 is negative")
     }
 
     #[test]
     fn struct_rest_on_axis() {
         let p = super::Point3 { x: 9, y: 0, z: 0 }
-        let desc = super::on_axis(&p)
-        let _ = testing::check(&desc.contains("x-axis"), "x-axis detected")
-        let _ = testing::check(&desc.contains("9"), "x=9 in description")
+        let desc = super::on_axis(p)
+        let _ = testing::check(desc.contains("x-axis"), "x-axis detected")
+        let _ = testing::check(desc.contains("9"), "x=9 in description")
     }
 
     #[test]
     fn struct_rest_off_axis() {
         let p = super::Point3 { x: 1, y: 2, z: 3 }
-        let desc = super::on_axis(&p)
-        let _ = testing::check(&desc.contains("off-axis"), "off-axis detected")
+        let desc = super::on_axis(p)
+        let _ = testing::check(desc.contains("off-axis"), "off-axis detected")
     }
 
     #[test]
     fn binding_or_pattern_shares_slot() {
-        let _ = testing::check_eq(&super::intensity(&super::Signal::Red(3)), &3, "red binds n")
-        let _ = testing::check_eq(&super::intensity(&super::Signal::Green(8)), &8, "green binds n")
-        let _ = testing::check_eq(&super::intensity(&super::Signal::Yellow(4)), &1004, "yellow arm")
+        let _ = testing::check_eq(super::intensity(super::Signal::Red(3)), 3, "red binds n")
+        let _ = testing::check_eq(super::intensity(super::Signal::Green(8)), 8, "green binds n")
+        let _ = testing::check_eq(super::intensity(super::Signal::Yellow(4)), 1004, "yellow arm")
     }
 
     #[test]
     fn binding_or_pattern_with_guard() {
-        let _ = testing::check_eq(&super::describe(&super::Signal::Red(5)), &"lit 5", "lit guard")
-        let _ = testing::check_eq(&super::describe(&super::Signal::Green(0)), &"dark 0", "dark fallthrough")
-        let _ = testing::check_eq(&super::describe(&super::Signal::Yellow(1)), &"warn 1", "warn arm")
+        let _ = testing::check_eq(super::describe(super::Signal::Red(5)), "lit 5", "lit guard")
+        let _ = testing::check_eq(super::describe(super::Signal::Green(0)), "dark 0", "dark fallthrough")
+        let _ = testing::check_eq(super::describe(super::Signal::Yellow(1)), "warn 1", "warn arm")
     }
 
     #[test]
     fn nested_binding_or_pattern() {
         let _ = testing::check_eq(
-            &super::cell_intensity(&super::Cell::Filled(super::Signal::Green(9)))
-            &9
+            super::cell_intensity(super::Cell::Filled(super::Signal::Green(9)))
+            9
             "nested green binds n"
         )
         let _ = testing::check_eq(
-            &super::cell_intensity(&super::Cell::Blank)
-            &-1
+            super::cell_intensity(super::Cell::Blank)
+            -1
             "blank arm"
         )
     }
 
     #[test]
     fn result_nested_binding_or_pattern() {
-        let _ = testing::check_eq(&super::collapse_result(super::Ok(5)), &5, "ok binds x")
-        let _ = testing::check_eq(&super::collapse_result(super::Err(9)), &9, "err binds x")
+        let _ = testing::check_eq(super::collapse_result(super::Ok(5)), 5, "ok binds x")
+        let _ = testing::check_eq(super::collapse_result(super::Err(9)), 9, "err binds x")
     }
 
     #[test]
     fn option_nested_binding_or_pattern() {
-        let _ = testing::check_eq(&super::option_wrap(super::Some(super::Wrap::A(11))), &11, "wrap a")
-        let _ = testing::check_eq(&super::option_wrap(super::Some(super::Wrap::B(22))), &22, "wrap b")
-        let _ = testing::check_eq(&super::option_wrap(super::None), &-1, "wrap none")
+        let _ = testing::check_eq(super::option_wrap(super::Some(super::Wrap::A(11))), 11, "wrap a")
+        let _ = testing::check_eq(super::option_wrap(super::Some(super::Wrap::B(22))), 22, "wrap b")
+        let _ = testing::check_eq(super::option_wrap(super::None), -1, "wrap none")
     }
 
     #[test]
     fn option_result_nested_binding_or_pattern() {
-        let _ = testing::check_eq(&super::option_result(super::Some(super::Ok(33))), &33, "opt ok")
-        let _ = testing::check_eq(&super::option_result(super::Some(super::Err(44))), &44, "opt err")
-        let _ = testing::check_eq(&super::option_result(super::None), &-1, "opt none")
+        let _ = testing::check_eq(super::option_result(super::Some(super::Ok(33))), 33, "opt ok")
+        let _ = testing::check_eq(super::option_result(super::Some(super::Err(44))), 44, "opt err")
+        let _ = testing::check_eq(super::option_result(super::None), -1, "opt none")
     }
 }

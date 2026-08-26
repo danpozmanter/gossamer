@@ -23,31 +23,31 @@ Format strings use `{}` and `{name}` placeholders.
 
 | Name | Signature | Description |
 |---|---|---|
-| `println!` | `println!("fmt", values...)` | Print formatted text to stdout, then a newline. |
-| `print!` | `print!("fmt", values...)` | Print formatted text to stdout with no newline. |
-| `eprintln!` | `eprintln!("fmt", values...)` | Print formatted text to stderr, then a newline. |
-| `eprint!` | `eprint!("fmt", values...)` | Print formatted text to stderr with no newline. |
-| `format!` | `format!("fmt", values...) -> String` | Render formatted text into an owned `String`. |
-| `panic!` | `panic!("fmt", values...) -> !` | Stop the current goroutine with the rendered message. |
+| `println!` | `println("fmt", values...)` | Print formatted text to stdout, then a newline. |
+| `print!` | `print("fmt", values...)` | Print formatted text to stdout with no newline. |
+| `eprintln!` | `eprintln("fmt", values...)` | Print formatted text to stderr, then a newline. |
+| `eprint!` | `eprint("fmt", values...)` | Print formatted text to stderr with no newline. |
+| `format!` | `format("fmt", values...) -> String` | Render formatted text into an owned `String`. |
+| `panic!` | `panic("fmt", values...) -> !` | Stop the current goroutine with the rendered message. |
 
 ```gossamer
 let who = "world"
-println!("hello, {who}")
-println!("{} + {} = {}", 1, 2, 1 + 2)
+println("hello, {who}")
+println("{} + {} = {}", 1, 2, 1 + 2)
 ```
 
 ## Fixed macros
 
 | Name | Signature | Description |
 |---|---|---|
-| `matches!` | `matches!(expr, pattern) -> bool` | Test whether `expr` matches `pattern`. |
-| `todo!` | `todo!("msg"?) -> !` | Mark code as intentionally unfinished and panic if reached. |
-| `unimplemented!` | `unimplemented!("msg"?) -> !` | Mark an unsupported path and panic if reached. |
-| `unreachable!` | `unreachable!("msg"?) -> !` | Mark an impossible path and panic if reached. |
-| `dbg!` | `dbg!(expr) -> T` | Print `expr` with debug formatting, then return it. |
+| `matches!` | `matches(expr, pattern) -> bool` | Test whether `expr` matches `pattern`. |
+| `todo!` | `todo("msg"?) -> !` | Mark code as intentionally unfinished and panic if reached. |
+| `unimplemented!` | `unimplemented("msg"?) -> !` | Mark an unsupported path and panic if reached. |
+| `unreachable!` | `unreachable("msg"?) -> !` | Mark an impossible path and panic if reached. |
+| `dbg!` | `dbg(expr) -> T` | Print `expr` with debug formatting, then return it. |
 | `regex!` | `regex!("pattern") -> regex::Pattern` | Compile a checked regular expression at build time. |
 | `sql!` | `sql!("query")` | Check a SQL literal at build time when a driver can validate it. |
-| `codegen!` | `codegen!(...)` | Run the build-time codegen hook. |
+| `codegen!` | `codegen(...)` | Run the build-time codegen hook. |
 
 User-defined macros do not exist. Any other `name!(...)` is a parse error.
 
@@ -79,15 +79,14 @@ let better = max(score_a, score_b)
 
 | Name | Signature | Description |
 |---|---|---|
-| `go` | `go expr` | Run `expr` on a goroutine and discard its result. |
 | `spawn` | `spawn(f) -> JoinHandle<T>` | Run `f` on a goroutine and return a join handle. |
 | `join` | `handle.join() -> Result<T, String>` | Wait for a spawned goroutine. `Err` carries the panic message. |
 
 ```gossamer
 let h = spawn(|| heavy_compute())
 match h.join() {
-    Ok(v) => println!("{v}"),
-    Err(e) => eprintln!("worker panicked: {e}"),
+    Ok(v) => println("{v}"),
+    Err(e) => eprintln("worker panicked: {e}"),
 }
 ```
 
@@ -121,7 +120,7 @@ compile time.
 | Family | Names | Description |
 |---|---|---|
 | Primitives | `bool`, `char`, signed and unsigned integers, `isize`, `usize`, `f32`, `f64`, `String`, `str` | Scalar and text types. |
-| Wrappers | `Option`, `Result`, `Box`, `Rc`, `Arc`, `Weak` | Sum types and managed-runtime compatibility wrappers. |
+| Wrappers | `Option`, `Result`, `Weak` | Sum types, and the non-owning reference into an RC allocation. |
 | Collections | `Vec`, `Map`, `Set`, `BTreeSet`, `BTreeMap`, `Deque`, `Queue`, `Stack`, `MaxHeap`, `MinHeap`, `Range`, `Iterator` | Core collection and sequence types. |
 | Concurrency | `Sender`, `Receiver`, `Mutex`, `WaitGroup`, `JoinHandle` | Channel, lock, wait, and goroutine-handle types. |
 
@@ -130,7 +129,7 @@ sequence, so it answers the same combinator surface `Iterator` does.
 
 ```gos
 let counted: Range = 0..5
-println!("{:?}", counted.iter().rev().collect())
+println("{:?}", counted.iter().rev().collect())
 ```
 
 ## Runtime statements

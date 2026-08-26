@@ -1,4 +1,4 @@
 fn main() {
     let s = "Hello"
-    println!("{}", s.len())
+    println("{}", s.len())
 }

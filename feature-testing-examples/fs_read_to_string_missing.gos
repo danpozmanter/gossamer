@@ -3,7 +3,7 @@ use std::fs
 // `fs::read_to_string` on a missing path must return `Err` (not a silent
 // `Ok("")`) identically on every tier - regression guard for the native/LLVM
 // tier dropping the error and returning an empty string.
-match fs::read_to_string(&"definitely_missing_gossamer_fixture_file.txt") {
-    Ok(s) => println!("UNEXPECTED OK len={}", s.len())
-    Err(e) => println!("{}", e)
+match fs::read_to_string("definitely_missing_gossamer_fixture_file.txt") {
+    Ok(s) => println("UNEXPECTED OK len={}", s.len())
+    Err(e) => println("{}", e)
 }

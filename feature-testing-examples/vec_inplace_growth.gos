@@ -20,13 +20,13 @@ fn main() {
     nums.sort()
     let mut total = 0
     for x in nums { total += x }
-    println!("nums_total={} nums_len={} pop={}", total, nums.len(), last)
+    println("nums_total={} nums_len={} pop={}", total, nums.len(), last)
 
     // f64 Vec built via Vec::new + push loop (flat FloatVec storage).
     let mut fs: Vec<f64> = Vec::new()
     for k in 0..4 { fs.push((3 - k) as f64 + 0.5) }
     fs.sort()
-    println!("f0={:.1} f3={:.1}", fs[0], fs[3])
+    println("f0={:.1} f3={:.1}", fs[0], fs[3])
 
     // pop drains the Vec, then yields None (-> -1) past the end.
     let mut stack = Vec::new()
@@ -35,10 +35,10 @@ fn main() {
     let a = unwrap_or(stack.pop(), -1)
     let b = unwrap_or(stack.pop(), -1)
     let c = unwrap_or(stack.pop(), -1)
-    println!("pops={} {} {} drained_len={}", a, b, c, stack.len())
+    println("pops={} {} {} drained_len={}", a, b, c, stack.len())
 
     // Integer range driven by iteration.
     let mut rsum = 0
     for x in 0..100 { rsum += x }
-    println!("rsum={}", rsum)
+    println("rsum={}", rsum)
 }

@@ -237,7 +237,23 @@ impl<'tcx> FnBuilder<'tcx> {
                             kind: RegKind::F64,
                         })
                     }
-                    (RegKind::I64, RegKind::F64) => {
+                    // A float reaching a full-width integer saturates at the
+                    // machine word, which this op already does. A narrow
+                    // target saturates at its own range instead, so it takes
+                    // the general cast rather than a second op here.
+                    (RegKind::I64, RegKind::F64)
+                        if !matches!(
+                            self.tcx.kind(*target_ty),
+                            Some(TyKind::Int(
+                                gossamer_types::IntTy::I8
+                                    | gossamer_types::IntTy::I16
+                                    | gossamer_types::IntTy::I32
+                                    | gossamer_types::IntTy::U8
+                                    | gossamer_types::IntTy::U16
+                                    | gossamer_types::IntTy::U32
+                            ))
+                        ) =>
+                    {
                         let src_tr = self.compile_expr_ex(value)?;
                         let src_f = self.as_f64(src_tr);
                         let dst_i = self.alloc_int();
@@ -770,12 +786,6 @@ impl<'tcx> FnBuilder<'tcx> {
             // `Op::Spawn` / `Op::SpawnMethod`; non-call shapes lift
             // the spawned expression into a zero-arg closure and spawn
             // that. The expression yields `()`.
-            HirExprKind::Go(inner) => {
-                if !self.try_compile_go_native(inner)? {
-                    self.compile_non_call_go(inner)?;
-                }
-                Ok(self.load_unit())
-            }
             // Native array literal. In a `Value` context assemble a
             // generic `Value::Array` (or `[v; n]` repeat) directly. The
             // typed-storage specialisations (`Value::IntArray` /

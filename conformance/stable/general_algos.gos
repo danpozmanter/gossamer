@@ -13,7 +13,7 @@ struct Body {
 }
 
 enum Tree {
-    Node(Box<Tree>, Box<Tree>)
+    Node(Tree, Tree)
     Leaf
 }
 
@@ -161,14 +161,14 @@ fn build_tree(depth: i64) -> Tree {
     Tree::Node(build_tree(depth - 1), build_tree(depth - 1))
 }
 
-fn count_nodes(t: &Tree) -> i64 {
+fn count_nodes(t: Tree) -> i64 {
     match t {
         Tree::Leaf => 1
         Tree::Node(l, r) => 1 + count_nodes(l) + count_nodes(r)
     }
 }
 
-fn kmer_checksum(dna: &String, k: i64) -> i64 {
+fn kmer_checksum(dna: String, k: i64) -> i64 {
     let mut counts = Map::new()
     for start in 0..dna.len() - k + 1 {
         counts.inc(dna.substring(start, start + k))
@@ -180,7 +180,7 @@ fn kmer_checksum(dna: &String, k: i64) -> i64 {
     checksum
 }
 
-fn dot_layer(inputs: &[f64], weights: &[f64]) -> f64 {
+fn dot_layer(inputs: [f64], weights: [f64]) -> f64 {
     let mut acc = 0.0
     for i in 0..inputs.len() {
         acc += inputs[i] * weights[i]
@@ -189,18 +189,18 @@ fn dot_layer(inputs: &[f64], weights: &[f64]) -> f64 {
 }
 
 fn main() {
-    println!("nbody {:.6}", nbody_energy(64))
-    println!("spectral {:.6}", spectral_norm(8, 4))
-    println!("fannkuch {}", fannkuch_max(7))
-    println!("fasta {}", fasta(24))
+    println("nbody {:.6}", nbody_energy(64))
+    println("spectral {:.6}", spectral_norm(8, 4))
+    println("fannkuch {}", fannkuch_max(7))
+    println("fasta {}", fasta(24))
 
     let tree = build_tree(8)
-    println!("trees {}", count_nodes(&tree))
+    println("trees {}", count_nodes(tree))
 
     let dna = fasta(64)
-    println!("kmers {}", kmer_checksum(&dna, 3))
+    println("kmers {}", kmer_checksum(dna, 3))
 
     let inputs = #[0.5, -0.25, 0.75, 1.0]
     let weights = #[1.5, 2.0, -0.5, 0.25]
-    println!("slp {:.6}", dot_layer(&inputs, &weights))
+    println("slp {:.6}", dot_layer(inputs, weights))
 }

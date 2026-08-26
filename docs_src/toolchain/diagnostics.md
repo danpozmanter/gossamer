@@ -36,7 +36,6 @@ version. This page is auto-generated from the catalogue in
 | [`GP0022`](#gp0022) | Parser | unserializable derived field |
 | [`GP0023`](#gp0023) | Parser | format argument count mismatch |
 | [`GP0024`](#gp0024) | Parser | non-literal format template |
-| [`GP0025`](#gp0025) | Parser | formatting macro used as a pipe step |
 | [`GP0026`](#gp0026) | Parser | inclusive range missing upper bound |
 | [`GP0027`](#gp0027) | Parser | `$` is not part of the language |
 | [`GP0029`](#gp0029) | Parser | match arm missing arrow |
@@ -52,6 +51,25 @@ version. This page is auto-generated from the catalogue in
 | [`GP0039`](#gp0039) | Parser | serde turbofish names an uncovered type |
 | [`GP0040`](#gp0040) | Parser | hyphen in a `use` path |
 | [`GP0041`](#gp0041) | Parser | pipe step with arguments is not a closure |
+| [`GP0042`](#gp0042) | Parser | targets written as a parenthesised tuple |
+| [`GP0043`](#gp0043) | Parser | `mod` declaration ended in `;` |
+| [`GP0044`](#gp0044) | Parser | callable type written as something other than `Fn` |
+| [`GP0045`](#gp0045) | Parser | argument label bound with `=` |
+| [`GP0046`](#gp0046) | Parser | `unsafe` grants nothing |
+| [`GP0047`](#gp0047) | Parser | opaque alias written `type X = new T` |
+| [`GP0048`](#gp0048) | Parser | `go` is retired |
+| [`GP0049`](#gp0049) | Parser | compiler-known call written with a `!` |
+| [`GP0050`](#gp0050) | Parser | enum representation is not an unsigned width |
+| [`GP0051`](#gp0051) | Parser | `regex!` / `sql!` moved into their modules |
+| [`GT0079`](#gt0079) | Types | pointer wrapper written |
+| [`GT0080`](#gt0080) | Types | `String::parse` called |
+| [`GT0081`](#gt0081) | Types | enum representation too narrow for its variants |
+| [`GT0082`](#gt0082) | Types | reference passed where a value is taken |
+| [`GT0083`](#gt0083) | Types | write through a value that is not a reference |
+| [`GP0052`](#gp0052) | Parser | build-time validated call without a literal |
+| [`GP0053`](#gp0053) | Parser | `Display` rendering declared as `to_string` |
+| [`GP0054`](#gp0054) | Parser | shared reference in parameter position |
+| [`GP0055`](#gp0055) | Parser | shared reference on a call argument |
 | [`GR0001`](#gr0001) | Resolve | unresolved name |
 | [`GR0002`](#gr0002) | Resolve | wrong namespace |
 | [`GR0003`](#gr0003) | Resolve | duplicate item |
@@ -60,7 +78,10 @@ version. This page is auto-generated from the catalogue in
 | [`GR0006`](#gr0006) | Resolve | removed stdlib item |
 | [`GR0007`](#gr0007) | Resolve | unknown stdlib item |
 | [`GR0017`](#gr0017) | Resolver | break or continue with no loop |
-| [`GR0018`](#gr0018) | Resolver | standard library macro named as a value path |
+| [`GR0018`](#gr0018) | Resolver | compiler-known call named as a value path |
+| [`GR0019`](#gr0019) | Resolver | two dependency packages under one module name |
+| [`GR0020`](#gr0020) | Resolver | declaration under a compiler-known call name |
+| [`GR0021`](#gr0021) | Resolve | std free call written data-last |
 | [`GT0001`](#gt0001) | Types | type mismatch |
 | [`GT0002`](#gt0002) | Types | unresolved method |
 | [`GT0003`](#gt0003) | Types | unresolved operator |
@@ -213,12 +234,6 @@ The number of positional arguments must equal the number of positional placehold
 
 Format macros require a literal template so placeholders can be checked at compile time.
 
-## `GP0025` <a id="gp0025"></a>
-
-**Parser** - formatting macro used as a pipe step
-
-A macro takes its arguments as written, so the piped value has no slot of its own. Write the step as a closure: `value |> |v| println!("{}", v)`.
-
 ## `GP0026` <a id="gp0026"></a>
 
 **Parser** - inclusive range missing upper bound
@@ -309,6 +324,120 @@ A codec is synthesized per concrete struct whose fields the synthesizer can clas
 
 A `|>` step that writes its own arguments leaves the piped value no slot. Write it as a closure whose parameter is that slot: `x |> |v| f(a, v)`.
 
+## `GP0042` <a id="gp0042"></a>
+
+**Parser** - targets written as a parenthesised tuple
+
+A binding and an assignment both list their targets without parentheses: `let a, b = value` and `a, b = x, y`. Parentheses group a pattern that sits beside others - a `match` arm, a `for` binding, a parameter, or a nested element of the list.
+
+## `GP0043` <a id="gp0043"></a>
+
+**Parser** - `mod` declaration ended in `;`
+
+A statement ends at its newline, and a trailing semicolon is invalid everywhere else in the language. Write `mod name`.
+
+## `GP0044` <a id="gp0044"></a>
+
+**Parser** - callable type written as something other than `Fn`
+
+The language has one callable type, `Fn(args) -> ret`. There is no raw function-pointer shape and no `FnMut` / `FnOnce` distinction to draw.
+
+## `GP0045` <a id="gp0045"></a>
+
+**Parser** - argument label bound with `=`
+
+Every keyed form in the language binds with `:` - a struct field, a map entry, a `cohort` header setting. Write `name: value`.
+
+## `GP0046` <a id="gp0046"></a>
+
+**Parser** - `unsafe` grants nothing
+
+No operation is withheld outside an `unsafe` block or from a safe `fn`. The keyword stays reserved for a future raw-FFI story.
+
+## `GP0047` <a id="gp0047"></a>
+
+**Parser** - opaque alias written `type X = new T`
+
+`new` reads as allocation to a reader arriving from any other language. Write `newtype X = T`.
+
+## `GP0048` <a id="gp0048"></a>
+
+**Parser** - `go` is retired
+
+Every goroutine is a `spawn` attached to the enclosing cohort, and `main` is an implicit root cohort. `go` evaluated its operands at the spawn site, so `--fix` hoists a computed operand into a temporary.
+
+## `GP0049` <a id="gp0049"></a>
+
+**Parser** - compiler-known call written with a `!`
+
+The set of compiler-known names is closed and recognised at the `(`, so there is nothing a sigil disambiguates. Write `println(..)`, `format(..)`, `matches(..)`.
+
+## `GP0050` <a id="gp0050"></a>
+
+**Parser** - enum representation is not an unsigned width
+
+A discriminant is a count, so its store is unsigned. Write `enum Name : u8 { .. }`, with a width between 1 and 64 bits.
+
+## `GP0051` <a id="gp0051"></a>
+
+**Parser** - `regex!` / `sql!` moved into their modules
+
+Write `regex::compile("…")` and `sql::statement("…")`. A literal argument is still validated while the program is compiled.
+
+## `GT0079` <a id="gt0079"></a>
+
+**Types** - pointer wrapper written
+
+Every value is heap-shared and reference-counted already, so `Box<T>` / `Rc<T>` / `Arc<T>` name no choice the writer has to make. Write the inner type.
+
+## `GT0080` <a id="gt0080"></a>
+
+**Types** - `String::parse` called
+
+The parse surface is `to_i64`, `to_f64`, and `to_bool`: each parses the whole string and answers an `Option<T>`. Add `.ok_or(..)` where a `Result` is wanted.
+
+## `GT0081` <a id="gt0081"></a>
+
+**Types** - enum representation too narrow for its variants
+
+A declared width is exact - it is what the discriminant is stored in - so it is never widened silently. Write a width that holds every variant, or drop it.
+
+## `GT0082` <a id="gt0082"></a>
+
+**Types** - reference passed where a value is taken
+
+A parameter that is not `&mut` takes the value, and a reference names one rather than being one, so the compiled tiers would hand the callee the address. Write `*x`.
+
+## `GT0083` <a id="gt0083"></a>
+
+**Types** - write through a value that is not a reference
+
+`*` reaches the place a reference names, and a value has no such place, so the write would reach nothing. Write the binding directly, or make the parameter `&mut T` and pass `&mut` at the call site.
+
+## `GP0052` <a id="gp0052"></a>
+
+**Parser** - build-time validated call without a literal
+
+`sql::statement` was handed something other than a literal. The statement is checked while the program is compiled, so it has to be there to check; a statement built at run time is an ordinary `String` and needs no wrapper.
+
+## `GP0053` <a id="gp0053"></a>
+
+**Parser** - `Display` rendering declared as `to_string`
+
+Both rendering contracts declare one method that answers a `String`, so both are written `fn fmt`; the `impl` header is what decides which channel a value reaches, `{}` taking `Display` and `{:?}` taking `Debug`. `x.to_string()` still renders through `Display`.
+
+## `GP0054` <a id="gp0054"></a>
+
+**Parser** - shared reference in parameter position
+
+An argument is passed without copying whatever its type, and a callee cannot write to the caller's variable unless the parameter says `&mut`, so `f(m: &Map)` and `f(m: Map)` have the same cost and the same guarantee. A sequence view is written `[T]`, and `&mut [T]` is the form that writes through. `--fix` drops the `&`.
+
+## `GP0055` <a id="gp0055"></a>
+
+**Parser** - shared reference on a call argument
+
+No parameter is a shared reference, so the sigil changes nothing: an argument is passed without copying either way, and a callee writes to the caller's variable only through a `&mut` parameter, which is spelled `&mut` at the call too. `--fix` drops the `&`.
+
 ## `GR0001` <a id="gr0001"></a>
 
 **Resolve** - unresolved name
@@ -359,9 +488,27 @@ A `break` or `continue` has no loop to act on: either none encloses it, or the l
 
 ## `GR0018` <a id="gr0018"></a>
 
-**Resolver** - standard library macro named as a value path
+**Resolver** - compiler-known call named as a value path
 
-A path named one of the standard library's macros - `println`, `format`, `panic`, and the rest of the fixed set. A macro expands where it is written and the runtime binds no callable for it, so the path has nothing to call or pass as a value. Write it as `name!(..)`; a macro needs no import.
+A path named one of the compiler-known calls - `println`, `format`, `panic`, and the rest of the fixed set. Each expands where it is written and the runtime binds no callable for it, so the path has nothing to call or pass as a value. Write it as `name(..)`; it needs no import.
+
+## `GR0019` <a id="gr0019"></a>
+
+**Resolver** - two dependency packages under one module name
+
+Two dependency packages are reached under one module name. A `-` is not part of an identifier, so a package name carrying one is reached from source as the same name with `_` in its place, which two packages can share. Give one of them a name of its own in `[dependencies]`, or import each through `use "id" as name`.
+
+## `GR0020` <a id="gr0020"></a>
+
+**Resolver** - declaration under a compiler-known call name
+
+A `fn` or a binding was declared under one of the compiler-known call names - `println`, `format`, `matches`, and the rest of the fixed set. Each expands where it is written, so the declaration could never be reached. Give it a name of its own.
+
+## `GR0021` <a id="gr0021"></a>
+
+**Resolve** - std free call written data-last
+
+A std free function was called with its data argument in the slot it occupied before every module took its data first. The call still means what it did, so nothing else in the body is affected; write the data argument first, which is what makes `iter::map(xs, f)` read as the `xs.map(f)` it stands for.
 
 ## `GT0001` <a id="gt0001"></a>
 

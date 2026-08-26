@@ -15,73 +15,73 @@ fn main() {
 
     // map / filter / filter_map (eager -> Vec).
     let mut ms = 0
-    for x in xs |> |v| iter::map(|n: i64| n * 10, v) { ms += x }
-    println!("map sum {}", ms)
+    for x in xs |> |v| iter::map(v, |n: i64| n * 10) { ms += x }
+    println("map sum {}", ms)
     let mut fs = 0
-    for x in xs |> |v| iter::filter(|n: i64| n % 2 == 1, v) { fs += x }
-    println!("filter odd sum {}", fs)
+    for x in xs |> |v| iter::filter(v, |n: i64| n % 2 == 1) { fs += x }
+    println("filter odd sum {}", fs)
     let mut fms = 0
-    for x in xs |> |v| iter::filter_map(|n: i64| if n > 2 { Some(n * 100) } else { None }, v) { fms += x }
-    println!("filter_map sum {}", fms)
+    for x in xs |> |v| iter::filter_map(v, |n: i64| if n > 2 { Some(n * 100) } else { None }) { fms += x }
+    println("filter_map sum {}", fms)
 
     // fold / reduce (+ empty reduce -> None).
-    println!("fold {}", xs |> |v| iter::fold(1000, |a: i64, b: i64| a + b, v))
-    println!("reduce {}", xs |> |v| iter::reduce(|a: i64, b: i64| a * b, v) |> |v| option::unwrap_or(0, v))
+    println("fold {}", xs |> |v| iter::fold(v, 1000, |a: i64, b: i64| a + b))
+    println("reduce {}", xs |> |v| iter::reduce(v, |a: i64, b: i64| a * b) |> |v| option::unwrap_or(v, 0))
     let empty: Vec<i64> = Vec::from([])
-    println!("reduce empty {}", empty |> |v| iter::reduce(|a: i64, b: i64| a + b, v) |> |v| option::unwrap_or(-1, v))
+    println("reduce empty {}", empty |> |v| iter::reduce(v, |a: i64, b: i64| a + b) |> |v| option::unwrap_or(v, -1))
 
     // find present + absent.
-    println!("find {}", xs |> |v| iter::find(|n: i64| n > 3, v) |> |v| option::unwrap_or(0, v))
-    println!("find none {}", xs |> |v| iter::find(|n: i64| n > 99, v) |> |v| option::unwrap_or(-1, v))
+    println("find {}", xs |> |v| iter::find(v, |n: i64| n > 3) |> |v| option::unwrap_or(v, 0))
+    println("find none {}", xs |> |v| iter::find(v, |n: i64| n > 99) |> |v| option::unwrap_or(v, -1))
 
     // array terminals: sum / count / min / max.
-    println!("sum {}", #[3, 1, 2, 4] |> iter::sum)
-    println!("count {}", #[3, 1, 2, 4] |> iter::count)
-    println!("min {}", #[3, 1, 2, 4] |> iter::min |> |v| option::unwrap_or(0, v))
-    println!("max {}", #[3, 1, 2, 4] |> iter::max |> |v| option::unwrap_or(0, v))
+    println("sum {}", #[3, 1, 2, 4] |> iter::sum)
+    println("count {}", #[3, 1, 2, 4] |> iter::count)
+    println("min {}", #[3, 1, 2, 4] |> iter::min |> |v| option::unwrap_or(v, 0))
+    println("max {}", #[3, 1, 2, 4] |> iter::max |> |v| option::unwrap_or(v, 0))
 
     // sum_by, take, skip, step_by (eager free fns).
-    println!("sum_by {}", xs |> |v| iter::sum_by(|n: i64| n * n, v))
+    println("sum_by {}", xs |> |v| iter::sum_by(v, |n: i64| n * n))
     let mut ts = 0
-    for x in xs |> |v| iter::take(2, v) { ts += x }
-    println!("take2 sum {}", ts)
+    for x in xs |> |v| iter::take(v, 2) { ts += x }
+    println("take2 sum {}", ts)
     let mut ks = 0
-    for x in xs |> |v| iter::skip(3, v) { ks += x }
-    println!("skip3 sum {}", ks)
+    for x in xs |> |v| iter::skip(v, 3) { ks += x }
+    println("skip3 sum {}", ks)
 
     // group_by + partition.
-    let groups = #[1, 2, 3, 4, 5, 6] |> |v| iter::chunk_by(|n: i64| n % 3, v)
-    println!("group_by buckets {}", groups.len())
+    let groups = #[1, 2, 3, 4, 5, 6] |> |v| iter::chunk_by(v, |n: i64| n % 3)
+    println("group_by buckets {}", groups.len())
     let mut g0 = 0
     for x in groups.get_or(0, Vec::from([])) { g0 += x }
     let mut g1 = 0
     for x in groups.get_or(1, Vec::from([])) { g1 += x }
     let mut g2 = 0
     for x in groups.get_or(2, Vec::from([])) { g2 += x }
-    println!("group sums {} {} {}", g0, g1, g2)
-    let (evens, odds) = #[1, 2, 3, 4, 5, 6] |> |v| iter::partition(|n: i64| n % 2 == 0, v)
+    println("group sums {} {} {}", g0, g1, g2)
+    let evens, odds = #[1, 2, 3, 4, 5, 6] |> |v| iter::partition(v, |n: i64| n % 2 == 0)
     let mut es = 0
     for x in evens { es += x }
     let mut os = 0
     for x in odds { os += x }
-    println!("partition even {} odd {}", es, os)
+    println("partition even {} odd {}", es, os)
 
     // for_each side effects in deterministic order.
-    #[10, 20, 30] |> |v| iter::for_each(|n: i64| print!("fe{} ", n), v)
-    println!("")
+    #[10, 20, 30] |> |v| iter::for_each(v, |n: i64| print("fe{} ", n))
+    println("")
 
     // struct-bearing collection: iterate and read fields.
     let recs = #[Rec { k: 1, v: 10 }, Rec { k: 2, v: 20 }, Rec { k: 3, v: 30 }]
     let mut vsum = 0
     for r in recs { vsum += r.v }
-    println!("rec vsum {}", vsum)
+    println("rec vsum {}", vsum)
 
     // empty + single edge inputs through eager combinators.
     let mut empty_map = 0
-    for x in empty |> |v| iter::map(|n: i64| n * 2, v) { empty_map += x }
-    println!("empty map sum {}", empty_map)
-    println!("single sum_by {}", #[7] |> |v| iter::sum_by(|n: i64| n, v))
+    for x in empty |> |v| iter::map(v, |n: i64| n * 2) { empty_map += x }
+    println("empty map sum {}", empty_map)
+    println("single sum_by {}", #[7] |> |v| iter::sum_by(v, |n: i64| n))
     let mut allfiltered = 0
-    for x in xs |> |v| iter::filter(|n: i64| n > 99, v) { allfiltered += x }
-    println!("all-filtered sum {}", allfiltered)
+    for x in xs |> |v| iter::filter(v, |n: i64| n > 99) { allfiltered += x }
+    println("all-filtered sum {}", allfiltered)
 }

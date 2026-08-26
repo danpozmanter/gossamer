@@ -144,14 +144,14 @@ fn nested_consts_run_in_vm_and_native() {
 const OUTER: i64 = 5
 
 fn main() {
-    println!("top={}", OUTER)
+    println("top={}", OUTER)
     const OUTER: i64 = 40
     const STEP: i64 = OUTER + 2
     {
         const OUTER: String = "answer"
-        println!("{}={}", OUTER, STEP)
+        println("{}={}", OUTER, STEP)
     }
-    println!("again={}", OUTER)
+    println("again={}", OUTER)
 }
 "#;
     let dir = fresh_dir("nested_consts");
@@ -195,7 +195,7 @@ fn generic_struct_f64_field_prints_as_float() {
 struct Triple<A, B, C> { first: A, second: B, third: C }
 fn main() {
     let r = Triple { first: 1, second: "two", third: 3.0 }
-    println!("{} {} {}", r.first, r.second, r.third)
+    println("{} {} {}", r.first, r.second, r.third)
 }
 "#;
     let dir = fresh_dir("generic_struct_f64");
@@ -221,7 +221,7 @@ fn impl_method_self_field_iteration_binds_element_type() {
 struct U { tags: Vec<String> }
 impl U {
     fn dump(self) {
-        for item in self.tags { println!("item={}", item) }
+        for item in self.tags { println("item={}", item) }
     }
 }
 fn main() {
@@ -266,11 +266,11 @@ fn classify(n: i64) -> String {
         1 | 2 | 3 => "small",
         4..=9 => "mid",
         x if x < 0 => "neg",
-        big @ 100..=999 => format!("big:{}", big),
+        big @ 100..=999 => format("big:{}", big),
         _ => "huge",
     }
 }
-fn area(s: &Shape) -> i64 {
+fn area(s: Shape) -> i64 {
     match s {
         Shape::Circle(r) => 3 * r * r,
         Shape::Rect(w, h) => w * h,
@@ -279,15 +279,15 @@ fn area(s: &Shape) -> i64 {
 }
 fn main() {
     for n in [0, 2, 7, -4, 500, 100000] {
-        println!("{}={}", n, classify(n))
+        println("{}={}", n, classify(n))
     }
-    println!("{}", area(&Shape::Circle(2)))
-    println!("{}", area(&Shape::Rect(3, 4)))
-    println!("{}", area(&Shape::Unit))
+    println("{}", area(Shape::Circle(2)))
+    println("{}", area(Shape::Rect(3, 4)))
+    println("{}", area(Shape::Unit))
     let p = Point { x: 5, y: 9 }
-    match p { Point { x, y } => println!("pt {} {}", x, y) }
+    match p { Point { x, y } => println("pt {} {}", x, y) }
     let pair = (11, 22)
-    match pair { (a, b) => println!("pair {} {}", a, b) }
+    match pair { (a, b) => println("pair {} {}", a, b) }
 }
 "#;
     let dir = fresh_dir("native_match");
@@ -316,7 +316,7 @@ fn compiled_match_on_inferred_tuple_binds_element_types() {
     let src = r#"
 fn main() {
     let pair = (10, "hi")
-    match pair { (n, s) => println!("{} {}", n, s) }
+    match pair { (n, s) => println("{} {}", n, s) }
 }
 "#;
     let dir = fresh_dir("compiled_match_tuple");
@@ -356,7 +356,7 @@ fn eprintln_runs_without_aborting_via_jit() {
     let src = write_source(
         &dir,
         "eprintln_jit",
-        "fn main() { eprintln!(\"diag-line\") }\n",
+        "fn main() { eprintln(\"diag-line\") }\n",
     );
     let run = run_vm(&src);
     assert_eq!(run.2, Some(0), "vm: expected clean exit, got {:?}", run.2);
@@ -393,7 +393,7 @@ fn os_exit_flushes_stdout_in_native_binary() {
     let src = write_source(
         &dir,
         "exit_flush",
-        "use std::process\nfn main() {\n    println!(\"before exit\")\n    process::exit(2)\n}\n",
+        "use std::process\nfn main() {\n    println(\"before exit\")\n    process::exit(2)\n}\n",
     );
     let cl_dir = dir.join("cl");
     fs::create_dir_all(&cl_dir).unwrap();
@@ -421,7 +421,7 @@ fn try_it() {
     args.push("one")
     let mut i: usize = 0
     while i < args.len() {
-        println!("[{}] = {}", i, args[i].clone())
+        println("[{}] = {}", i, args[i].clone())
         i = i + 1
     }
 }
@@ -457,7 +457,7 @@ fn indexing_tuple_slices_with_usize_works() {
     // same `Value::Int`-only match as the string-array case
     // above.
     let src = r#"
-fn first_key(vars: &[(String, String)]) -> String {
+fn first_key(vars: [(String, String)]) -> String {
     if vars.len() == 0 { return "" }
     let mut i: usize = 0
     while i < vars.len() {
@@ -472,7 +472,7 @@ fn main() {
         ("alpha", "1"),
         ("beta", "2"),
     ].to_vec()
-    println!("{}", first_key(&pairs))
+    println("{}", first_key(pairs))
 }
 "#;
     let dir = fresh_dir("usize_index_tuple");
@@ -499,14 +499,14 @@ fn main() {
     let xs = ["a", "b"].to_vec()
     let mut it = xs.iter()
     match it.next() {
-        Some(s) => println!("first={}", s),
-        None => println!("none"),
+        Some(s) => println("first={}", s),
+        None => println("none"),
     }
     let empty: Vec<i64> = [].to_vec()
     let mut it2 = empty.iter()
     match it2.next() {
-        Some(_) => println!("unexpected some"),
-        None => println!("empty-none"),
+        Some(_) => println("unexpected some"),
+        None => println("empty-none"),
     }
 }
 "#;
@@ -560,23 +560,23 @@ fn main() -> Result<(), errors::Error> {
     let mut tags: Vec<String> = Vec::from([])
     tags.push("admin")
     let original = User { name: "alice", age: 30, active: true, tags: tags, address: Address { city: "denver", zip: "80205" } }
-    let text = to_json::<User>(&original)?
-    let back: User = from_json::<User>(&text)?
-    println!("name={}", back.name)
-    println!("age={}", back.age)
-    println!("city={}", back.address.city)
-    println!("tag0={}", back.tags[0])
+    let text = to_json::<User>(original)?
+    let back: User = from_json::<User>(text)?
+    println("name={}", back.name)
+    println("age={}", back.age)
+    println("city={}", back.address.city)
+    println("tag0={}", back.tags[0])
 
     let bad = "{\"name\":\"bob\",\"age\":\"oops\",\"active\":false,\"tags\":[],\"address\":{\"city\":\"x\",\"zip\":\"0\"}}"
-    match from_json::<User>(&bad) {
-        Ok(_)  => println!("bad-passed"),
-        Err(e) => println!("bad-rejected: {}", e),
+    match from_json::<User>(bad) {
+        Ok(_)  => println("bad-passed"),
+        Err(e) => println("bad-rejected: {}", e),
     }
 
     let missing = "{\"name\":\"carol\",\"age\":40,\"active\":true,\"tags\":[]}"
-    match from_json::<User>(&missing) {
-        Ok(_)  => println!("missing-passed"),
-        Err(e) => println!("missing-rejected: {}", e),
+    match from_json::<User>(missing) {
+        Ok(_)  => println("missing-passed"),
+        Err(e) => println("missing-rejected: {}", e),
     }
     Ok(())
 }
@@ -613,10 +613,10 @@ fn json_set_appends_and_replaces_fields() {
 use std::encoding::json
 fn main() {
     let obj = json::Value::object()
-    let with_a = json::set(obj, &"a", &json::Value::Int(1))
-    let with_b = json::set(with_a, &"b", &json::Value::String("hello"))
-    let replaced = json::set(with_b, &"a", &json::Value::Int(99))
-    println!("{}", json::render(&replaced))
+    let with_a = json::set(obj, "a", json::Value::Int(1))
+    let with_b = json::set(with_a, "b", json::Value::String("hello"))
+    let replaced = json::set(with_b, "a", json::Value::Int(99))
+    println("{}", json::render(replaced))
 }
 "#;
     let dir = fresh_dir("json_set");
@@ -663,10 +663,10 @@ use std::errors
 fn main() {
     let inner = errors::new("inner failure")
     let wrapped = errors::wrap(inner, "outer context")
-    println!("top: {}", wrapped.message())
+    println("top: {}", wrapped.message())
     match wrapped.cause() {
-        Some(c) => println!("cause: {}", c.message()),
-        None => println!("no cause"),
+        Some(c) => println("cause: {}", c.message()),
+        None => println("no cause"),
     }
 }
 "#;
@@ -712,17 +712,17 @@ fn regex_captures_indexing_works() {
 use std::regex
 fn main() {
     let re = regex::compile("(\\w+)=(\\d+)").unwrap()
-    let caps = regex::captures_all(&re, &"a=1 b=22")
+    let caps = regex::captures_all(re, "a=1 b=22")
     if caps.len() == 0 {
-        println!("no match")
+        println("no match")
     } else {
         let row = caps[0].clone()
         if row.len() < 2 {
-            println!("too few groups")
+            println("too few groups")
         } else {
             match row[1].clone() {
-                Some(s) => println!("first={}", s),
-                None => println!("missing-group"),
+                Some(s) => println("first={}", s),
+                None => println("missing-group"),
             }
         }
     }
@@ -767,7 +767,7 @@ fn main() {
         }
         acc = acc + i
     }
-    println!("acc={}", acc)
+    println("acc={}", acc)
 }
 
 "#;
@@ -811,7 +811,7 @@ fn main() {
     }
     let mut finite = 0
     for i in ..3 { finite += i }
-    println!("{} {} {}", total, total2, finite)
+    println("{} {} {}", total, total2, finite)
 }
 "#;
     let dir = fresh_dir("open_range_break");
@@ -875,7 +875,7 @@ fn main() {
     if let Some(n) = first {
         if let Some(m) = maybe_double(n) {
             if let Ok(d) = safe_divide(m, 4) {
-                println!("d = {}", d)
+                println("d = {}", d)
             }
         }
     }
@@ -909,7 +909,7 @@ fn iterator_sum_preserves_usize_result_type() {
 fn main() {
     let values: Vec<i64> = Vec::from([9, 18, 27])
     let total: usize = values.iter().map(|value| value as usize).sum()
-    println!("total={}", total)
+    println("total={}", total)
 }
 "#;
     let dir = fresh_dir("iterator_sum_usize");
@@ -941,12 +941,12 @@ fn str_find_returns_option_in_compiled_mode() {
 fn main() {
     let s = "foo bar"
     match s.find("bar") {
-        Some(i) => println!("found at {}", i),
-        None => println!("missing"),
+        Some(i) => println("found at {}", i),
+        None => println("missing"),
     }
     match s.find("qux") {
-        Some(i) => println!("unexpected at {}", i),
-        None => println!("not found"),
+        Some(i) => println("unexpected at {}", i),
+        None => println("not found"),
     }
 }
 "#;
@@ -1106,7 +1106,7 @@ fn a_label_on_an_enclosing_loop_still_resolves() {
         "            continue 'inner\n",
         "        }\n",
         "    }\n",
-        "    println!(\"{:?}\", found)\n",
+        "    println(\"{:?}\", found)\n",
         "}\n"
     );
     let path = std::env::temp_dir().join(format!("gos-loop-ok-{}.gos", std::process::id()));
@@ -1145,18 +1145,18 @@ fn free_push(xs: &mut Vec<i64>, v: i64) { xs.push(v) }
 fn main() {
     let mut h = Holder { items: #[] }
     h.add(1)
-    println!("field={:?}", h.items)
+    println("field={:?}", h.items)
 
     let mut direct = Holder { items: #[] }
     direct.items.push(2)
-    println!("outside={:?}", direct.items)
+    println("outside={:?}", direct.items)
 
     let mut xs: Vec<i64> = #[]
     free_push(&mut xs, 3)
-    println!("param={:?}", xs)
+    println("param={:?}", xs)
 
     let mut o = Other {}
-    println!("user={}", o.push(4))
+    println("user={}", o.push(4))
 }
 "#;
     let dir = fresh_dir("builtin_receiver_dispatch");
@@ -1189,31 +1189,31 @@ fn vec_u8_mutators_agree_across_tiers() {
 fn main() {
     let mut a: Vec<u8> = #[1, 2, 3]
     a.extend(#[4, 5])
-    println!("extend {:?}", a)
+    println("extend {:?}", a)
 
     let mut b: Vec<u8> = #[1, 2, 3]
     b.extend_from_slice(#[9])
-    println!("extend_from_slice {:?}", b)
+    println("extend_from_slice {:?}", b)
 
     let mut c: Vec<u8> = #[1, 2, 3, 4]
     c.truncate(2)
-    println!("truncate {:?}", c)
+    println("truncate {:?}", c)
 
     let mut d: Vec<u8> = #[3, 1, 2]
     d.sort()
-    println!("sort {:?}", d)
+    println("sort {:?}", d)
 
     let mut e: Vec<u8> = #[1, 2, 3]
     e.reverse()
-    println!("reverse {:?}", e)
+    println("reverse {:?}", e)
 
     let mut f: Vec<u8> = #[1, 2, 3]
     f.clear()
-    println!("clear {:?}", f)
+    println("clear {:?}", f)
 
     let mut g: Vec<u8> = #[]
     g.extend("hi".as_bytes())
-    println!("extend_str {:?}", g)
+    println("extend_str {:?}", g)
 }
 "#;
     let dir = fresh_dir("vec_u8_mutators");
@@ -1254,7 +1254,7 @@ use std::errors
 use std::net::{TcpListener, TcpStream}
 
 fn serve(listener: TcpListener) -> Result<String, errors::Error> {
-    let (client, _addr) = listener.accept()?
+    let client, _addr = listener.accept()?
     let payload = client.read(64)?
     client.close()
     String::from_utf8(payload)
@@ -1264,12 +1264,12 @@ fn main() -> Result<(), errors::Error> {
     let listener = TcpListener::bind("127.0.0.1:0")?
     let addr = listener.local_addr()?
     let sender = spawn(|| serve(listener))
-    let stream = TcpStream::connect(&addr)?
+    let stream = TcpStream::connect(addr)?
     let mut payload: Vec<u8> = #[]
     payload.extend("ping".as_bytes())
     stream.write_all(payload)?
     stream.close()
-    println!("{}", sender.join()??)
+    println("{}", sender.join()??)
     Ok(())
 }
 "#;
@@ -1333,11 +1333,11 @@ fn marked(m: Marker) -> String {
 }
 
 fn main() {
-    println!("{} {} {}", band(10), band(20), band(30))
-    println!("{} {}", label("pg"), label("other"))
-    println!("{} {}", scale(1.5), scale(2.5))
-    println!("{} {}", hue(Color::Red), hue(Color::Green))
-    println!("{}", marked(Marker))
+    println("{} {} {}", band(10), band(20), band(30))
+    println("{} {}", label("pg"), label("other"))
+    println("{} {}", scale(1.5), scale(2.5))
+    println("{} {}", hue(Color::Red), hue(Color::Green))
+    println("{}", marked(Marker))
 }
 "#;
     let dir = fresh_dir("const_pattern");
@@ -1367,7 +1367,7 @@ fn string_reference_iterates_unicode_scalars() {
     // than the text it names, so `c.to_string()` rendered the code
     // point. The by-value spelling was already correct.
     let src = r#"
-fn escape(text: &String) -> String {
+fn escape(text: String) -> String {
     let mut out = ""
     for c in text {
         out += match c { 'b' => "B", _ => c.to_string() }
@@ -1375,20 +1375,20 @@ fn escape(text: &String) -> String {
     out
 }
 
-fn count_upper(text: &String) -> i64 {
+fn count_upper(text: String) -> i64 {
     let mut n = 0
     for c in text { if c >= 'A' && c <= 'Z' { n += 1 } }
     n
 }
 
 fn main() {
-    println!("{}", escape(&"abc"))
+    println("{}", escape("abc"))
     let owned = "aXbY"
     let borrowed = &owned
     let mut joined = ""
     for c in borrowed { joined += c.to_string() }
-    println!("{}", joined)
-    println!("{}", count_upper(&"aXbY"))
+    println("{}", joined)
+    println("{}", count_upper("aXbY"))
 }
 "#;
     let dir = fresh_dir("string_ref_iter");
@@ -1424,20 +1424,20 @@ fn main() {
         let params = #[V::Int(n)]
         let _ = params.len()
     }
-    println!("literal enum ok")
+    println("literal enum ok")
     for s in #["a", "b"] {
         let held = #[s]
         let _ = held.len()
     }
-    println!("literal string ok")
+    println("literal string ok")
     let mut v = Vec::from([1, 2])
     for i in &mut v {
         *i += 1
     }
-    println!("write-back {} {}", v[0], v[1])
+    println("write-back {} {}", v[0], v[1])
     let mut inline = #[#[1]]
     for row in &mut inline { row.push(5) }
-    println!("inline {}", inline[0].len())
+    println("inline {}", inline[0].len())
 }
 "#;
     let dir = fresh_dir("for_literal_move");
@@ -1483,28 +1483,28 @@ impl Conn {
 fn main() {
     let mut xs: Vec<N> = #[N { channel: "a", pid: 1 }, N { channel: "b", pid: 2 }]
     match Vec::remove(&mut xs, 0) {
-        Ok(n) => println!("free {} {}", n.channel, n.pid)
-        Err(_) => println!("none")
+        Ok(n) => println("free {} {}", n.channel, n.pid)
+        Err(_) => println("none")
     }
-    println!("left {}", xs.len())
+    println("left {}", xs.len())
 
     let mut c = Conn {
         pending: #[N { channel: "c", pid: 3 }, N { channel: "d", pid: 4 }]
         count: 0
     }
     while let Some(n) = c.take() {
-        println!("field {} {}", n.channel, n.pid)
+        println("field {} {}", n.channel, n.pid)
     }
-    println!("drained {}", c.pending.len())
+    println("drained {}", c.pending.len())
 
     let mut ints: Vec<i64> = #[7, 8]
     match Vec::remove(&mut ints, 0) {
-        Ok(v) => println!("int {}", v)
-        Err(_) => println!("none")
+        Ok(v) => println("int {}", v)
+        Err(_) => println("none")
     }
     match Vec::remove(&mut ints, 5) {
-        Ok(v) => println!("int {}", v)
-        Err(_) => println!("out of range")
+        Ok(v) => println("int {}", v)
+        Err(_) => println("out of range")
     }
 }
 "#;
@@ -1537,26 +1537,26 @@ fn reference_to_a_vec_element_names_the_element() {
     let src = r#"
 enum Value { Null, Int(i64), Text(String) }
 
-fn row_len(row: &Vec<Value>) -> i64 { row.len() }
+fn row_len(row: Vec<Value>) -> i64 { row.len() }
 
-fn first_text(row: &Vec<Value>) -> String {
+fn first_text(row: Vec<Value>) -> String {
     match row[0] {
         Value::Text(s) => s
         _ => "?"
     }
 }
 
-fn walk(params: &Vec<Vec<Value>>) -> i64 {
+fn walk(params: Vec<Vec<Value>>) -> i64 {
     let mut total = 0
     let mut i = 0
     while i < params.len() {
-        total += row_len(&params[i])
+        total += row_len(params[i])
         i += 1
     }
     total
 }
 
-fn sum_words(words: &Vec<String>) -> i64 {
+fn sum_words(words: Vec<String>) -> i64 {
     let mut total = 0
     let mut i = 0
     while i < words.len() {
@@ -1571,10 +1571,10 @@ fn main() {
         #[Value::Text("a"), Value::Int(1)]
         #[Value::Null]
     ]
-    println!("total {}", walk(&params))
-    println!("first {}", first_text(&params[0]))
+    println("total {}", walk(params))
+    println("first {}", first_text(params[0]))
     let words: Vec<String> = #["ab", "cde"]
-    println!("words {}", sum_words(&words))
+    println("words {}", sum_words(words))
 }
 "#;
     let dir = fresh_dir("vec_elem_ref");
@@ -1607,25 +1607,25 @@ fn result_ok_and_err_answer_a_matchable_option() {
     let src = r#"
 use std::errors
 
-fn parse(text: &String) -> Result<i64, errors::Error> {
+fn parse(text: String) -> Result<i64, errors::Error> {
     match text.to_i64() {
         Some(v) => Ok(v)
         None => Err(errors::new("bad"))
     }
 }
 
-fn read(text: &String) -> Result<String, errors::Error> {
+fn read(text: String) -> Result<String, errors::Error> {
     if text.len() > 0 { Ok(text.clone()) } else { Err(errors::new("empty")) }
 }
 
 fn main() {
-    println!("{}", match parse(&"42").ok() { Some(v) => v, None => -1 })
-    println!("{}", match parse(&"x").ok() { Some(v) => v, None => -1 })
-    println!("{}", match read(&"hi").ok() { Some(v) => v, None => "none" })
-    println!("{}", match read(&"").ok() { Some(v) => v, None => "none" })
-    println!("{}", parse(&"7").ok().is_some())
-    println!("{}", parse(&"x").err().is_some())
-    println!("{}", parse(&"7").err().is_some())
+    println("{}", match parse("42").ok() { Some(v) => v, None => -1 })
+    println("{}", match parse("x").ok() { Some(v) => v, None => -1 })
+    println("{}", match read("hi").ok() { Some(v) => v, None => "none" })
+    println("{}", match read("").ok() { Some(v) => v, None => "none" })
+    println("{}", parse("7").ok().is_some())
+    println("{}", parse("x").err().is_some())
+    println("{}", parse("7").err().is_some())
 }
 "#;
     let dir = fresh_dir("result_ok_option");
@@ -1666,7 +1666,7 @@ enum Value {
     Array(Vec<Value>)
 }
 
-fn matching_brace(text: &String, open: i64) -> Result<i64, errors::Error> {
+fn matching_brace(text: String, open: i64) -> Result<i64, errors::Error> {
     let n = text.byte_len()
     let mut depth = 0
     let mut i = open
@@ -1682,7 +1682,7 @@ fn matching_brace(text: &String, open: i64) -> Result<i64, errors::Error> {
     Err(errors::new("unterminated"))
 }
 
-fn parse_body(text: &String) -> Result<Vec<Value>, errors::Error> {
+fn parse_body(text: String) -> Result<Vec<Value>, errors::Error> {
     let n = text.byte_len()
     let mut items: Vec<Value> = #[]
     let mut i = 1
@@ -1693,7 +1693,7 @@ fn parse_body(text: &String) -> Result<Vec<Value>, errors::Error> {
         let c = text.byte_at(i)
         if c == 123 {
             let close = matching_brace(text, i)?
-            let inner = parse_body(&text.substring(i, close + 1))?
+            let inner = parse_body(text.substring(i, close + 1))?
             items.push(Value::Array(inner))
             i = close + 1
         } else {
@@ -1710,30 +1710,30 @@ fn parse_body(text: &String) -> Result<Vec<Value>, errors::Error> {
     Err(errors::new("unterminated"))
 }
 
-fn describe(vs: &Vec<Value>) -> String {
+fn describe(vs: Vec<Value>) -> String {
     let mut out = ""
     for v in vs {
         out += match v {
-            Value::Text(s) => format!("{} ", s)
-            Value::Array(inner) => format!("[{}] ", describe(&inner))
+            Value::Text(s) => format("{} ", s)
+            Value::Array(inner) => format("[{}] ", describe(inner))
             _ => "? "
         }
     }
     out
 }
 
-fn report(text: &String) {
+fn report(text: String) {
     match parse_body(text) {
-        Ok(vs) => println!("{} :: {}", vs.len(), describe(&vs))
-        Err(e) => println!("err {}", e)
+        Ok(vs) => println("{} :: {}", vs.len(), describe(vs))
+        Err(e) => println("err {}", e)
     }
 }
 
 fn main() {
-    report(&"{a,b}")
-    report(&"{a,{b,c},d}")
-    report(&"{{a,b},{c,d},{e,f}}")
-    report(&"{}")
+    report("{a,b}")
+    report("{a,{b,c},d}")
+    report("{{a,b},{c,d},{e,f}}")
+    report("{}")
 }
 "#;
     let dir = fresh_dir("recursive_vec_enum");
@@ -1784,19 +1784,19 @@ struct Outer { name: String, inner: Inner, xs: Vec<Inner> }
 fn main() {
     let o = Outer { name: "n", inner: Inner { a: 1, b: "x" }, xs: #[Inner { a: 2, b: "y" }] }
     let text = to_json::<Outer>(o).unwrap_or("ERR")
-    println!("{}", text)
-    let back = from_json::<Outer>(&text).unwrap_or(Outer {
+    println("{}", text)
+    let back = from_json::<Outer>(text).unwrap_or(Outer {
         name: "?"
         inner: Inner { a: 0, b: "?" }
         xs: #[]
     })
-    println!("{} {} {}", back.name, back.inner.a, back.xs[0].b)
+    println("{} {} {}", back.name, back.inner.a, back.xs[0].b)
     match UnixStream::connect("/nonexistent-gossamer-regression.sock") {
         Ok(s) => {
             let c = Client { pg: Conn { sock: Socket::Unix(s), counter: 3 }, label: "pg" }
-            println!("{} {}", c.label, c.pg.counter)
+            println("{} {}", c.label, c.pg.counter)
         }
-        Err(_) => println!("no socket")
+        Err(_) => println("no socket")
     }
 }
 "#;
@@ -1829,16 +1829,16 @@ fn a_for_over_a_literal_keeps_the_literal_as_the_sequence_it_walks() {
 fn main() {
     let mut total = 0
     for cmd in #[1, 2, 3, 4] {
-        let (dx, dy) = dir(cmd)
+        let dx, dy = dir(cmd)
         total += dx + dy
     }
-    println!("{}", total)
+    println("{}", total)
     let mut seen = 0
     for cmd in #[2, 4] {
-        let (dx, _) = dir(cmd)
+        let dx, _ = dir(cmd)
         seen += dx
     }
-    println!("{}", seen)
+    println("{}", seen)
 }
 
 fn dir(cmd: i64) -> (i64, i64) {
@@ -1847,7 +1847,7 @@ fn dir(cmd: i64) -> (i64, i64) {
         2 => (0, 1)
         3 => (-1, 0)
         4 => (1, 0)
-        _ => panic!("bad")
+        _ => panic("bad")
     }
 }
 "#;
@@ -1887,13 +1887,13 @@ fn set_result(r: &mut Result<i64, String>) {
 fn main() {
     let mut pair = Some((0, 0))
     set_pair(&mut pair)
-    println!("{}", pair)
+    println("{}", pair)
     let mut scalar = Some(0)
     set_scalar(&mut scalar)
-    println!("{}", scalar)
+    println("{}", scalar)
     let mut answer: Result<i64, String> = Ok(0)
     set_result(&mut answer)
-    println!("{}", answer)
+    println("{}", answer)
 }
 "#;
     let dir = fresh_dir("option_deref_write");
@@ -1919,13 +1919,13 @@ fn numeric_chars_answers_a_cursor_every_consumer_reads() {
     let src = r#"
 fn main() {
     let digits = 123_456.to_string().chars().collect()
-    println!("{}", digits.len())
-    println!("{}", 123_456.to_string().chars().count())
+    println("{}", digits.len())
+    println("{}", 123_456.to_string().chars().count())
     let mut seen = 0
     for c in 123.to_string().chars() {
         seen += 1
     }
-    println!("{}", seen)
+    println("{}", seen)
 }
 "#;
     let dir = fresh_dir("numeric_chars_cursor");

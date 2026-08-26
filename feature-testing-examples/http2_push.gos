@@ -14,8 +14,8 @@ fn main() {
     let weight = 16
     let exclusive = false
     let depends_on = 0
-    println!("default_weight={}", weight)
-    println!("exclusive={}", exclusive)
-    println!("depends_on={}", depends_on)
-    println!("push_promise_supported=true")
+    println("default_weight={}", weight)
+    println("exclusive={}", exclusive)
+    println("depends_on={}", depends_on)
+    println("push_promise_supported=true")
 }

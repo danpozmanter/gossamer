@@ -135,6 +135,64 @@ pub enum ParseError {
     /// used to spell is retired in favour of a closure step.
     #[error("`$` is not part of the language")]
     PipePlaceholderRetired,
+    /// A validating macro was written; it lives in its module now.
+    #[error("`{name}!` moved into its module")]
+    ValidatingMacroMoved {
+        /// The macro name as written.
+        name: String,
+    },
+    /// A build-time validated call handed something other than a literal.
+    #[error("`sql::statement` takes a literal")]
+    ValidatedCallNeedsLiteral,
+    /// An `enum Name : R` named something that is not an unsigned width.
+    #[error("an enum representation is an unsigned width, not `{written}`")]
+    EnumReprWidth {
+        /// The representation as written.
+        written: String,
+    },
+    /// A compiler-known call was written with a `!`.
+    #[error("`{name}` is an ordinary call; drop the `!`")]
+    MacroSigilRetired {
+        /// The name as written, without the bang.
+        name: String,
+    },
+    /// An opaque alias was written `type X = new T`.
+    #[error("an opaque alias is written `newtype X = T`")]
+    OpaqueAliasSpelling,
+    /// A `Display` implementation declared the rendering as `to_string`.
+    #[error("the `Display` contract is `fn fmt`")]
+    DisplayContractMethod,
+    /// A parameter was declared with a shared reference type.
+    #[error("a parameter is `T` or `&mut T`; a shared `&` names no choice")]
+    SharedReferenceParameter,
+    /// A call argument was written as a shared reference.
+    #[error("a shared `&` on an argument names no choice; drop it")]
+    SharedReferenceArgument,
+    /// `unsafe` was written. It grants nothing the language withholds.
+    #[error("`unsafe` grants nothing; drop it")]
+    UnsafeGrantsNothing,
+    /// An argument label was bound with `=` instead of `:`.
+    #[error("an argument label binds with `:`, not `=`")]
+    ArgumentLabelSeparator {
+        /// The label as written.
+        name: String,
+    },
+    /// A callable type was written with a spelling other than `Fn`.
+    #[error("`{written}` is not a callable type; the language has one, `Fn`")]
+    CallableTypeSpelling {
+        /// The spelling as written.
+        written: String,
+    },
+    /// A `mod` declaration ended in `;`. A statement ends at its newline.
+    #[error("a `mod` declaration ends at its newline, not at a `;`")]
+    ModDeclSemicolon,
+    /// A `let` binding or an assignment wrote its targets as a parenthesised
+    /// tuple. The comma-separated list is the one spelling.
+    #[error("a binding lists its targets without parentheses")]
+    LetPatternParens {
+        /// The paren-free spelling of the same targets.
+        replacement: String,
+    },
     /// A `|>` step takes arguments, so it cannot also take the piped value.
     #[error("a `|>` step that takes arguments must be a closure")]
     PipeStepNeedsClosure {
@@ -232,10 +290,6 @@ pub enum ParseError {
     /// placeholders can be checked during parsing.
     #[error("format argument must be a string literal")]
     FormatStringMustBeLiteral,
-    /// A formatting macro was written as a `|>` step. A macro takes its
-    /// arguments as written, so the piped value has no slot of its own.
-    #[error("a formatting macro is not a `|>` step")]
-    PipedFormatMacroStep,
     /// A `const` or `static` declaration whose name was followed directly by
     /// `=`. These items carry no inference, so the type annotation is part of
     /// the grammar rather than an option.
@@ -344,6 +398,10 @@ impl ParseDiagnostic {
     /// Renders this parse diagnostic as a structured
     /// [`gossamer_diagnostics::Diagnostic`].
     #[must_use]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per diagnostic that carries a suggestion"
+    )]
     pub fn to_diagnostic(&self) -> gossamer_diagnostics::Diagnostic {
         use gossamer_diagnostics::{Code, Diagnostic, Location, Suggestion};
         let location = Location::new(self.span.file, self.span);
@@ -364,6 +422,88 @@ impl ParseDiagnostic {
                 location,
                 format!("annotate the type: `{name}: {ty}`"),
                 format!("{name}: {ty}"),
+            ));
+        }
+        if let ParseError::ValidatingMacroMoved { name } = &self.error {
+            let replacement = if name == "regex" {
+                "regex::compile"
+            } else {
+                "sql::statement"
+            };
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                format!("write `{replacement}`"),
+                String::new(),
+            ));
+        }
+        if matches!(self.error, ParseError::MacroSigilRetired { .. }) {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                "drop the `!`".to_string(),
+                String::new(),
+            ));
+        }
+        if matches!(self.error, ParseError::SharedReferenceArgument) {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                "drop the `&`".to_string(),
+                String::new(),
+            ));
+        }
+        if matches!(self.error, ParseError::SharedReferenceParameter) {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                "drop the `&`".to_string(),
+                String::new(),
+            ));
+        }
+        if matches!(self.error, ParseError::DisplayContractMethod) {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                "write `fmt`".to_string(),
+                "fmt".to_string(),
+            ));
+        }
+        if matches!(self.error, ParseError::OpaqueAliasSpelling) {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                "drop `new` and write `newtype` in place of `type`".to_string(),
+                String::new(),
+            ));
+        }
+        if matches!(self.error, ParseError::UnsafeGrantsNothing) {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                "drop `unsafe`".to_string(),
+                String::new(),
+            ));
+        }
+        if let ParseError::ArgumentLabelSeparator { name } = &self.error {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                format!("write `{name}:`"),
+                ":".to_string(),
+            ));
+        }
+        if matches!(self.error, ParseError::CallableTypeSpelling { .. }) {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                "write `Fn`".to_string(),
+                "Fn".to_string(),
+            ));
+        }
+        if matches!(self.error, ParseError::ModDeclSemicolon) {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                "drop the `;`".to_string(),
+                String::new(),
+            ));
+        }
+        if let ParseError::LetPatternParens { replacement } = &self.error {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                format!("write `{replacement}`"),
+                replacement.clone(),
             ));
         }
         // The rewrite covers the step alone, so every step of a chain
@@ -546,6 +686,7 @@ impl ParseError {
     }
 
     /// Code/title/help for range, match-arm, and pipe syntax errors.
+    #[allow(clippy::too_many_lines, reason = "one arm per diagnostic code")]
     fn code_title_help_syntax(&self) -> (&'static str, String, Option<String>) {
         match self {
             ParseError::InclusiveRangeMissingEnd => (
@@ -566,14 +707,151 @@ impl ParseError {
                         .to_string(),
                 ),
             ),
+            ParseError::ValidatingMacroMoved { name } => {
+                let replacement = if name == "regex" {
+                    "regex::compile"
+                } else {
+                    "sql::statement"
+                };
+                (
+                    "GP0051",
+                    format!("`{name}!` moved into its module"),
+                    Some(format!(
+                        "write `{replacement}(\"…\")`; a literal argument is still \
+                         validated while the program is compiled, and `{name}` stays a \
+                         module name rather than becoming a global"
+                    )),
+                )
+            }
+            ParseError::ValidatedCallNeedsLiteral => (
+                "GP0052",
+                "`sql::statement` takes a literal".to_string(),
+                Some(
+                    "the statement is checked while the program is compiled, so it has to \
+                     be there to check; a statement built at run time is an ordinary \
+                     `String` and needs no wrapper"
+                        .to_string(),
+                ),
+            ),
+            ParseError::EnumReprWidth { written } => (
+                "GP0050",
+                format!("an enum representation is an unsigned width, not `{written}`"),
+                Some(
+                    "write `enum Name : u8 { .. }` - a discriminant is a count, so its \
+                     store is unsigned, and the width is between 1 and 64 bits"
+                        .to_string(),
+                ),
+            ),
+            ParseError::MacroSigilRetired { name } => (
+                "GP0049",
+                format!("`{name}` is an ordinary call; drop the `!`"),
+                Some(
+                    "the set of compiler-known names is closed and recognised at the \
+                     `(`, so there is nothing a sigil disambiguates. The first argument \
+                     is still the template when it is a string literal"
+                        .to_string(),
+                ),
+            ),
+            ParseError::SharedReferenceArgument => (
+                "GP0055",
+                "a shared `&` on an argument names no choice; drop it".to_string(),
+                Some(
+                    "no parameter is a shared reference, so the sigil changes nothing: \
+                     an argument is passed without copying either way, and a callee \
+                     writes to the caller's variable only through a `&mut` parameter, \
+                     which is spelled `&mut` at the call too"
+                        .to_string(),
+                ),
+            ),
+            ParseError::SharedReferenceParameter => (
+                "GP0054",
+                "a parameter is `T` or `&mut T`; a shared `&` names no choice".to_string(),
+                Some(
+                    "an argument is passed without copying whatever its type, and a \
+                     callee cannot write to the caller's variable unless the parameter \
+                     says `&mut`, so `f(m: &Map)` and `f(m: Map)` have the same cost \
+                     and the same guarantee. A sequence view is written `[T]`, and \
+                     `&mut [T]` is the form that writes through"
+                        .to_string(),
+                ),
+            ),
+            ParseError::DisplayContractMethod => (
+                "GP0053",
+                "the `Display` contract is `fn fmt`".to_string(),
+                Some(
+                    "`Display` and `Debug` each declare one method that answers a \
+                     `String`, so both are written `fn fmt`; which one a value \
+                     reaches is decided by the `impl` header, `{}` taking `Display` \
+                     and `{:?}` taking `Debug`. `x.to_string()` still renders through \
+                     `Display`"
+                        .to_string(),
+                ),
+            ),
+            ParseError::OpaqueAliasSpelling => (
+                "GP0047",
+                "an opaque alias is written `newtype X = T`".to_string(),
+                Some(
+                    "`new` reads as allocation to a reader arriving from any other \
+                     language; `newtype` is the standard name for a distinct type over \
+                     one representation"
+                        .to_string(),
+                ),
+            ),
+            ParseError::UnsafeGrantsNothing => (
+                "GP0046",
+                "`unsafe` grants nothing; drop it".to_string(),
+                Some(
+                    "no operation is withheld outside an `unsafe` block or from a safe \
+                     `fn`, so the keyword marked a boundary the language does not draw. \
+                     It stays reserved for a future raw-FFI story"
+                        .to_string(),
+                ),
+            ),
+            ParseError::ArgumentLabelSeparator { name } => (
+                "GP0045",
+                "an argument label binds with `:`, not `=`".to_string(),
+                Some(format!(
+                    "write `{name}: value`; every keyed form in the language - a struct \
+                     field, a map entry, a `cohort` header setting - binds with `:`, and \
+                     `=` at a call site reads as the assignment it is elsewhere"
+                )),
+            ),
+            ParseError::CallableTypeSpelling { written } => (
+                "GP0044",
+                format!("`{written}` is not a callable type; the language has one, `Fn`"),
+                Some(
+                    "write `Fn(args) -> ret`. There is no raw function-pointer shape \
+                     and no `FnMut` / `FnOnce` distinction to draw"
+                        .to_string(),
+                ),
+            ),
+            ParseError::ModDeclSemicolon => (
+                "GP0043",
+                "a `mod` declaration ends at its newline, not at a `;`".to_string(),
+                Some(
+                    "write `mod name`; a trailing semicolon is invalid everywhere else \
+                     in the language, and this was the one form that asked for one"
+                        .to_string(),
+                ),
+            ),
+            ParseError::LetPatternParens { .. } => (
+                "GP0042",
+                "a binding lists its targets without parentheses".to_string(),
+                Some(
+                    "write `let a, b = value` and `a, b = x, y`; parentheses group a \
+                     pattern that sits beside others - a `match` arm, a `for` binding, \
+                     a parameter, or a nested element of the list"
+                        .to_string(),
+                ),
+            ),
             ParseError::PipeStepNeedsClosure { .. } => (
                 "GP0041",
                 "a `|>` step that takes arguments must be a closure".to_string(),
                 Some(
                     "write the step as a closure whose parameter is the piped value, as in \
-                     `x |> |v| f(a, v)`. `--fix` puts the parameter in the trailing slot, \
-                     which a data-first callee does not want - check that is the slot the \
-                     call needs"
+                     `x |> |v| f(v, a)`. Every std free function takes its data first, \
+                     which is the slot `--fix` writes; check it is the slot this call \
+                     needs"
                         .to_string(),
                 ),
             ),
@@ -642,15 +920,9 @@ impl ParseError {
                 "GP0024",
                 "format argument must be a string literal".to_string(),
                 Some(
-                    "use a literal template such as `format!(\"value: {}\", value)`"
-                        .to_string(),
-                ),
-            ),
-            ParseError::PipedFormatMacroStep => (
-                "GP0025",
-                "a formatting macro is not a `|>` step".to_string(),
-                Some(
-                    "write the step as a closure, as in `value |> |v| println!(\"… {}\", v)`"
+                    "the first argument is the template when it is a string literal, and a \
+                     lone argument renders on its own; two or more arguments need a \
+                     template, as in `format(\"value: {}\", value)`"
                         .to_string(),
                 ),
             ),

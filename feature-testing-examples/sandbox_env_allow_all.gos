@@ -22,11 +22,11 @@ fn main() {
     let mut mine = #[]
     for name in policy.environment_names() {
         if name.starts_with("GOS_ALLOW_") {
-            mine.push(format!("{}={}", name, policy.environment_value(name)))
+            mine.push(format("{}={}", name, policy.environment_value(name)))
         }
     }
     mine.sort()
-    println!("allowed={}", mine.join(","))
+    println("allowed={}", mine.join(","))
 
     // An empty list is a policy unchanged, not a policy emptied.
     let untouched = policy.env_allow_all(#[])
@@ -34,12 +34,12 @@ fn main() {
     for name in untouched.environment_names() {
         if name.starts_with("GOS_ALLOW_") { still += 1 }
     }
-    println!("after-empty={}", still)
+    println("after-empty={}", still)
 
     // One name at a time reaches the same place.
     let single = sandbox::Policy::new()
         .env_allow("GOS_ALLOW_ONE")
         .env_allow("GOS_ALLOW_TWO")
         .env_allow("GOS_ALLOW_THREE")
-    println!("same={}", single.environment_names() == policy.environment_names())
+    println("same={}", single.environment_names() == policy.environment_names())
 }

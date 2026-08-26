@@ -95,19 +95,19 @@ use std::collections::Map
 
 fn main() {
     match database_query("select id") {
-        Ok(rows) => { println!("rows={}", rows.len()) },
+        Ok(rows) => { println("rows={}", rows.len()) },
         Err(err) => { panic(err) },
     }
     let mut attrs: Map<String, String> = Map::new()
     attrs.insert("service", "fixture")
     attrs.insert("environment", "test")
-    println!("attrs={}", attribute_count(attrs))
+    println("attrs={}", attribute_count(attrs))
     match parse_args(["serve", "--dry-run"]) {
-        Ok(args) => { println!("args={}", args.len()) },
+        Ok(args) => { println("args={}", args.len()) },
         Err(err) => { panic(err) },
     }
     match exchange_code("good") {
-        Ok(token) => { println!("token={}", token) },
+        Ok(token) => { println("token={}", token) },
         Err(err) => { panic(err) },
     }
 }

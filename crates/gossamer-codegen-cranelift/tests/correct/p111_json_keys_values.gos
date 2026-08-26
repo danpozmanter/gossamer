@@ -1,34 +1,34 @@
 use std::encoding::json
 
 fn main() {
-    let v = json::parse(&"{\"a\":1,\"b\":2}").unwrap()
-    let keys = json::keys(&v).unwrap()
+    let v = json::parse("{\"a\":1,\"b\":2}").unwrap()
+    let keys = json::keys(v).unwrap()
     let n = keys.len() as i64
-    println!("keys.len = {}", n)
+    println("keys.len = {}", n)
     let mut i: i64 = 0
     while i < n {
-        println!("k[{}] = {}", i, keys[i])
+        println("k[{}] = {}", i, keys[i])
         i += 1
     }
     let mut vals = #[]
     for key in keys {
-        match json::get(&v, &key) {
+        match json::get(v, key) {
             Some(item) => vals.push(item)
             None => {}
         }
     }
     let m = vals.len() as i64
-    println!("vals.len = {}", m)
+    println("vals.len = {}", m)
     let mut j: i64 = 0
     while j < m {
         let item = vals[j]
-        println!("v[{}] = {}", j, json::as_i64(&item).unwrap_or(-1))
+        println("v[{}] = {}", j, json::as_i64(item).unwrap_or(-1))
         j += 1
     }
     // Non-object → None
-    let s = json::parse(&"\"hi\"").unwrap()
-    match json::keys(&s) {
-        Some(_) => println!("BAD")
-        None => println!("string has no keys: ok")
+    let s = json::parse("\"hi\"").unwrap()
+    match json::keys(s) {
+        Some(_) => println("BAD")
+        None => println("string has no keys: ok")
     }
 }

@@ -23,7 +23,7 @@ are returned as `Result<T, E>` instead of raised as exceptions.
 | `collections.deque` as deque | `Deque<i64>` with explicit front/back methods |
 | stack list | `Stack<i64>` from `Stack::from([a, b])`, `push`, and LIFO `pop` |
 | `heapq` min-heap | `MinHeap::from([...])`; use `MaxHeap::from([...])` for max-heap order |
-| `asyncio.create_task` | `go fn() { ... }()` |
+| `asyncio.create_task` | `spawn(|| { ... })` |
 | `if __name__ == "__main__"` | entry-file top-level statements |
 
 ## Gossamer 0.47 Syntax At A Glance
@@ -120,9 +120,9 @@ enum Event {
 }
 
 match event {
-    Event::Click(x, y) => println!("click {x} {y}")
-    Event::Message(text) => println!("{text}")
-    Event::Closed => println!("closed")
+    Event::Click(x, y) => println("click {x} {y}")
+    Event::Message(text) => println("{text}")
+    Event::Closed => println("closed")
 }
 ```
 
@@ -138,7 +138,7 @@ let name: Option<String> = user_name()
 let display = name.unwrap_or("anonymous")
 
 if let Some(n) = name {
-    println!("hello, {n}")
+    println("hello, {n}")
 }
 ```
 
@@ -159,15 +159,15 @@ except Exception as e:
 ```gos
 use std::{errors, fs}
 
-fn read_config(path: &String) -> Result<Config, errors::Error> {
+fn read_config(path: String) -> Result<Config, errors::Error> {
     let text = fs::read_to_string(path)?
-    parse_config(&text)
+    parse_config(text)
 }
 
-let cfg = match read_config(&path) {
+let cfg = match read_config(path) {
     Ok(v) => v
     Err(e) => {
-        log(&e)
+        log(e)
         default_config()
     }
 }
@@ -187,8 +187,8 @@ Gossamer:
 use std::iter
 
 let total = iter::range_inclusive(1, 10)
-    |> |v| iter::filter(|n: i64| n % 2 == 0, v)
-    |> |v| iter::sum_by(|n: i64| n * n, v)
+    |> |v| iter::filter(v, |n: i64| n % 2 == 0)
+    |> |v| iter::sum_by(v, |n: i64| n * n)
 ```
 
 For stateful code, ordinary loops are still idiomatic:
@@ -227,12 +227,12 @@ Python `async` code usually becomes goroutines plus channels when work
 must run concurrently:
 
 ```gos
-let (tx, rx) = channel()
+let tx, rx = channel()
 
 for url in urls {
     let tx = tx.clone()
-    go fn() {
-        tx.send(http::get(&url, #[]))
+    spawn(|| {
+        tx.send(http::get(url, #[]))
     }()
 }
 
@@ -275,7 +275,7 @@ impl Amount {
     fn normalize(&self) -> i64 { self.cents }   // private helper
 }
 
-pub(package) fn round_trip(a: &Amount) -> i64 { a.normalize() }
+pub(package) fn round_trip(a: Amount) -> i64 { a.normalize() }
 ```
 
 A `pub` type may keep private methods and private fields, so a struct with any
@@ -298,10 +298,10 @@ not a lint. Anything you want another module to reach needs `pub` or
 | `Path(path).write_text(s)` | `fs::write(path, s)` |
 | `os.environ.get("X")` | `env::var("X")` |
 | `sys.argv` | `env::args()` |
-| `subprocess.run([...])` | `process::run(program, &args)` |
-| `print(x)` | `println!("{x}")` |
+| `subprocess.run([...])` | `process::run(program, args)` |
+| `print(x)` | `println("{x}")` |
 | `json.dumps(v)` | `encoding::json::encode(v)` |
 | `json.loads(s)` | `encoding::json::decode::<T>(s)` |
 | `re.compile(p)` | `regex::compile(p)` |
-| `s.strip()` | `strings::trim(&s)` |
-| `int(s)` | `strconv::parse_i64(&s)` |
+| `s.strip()` | `strings::trim(s)` |
+| `int(s)` | `strconv::parse_i64(s)` |

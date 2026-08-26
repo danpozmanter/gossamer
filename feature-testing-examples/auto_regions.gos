@@ -4,7 +4,7 @@
 // either direction (over-region an escaping value -> UAF/wrong output;
 // under-region -> still correct, just slower).
 
-enum Tree { Leaf, Node(Box<Tree>, Box<Tree>) }
+enum Tree { Leaf, Node(Tree, Tree) }
 
 fn make(d: i64) -> Tree {
     if d == 0 {
@@ -14,7 +14,7 @@ fn make(d: i64) -> Tree {
     }
 }
 
-fn count(t: &Tree) -> i64 {
+fn count(t: Tree) -> i64 {
     match t {
         Tree::Leaf => 1
         Tree::Node(l, r) => 1 + count(l) + count(r)
@@ -27,7 +27,7 @@ fn main() {
     let mut churn: i64 = 0
     let mut i: i64 = 0
     while i < 1000 {
-        churn += count(&make(6))
+        churn += count(make(6))
         i += 1
     }
 
@@ -46,5 +46,5 @@ fn main() {
         total += count(t)
     }
 
-    println!("{} {}", churn, total)
+    println("{} {}", churn, total)
 }

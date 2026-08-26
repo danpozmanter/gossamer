@@ -223,7 +223,7 @@ with parentheses rather than brackets and needs no import.
 ```gos
 let entry = (1, "two", 3.0)
 println(entry.1)
-let (id, name, weight) = entry
+let id, name, weight = entry
 ```
 
 See [Tuples](language/tuples.md) for the full surface.

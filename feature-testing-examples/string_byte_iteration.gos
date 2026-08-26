@@ -15,7 +15,7 @@ fn main() {
         for b in raw { bound.push(b as i64) }
         let mut iterform: Vec<i64> = #[]
         for b in text.bytes() { iterform.push(b as i64) }
-        println!("{} len={} byte_len={} direct={} bound={} bytes={} same={}"
+        println("{} len={} byte_len={} direct={} bound={} bytes={} same={}"
             text, text.len(), text.byte_len(), direct.len(), bound.len(), iterform.len()
             direct == bound && direct == iterform)
     }

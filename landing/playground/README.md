@@ -38,7 +38,7 @@ Embed it anywhere:
   import { mountPlayground } from "./playground/playground.js";
 
   mountPlayground(document.getElementById("demo"), {
-    source: 'fn main() {\n    println!("hello")\n}\n',
+    source: 'fn main() {\n    println("hello")\n}\n',
     autorun: true,
     height: "240px",
   });

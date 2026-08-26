@@ -1950,7 +1950,7 @@ impl<'a> Builder<'a> {
             // A nested destructuring sub-pattern (`(b, c)`, `Point { x, y }`,
             // a tuple-struct variant) extracts its field into a fresh local
             // and recurses; a bare `else { continue }` skipped it, leaving its
-            // bindings unmaterialised (`let (a, (b, c)) = t` lost b and c).
+            // bindings unmaterialised (`let a, (b, c) = t` lost b and c).
             let (name, mutable) = match &sub.kind {
                 HirPatKind::Binding { name, mutable } => (name, *mutable),
                 _ => {

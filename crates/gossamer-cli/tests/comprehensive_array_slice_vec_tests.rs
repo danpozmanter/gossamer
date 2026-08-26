@@ -19,7 +19,7 @@ fn diagnostics(body: &str) -> Vec<String> {
     let source = format!("fn main() {{\n{body}\n}}\n");
     let mut map = SourceMap::new();
     let file = map.add_file("comprehensive_array_slice_vec_tests.gos", source.clone());
-    let (parsed, parse_diagnostics) = parse_source_file(&source, file);
+    let (mut parsed, parse_diagnostics) = parse_source_file(&source, file);
     if !parse_diagnostics.is_empty() {
         return parse_diagnostics
             .into_iter()
@@ -27,6 +27,7 @@ fn diagnostics(body: &str) -> Vec<String> {
             .collect();
     }
     let (resolutions, resolve_diagnostics) = resolve_source_file(&parsed);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut parsed, &resolutions);
     if !resolve_diagnostics.is_empty() {
         return resolve_diagnostics
             .into_iter()
@@ -191,16 +192,31 @@ fn all_four_rust_unsizing_coercions_are_accepted() {
 
 #[test]
 fn parameters_returns_and_owned_assignments_keep_each_sequence_identity() {
+    // The two spellings differ in exactly one place, and deliberately: a
+    // Gossamer parameter names the sequence view as `[T]`, where Rust
+    // needs the `&` because the view is unsized by value there.
+    let body = "let fixed = array_id([1, 2, 3]);\n\
+        let mut fixed_mut = fixed;\n\
+        slice_set(&mut fixed_mut);\n\
+        let grown = vec_id(Vec::from([4, 5, 6]));\n\
+        let _total = slice_len(&fixed_mut) + slice_len(&grown);";
+    let oracle = format!(
+        "fn array_id(value: [i64; 3]) -> [i64; 3] {{ value }}\n\
+         fn slice_len(value: &[i64]) -> usize {{ value.len() }}\n\
+         fn slice_set(value: &mut [i64]) {{ value[0] = 9 }}\n\
+         fn vec_id(value: Vec<i64>) -> Vec<i64> {{ value }}\n\
+         {body}"
+    );
     let accepted = "fn array_id(value: [i64; 3]) -> [i64; 3] { value }\n\
-        fn slice_len(value: &[i64]) -> usize { value.len() as usize }\n\
+        fn slice_len(value: [i64]) -> usize { value.len() as usize }\n\
         fn slice_set(value: &mut [i64]) { value[0] = 9 }\n\
         fn vec_id(value: Vec<i64>) -> Vec<i64> { value }\n\
         let fixed = array_id([1, 2, 3]);\n\
         let mut fixed_mut = fixed;\n\
         slice_set(&mut fixed_mut);\n\
         let grown = vec_id(Vec::from([4, 5, 6]));\n\
-        let _total = slice_len(&fixed_mut) + slice_len(&grown);";
-    assert!(rust_accepts(accepted), "Rust rejected the parameter oracle");
+        let _total = slice_len(fixed_mut) + slice_len(grown);";
+    assert!(rust_accepts(&oracle), "Rust rejected the parameter oracle");
     assert_accepted("array, slice, and Vec parameters and returns", accepted);
 
     assert!(
@@ -509,28 +525,28 @@ fn write_owned_sequence_parameter_fixture(source: &Path) {
          }\n\
          let array = [1, 2, 3]\n\
          let vector = #[1, 2, 3]\n\
-         println!(\"{} {} {:?} {:?}\", mutate_array(array), mutate_vec(vector), array, vector)\n\
+         println(\"{} {} {:?} {:?}\", mutate_array(array), mutate_vec(vector), array, vector)\n\
          let nested = #[#[1, 2]]\n\
-         println!(\"{} {:?}\", mutate_nested(nested), nested)\n\
+         println(\"{} {:?}\", mutate_nested(nested), nested)\n\
          let wrapped = Wrapped { values: #[1, 2] }\n\
-         println!(\"{} {:?}\", mutate_wrapped(wrapped), wrapped.values)\n\
+         println(\"{} {:?}\", mutate_wrapped(wrapped), wrapped.values)\n\
          let array_of_vec = [#[1, 2]]\n\
-         println!(\"{} {}\", mutate_array_of_vec(array_of_vec), array_of_vec[0].len())\n\
-         let (tx, rx) = channel::<Vec<i64>>(1)\n\
+         println(\"{} {}\", mutate_array_of_vec(array_of_vec), array_of_vec[0].len())\n\
+         let tx, rx = channel::<Vec<i64>>(1)\n\
          tx.send(vector)\n\
          let mut received = rx.recv().unwrap()\n\
          received.push(5)\n\
-         println!(\"{:?} {:?}\", vector, received)\n\
+         println(\"{:?} {:?}\", vector, received)\n\
          let words = #[\"alpha\", \"beta\"]\n\
-         let (word_tx, word_rx) = channel::<Vec<String>>(1)\n\
+         let word_tx, word_rx = channel::<Vec<String>>(1)\n\
          word_tx.send(words)\n\
          let mut received_words = word_rx.recv().unwrap()\n\
          received_words.push(\"gamma\")\n\
-         println!(\"{:?} {:?}\", words, received_words)\n\
-         let (done_tx, done_rx) = channel::<i64>(1)\n\
-         go publish_words(words, done_tx)\n\
-         println!(\"{}\", done_rx.recv().unwrap())\n\
-         println!(\"{}\", wrapped.values.len())\n",
+         println(\"{:?} {:?}\", words, received_words)\n\
+         let done_tx, done_rx = channel::<i64>(1)\n\
+         spawn(|| publish_words(words, done_tx))\n\
+         println(\"{}\", done_rx.recv().unwrap())\n\
+         println(\"{}\", wrapped.values.len())\n",
     )
     .expect("write owned parameter fixture");
 }

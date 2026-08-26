@@ -1,11 +1,11 @@
-// Opaque nominal aliases: `type Name = new Repr` declares a distinct type
+// Opaque nominal aliases: `newtype Name = Repr` declares a distinct type
 // over an unchanged runtime representation.
 
 use std::collections::{Map, Set}
 
-type UserId = new i64
-type Score = new i64
-type Label = new String
+newtype UserId = i64
+newtype Score = i64
+newtype Label = String
 type Transparent = i64
 
 impl UserId {
@@ -40,7 +40,7 @@ fn accumulate(seed: UserId, rounds: i64) -> i64 {
 }
 
 fn describe(id: UserId) -> String {
-    format!("user:{}", id)
+    format("user:{}", id)
 }
 
 // A field typed by an alias serializes as its representation and decodes
@@ -52,67 +52,67 @@ fn main() {
     // directions and carries no work.
     let id: UserId = 41.into()
     let raw: i64 = id.into()
-    println!("id {} raw {}", id, raw)
+    println("id {} raw {}", id, raw)
 
     // An alias carries its own impl, and a method may return the alias.
-    println!("next {}", id.next())
-    println!("value {}", id.value())
+    println("next {}", id.next())
+    println("value {}", id.value())
 
     // Two aliases over the same representation stay distinct from each
     // other, not just from the representation.
     let s: Score = 10.into()
-    println!("score {}", s)
+    println("score {}", s)
 
     // Crossing between two aliases runs the impl that was written for it.
     let converted: Score = id.into()
-    println!("converted {}", converted)
+    println("converted {}", converted)
 
     // A transparent alias keeps its substitute-everywhere meaning.
     let t: Transparent = 5
-    println!("transparent {}", t + 1)
+    println("transparent {}", t + 1)
 
     // The representation's own behaviour shows through: ordering and
     // equality compare the underlying values.
     let a: UserId = 1.into()
     let b: UserId = 2.into()
-    println!("cmp {} {} {}", a == b, a < b, a == 1.into())
+    println("cmp {} {} {}", a == b, a < b, a == 1.into())
 
     // Hashable wherever the representation is, and the key round-trips.
     let mut seats: Map<UserId, String> = Map::new()
     seats.insert(a, "front")
     seats.insert(b, "back")
     match seats.get(a) {
-        Some(seat) => println!("seat {}", seat)
-        None => println!("seat missing")
+        Some(seat) => println("seat {}", seat)
+        None => println("seat missing")
     }
-    println!("seats {}", seats.len())
+    println("seats {}", seats.len())
 
     let mut seen: Set<UserId> = Set::new()
     seen.insert(a)
     seen.insert(a)
-    println!("set {}", seen.len())
+    println("set {}", seen.len())
 
     // A non-integer representation works the same way.
     let tag: Label = "beta".into()
     let tag_raw: String = tag.into()
-    println!("tag {} {}", tag, tag_raw.len())
+    println("tag {} {}", tag, tag_raw.len())
 
     // Nested in a container, the alias is still the element type.
     let ids: Vec<UserId> = #[a, b]
-    println!("ids {} {}", ids.len(), ids[1])
+    println("ids {} {}", ids.len(), ids[1])
 
-    println!("acc {}", accumulate(id, 6))
-    println!("{}", describe(id))
+    println("acc {}", accumulate(id, 6))
+    println("{}", describe(id))
 
     let rec = Record { id: a, plain: 3, n: 9 }
     match to_json::<Record>(rec) {
         Ok(text) => {
-            println!("json {}", text)
-            match from_json::<Record>(&text) {
-                Ok(back) => println!("back {} {} {}", back.id, back.plain, back.n)
-                Err(e) => println!("decode failed {}", e)
+            println("json {}", text)
+            match from_json::<Record>(text) {
+                Ok(back) => println("back {} {} {}", back.id, back.plain, back.n)
+                Err(e) => println("decode failed {}", e)
             }
         }
-        Err(e) => println!("encode failed {}", e)
+        Err(e) => println("encode failed {}", e)
     }
 }

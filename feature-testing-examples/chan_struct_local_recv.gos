@@ -11,8 +11,8 @@ use std::sync::channel
 struct Msg { id: i64, text: String }
 
 fn produce(tx: Sender<Msg>) {
-    tx.send(Msg { id: 1, text: format!("ab") })
-    tx.send(Msg { id: 2, text: format!("cde") })
+    tx.send(Msg { id: 1, text: format("ab") })
+    tx.send(Msg { id: 2, text: format("cde") })
     tx.close()
 }
 
@@ -26,19 +26,19 @@ fn consume(rx: Receiver<Msg>) -> i64 {
 
 fn main() {
     // Inferred channel, recv via a typed-parameter Receiver.
-    let (tx1, rx1) = channel()
-    go produce(tx1)
+    let tx1, rx1 = channel()
+    spawn(|| produce(tx1))
     let via_param = consume(rx1)
 
     // Inferred channel, send and recv in the same function on a local Receiver.
-    let (tx2, rx2) = channel::unbounded()
-    tx2.send(Msg { id: 10, text: format!("xy") })
-    tx2.send(Msg { id: 20, text: format!("zzz") })
+    let tx2, rx2 = channel::unbounded()
+    tx2.send(Msg { id: 10, text: format("xy") })
+    tx2.send(Msg { id: 20, text: format("zzz") })
     tx2.close()
     let mut via_local = 0
     while let Some(m) = rx2.recv() {
         via_local += m.id + m.text.len()
     }
 
-    println!("via_param={} via_local={}", via_param, via_local)
+    println("via_param={} via_local={}", via_param, via_local)
 }

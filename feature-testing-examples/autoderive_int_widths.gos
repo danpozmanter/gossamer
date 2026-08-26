@@ -20,11 +20,11 @@ struct Mixed {
 
 fn main() -> Result<(), errors::Error> {
     let text = "{\"a\":-1,\"b\":300,\"c\":255,\"d\":9000000000,\"e\":1.5,\"f\":true,\"g\":\"hi\"}"
-    let m = from_json::<Mixed>(&text)?
-    println!("a={} b={} c={} d={} e={} f={} g={}", m.a, m.b, m.c, m.d, m.e, m.f, m.g)
+    let m = from_json::<Mixed>(text)?
+    println("a={} b={} c={} d={} e={} f={} g={}", m.a, m.b, m.c, m.d, m.e, m.f, m.g)
 
     let back = to_json::<Mixed>(m)?
-    let again = from_json::<Mixed>(&back)?
-    println!("round a={} c={} d={}", again.a, again.c, again.d)
+    let again = from_json::<Mixed>(back)?
+    println("round a={} c={} d={}", again.a, again.c, again.d)
     Ok(())
 }

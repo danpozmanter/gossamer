@@ -25,10 +25,10 @@ fn main() {
             skipped.push(name)
             continue
         }
-        kept.push(format!("{}={}", name, value))
+        kept.push(format("{}={}", name, value))
     }
-    println!("kept={}", kept.join(","))
-    println!("skipped={}", skipped.join(","))
+    println("kept={}", kept.join(","))
+    println("skipped={}", skipped.join(","))
 
     let mut seen = #[]
     for (name, _) in scores.iter() {
@@ -37,7 +37,7 @@ fn main() {
         }
         seen.push(name)
     }
-    println!("before-break={}", seen.join(","))
+    println("before-break={}", seen.join(","))
 
     // A label reaches the loop it names from inside the inner one.
     let mut pairs = #[]
@@ -49,10 +49,10 @@ fn main() {
             if left == "gamma" {
                 break 'outer
             }
-            pairs.push(format!("{}/{}", left, right))
+            pairs.push(format("{}/{}", left, right))
         }
     }
-    println!("pairs={}", pairs.join(","))
+    println("pairs={}", pairs.join(","))
 
     let mut total = 0
     for (_, value) in scores.iter() {
@@ -61,5 +61,5 @@ fn main() {
         }
         total += value
     }
-    println!("total={}", total)
+    println("total={}", total)
 }

@@ -16,8 +16,8 @@ fn main() {
     let s = a + b
     let d = b - a
     let dot = a * b
-    println!("{} {} {} {} {}", s.x, s.y, d.x, d.y, dot)
+    println("{} {} {} {} {}", s.x, s.y, d.x, d.y, dot)
     let m = Money { cents: 150 } + Money { cents: 75 }
     let q = Money { cents: 200 } / Money { cents: 4 }
-    println!("{} {}", m.cents, q.cents)
+    println("{} {}", m.cents, q.cents)
 }

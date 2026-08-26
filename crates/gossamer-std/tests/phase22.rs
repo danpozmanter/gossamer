@@ -75,7 +75,7 @@ fn canonical_modules_list_system_helpers() {
 fn item_lookup_finds_qualified_names() {
     let (_m, item_decl) = item("std::fmt::println").expect("println registered");
     assert_eq!(item_decl.name, "println");
-    assert_eq!(item_decl.kind, StdItemKind::Macro);
+    assert_eq!(item_decl.kind, StdItemKind::Builtin);
     assert!(item("std::fmt::nope").is_none());
 }
 

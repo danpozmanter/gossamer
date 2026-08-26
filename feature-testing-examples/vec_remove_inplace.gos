@@ -6,7 +6,7 @@ fn main() {
     let r = Vec::remove(&mut xs, 1).unwrap_or(-1)
     let mut sum = 0
     for x in xs { sum += x }
-    println!("removed={} len={} sum={} first={}", r, xs.len(), sum, xs[0])
+    println("removed={} len={} sum={} first={}", r, xs.len(), sum, xs[0])
     let r2 = Vec::remove(&mut xs, 0).unwrap_or(-1)
-    println!("removed2={} len={}", r2, xs.len())
+    println("removed2={} len={}", r2, xs.len())
 }

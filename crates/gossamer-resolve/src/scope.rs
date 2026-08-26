@@ -260,8 +260,9 @@ const PRELUDE_VALUES: &[&str] = &[
     "max",
     "clamp",
     // Goroutine join handle: `spawn(f)` runs `f` on a goroutine and
-    // returns a handle whose `.join()` blocks for the outcome. Bare
-    // prelude name so a user `fn spawn` overrides it.
+    // returns a handle whose `.join()` blocks for the outcome. It is the
+    // one way to start one, so a declaration under the name reports
+    // GR0020 rather than shadowing it.
     "spawn",
     // `channel()` - typed goroutine channel constructor. Prelude so the
     // injected `time::after` / `time::tick` timer wrappers can build a

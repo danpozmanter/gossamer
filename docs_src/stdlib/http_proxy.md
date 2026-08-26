@@ -30,7 +30,7 @@ and let the client/server engines manage their own:
 
 ```text
 // Drop hop-by-hop / engine-managed names; keep everything else.
-fn forwardable_headers(headers: &[(String, String)]) -> [(String, String)] {
+fn forwardable_headers(headers: [(String, String)]) -> [(String, String)] {
     let mut out: [(String, String)] = []
     for (name, value) in headers {
         let n = name.to_lowercase()
@@ -61,7 +61,7 @@ fn forward_buffered(method: String, target: String, body: [u8],
             content_type: up.content_type,
             headers: [],
         },
-        Err(e) => http::Response::text(502, format!("upstream error: {}", e)),
+        Err(e) => http::Response::text(502, format("upstream error: {}", e)),
     }
 }
 ```
@@ -79,9 +79,9 @@ flow immediately:
 ```text
 fn forward_stream(method: String, target: String, body: String,
                   headers: [(String, String)]) -> http::Response {
-    match http::stream(&method, &target, &body, headers) {
+    match http::stream(method, target, body, headers) {
         Ok(up) => http::Response::stream(up.status, up.content_type, up),
-        Err(e) => http::Response::text(502, format!("upstream error: {}", e)),
+        Err(e) => http::Response::text(502, format("upstream error: {}", e)),
     }
 }
 ```
@@ -98,15 +98,15 @@ struct App { target_base: String }
 impl http::Handler for App {
     fn serve(&self, r: http::Request) -> http::Response {
         let suffix = if r.query.len() == 0 { "" } else { "?" + &r.query }
-        let target = format!("{}{}{}", self.target_base, r.path, suffix)
-        let headers = forwardable_headers(&r.headers)
+        let target = format("{}{}{}", self.target_base, r.path, suffix)
+        let headers = forwardable_headers(r.headers)
         forward_buffered(r.method, target, r.raw_body, headers)
     }
 }
 
 fn main() {
     if let Err(e) = http::serve("127.0.0.1:8080", App { target_base: "http://localhost:3000" }) {
-        eprintln!("{}", e)
+        eprintln("{}", e)
     }
 }
 ```

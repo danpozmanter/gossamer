@@ -280,7 +280,6 @@ fn every_delimited_list_accepts_a_newline_separator() {
     for source in [
         "fn main() { let t = (\n    1\n    2\n)\n let _ = t }\n",
         "fn f() -> (\n    i64\n    i64\n) { (1, 2) }\n",
-        "fn main() { let (\n    a\n    b\n) = (1, 2)\n let _ = a + b }\n",
         "fn main() { let m = {\n    \"a\": 1\n    \"b\": 2\n}\n let _ = m }\n",
         "fn main() { let s = #{\n    1\n    2\n}\n let _ = s }\n",
         "fn main() { let v = #[\n    1\n    2\n]\n let _ = v }\n",
@@ -330,6 +329,43 @@ fn an_unterminated_list_stops_instead_of_collecting_forever() {
             !diags.is_empty(),
             "`{source}` is not a complete program and must report why"
         );
+    }
+}
+
+#[test]
+fn a_binding_lists_its_targets_without_parentheses() {
+    for source in [
+        "fn main() { let a, b = (1, 2)\n let _ = a + b }\n",
+        "fn main() { let mut a, mut b = 7, 8\n a, b += 1, 2\n let _ = a + b }\n",
+        "fn main() { let a, (b, c) = 1, (2, 3)\n let _ = a + b + c }\n",
+        "fn main() { let mut a = 1\n let mut b = 2\n a, b = b, a\n let _ = a }\n",
+    ] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("target_list.gos", source.to_string());
+        let (_, diags) = parse_source_file(source, file);
+        assert!(diags.is_empty(), "`{source}` produced {diags:?}");
+    }
+}
+
+#[test]
+fn a_parenthesised_target_list_is_rejected_with_its_rewrite() {
+    for (source, replacement) in [
+        ("fn main() { let (a, b) = (1, 2)\n let _ = a }\n", "a, b"),
+        (
+            "fn main() { let mut a = 1\n let mut b = 2\n (a, b) = (b, a)\n let _ = a }\n",
+            "a, b",
+        ),
+    ] {
+        let mut map = SourceMap::new();
+        let file = map.add_file("parenthesised_targets.gos", source.to_string());
+        let (_, diags) = parse_source_file(source, file);
+        let found = diags.iter().any(|d| {
+            matches!(
+                &d.error,
+                gossamer_parse::ParseError::LetPatternParens { replacement: r } if r == replacement
+            )
+        });
+        assert!(found, "`{source}` produced {diags:?}");
     }
 }
 
@@ -389,7 +425,7 @@ fn same_line_non_block_statements_require_semicolons() {
         "fn main() { println 1 }\n",
         "fn main() { let x = 1 let y = 2 }\n",
         "fn main() { defer cleanup() println(1) }\n",
-        "fn main() { go work() println(1) }\n",
+        "fn main() { spawn(|| { work() println(1) }) }\n",
         "println 1\n",
     ] {
         let mut map = SourceMap::new();
@@ -582,7 +618,7 @@ fn use_brace_group_accepts_nested_groups() {
 #[test]
 fn pipe_closure_step_parses() {
     let source = "use std::strings\nfn main() {\n\
-        let greeting = \"world\" |> |v| format!(\"hello, {}\", v)\n\
+        let greeting = \"world\" |> |v| format(\"hello, {}\", v)\n\
         let part = \"world\" |> |v| strings::slice(v, 1, 4)\n\
     }\n";
     let mut map = SourceMap::new();
@@ -693,7 +729,7 @@ fn format_macro_family_requires_literal_templates() {
 fn a_format_macro_is_not_a_pipe_step() {
     let source = "fn main() {\n\
         let value = \"world\"\n\
-        value |> |v| println!(\"hello, {}\", v)\n\
+        value |> |v| println(\"hello, {}\", v)\n\
     }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("pipe_format_closure.gos", source.to_string());
@@ -703,16 +739,18 @@ fn a_format_macro_is_not_a_pipe_step() {
         "a closure step reaches a formatting macro: {diags:?}"
     );
 
-    for macro_name in ["format", "println", "print", "eprintln", "eprint", "panic"] {
-        let source = format!("fn main() {{ \"world\" |> {macro_name}!(\"hello\") }}");
+    // A formatting call is an ordinary call, so an argument-taking step
+    // built from one reports what any other argument-taking step does.
+    for name in ["format", "println", "print", "eprintln", "eprint", "panic"] {
+        let source = format!("fn main() {{ \"world\" |> {name}(\"hello\") }}");
         let mut map = SourceMap::new();
         let file = map.add_file("pipe_format_step.gos", source.clone());
         let (_sf, diags) = parse_source_file(&source, file);
         assert!(
             diags
                 .iter()
-                .any(|diag| matches!(diag.error, ParseError::PipedFormatMacroStep)),
-            "{macro_name}! must not be a pipe step: {diags:?}"
+                .any(|diag| matches!(diag.error, ParseError::PipeStepNeedsClosure { .. })),
+            "`{name}` with arguments must not be a pipe step: {diags:?}"
         );
     }
 }
@@ -883,7 +921,7 @@ fn newline_separates_break_match_arm_without_comma() {
 
 #[test]
 fn assoc_type_binding_parses_into_the_bound() {
-    let source = "trait Holder { type Item }\nfn f<T: Holder<Item = i64>>(x: &T) -> i64 { 1 }\n";
+    let source = "trait Holder { type Item }\nfn f<T: Holder<Item = i64>>(x: T) -> i64 { 1 }\n";
     let mut map = SourceMap::new();
     let file = map.add_file("assoc_binding.gos", source.to_string());
     let (sf, diags) = parse_source_file(source, file);
@@ -905,7 +943,7 @@ fn assoc_type_binding_parses_into_the_bound() {
 
 #[test]
 fn assoc_type_binding_coexists_with_a_type_argument() {
-    let source = "trait Pair<A> { type Item }\nfn f<T: Pair<i64, Item = String>>(x: &T) {}\n";
+    let source = "trait Pair<A> { type Item }\nfn f<T: Pair<i64, Item = String>>(x: T) {}\n";
     let mut map = SourceMap::new();
     let file = map.add_file("assoc_binding_mixed.gos", source.to_string());
     let (sf, diags) = parse_source_file(source, file);
@@ -989,8 +1027,8 @@ fn a_triple_quoted_literal_works_as_a_match_pattern() {
         "fn main() {\n",
         "    let text = \"\"\"\n    hi\n    \"\"\"\n",
         "    match text {\n",
-        "        \"\"\"\n        hi\n        \"\"\" => println!(\"yes\")\n",
-        "        _ => println!(\"no\")\n",
+        "        \"\"\"\n        hi\n        \"\"\" => println(\"yes\")\n",
+        "        _ => println(\"no\")\n",
         "    }\n",
         "}\n"
     );

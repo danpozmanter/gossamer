@@ -1,6 +1,6 @@
 # `lang::comptime`
 
-Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. `typeInfo::<T>()` reflects a struct's fields, a tuple struct's positions, or an enum's variants - substituting the arguments for a generic instantiation - and a `for (name, ty) in typeInfo::<T>()` loop unrolls into native per-field code, and `codegen!(...)` splices a `comptime fn`'s `String` back as source. Includes the `regex!` / `sql!` build-time validation macros.
+Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. `typeInfo::<T>()` reflects a struct's fields, a tuple struct's positions, or an enum's variants - substituting the arguments for a generic instantiation - and a `for (name, ty) in typeInfo::<T>()` loop unrolls into native per-field code, and `codegen(...)` splices a `comptime fn`'s `String` back as source. Includes the `regex::compile` / `sql::statement` build-time literal validation.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
@@ -30,8 +30,8 @@ fn main() {
         for i in 1..=100 { acc += i }
         acc
     }
-    println!("{}", triangular)   // 5050
-    println!("{}", fib(10))      // 55, computed at build time
+    println("{}", triangular)   // 5050
+    println("{}", fib(10))      // 55, computed at build time
 }
 ```
 
@@ -59,7 +59,7 @@ fn scale(comptime factor: i64, x: i64) -> i64 { factor * x }
 fn main() {
     let x = read_runtime_value()
     // `BASE * 2 + 5` is folded to a constant at the call site.
-    println!("{}", scale(BASE * 2 + 5, x))
+    println("{}", scale(BASE * 2 + 5, x))
 }
 ```
 
@@ -86,7 +86,7 @@ spellings a `match` arm binds:
 enum Shape { Circle(f64), Rect { w: f64, h: f64 }, Nothing }
 
 for (variant, payload) in typeInfo::<Shape>() {
-    println!("{} carries {}", variant, payload)
+    println("{} carries {}", variant, payload)
 }
 // Circle carries f64
 // Rect carries (f64, f64)
@@ -99,7 +99,7 @@ fields that instantiation actually has:
 ```gossamer
 struct Wrapper<T> { inner: T, count: i64 }
 
-for (name, ty) in typeInfo::<Wrapper<String>>() { println!("{}: {}", name, ty) }
+for (name, ty) in typeInfo::<Wrapper<String>>() { println("{}: {}", name, ty) }
 // inner: String
 // count: i64
 ```
@@ -163,19 +163,19 @@ fn record<T>(v: T) -> String {
             "bool" => "bool",
             _ => "int",
         }
-        out += name + ":" + label + "=" + format!("{}", field_of(v, name)) + ";"
+        out += name + ":" + label + "=" + format("{}", field_of(v, name)) + ";"
     }
     out
 }
 
 // id:int=7;name:str=jane;active:bool=true;
-println!("{}", record::<User>(User { id: 7, name: "jane", active: true }))
+println("{}", record::<User>(User { id: 7, name: "jane", active: true }))
 ```
 
 A concrete-type loop (`for (name, ty) in typeInfo::<Point>()`) needs no
 turbofish and is unrolled directly.
 
-`codegen!(...)` - splices a `comptime fn`'s `String` result back as raw
+`codegen(...)` - splices a `comptime fn`'s `String` result back as raw
 source, for generation beyond the field-loop shape. The spliced
 expression is type-checked in place, so it must produce the type the call
 site expects:
@@ -184,13 +184,13 @@ site expects:
 comptime fn gen_show(fields: [(String, String)], v: String) -> String {
     let mut out = "\"\""
     for (name, _) in fields {
-        out += " + \"" + name + "=\" + format!(\"{}\", " + v + "." + name + ") + \" \""
+        out += " + \"" + name + "=\" + format(\"{}\", " + v + "." + name + ") + \" \""
     }
     out
 }
 
 fn show(p: Point) -> String {
-    codegen!(gen_show(typeInfo::<Point>(), "p"))   // emits: "" + "x=" + ... + " "
+    codegen(gen_show(typeInfo::<Point>(), "p"))   // emits: "" + "x=" + ... + " "
 }
 ```
 

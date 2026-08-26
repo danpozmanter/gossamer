@@ -521,8 +521,55 @@ fn access_for(rules: &[PathRule], path: &Path) -> Access {
 }
 
 /// The canonical form of `path`, or `None` when it has no target.
+///
+/// On Windows the resolved form is the one a program accepts as its
+/// working directory, not the verbatim one the filesystem answers with.
 fn canonicalize(path: &Path) -> Option<PathBuf> {
-    path.canonicalize().ok()
+    path.canonicalize()
+        .ok()
+        .map(|resolved| simplified(&resolved))
+}
+
+/// `path` with the Windows verbatim prefix removed where a plain
+/// spelling names the same object.
+///
+/// `Path::canonicalize` answers `\\?\C:\...` on Windows. The Win32 file
+/// APIs take it and little else does: `cmd.exe` refuses to start in one
+/// and runs in the Windows directory instead, so a child would run
+/// somewhere the policy never named. A drive path and a UNC share have a
+/// plain spelling and get it; a volume GUID path has none, so it keeps
+/// the prefix that is what reaches it.
+#[cfg(windows)]
+pub(crate) fn simplified(path: &Path) -> PathBuf {
+    use std::path::Prefix;
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path.to_path_buf();
+    };
+    let plain = match prefix.kind() {
+        Prefix::VerbatimDisk(letter) => format!("{}:\\", char::from(letter)),
+        Prefix::VerbatimUNC(server, share) => format!(
+            "\\\\{}\\{}\\",
+            server.to_string_lossy(),
+            share.to_string_lossy()
+        ),
+        _ => return path.to_path_buf(),
+    };
+    let mut out = PathBuf::from(plain);
+    for component in components {
+        if let Component::Normal(part) = component {
+            out.push(part);
+        }
+    }
+    out
+}
+
+/// A path has no verbatim prefix off Windows, so its plain spelling is
+/// the one it already has.
+#[cfg(not(windows))]
+pub(crate) fn simplified(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }
 
 /// `path` made absolute and lexically normalized, without touching the
@@ -573,6 +620,53 @@ mod policy_tests {
         // The rules name resolved paths, so the lookup resolves too:
         // one directory reached by two names has one verdict.
         assert_eq!(compiled.access(&link), Access::ReadWrite);
+    }
+
+    /// The working directory a policy records is the one the child
+    /// starts in, so it has to be in the spelling a child accepts.
+    #[test]
+    fn the_working_directory_is_recorded_in_the_spelling_a_child_accepts() {
+        let root = temp_tree("plain-cwd");
+        let compiled = SandboxPolicy::new()
+            .read_write(&root)
+            .working_directory(&root)
+            .compile()
+            .expect("compile");
+        let recorded = compiled
+            .working_directory
+            .as_deref()
+            .expect("a working directory");
+        assert!(
+            !recorded.to_string_lossy().starts_with(r"\\?\"),
+            "verbatim working directory: {}",
+            recorded.display()
+        );
+        for rule in &compiled.rules {
+            assert!(
+                !rule.path.to_string_lossy().starts_with(r"\\?\"),
+                "verbatim rule path: {}",
+                rule.path.display()
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_verbatim_path_is_simplified_only_where_a_plain_spelling_exists() {
+        assert_eq!(
+            simplified(Path::new(r"\\?\C:\build\out")),
+            PathBuf::from(r"C:\build\out")
+        );
+        assert_eq!(
+            simplified(Path::new(r"\\?\UNC\server\share\dir")),
+            PathBuf::from(r"\\server\share\dir")
+        );
+        assert_eq!(
+            simplified(Path::new(r"C:\build")),
+            PathBuf::from(r"C:\build")
+        );
+        let volume = r"\\?\Volume{9d3f}\build";
+        assert_eq!(simplified(Path::new(volume)), PathBuf::from(volume));
     }
 
     #[test]

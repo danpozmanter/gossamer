@@ -19,13 +19,13 @@ struct Named {
 fn main() {
     // Struct reached through a tuple element.
     let t = (P { x: 7, y: 9 }, 5)
-    println!("{} {} {}", t.0.x, t.0.y, t.1)
+    println("{} {} {}", t.0.x, t.0.y, t.1)
 
     // Struct field reached through another struct, with a String leaf.
-    let n = Named { p: P { x: 1, y: 2 }, tag: format!("origin") }
-    println!("{} {} {}", n.p.x, n.p.y, n.tag)
+    let n = Named { p: P { x: 1, y: 2 }, tag: format("origin") }
+    println("{} {} {}", n.p.x, n.p.y, n.tag)
 
     // A tuple holding a struct with a String, read after the tuple is built.
-    let pair = (Named { p: P { x: 3, y: 4 }, tag: format!("here") }, 8)
-    println!("{} {} {}", pair.0.p.x, pair.0.tag, pair.1)
+    let pair = (Named { p: P { x: 3, y: 4 }, tag: format("here") }, 8)
+    println("{} {} {}", pair.0.p.x, pair.0.tag, pair.1)
 }

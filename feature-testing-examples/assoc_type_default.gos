@@ -16,12 +16,12 @@ impl Counted for Tally {
     }
 }
 
-fn total<T: Counted>(counter: &T) -> T::Count {
+fn total<T: Counted>(counter: T) -> T::Count {
     counter.amount()
 }
 
 fn main() {
     let tally = Tally { hits: 7 }
-    let count: i64 = total(&tally)
-    println!("{}", count * 6)
+    let count: i64 = total(tally)
+    println("{}", count * 6)
 }

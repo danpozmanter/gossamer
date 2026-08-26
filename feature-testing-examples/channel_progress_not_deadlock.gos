@@ -19,28 +19,28 @@ fn worker(id: i64, tx: Sender<i64>) {
 
 fn main() {
     // Unbuffered: every send waits for a receiver to take the value.
-    let (tx, rx) = channel()
-    go produce(tx, 200)
+    let tx, rx = channel()
+    spawn(|| produce(tx, 200))
     let mut total = 0
     while let Some(v) = rx.recv() { total += v }
-    println!("unbuffered total {}", total)
+    println("unbuffered total {}", total)
 
     // Buffered: sends wait only when the buffer is full.
-    let (btx, brx) = channel(4)
-    go produce(btx, 100)
+    let btx, brx = channel(4)
+    spawn(|| produce(btx, 100))
     let mut buffered = 0
     while let Some(v) = brx.recv() { buffered += v }
-    println!("buffered total {}", buffered)
+    println("buffered total {}", buffered)
 
     // Fan-in: eight senders on one unbuffered channel. Each blocks holding a
     // value only that sender's own handoff releases, so every wake has to
     // reach the sender it belongs to.
-    let (ftx, frx) = channel()
-    for w in 0..8 { go worker(w, ftx) }
+    let ftx, frx = channel()
+    for w in 0..8 { spawn(|| worker(w, ftx)) }
     let mut seen = 0
     let mut sum = 0
     while seen < 8 * 20 {
         if let Some(v) = frx.recv() { sum += v; seen += 1 } else { break }
     }
-    println!("fan-in {} {}", seen, sum)
+    println("fan-in {} {}", seen, sum)
 }

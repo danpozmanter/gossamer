@@ -26,7 +26,7 @@ fn shift(p: Point, dx: f64) -> Point {
     Point { x: p.x + dx, y: p.y }
 }
 
-fn total(xs: &[i64]) -> i64 {
+fn total(xs: [i64]) -> i64 {
     let mut acc = 0
     for x in xs { acc += x }
     acc
@@ -42,10 +42,10 @@ fn unwrap_sum<const N: usize>(xs: [i64; N]) -> i64 {
 
 fn main() {
     let p = shift(Point { x: 1.0, y: 2.0 }, 0.5)
-    println!("{} {}", p.x, area(Shape::Rect(2.0, 3.0)))
-    println!("{}", total(&[1, 2, 3]))
+    println("{} {}", p.x, area(Shape::Rect(2.0, 3.0)))
+    println("{}", total([1, 2, 3]))
     let w = Wrapper { value: 7 }
-    println!("{} {}", w.value, unwrap_sum([1, 2, 3, 4]))
+    println("{} {}", w.value, unwrap_sum([1, 2, 3, 4]))
 }
 "#;
 

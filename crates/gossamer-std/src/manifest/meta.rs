@@ -490,7 +490,7 @@ pub const PANIC: StdModule = StdModule {
     summary: "Panic / `catch_unwind` integration.",
     items: &[StdItem {
         name: "panic",
-        kind: StdItemKind::Macro,
+        kind: StdItemKind::Builtin,
         doc: "Aborts the current goroutine with a message.",
     }],
 };

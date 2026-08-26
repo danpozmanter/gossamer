@@ -193,6 +193,7 @@ fn enum_decl_with_unit_variants_renders_block() {
         name: Ident::new("Direction"),
         generics: Generics::default(),
         where_clause: WhereClause::default(),
+        repr: gossamer_ast::EnumRepr::default(),
         variants: vec![
             EnumVariant {
                 attrs: Attrs::default(),

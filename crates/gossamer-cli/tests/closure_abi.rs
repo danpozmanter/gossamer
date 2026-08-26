@@ -182,7 +182,7 @@ fn apply(f: Fn(i64) -> i64, x: i64) -> i64 {
 
 fn main() {
     let result = apply(|y: i64| y * y, 3)
-    println!("result={}", result)
+    println("result={}", result)
 }
 "#;
     assert_three_tier_parity("closure_no_capture_callback", src, "result=25");
@@ -202,7 +202,7 @@ fn apply_twice(f: Fn(i64) -> i64, x: i64) -> i64 {
 fn main() {
     let scale = 3
     let scaled = |y: i64| scale * y
-    println!("apply_twice={}", apply_twice(scaled, 2))
+    println("apply_twice={}", apply_twice(scaled, 2))
 }
 "#;
     assert_three_tier_parity("closure_single_i64_capture", src, "apply_twice=18");
@@ -219,8 +219,8 @@ fn closure_calling_concat_does_not_capture_concat() {
 fn main() {
     let prefix = "hello"
     let greet = |name: String| prefix + " " + name
-    println!("{}", greet("world"))
-    println!("{}", greet("there"))
+    println("{}", greet("world"))
+    println("{}", greet("there"))
 }
 "#;
     assert_three_tier_parity("closure_concat_no_capture", src, "hello world\nhello there");
@@ -234,9 +234,9 @@ fn closure_calling_format_does_not_capture_format() {
     let src = r#"
 fn main() {
     let n = 7
-    let label = |tag: String| format!("{}={}", tag, n)
-    println!("{}", label("count"))
-    println!("{}", label("size"))
+    let label = |tag: String| format("{}={}", tag, n)
+    println("{}", label("count"))
+    println("{}", label("size"))
 }
 "#;
     assert_three_tier_parity("closure_format_no_capture", src, "count=7\nsize=7");
@@ -255,8 +255,8 @@ fn main() {
         let y = x as f64 * scale as f64 + bias
         y
     }
-    println!("{:.2}", f(2))
-    println!("{:.2}", f(10))
+    println("{:.2}", f(2))
+    println("{:.2}", f(10))
 }
 "#;
     assert_three_tier_parity("closure_capture_two_scalars", src, "6.50\n30.50");
@@ -277,9 +277,9 @@ fn make_adder(base: i64) -> Fn(i64) -> i64 {
 fn main() {
     let add5 = make_adder(5)
     let add10 = make_adder(10)
-    println!("add5(3)={}", add5(3))
-    println!("add10(3)={}", add10(3))
-    println!("add5(7)={}", add5(7))
+    println("add5(3)={}", add5(3))
+    println("add10(3)={}", add10(3))
+    println("add5(7)={}", add5(7))
 }
 "#;
     assert_three_tier_parity(
@@ -292,7 +292,7 @@ fn main() {
 #[test]
 fn closure_as_goroutine_body_with_captures() {
     // The 2026-05-05 `closure_goroutine_landed` fix routed
-    // capturing closures through `gos_rt_go_spawn_closure`.
+    // capturing closures through the spawn env blob.
     // The smallest closure-as-goroutine case that actually
     // captures is below - `base + i` where `base` is captured
     // and the goroutine sends three values back through a
@@ -301,23 +301,23 @@ fn closure_as_goroutine_body_with_captures() {
 use std::sync::channel
 
 fn main() {
-    let (tx, rx) = channel()
+    let tx, rx = channel()
     let base = 100
 
-    go fn() {
+    spawn(|| {
         let mut i = 0
         while i < 3 {
             tx.send(base + i)
             i = i + 1
         }
         tx.close()
-    }()
+    })
 
     let mut total = 0
     while let Some(v) = rx.recv() {
         total = total + v
     }
-    println!("total={}", total)
+    println("total={}", total)
 }
 "#;
     assert_three_tier_parity("closure_goroutine_capture", src, "total=303");
@@ -338,7 +338,7 @@ fn main() {
         let bb = if *b < 0 { -*b } else { *b } * factor
         if aa < bb { -1 } else if aa > bb { 1 } else { 0 }
     })
-    println!("{:?}", nums)
+    println("{:?}", nums)
 }
 "#;
     assert_three_tier_parity("closure_in_sort_by", src, "[-1, 2, 3, -4, -5]");

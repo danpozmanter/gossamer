@@ -19,7 +19,7 @@ struct Point {
 }
 
 fn label(p: Point) -> String {
-    format!("{},{}", p.x, p.y)
+    format("{},{}", p.x, p.y)
 }
 
 fn shout(s: String) -> String {
@@ -32,28 +32,28 @@ fn scale(factor: i64, n: i64) -> i64 {
 
 fn main() {
     // a bare callable takes the value as its only argument
-    println!("{}", "hi" |> shout)
+    println("{}", "hi" |> shout)
 
     // a method chain feeds a pipe; the chain is the shorter spelling
-    println!("{}", "  Ab  ".trim().to_lowercase() |> shout)
+    println("{}", "  Ab  ".trim().to_lowercase() |> shout)
 
     // the closure's parameter is the slot, so a data-first callee reads
     // like a data-last one
-    println!("{}", 3 |> |v| scale(10, v))
+    println("{}", 3 |> |v| scale(10, v))
     match "world" |> |v| strings::slice(v, 1, 4) {
-        Ok(part) => println!("{}", part)
-        Err(_) => println!("slice failed")
+        Ok(part) => println("{}", part)
+        Err(_) => println("slice failed")
     }
 
     // a format macro takes the value through the same closure parameter
-    println!("{}", "world" |> |v| format!("hello, {}", v))
+    println("{}", "world" |> |v| format("hello, {}", v))
 
     // data-last `iter::` steps name the slot too, and the result chains
-    let evens = #[1, 2, 3, 4, 5, 6] |> |v| iter::filter(|x: i64| x % 2 == 0, v).len()
-    println!("{}", evens)
+    let evens = #[1, 2, 3, 4, 5, 6] |> |v| iter::filter(v, |x: i64| x % 2 == 0).len()
+    println("{}", evens)
 
     // a bare callable takes a struct the same way it takes a scalar
-    println!("{}", Point { x: 7, y: 9 } |> label)
+    println("{}", Point { x: 7, y: 9 } |> label)
 }
 
 #[cfg(test)]
@@ -92,13 +92,13 @@ mod pipe_closure_step_tests {
 
     #[test]
     fn format_argument_receives_the_value() {
-        let greeting = "world" |> |v| format!("hello, {}", v)
+        let greeting = "world" |> |v| format("hello, {}", v)
         let _ = testing::check(greeting == "hello, world", "a macro slot is named too")
     }
 
     #[test]
     fn mixed_with_iter() {
-        let n = #[1, 2, 3, 4] |> |v| iter::filter(|x: i64| x % 2 == 0, v).len()
+        let n = #[1, 2, 3, 4] |> |v| iter::filter(v, |x: i64| x % 2 == 0).len()
         let _ = testing::check(n == 2, "an iter step chains into a method")
     }
 }

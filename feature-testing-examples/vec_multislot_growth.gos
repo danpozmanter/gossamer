@@ -83,11 +83,11 @@ fn nested_literal_start() -> i64 {
 }
 
 fn main() {
-    println!("array_for_loop={}", array_for_loop())
-    println!("array_index={}", array_index())
-    println!("tuple_for_loop={}", tuple_for_loop())
-    println!("tuple_destructure={}", tuple_destructure())
-    println!("tuple_index={}", tuple_index())
-    println!("struct_index={}", struct_index())
-    println!("nested_literal_start={}", nested_literal_start())
+    println("array_for_loop={}", array_for_loop())
+    println("array_index={}", array_index())
+    println("tuple_for_loop={}", tuple_for_loop())
+    println("tuple_destructure={}", tuple_destructure())
+    println("tuple_index={}", tuple_index())
+    println("struct_index={}", struct_index())
+    println("nested_literal_start={}", nested_literal_start())
 }

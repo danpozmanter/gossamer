@@ -25,12 +25,12 @@ fn bump(counter: sync::Shared, times: i64) -> Result<(), errors::Error> {
 
 fn main() -> Result<(), errors::Error> {
     let counter = sync::Shared::new(0)
-    println!("initial: {}", counter.get())
+    println("initial: {}", counter.get())
 
     counter.set(41)
-    println!("after set: {}", counter.get())
-    println!("after update: {}", counter.update(|v| v + 1))
-    println!("with leaves it alone: {} then {}", counter.with(|v| v * 2), counter.get())
+    println("after set: {}", counter.get())
+    println("after update: {}", counter.update(|v| v + 1))
+    println("with leaves it alone: {} then {}", counter.with(|v| v * 2), counter.get())
 
     counter.set(0)
     cohort {
@@ -38,6 +38,6 @@ fn main() -> Result<(), errors::Error> {
             spawn(|| bump(counter, 1000))
         }
     }?
-    println!("eight goroutines, a thousand each: {}", counter.get())
+    println("eight goroutines, a thousand each: {}", counter.get())
     Ok(())
 }

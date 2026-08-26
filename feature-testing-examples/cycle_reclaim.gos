@@ -11,7 +11,7 @@ use std::runtime
 
 struct Node {
     id: i64
-    next: Option<Box<Node>>
+    next: Option<Node>
 }
 
 fn main() {
@@ -33,5 +33,5 @@ fn main() {
         runtime::collect_cycles()
         round += 1
     }
-    println!("total: {}", total)
+    println("total: {}", total)
 }

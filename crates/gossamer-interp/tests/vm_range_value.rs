@@ -24,9 +24,10 @@ fn run_main(source: &str) -> String {
 fn try_run_main(source: &str) -> Result<String, String> {
     let mut map = SourceMap::new();
     let file = map.add_file("range_value.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -45,7 +46,7 @@ fn exclusive_range_value() {
     let src = r#"
 fn main() {
     let r = 0..3
-    println!("{:?}", r)
+    println("{:?}", r)
 }
 "#;
     assert_eq!(run_main(src), "0..3\n");
@@ -56,7 +57,7 @@ fn inclusive_range_value() {
     let src = r#"
 fn main() {
     let r = 1..=4
-    println!("{:?}", r)
+    println("{:?}", r)
 }
 "#;
     assert_eq!(run_main(src), "1..=4\n");
@@ -66,7 +67,7 @@ fn main() {
 fn open_ranges_preserve_their_source_shape_without_realising() {
     let src = r#"
 fn main() {
-    println!("{} {} {}", ..10, 10.., ..)
+    println("{} {} {}", ..10, 10.., ..)
 }
 "#;
     assert_eq!(run_main(src), "..10 10.. ..\n");
@@ -76,8 +77,8 @@ fn main() {
 fn open_range_can_be_bounded_before_collection() {
     let src = r#"
 fn main() {
-    let first = 10.. |> |v| iter::take(3, v) |> iter::collect()
-    println!("{:?}", first)
+    let first = 10.. |> |v| iter::take(v, 3) |> iter::collect()
+    println("{:?}", first)
 }
 "#;
     assert_eq!(run_main(src), "#[10, 11, 12]\n");
@@ -127,8 +128,8 @@ fn main() {
 fn open_range_matches_rust_overflow_profile() {
     let src = r#"
 fn main() {
-    let edge = 9223372036854775805.. |> |v| iter::take(4, v) |> iter::collect()
-    println!("{:?}", edge)
+    let edge = 9223372036854775805.. |> |v| iter::take(v, 4) |> iter::collect()
+    println("{:?}", edge)
 }
 "#;
     if cfg!(debug_assertions) {
@@ -137,7 +138,7 @@ fn main() {
     } else {
         assert_eq!(
             try_run_main(src).expect("release open range wraps"),
-            "[9223372036854775805, 9223372036854775806, 9223372036854775807, -9223372036854775808]\n"
+            "#[9223372036854775805, 9223372036854775806, 9223372036854775807, -9223372036854775808]\n"
         );
     }
 }
@@ -148,7 +149,7 @@ fn generic_string_array_and_repeat() {
 fn main() {
     let xs = ["a", "b", "c"]
     let rep = [7; 3]
-    println!("{:?} {:?}", xs, rep)
+    println("{:?} {:?}", xs, rep)
 }
 "#;
     assert_eq!(run_main(src), "[a, b, c] [7, 7, 7]\n");

@@ -23,13 +23,13 @@ fn key_len(key: Vec<u8>) -> i64 {
     key.len()
 }
 
-fn attach(r: Resp, tok: &String) -> Resp {
+fn attach(r: Resp, tok: String) -> Resp {
     let mut r2 = r
     r2.headers.push(("set-cookie", "gos_csrf=" + tok))
     r2
 }
 
-fn header_of(headers: &[(String, String)], want: String) -> String {
+fn header_of(headers: [(String, String)], want: String) -> String {
     let mut found = ""
     for (name, value) in headers {
         if name == want { found = *value }
@@ -43,9 +43,9 @@ fn main() {
     cfg.trusted = Vec::from(["https://app.example.com"])
     let n = key_len(cfg.key)
     let resp = Resp { body: "ok", headers: Vec::from([]) }
-    let resp = attach(resp, &"tok")
-    let sc = header_of(&resp.headers, "set-cookie")
-    println!("key_len={n}")
-    println!("cookie={sc}")
-    println!("trusted={}", cfg.trusted.len())
+    let resp = attach(resp, "tok")
+    let sc = header_of(resp.headers, "set-cookie")
+    println("key_len={n}")
+    println("cookie={sc}")
+    println("trusted={}", cfg.trusted.len())
 }

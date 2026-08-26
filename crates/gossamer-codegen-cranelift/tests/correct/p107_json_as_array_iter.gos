@@ -1,14 +1,14 @@
 use std::encoding::json
 
 fn main() {
-    let v = json::parse(&"[\"a\",\"b\",\"c\"]").unwrap()
-    let arr = json::as_array(&v).unwrap()
+    let v = json::parse("[\"a\",\"b\",\"c\"]").unwrap()
+    let arr = json::as_array(v).unwrap()
     let n = arr.len() as i64
-    println!("len = {}", n)
+    println("len = {}", n)
     let mut i: i64 = 0
     while i < n {
         let item = arr[i]
-        println!("item[{}] = {}", i, json::as_str(&item).unwrap_or("?"))
+        println("item[{}] = {}", i, json::as_str(item).unwrap_or("?"))
         i += 1
     }
 }

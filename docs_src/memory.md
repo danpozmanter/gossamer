@@ -162,7 +162,7 @@ fn main() {
         }
         i += 1
     }
-    println!("{}", total)
+    println("{}", total)
 }
 ```
 
@@ -177,7 +177,7 @@ Semantics:
   `defer`).
 - **Headerless nodes.** Enum nodes of tagged-repr types (at most 4
   variants) allocated inside an arena carry **no header at all**: a
-  `Node(Box<Tree>, Box<Tree>)` is exactly 16 bytes.
+  `Node(Tree, Tree)` is exactly 16 bytes.
 - **Arenas nest.** An inner `arena { }` frees at its own close brace;
   the outer arena is unaffected. Slabs from finished arenas are
   recycled, so an arena per loop iteration costs a bump-pointer reset,
@@ -228,10 +228,10 @@ form is the idiom because it cannot be left unbalanced.
 
 ## Goroutine stacks
 
-Each `go expr` launches a goroutine with its own stack. Captures are
+Each `spawn(|| expr)` launches a goroutine with its own stack. Captures are
 reference-counted exactly as regular struct fields would be.
 
-## When to reach for `Rc<RefCell<T>>`-like patterns
+## When to reach for `RefCell<T>`-like patterns
 
 You generally don't. Shared aliasing works directly. If you need to
 mutate through a shared handle across goroutines, hold the value in a
@@ -242,6 +242,6 @@ mutate through a shared handle across goroutines, hold the value in a
 - Small value types live on the stack or inline inside their
   aggregate.
 - Aggregates (`String`, `Vec<T>`, structs, enums, closures) live on
-  the heap, reference-counted; `Box<T>` / `Rc<T>` / `Arc<T>` spellings
+  the heap, reference-counted; `T` / `T` / `T` spellings
   are accepted and transparent.
 - Short-lived object graphs belong in an `arena { }`.

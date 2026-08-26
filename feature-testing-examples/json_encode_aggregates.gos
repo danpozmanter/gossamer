@@ -30,15 +30,15 @@ fn item(id: i64, title: String) -> Item {
 }
 
 fn main() {
-    println!("{}", json::encode(&item(1, "one")))
-    println!("{}", json::encode(&#[item(1, "one"), item(2, "two")]))
-    println!("{}", json::encode(&[item(3, "three")]))
-    println!("{}", json::encode(&(1, "a", true, 2.5)))
-    println!("{}", json::encode(&#[(1, "a"), (2, "b")]))
-    println!("{}", json::encode(&#[#[1, 2], #[3]]))
-    println!("{}", json::encode(&#[#[Inner { n: 1, tags: #["z"] }]]))
+    println("{}", json::encode(item(1, "one")))
+    println("{}", json::encode(#[item(1, "one"), item(2, "two")]))
+    println("{}", json::encode([item(3, "three")]))
+    println("{}", json::encode((1, "a", true, 2.5)))
+    println("{}", json::encode(#[(1, "a"), (2, "b")]))
+    println("{}", json::encode(#[#[1, 2], #[3]]))
+    println("{}", json::encode(#[#[Inner { n: 1, tags: #["z"] }]]))
     let empty: Vec<Item> = #[]
-    println!("{}", json::encode(&empty))
-    println!("{} {} {} {}", json::encode(&7), json::encode(&true), json::encode(&2.5), json::encode(&"s"))
-    println!("{} {}", json::encode(&#[1, 2, 3]), json::encode(&#["x", "y"]))
+    println("{}", json::encode(empty))
+    println("{} {} {} {}", json::encode(7), json::encode(true), json::encode(2.5), json::encode("s"))
+    println("{} {}", json::encode(#[1, 2, 3]), json::encode(#["x", "y"]))
 }

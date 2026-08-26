@@ -198,8 +198,6 @@ pub mod cohort;
 pub mod combinator;
 pub mod concat;
 pub mod container_heap;
-pub mod container_seq;
-pub mod container_set;
 pub mod context;
 pub mod coverage;
 #[cfg(not(target_arch = "wasm32"))]
@@ -336,8 +334,6 @@ pub use chan::*;
 pub use combinator::*;
 pub use concat::*;
 pub use container_heap::*;
-pub use container_seq::*;
-pub use container_set::*;
 pub use context::*;
 pub use coverage::*;
 #[cfg(not(target_arch = "wasm32"))]

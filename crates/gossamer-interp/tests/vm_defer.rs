@@ -27,9 +27,10 @@ fn capture_writer(text: &str) {
 fn run_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("defer.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -48,9 +49,9 @@ fn defers_run_lifo_at_block_exit() {
     // Both defers run after the block body, in reverse registration order.
     let src = r#"
 fn main() {
-    defer println!("A")
-    defer println!("B")
-    println!("body")
+    defer println("A")
+    defer println("B")
+    println("body")
 }
 "#;
     assert_eq!(run_main(src), "body\nB\nA\n");
@@ -62,12 +63,12 @@ fn defer_in_nested_block_runs_before_outer() {
     // before the outer block's own defers.
     let src = r#"
 fn main() {
-    defer println!("outer")
+    defer println("outer")
     {
-        defer println!("inner")
-        println!("in block")
+        defer println("inner")
+        println("in block")
     }
-    println!("after block")
+    println("after block")
 }
 "#;
     assert_eq!(run_main(src), "in block\ninner\nafter block\nouter\n");
@@ -80,8 +81,8 @@ fn defer_runs_each_loop_iteration() {
     let src = r#"
 fn main() {
     for i in 0..3 {
-        defer println!("end {}", i)
-        println!("iter {}", i)
+        defer println("end {}", i)
+        println("iter {}", i)
     }
 }
 "#;
@@ -99,8 +100,8 @@ fn main() {
     let mut i = 0
     while i < 3 {
         let cur = i
-        defer println!("end {}", cur)
-        println!("iter {}", cur)
+        defer println("end {}", cur)
+        println("iter {}", cur)
         i += 1
     }
 }
@@ -117,15 +118,15 @@ fn defer_runs_on_early_return() {
     // fall-through path.
     let src = r#"
 fn pick(open: bool) -> i64 {
-    defer println!("cleanup")
+    defer println("cleanup")
     if !open {
         return 1
     }
     2
 }
 fn main() {
-    println!("got {}", pick(false))
-    println!("got {}", pick(true))
+    println("got {}", pick(false))
+    println("got {}", pick(true))
 }
 "#;
     assert_eq!(run_main(src), "cleanup\ngot 1\ncleanup\ngot 2\n");
@@ -138,13 +139,13 @@ fn defer_runs_on_break() {
     let src = r#"
 fn main() {
     for i in 0..5 {
-        defer println!("cleanup {}", i)
+        defer println("cleanup {}", i)
         if i == 2 {
             break
         }
-        println!("work {}", i)
+        println("work {}", i)
     }
-    println!("done")
+    println("done")
 }
 "#;
     assert_eq!(
@@ -160,13 +161,13 @@ fn defer_runs_on_continue() {
     let src = r#"
 fn main() {
     for i in 0..3 {
-        defer println!("cleanup {}", i)
+        defer println("cleanup {}", i)
         if i == 1 {
             continue
         }
-        println!("work {}", i)
+        println("work {}", i)
     }
-    println!("done")
+    println("done")
 }
 "#;
     assert_eq!(
@@ -189,18 +190,18 @@ fn parse(ok: bool) -> Result<i64, String> {
     }
 }
 fn run(ok: bool) -> Result<i64, String> {
-    defer println!("run cleanup")
+    defer println("run cleanup")
     let v = parse(ok)?
     Ok(v + 1)
 }
 fn main() {
     match run(true) {
-        Ok(v) => println!("ok {}", v),
-        Err(e) => println!("err {}", e),
+        Ok(v) => println("ok {}", v),
+        Err(e) => println("err {}", e),
     }
     match run(false) {
-        Ok(v) => println!("ok {}", v),
-        Err(e) => println!("err {}", e),
+        Ok(v) => println("ok {}", v),
+        Err(e) => println("err {}", e),
     }
 }
 "#;
@@ -222,7 +223,7 @@ fn main() {
         defer order.push(2)
         order.push(9)
     }
-    println!("{} {} {} {}", order[0], order[1], order[2], order[3])
+    println("{} {} {} {}", order[0], order[1], order[2], order[3])
 }
 "#;
     assert_eq!(run_main(src), "0 9 2 1\n");

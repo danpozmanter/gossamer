@@ -22,11 +22,12 @@ use gossamer_types::{TyCtxt, typecheck_source_file};
 fn run_interp(source: &str) -> Result<(), String> {
     let mut map = SourceMap::new();
     let file = map.add_file("server.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     if !parse_diags.is_empty() {
         return Err(format!("parse: {parse_diags:?}"));
     }
     let (resolutions, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -247,11 +248,11 @@ fn response_stream_next_chunk_drains_body_in_max_byte_chunks() {
                          chunks += 1\n\
                          for b in chunk {{ sum += b }}\n\
                      }}\n\
-                     if total != 10 {{ panic!(\"total: {{}}\", total) }}\n\
-                     if chunks != 3 {{ panic!(\"chunks: {{}}\", chunks) }}\n\
-                     if sum != 525 {{ panic!(\"sum: {{}}\", sum) }}\n\
+                     if total != 10 {{ panic(\"total: {{}}\", total) }}\n\
+                     if chunks != 3 {{ panic(\"chunks: {{}}\", chunks) }}\n\
+                     if sum != 525 {{ panic(\"sum: {{}}\", sum) }}\n\
                  }},\n\
-                 Err(e) => panic!(\"stream failed: {{}}\", e),\n\
+                 Err(e) => panic(\"stream failed: {{}}\", e),\n\
              }}\n\
          }}\n",
     );
@@ -271,17 +272,17 @@ fn response_stream_next_line_then_next_chunk_share_one_cursor() {
                  Ok(s) => {{\n\
                      match s.next_line() {{\n\
                          Some(line) => {{\n\
-                             if line != \"alpha\" {{ panic!(\"line: {{}}\", line) }}\n\
+                             if line != \"alpha\" {{ panic(\"line: {{}}\", line) }}\n\
                          }},\n\
-                         None => panic!(\"missing first line\"),\n\
+                         None => panic(\"missing first line\"),\n\
                      }}\n\
                      let mut rest = 0\n\
                      while let Some(chunk) = s.next_chunk(4) {{\n\
                          rest += chunk.len()\n\
                      }}\n\
-                     if rest != 5 {{ panic!(\"rest: {{}}\", rest) }}\n\
+                     if rest != 5 {{ panic(\"rest: {{}}\", rest) }}\n\
                  }},\n\
-                 Err(e) => panic!(\"stream failed: {{}}\", e),\n\
+                 Err(e) => panic(\"stream failed: {{}}\", e),\n\
              }}\n\
          }}\n",
     );
@@ -298,19 +299,19 @@ fn client_get_send_returns_response_with_populated_headers() {
     let source = format!(
         "fn main() {{\n\
              let client = http::Client::new()\n\
-             let result = client.get(&\"http://{addr}/hdr\").send()\n\
+             let result = client.get(\"http://{addr}/hdr\").send()\n\
              match result {{\n\
                  Ok(resp) => {{\n\
-                     if resp.status != 200 {{ panic!(\"bad status: {{}}\", resp.status) }}\n\
+                     if resp.status != 200 {{ panic(\"bad status: {{}}\", resp.status) }}\n\
                      let mut found = false\n\
                      for (k, v) in resp.headers {{\n\
                          if k == \"x-custom\" {{\n\
                              if v == \"hello\" {{ found = true }}\n\
                          }}\n\
                      }}\n\
-                     if !found {{ panic!(\"x-custom missing from resp.headers\") }}\n\
+                     if !found {{ panic(\"x-custom missing from resp.headers\") }}\n\
                  }},\n\
-                 Err(e) => panic!(\"send failed: {{}}\", e),\n\
+                 Err(e) => panic(\"send failed: {{}}\", e),\n\
              }}\n\
          }}\n",
     );
@@ -331,10 +332,10 @@ fn http_request_bytes_posts_binary_body_and_returns_ok_response() {
              let result = http::request_bytes(\"POST\", \"http://{addr}/echo\", body, headers)\n\
              match result {{\n\
                  Ok(resp) => {{\n\
-                     if resp.status != 200 {{ panic!(\"bad status: {{}}\", resp.status) }}\n\
-                     if resp.body != \"hi\" {{ panic!(\"bad body: {{}}\", resp.body) }}\n\
+                     if resp.status != 200 {{ panic(\"bad status: {{}}\", resp.status) }}\n\
+                     if resp.body != \"hi\" {{ panic(\"bad body: {{}}\", resp.body) }}\n\
                  }},\n\
-                 Err(e) => panic!(\"request_bytes failed: {{}}\", e),\n\
+                 Err(e) => panic(\"request_bytes failed: {{}}\", e),\n\
              }}\n\
          }}\n",
     );
@@ -379,7 +380,7 @@ fn server_request_raw_body_preserves_binary_post_bytes() {
              fn serve(&self, request: http::Request) -> http::Response {{\n\
                  let mut sum = 0\n\
                  for b in request.raw_body {{ sum += b }}\n\
-                 http::Response::text(200, format!(\"{{}} {{}}\", request.raw_body.len(), sum))\n\
+                 http::Response::text(200, format(\"{{}} {{}}\", request.raw_body.len(), sum))\n\
              }}\n\
          }}\n\
          fn main() {{\n\

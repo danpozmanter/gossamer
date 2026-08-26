@@ -25,9 +25,10 @@ fn capture_writer(text: &str) {
 fn run_vm_main(source: &str) -> String {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -50,13 +51,13 @@ fn bump() { COUNTER += 1 }
 fn read() -> i64 { COUNTER }
 
 fn main() {
-    println!("start = {}", read())
+    println("start = {}", read())
     bump()
     bump()
     bump()
-    println!("after 3 bumps = {}", read())
+    println("after 3 bumps = {}", read())
     COUNTER = 100
-    println!("after assign 100 = {}", read())
+    println("after assign 100 = {}", read())
 }
 "#;
     let out = run_vm_main(source);
@@ -92,8 +93,8 @@ fn main() {
     let mid = h1.join()
     let h2 = spawn(|| bump_n(1000))
     let _ = h2.join()
-    println!("mid = {}", mid)
-    println!("counter = {}", COUNTER)
+    println("mid = {}", mid)
+    println("counter = {}", COUNTER)
 }
 "#;
     let out = run_vm_main(source);

@@ -20,10 +20,11 @@ fn produce(tx: Sender<i64>, base: i64) {
 // rather than owning a second one, so the count the consumer expects is what
 // bounds the drain; closing is the job of whoever owns the last handle.
 fn fan_in() -> i64 {
-    let (tx, rx) = channel()
+    let tx, rx = channel()
     for p in 0..PRODUCERS {
         let sender = tx.clone()
-        go produce(sender, p * PER_PRODUCER)
+        let __spawn_arg_0 = p * PER_PRODUCER
+        spawn(|| produce(sender, __spawn_arg_0))
     }
     let mut total = 0
     let mut seen = 0
@@ -56,14 +57,14 @@ fn feed_jobs(tx: Sender<i64>) {
 // concurrent - both channels are unbuffered, so a feeder that is also the
 // drainer cannot make progress once every worker is parked on a send.
 fn fan_out() -> i64 {
-    let (jobs, jobs_rx) = channel()
-    let (results, results_rx) = channel()
+    let jobs, jobs_rx = channel()
+    let results, results_rx = channel()
     for _ in 0..WORKERS {
         let rx = jobs_rx.clone()
         let tx = results.clone()
-        go square_all(rx, tx)
+        spawn(|| square_all(rx, tx))
     }
-    go feed_jobs(jobs)
+    spawn(|| feed_jobs(jobs))
     let mut total = 0
     let mut seen = 0
     while seen < PER_PRODUCER {
@@ -91,12 +92,12 @@ fn stage_offset(input: Receiver<i64>, output: Sender<i64>) {
 // Three goroutines chained by two channels: each stage is both a receiver
 // waiting on its predecessor and a sender its successor waits on.
 fn pipeline() -> i64 {
-    let (feed, feed_rx) = channel()
-    let (mid, mid_rx) = channel()
-    let (out, out_rx) = channel()
-    go stage_double(feed_rx, mid)
-    go stage_offset(mid_rx, out)
-    go produce_range(feed)
+    let feed, feed_rx = channel()
+    let mid, mid_rx = channel()
+    let out, out_rx = channel()
+    spawn(|| stage_double(feed_rx, mid))
+    spawn(|| stage_offset(mid_rx, out))
+    spawn(|| produce_range(feed))
     let mut total = 0
     while let Some(v) = out_rx.recv() {
         total += v
@@ -121,8 +122,9 @@ fn echo_once(tx: Sender<i64>, value: i64) {
 fn many_channels() -> i64 {
     let mut receivers: Vec<Receiver<i64>> = #[]
     for i in 0..CHANNEL_PAIRS {
-        let (tx, rx) = channel()
-        go echo_once(tx, i * i)
+        let tx, rx = channel()
+        let __spawn_arg_0 = i * i
+        spawn(|| echo_once(tx, __spawn_arg_0))
         receivers.push(rx)
     }
     let mut total = 0
@@ -137,8 +139,8 @@ fn many_channels() -> i64 {
 // A buffered channel whose capacity is smaller than the burst, so senders
 // park on a full buffer and are woken by the receiver draining it.
 fn buffered_backpressure() -> i64 {
-    let (tx, rx) = channel(8)
-    go produce_range(tx)
+    let tx, rx = channel(8)
+    spawn(|| produce_range(tx))
     let mut count = 0
     while let Some(_) = rx.recv() {
         count += 1
@@ -147,9 +149,9 @@ fn buffered_backpressure() -> i64 {
 }
 
 fn main() {
-    println!("fan_in {}", fan_in())
-    println!("fan_out {}", fan_out())
-    println!("pipeline {}", pipeline())
-    println!("many_channels {}", many_channels())
-    println!("buffered {}", buffered_backpressure())
+    println("fan_in {}", fan_in())
+    println("fan_out {}", fan_out())
+    println("pipeline {}", pipeline())
+    println("many_channels {}", many_channels())
+    println("buffered {}", buffered_backpressure())
 }

@@ -11,7 +11,7 @@ The attribute set is fixed - there are no user-defined attributes.
 | `#[test]` | `fn` | Run by `gos test`. |
 | `#[bench]` | `fn` | Timed by `gos bench`. |
 | `#[cfg(...)]` | item | Conditional compilation (see [cfg](cfg.md)). |
-| `#[cfg(test)]` | `mod` | Test-only module (give each a unique name in a project). |
+| `#[cfg(test)]` | `mod` | Test-only module. |
 | `#[derive(...)]` | `struct` / `enum` | Synthesize the listed traits. |
 | `#[default]` | enum variant | Marks the `Default` variant. |
 

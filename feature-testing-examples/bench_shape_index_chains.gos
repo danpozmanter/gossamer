@@ -86,7 +86,7 @@ fn chunks(count: i64) -> i64 {
             head[1] = b[15]
             head[2] = 200u8
             head[3] = 255u8
-            println!("head={:?}", head)
+            println("head={:?}", head)
         }
         kept.push(b.to_vec())
     }
@@ -121,7 +121,7 @@ fn gen_pair() -> ([f64; 12], [f64; 3]) {
     (xs, ys)
 }
 
-fn score(xs: &[f64], ys: &[f64; 3]) -> f64 {
+fn score(xs: [f64], ys: [f64; 3]) -> f64 {
     let mut total = 0.0
     for i in 0..3 {
         let base = i * 4
@@ -133,15 +133,15 @@ fn score(xs: &[f64], ys: &[f64; 3]) -> f64 {
 }
 
 fn main() {
-    let (components, checksum) = union_find(64)
-    println!("uf components={} checksum={}", components, checksum)
+    let components, checksum = union_find(64)
+    println("uf components={} checksum={}", components, checksum)
 
-    let (count, sum) = sieve(200)
-    println!("sieve count={} sum={}", count, sum)
+    let count, sum = sieve(200)
+    println("sieve count={} sum={}", count, sum)
 
-    println!("chunks={}", chunks(8))
-    println!("rows={}", rows(6))
+    println("chunks={}", chunks(8))
+    println("rows={}", rows(6))
 
-    let (xs, ys) = gen_pair()
-    println!("score={:.6} x0={:.6} x11={:.6}", score(&xs, &ys), xs[0], xs[11])
+    let xs, ys = gen_pair()
+    println("score={:.6} x0={:.6} x11={:.6}", score(xs, ys), xs[0], xs[11])
 }

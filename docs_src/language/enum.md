@@ -7,8 +7,8 @@ Sum type declaration with payload-carrying variants.
 Variants carry tuple payloads (`Line(i64)`, `Rect(i64, i64)`), struct
 payloads (`Named { id: i64 }`), or nothing (`Dot`). Recursive payloads
 work directly with no wrapper - `enum List { Cons(i64, List), Nil }` -
-because every variant payload is already heap-shared. The `Box<List>` /
-`Arc<List>` / `Rc<List>` spellings are transparent and compile to the
+because every variant payload is already heap-shared. The `List` /
+`List` / `List` spellings are transparent and compile to the
 same thing, so reach for them only when the type reads clearer with the
 wrapper. Match exhaustively.
 
@@ -22,9 +22,9 @@ order), then payload lexicographically:
 ```gossamer
 enum Shape { Dot, Line(i64), Box(i64, i64) }
 
-println!("{}", Shape::Dot < Shape::Line(0))     // true: Dot ranks before Line
-println!("{}", Shape::Line(1) < Shape::Line(2)) // true: same rank, payload compared
-println!("{}", Shape::Box(1, 2) == Shape::Box(1, 2))
+println("{}", Shape::Dot < Shape::Line(0))     // true: Dot ranks before Line
+println("{}", Shape::Line(1) < Shape::Line(2)) // true: same rank, payload compared
+println("{}", Shape::Box(1, 2) == Shape::Box(1, 2))
 ```
 
 A user `impl` of `eq` / `cmp` overrides the synthesized one for custom
@@ -50,3 +50,27 @@ enum Move {
 `Clone`, `Copy`, `Hash`, `Display`, `Serialize`, and `Deserialize` are
 **not** derivable (`GT0025`) - copying, hashing, and serialization are
 automatic. The enum cap is 256 variants (`GT0012`).
+
+## How wide the discriminant is
+
+A plain `enum` stores its discriminant in the smallest byte-aligned
+width that holds every variant. `packed` asks for the smallest number of
+bits instead, and a `: uN` names a width outright - any unsigned width
+from `u1` to `u64`:
+
+```gossamer
+enum Level: u16 { Debug, Warn, Error }   // 16 bits, as asked
+packed enum Direction { North, East, South, West }  // 2 bits
+packed enum Bit: u1 { Off, On }          // exactly 1 bit
+```
+
+A width too narrow for the variants reports `GT0081` with the width they
+need; a representation that is not an unsigned width reports `GP0050`.
+Variants number from zero in declaration order.
+
+The choice is about storage only. Matching, `==`, ordering, `{}` and
+`{:?}`, serialization, `Map` keys, arrays, and tuples all behave
+identically at every width, on the VM and both compiled tiers.
+
+`packed` is a keyword only directly before `enum`, so a value or a
+function may still be named `packed`.

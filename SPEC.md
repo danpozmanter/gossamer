@@ -83,9 +83,10 @@ The language is designed so that:
   rule of thumb: a data transformation should read top-to-bottom as
   a chain of named stages, not as a `for` loop building up a `let
   mut` accumulator. `for` loops keep their place for side-effects
-  and complex state; transformations should compose. Gossamer
-  follows F#'s "data-last" argument-order convention in stdlib free
-  functions so `x |> |v| f(a, b, v)` reads as `f(a, b, x)` with the slot named.
+  and complex state; transformations should compose. Every stdlib free
+  function takes its data first, so `iter::map(xs, f)` reads as the
+  `xs.map(f)` it stands for, and a `|>` step names the slot the value
+  fills so `x |> |v| f(a, b, v)` reads as `f(a, b, x)`.
 - A single pass over the source file classifies it into tokens.
 - A single recursive-descent parser produces an AST without
   context-dependent parsing tricks beyond bounded lookahead.
@@ -157,16 +158,35 @@ Reserved:
 
 ```
 as        async     await     break     const     continue
-crate     defer     else      enum      extern    false
-fn        for       go        if        impl      in
-let       loop      match     mod       mut       pub
-return    select    self      Self      static    struct
-super     trait     true      type      unsafe    use
-where     while     yield
+crate     else      enum      extern    false     fn
+for       if        impl      in        let       loop
+match     mod       mut       pub       return    self
+Self      static    struct    super     trait     true
+type      unsafe    use       where     while     yield
 ```
 
 Reserved but currently unused (future extensions): `async`, `await`,
 `crate`, `yield`, `extern`, `package`.
+
+Contextual, never reserved:
+
+```
+arena     cohort    comptime  defer     newtype   packed    select
+```
+
+Each of these is a keyword only where its construct can start and an
+ordinary identifier everywhere else, so a binding, field, parameter,
+method, or function may carry any of these names. What claims each one:
+
+| Word | Claimed when |
+|---|---|
+| `arena` | directly before `{`, in statement position |
+| `cohort` | directly before `{`, or before a parenthesised header followed by `{` |
+| `comptime` | directly before `{`, before `fn`, or before a parameter that is not its own `:` |
+| `defer` | in statement position, directly before a name, a keyword, or `{` |
+| `newtype` | directly before the alias name |
+| `packed` | directly before `enum` |
+| `select` | directly before `{` |
 
 `use` is the sole path-binding keyword; there is no `import`. `package`
 is reserved but has no role - source files do not declare a package;
@@ -285,7 +305,7 @@ So:
 
 ```
 let s = read_file(path)?
-&s |> strings::lines |> |v| iter::for_each(handle, v)   // two statements
+&s |> strings::lines |> |v| iter::for_each(v, handle)   // two statements
 ```
 
 parses as a let followed by a pipe-expression statement, not as
@@ -440,9 +460,9 @@ are constructed through their type, with `T::new()` for an empty container and
 let words = ["yes", "wow"]
 let fixed = #["m", "n"]
 let zeros = #[0; 4]
-fn count(xs: &[String]) -> i64 { xs.len() }
+fn count(xs: [String]) -> i64 { xs.len() }
 let names: [String; 2] = ["m", "n"]
-count(&names)
+count(names)
 let map = {"ada": 36, "grace": 37}
 let set = #{"compiler", "runtime"}
 let ordered: BTreeSet<String> = #{"compiler", "runtime"}
@@ -501,9 +521,25 @@ Unicode scalars, so do not mix the two spellings on non-ASCII text.
   has independent storage, including recursively nested Vec elements. There
   is no source-level ownership transfer or `move` keyword.
 - `&T` is a shared, non-owning lexical view. It cannot be null. It permits
-  reads but not writes to the source place.
+  reads but not writes to the source place. It is not a **parameter** type:
+  an argument is passed without copying whatever its type, so the sigil
+  names no choice there and reports `GP0054`, as a shared `&` written on an
+  argument reports `GP0055`. It remains a binding (`let view = &values`)
+  and a pattern.
 - `&mut T` is an exclusive, non-owning lexical view. It requires a writable
-  source place and writes through to that place.
+  source place and writes through to that place. It is the one reference a
+  parameter takes, and it is spelled `&mut` at the call site too. A
+  reference reaching a parameter that takes the value is `GT0082`, with the
+  `*x` rewrite: a reference names a value rather than being one.
+- `*` reaches the place a reference names. Over a value there is no such
+  place, so a write through one - `*x = v` where `x` is an `i64` - is
+  `GT0083`; the read is the value itself.
+- `[T]` is the sequence view a parameter names directly, and it accepts an
+  array, a `Vec`, or another view. `&mut [T]` is the form that writes
+  through to the sequence it views.
+- A method receiver is `&self` (reads) or `&mut self` (writes). `&self` and
+  `self` name the same value, since a receiver is reached without copying
+  either way; only `&mut self` writes back.
 
 References are deliberately restricted because the runtime does not attach an
 owning backing-allocation handle to every reference representation. A named
@@ -559,7 +595,7 @@ mutable references implicitly. A writable place must appear as `&mut place`
 at the call site; an expression already typed as `&mut T` can be forwarded
 directly. Passing the same root twice as `&mut` in one call
 (`f(&mut v, &mut v)`) is rejected. References cannot cross a goroutine
-boundary, so `go f(&mut v)` is rejected.
+boundary, so `spawn(|| f(&mut v))` is rejected.
 
 ### 3.5 Function types
 
@@ -678,7 +714,8 @@ cannot be constructed there.
 ### 3.7 Enums (sum types)
 
 ```
-EnumDecl = [ "pub" ] "enum" Ident [ Generics ] "{" VariantList "}" [ WhereClause ]
+EnumDecl = [ "pub" ] [ "packed" ] "enum" Ident [ Generics ] [ ":" UIntType ]
+           "{" VariantList "}" [ WhereClause ]
 VariantList = SingleLineVariants | MultiLineVariants
 SingleLineVariants = Variant { "," Variant }
 MultiLineVariants  = newline Variant { [ "," ] newline Variant } [ "," ] newline
@@ -692,6 +729,31 @@ The built-in `Option` and `Result` are defined as:
 pub enum Option<T> { Some(T), None }
 pub enum Result<T, E> { Ok(T), Err(E) }
 ```
+
+**Representation.** A declaration says how wide the discriminant is
+stored, and nothing else about the enum changes with it:
+
+| Declaration | Width |
+|---|---|
+| `enum Foo { .. }` | the smallest byte-aligned width holding every variant: 8, 16, 32, or 64 bits |
+| `enum Foo: uN { .. }` | exactly `N` bits |
+| `packed enum Foo { .. }` | the smallest number of bits holding every variant |
+| `packed enum Foo: uN { .. }` | exactly `N` bits |
+
+`N` is any unsigned width from `u1` to `u64`, sub-byte widths included;
+anything else after the colon reports `GP0050`. A width too narrow for
+the variants reports `GT0081` and names the width they need - `packed
+enum Dir: u1 { N, E, S, W }` needs 2 bits. Variants number from zero in
+declaration order, and the discriminant occupies the low `N` bits of its
+storage with the rest zero, on every tier.
+
+`packed` is contextual: it is a keyword only directly before `enum`, so
+a binding, field, or function may still be called `packed`.
+
+Everything a program can observe is independent of the choice - the
+variant a value names, `==`, ordering, matching, `{}` and `{:?}`,
+serialization, use as a `Map` key, and storage in an array or a tuple all
+behave the same at every width.
 
 > **Constraint - variant names share the module namespace.** Unlike
 > Rust, a variant name is not scoped under its enum: every variant in a
@@ -734,7 +796,7 @@ impl Holder for Label {
     type Item = String
     fn get(&self) -> Self::Item { self.text }
 }
-fn shout<T: Holder>(h: &T) -> T::Item { h.get() }
+fn shout<T: Holder>(h: T) -> T::Item { h.get() }
 ```
 
 A projection resolves, in order, to an equality constraint on the bound
@@ -764,7 +826,7 @@ trait Bounded {
     const STEP: i64 = 5
 }
 impl Bounded for Gauge { const MAX: i64 = 100 }
-fn headroom<T: Bounded>(g: &T) -> i64 { T::MAX + T::STEP }
+fn headroom<T: Bounded>(g: T) -> i64 { T::MAX + T::STEP }
 ```
 
 Each associated constant becomes an ordinary constant, so its value is
@@ -781,8 +843,8 @@ trait Shape {
     fn name(&self) -> String
     fn area(&self) -> i64
 }
-fn report<T: Shape>(s: &T) -> String {
-    format!("{}: {}", s.name(), s.area())
+fn report<T: Shape>(s: T) -> String {
+    format("{}: {}", s.name(), s.area())
 }
 ```
 
@@ -846,7 +908,7 @@ Generic instantiation in expressions uses the turbofish `::<T>`:
 
 ```
 let v = Vec::<i32>::new()
-let (tx, rx) = channel::<String>()
+let tx, rx = channel::<String>()
 ```
 
 The bare form `name<T>(...)` is also accepted when the parser can
@@ -891,7 +953,7 @@ and no supertrait method inheritance through the bound.
 There is no `dyn Trait` and no trait-object type. `dyn` is not a
 reserved word, and the `dyn Trait` type spelling does not parse
 (`GP0001`). Polymorphism is provided by generic bounds with static
-dispatch (§3.10): `fn f<T: Trait>(x: &T)` monomorphises per call site.
+dispatch (§3.10): `fn f<T: Trait>(x: T)` monomorphises per call site.
 A heterogeneous collection is modelled with an `enum` whose variants
 carry the alternatives, matched exhaustively.
 
@@ -917,14 +979,14 @@ type Pair<A> = (A, A)
 ```
 
 With `new` the alias is **opaque**: it declares a type of its own over an
-unchanged representation. `type UserId = new i64` makes `UserId` and
+unchanged representation. `newtype UserId = i64` makes `UserId` and
 `i64` distinct, as are two opaque aliases of the same target. The
 distinction exists only in the checker - the runtime value is the
 representation, so an opaque alias adds no layout, no indirection, and no
 cost on any tier.
 
 ```
-type UserId = new i64
+newtype UserId = i64
 ```
 
 An opaque alias converts to and from its own representation with
@@ -972,17 +1034,21 @@ and `Ord`:
 - `Debug` - `{:?}` renders `Name { field: value, … }`.
 
 A plain struct or enum whose fields all render gets that structural rendering
-with no derive at all, including one recursive through `Box`, under both
-channel spellings: `to_string` for `Display` (`{}`) and `fmt` for `Debug`
+with no derive at all, on both channels: `Display` (`{}`) and `Debug`
 (`{:?}`). A **generic** type does not: what its fields render as depends on
 the arguments each instantiation supplies, so the declaration asks for the
 rendering with `#[derive(Debug)]`. Formatting a generic type without one is
 `GT0062`, on every tier.
 
-`Display` and `Debug` are distinct contracts, exactly as in Rust. `{}` reaches
-a type's `to_string` and `{:?}` its `fmt`; neither channel borrows the other's
-method, so `impl Display for T { fn to_string }` leaves `{:?}` showing the
-synthesized shape and `impl Debug for T { fn fmt }` leaves `{}` showing it.
+`Display` and `Debug` are distinct contracts, exactly as in Rust. Each
+declares one method that answers a `String`, and both are written `fn fmt`;
+the `impl` header is what says which contract a block supplies. Neither
+channel borrows the other's method, so `impl Display for T { fn fmt }` leaves
+`{:?}` showing the synthesized shape and `impl Debug for T { fn fmt }` leaves
+`{}` showing it. `x.to_string()` renders through `Display`, whether that is
+the synthesized rendering or a written one; declaring the rendering as
+`fn to_string` inside an `impl Display` block is `GP0053`, with the rewrite
+that names it `fmt`.
 
 An `impl Trait for Type` block defines exactly the items the trait declares. A
 `fn` the trait does not declare is `GT0072` - it would become an inherent
@@ -1020,12 +1086,16 @@ to the same entry - with no `#[derive(Hash)]`; hashing is automatic, and
 ### 4.1 Bindings
 
 ```
-LetStmt = "let" [ "mut" ] Pattern [ ":" Type ] [ "=" Expr ]
+LetStmt = "let" LetTargets [ ":" Type ] [ "=" ExprList ]
+LetTargets = Pattern { "," Pattern }
+ExprList = Expr { "," Expr }
 ```
 
 - `let x = 1` - immutable binding, type inferred.
 - `let mut x = 1` - mutable binding.
-- `let (a, b) = pair` - destructuring.
+- `let a, b = pair` - destructuring.
+- `let a, b = 1, 2` - the same list, written out element by element.
+- `let a, (b, c) = 1, (2, 3)` - a nested element keeps its parentheses.
 - `let Point { x, y } = p` - struct destructuring.
 - `let Point { x: a, y: b } = p` - renamed struct destructuring.
 - `let Nested { p: Point { x, y }, label } = n` - nested struct.
@@ -1036,6 +1106,17 @@ LetStmt = "let" [ "mut" ] Pattern [ ":" Type ] [ "=" Expr ]
   same names).
 - `let x: i64 = 1` - annotated.
 
+A `let` lists its targets separated by commas, and a list of two or more
+binds the elements of a tuple value element-wise. Writing that list as a
+parenthesised tuple pattern - `let (a, b) = pair` - reports `GP0042` and
+carries the paren-free rewrite. Parentheses group a pattern only where one
+sits beside others: a `match` arm, a `for` binding, a parameter, and a
+nested element of the list itself.
+
+A right-hand side may be written as a list too, in which case it is the
+tuple its elements form: `let a, b = 1, 2` and `let a, b = (1, 2)` are the
+same binding.
+
 A `let` pattern must be irrefutable (it always matches); a refutable
 pattern requires `let ... else { ... }` (the `else` block must diverge).
 Irrefutable struct, nested-struct, variant, and or-pattern destructuring
@@ -1044,19 +1125,21 @@ AOT tiers.
 
 Shadowing is permitted.
 
-A tuple written on the left of `=` in an assignment is a destructuring
-target: each element is written from the matching element of the
-right-hand side, which is evaluated in full before the first write. Every
-element must be a writable place - a binding, a field, an index, a tuple
-position, or a dereference - or `_`, which discards its element. Targets
-nest. Only plain `=` destructures; a compound operator on a tuple target is
-rejected.
+A comma-separated list on the left of `=` is a destructuring target: each
+element is written from the matching element of the right-hand side, which
+is evaluated in full before the first write. Every element must be a
+writable place - a binding, a field, an index, a tuple position, or a
+dereference - or `_`, which discards its element. Targets nest, and a
+nested one keeps its parentheses. A compound operator pairs element-wise:
+each place is read, combined with its own element of the right-hand value,
+and written back.
 
 ```
-(a, b) = (b, a)
-(p.x, xs[1]) = (5, 6)
-(head, (left, right)) = (1, (2, 3))
-(_, kept) = (99, 42)
+a, b = b, a
+p.x, xs[1] = 5, 6
+head, (left, right) = 1, (2, 3)
+_, kept = 99, 42
+x, y += 2, 3
 ```
 
 The left side of `=` is a pattern and the right side is an expression. This
@@ -1068,7 +1151,7 @@ reassignable; `let &mut mut value = reference` does.
 
 For a simple top-level copy, `let value = *reference` is usually the clearest
 spelling. Reference patterns remain useful and uniform when nested, such as
-`let (name, &mut count) = entry`.
+`let name, &mut count = entry`.
 
 ### 4.2 Expressions
 
@@ -1158,8 +1241,8 @@ parse errors.
 
 ```
 match divide(a, b) {
-  Ok(v) => println!("got: {}", v),
-  Err(e) => eprintln!("err: {}", e),
+  Ok(v) => println("got: {}", v),
+  Err(e) => eprintln("err: {}", e),
 }
 ```
 
@@ -1274,7 +1357,7 @@ fn gather() -> Result<(), errors::Error> {
   cohort {
     let a = spawn(|| fetch("one"))
     let b = spawn(|| fetch("two"))
-    println!("{} {}", a.join()??, b.join()??)
+    println("{} {}", a.join()??, b.join()??)
   }
 }
 ```
@@ -1284,6 +1367,10 @@ fn gather() -> Result<(), errors::Error> {
 ```
 DeferStmt = "defer" Expr
 ```
+
+`defer` is contextual (§2.4): it opens the statement only in statement
+position and directly before a name, a keyword, or `{`, so a binding,
+field, or function may still be called `defer`.
 
 `defer` is **block-scoped**, following Swift and Zig rather than Go: a
 deferred expression runs when control leaves its *enclosing block* - by
@@ -1314,31 +1401,30 @@ they read the current value of any variable they reference at block exit (the
 same capture rule as Swift/Zig). A deferred expression's own value and any
 control flow inside it are discarded; a panic raised inside one propagates.
 
-#### `go`
-
-```
-GoStmt = "go" Expr
-```
-
-The expression must be a call (possibly the call of an anonymous `fn()`
-literal, in which case the `()` on the literal may be omitted as
-syntactic sugar). Launches the call in a new goroutine; does not wait.
-
-```
-go worker()
-go producer.step()
-go fn() { process(item) }          // sugar for: go (fn() { process(item) })()
-```
-
 #### `spawn` / `join`
 
 `spawn(f)` runs the callable `f` (a function or closure taking no
 arguments) on a goroutine and returns a `JoinHandle<T>`, where `T` is
 `f`'s return type. `handle.join()` blocks until the goroutine finishes
 and yields its outcome as `Result<T, String>`: `Ok(value)` on a normal
-return, or `Err(message)` if the goroutine panicked. Unlike `go`, which
-is fire-and-forget, `spawn` lets the caller recover the result and
-isolate a panic without ending the process.
+return, or `Err(message)` if the goroutine panicked.
+
+`spawn` is the only way to start a goroutine. Every one attaches to the
+enclosing cohort, and `main` runs inside an implicit root cohort, so a
+goroutine never outlives the block that started it and a failure nobody
+joined is still reported. There is no detached form.
+
+Ownership is fixed at the spawn and there is no re-parenting: nothing
+moves a running goroutine from one cohort to another, so the block a
+child belongs to is decided once, where it was written.
+
+A closure body runs on the child, so an operand that must be read where
+the spawn is written is bound first:
+
+```
+let snapshot = xs[0]
+spawn(|| worker(snapshot))
+```
 
 ```
 let h = spawn(|| compute())
@@ -1359,6 +1445,9 @@ RecvExpr   = Expr ".recv()"
 SendExpr   = Expr ".send(" Expr ")"
 ```
 
+`select` is contextual (§2.4): only the word directly before `{` opens
+the expression, so a method or binding may still be called `select`.
+
 `select` chooses exactly one of its communication operations to proceed,
 pseudo-randomly among those ready. If none is ready and no `default`
 arm exists, the goroutine blocks. Matches Go's select semantics.
@@ -1367,8 +1456,8 @@ Example (from examples.md):
 
 ```
 select {
-  Ok(msg) = rx_ok.recv() => println!("success: {}", msg),
-  Err(err) = rx_err.recv() => println!("error: {}", err),
+  Ok(msg) = rx_ok.recv() => println("success: {}", msg),
+  Err(err) = rx_err.recv() => println("error: {}", err),
 }
 ```
 
@@ -1412,9 +1501,9 @@ low precedence (just above assignment), so `a |> f |> g` parses as
 
 A step either takes the piped value as its only argument, or is a closure
 whose parameter is the slot the value fills. No argument order is
-assumed: a data-first callee (`strings::`, `bytes::`, `path::`, `sort::`,
-`fs::`) and a data-last one (`iter::`, `option::`, `result::`) are
-written alike.
+assumed, so a step reads the same whatever the callee's parameters are -
+a stdlib function, one this program declares, or a method on an external
+receiver.
 
 Lowering rules:
 
@@ -1471,9 +1560,9 @@ desugared call exactly as they would to a hand-written call.
 Examples:
 
 ```
-// The slot is named, so a data-first callee reads like a data-last one.
+// The slot is named, so a step reads the same for any callee.
 text |> |v| strings::slice(v, 1, 3)
-name |> |v| format!("hello {}", v) |> println
+name |> |v| format("hello {}", v) |> println
 
 // A bare callable needs no closure.
 3 |> double |> negate
@@ -1484,24 +1573,23 @@ Idiomatic iterator chains:
 ```
 let total =
   1..=100
-  |> |v| iter::filter(|n| n % 2 == 0, v)
-  |> |v| iter::map(|n| n * n, v)
+  |> |v| iter::filter(v, |n| n % 2 == 0)
+  |> |v| iter::map(v, |n| n * n)
   |> iter::sum::<i64>()
 ```
 
 Desugars to:
 
 ```
-let total = iter::sum::<i64>(iter::map(|n| n * n, iter::filter(|n| n % 2 == 0, 1..=100)))
+let total = iter::sum::<i64>(iter::map(iter::filter(1..=100, |n| n % 2 == 0), |n| n * n))
 ```
 
-**Argument-order convention.** Stdlib free functions intended to be
-piped into (`std::iter`, `std::option`, `std::result`, and most of
-`std::strings`) follow a uniform "data-last" rule: the value being
-transformed is the **last** positional parameter. This is what makes
-`x |> |v| f(a, b, v)` thread cleanly without explicit placeholders. The
-convention is documented per-module; APIs that diverge from it (for
-historical or readability reasons) are called out at their declaration.
+**Argument-order convention.** Every stdlib free function takes the
+value it transforms as its **first** positional parameter, so a free call
+reads as the method it stands for: `iter::map(xs, f)` beside `xs.map(f)`,
+`strings::split(s, ",")` beside `s.split(",")`. A call written with the
+data in the trailing slot reports `GR0021` and still means what it did,
+so the rest of the body is diagnosed on its own terms.
 
 Interaction with `?`:
 
@@ -1658,7 +1746,9 @@ mod vector {
 Items within the same module reference each other by bare name. Items
 in a sibling or nested module use a path: `math::vector::Vec3`, or are
 brought into scope with a `use` (§6.6). A module's items are never in
-scope on their own; naming one without a path or import is `GR0011`.
+scope on their own; naming one without a path or import is `GR0011`. A
+module name is not a value, so a module and one of its items may share a
+name and a bare call still reports `GR0011` naming the import.
 
 A module nested inside another is a **module descendant**:
 `math::vector` is a descendant of `math`. Descendancy runs one way and
@@ -2037,7 +2127,7 @@ view itself remains the permitted access path. A reference ends only at its
 lexical scope boundary.
 
 References cannot be stored in aggregates or containers, returned from user
-functions, captured by closures, sent through channels, or passed to `go`.
+functions, captured by closures, sent through channels, or spawned.
 Inferred container and channel element types are checked after inference so an
 omitted annotation cannot bypass the rule. A direct call-scoped borrow remains
 valid, including array-to-slice and Vec-to-slice coercion. Static string
@@ -2069,7 +2159,7 @@ process lifetime.
   scope-local exclusivity rules apply to these references too.
 - Returning or storing a reference is rejected. Use an owned return value or
   keep the view at a direct call boundary.
-- `go` and `Sender::send` reject reference payloads. Owned Vec values are
+- `spawn` and `Sender::send` reject reference payloads. Owned Vec values are
   cloned before publication so sender-side growth cannot invalidate receiver
   storage.
 
@@ -2095,24 +2185,24 @@ require non-lexical lifetime inference or arbitrary alias reasoning.
 ### 8.1 Goroutines
 
 A goroutine is a stackful coroutine scheduled cooperatively by the
-runtime. `go expr` spawns one. Each goroutine owns a fixed-size
+runtime. `spawn(|| expr)` starts one. Each goroutine owns a fixed-size
 mmap'd stack (default 1 MiB; override with `GOSSAMER_GOROUTINE_STACK`,
 clamped to a 32 KiB minimum). The operating system commits pages on demand.
 A byte-budget guard reports `GX0008` before the hardware guard page; the stack
 does not grow or shrink.
 
-**Argument discipline.** After `go f(x)` returns, the caller may continue to
+**Argument discipline.** After `spawn(|| f(x))` returns, the caller may continue to
 use `x`; Gossamer has no source-level ownership transfer. Primitive values
 copy directly. A named Vec argument is cloned before the goroutine is
 published, including nested Vec storage, so later growth occurs on independent
 buffers. Every managed child reachable from that Vec is marked shared before
 publication. Runtime synchronization handles keep their documented
 shared-handle semantics. GT0055 rejects every inline struct, tuple, or
-fixed-array argument at a direct `go` call because the compiled spawn ABI
+fixed-array argument at a spawned call because the compiled spawn ABI
 cannot yet copy arbitrary inline layouts. Publish supported fields separately
 and reconstruct the aggregate in the receiving goroutine.
 
-A `go` call may not capture or pass a `&T` or `&mut T`. The tracked
+A spawned call may not capture or pass a `&T` or `&mut T`. The tracked
 `&`/`&mut` access markers are lexical write-intent markers (§7.5) and cannot be
 carried across goroutine boundaries. Pass the underlying value (managed
 reference, or `Copy`) instead.
@@ -2141,8 +2231,8 @@ builtin effect audit confirms that they cannot pin a scheduler worker.
 ### 8.2 Channels
 
 ```
-let (tx, rx) = channel::<T>()             // unbuffered
-let (tx, rx) = channel::<T>(cap: 16)      // buffered
+let tx, rx = channel::<T>()             // unbuffered
+let tx, rx = channel::<T>(cap: 16)      // buffered
 ```
 
 Channel operations (non-`select`):
@@ -2224,10 +2314,10 @@ There is no `recover`, and no user-callable `catch_unwind`. A panic
 marks a violated invariant, and the failures a caller is meant to handle
 travel as `Result` (§9).
 
-What a program can do with a panic is contain it and observe it. `go
-expr` and `spawn(f)` are the containment boundary: a panic ends that
-goroutine alone, and `spawn`'s `handle.join() -> Result<T, String>`
-delivers the message to the joiner. `runtime::set_panic_hook` observes
+What a program can do with a panic is contain it and observe it.
+`spawn(f)` is the containment boundary: a panic ends that goroutine
+alone, and `handle.join() -> Result<T, String>` delivers the message to
+the joiner. `runtime::set_panic_hook` observes
 one before it unwinds.
 
 ### 8.6 `unsafe`
@@ -2325,7 +2415,7 @@ This is an outline; full API docs ship with the first implementation.
 - `println(args...)` - variadic print-with-newline. Each argument
   implements `Display`.
 - `eprintln(args...)`.
-- `format!(fmt_str, args...)` - returns `String`. `fmt_str` is a
+- `format(fmt_str, args...)` - returns `String`. `fmt_str` is a
   compile-time-validated format string (`{}` placeholders).
 - `print`, `eprint` without newline.
 - `Display`, `Debug` traits with derive support.
@@ -2396,10 +2486,12 @@ import is needed. Mutating helpers (`xs.push`, `xs.pop`, `xs.sort`,
 `xs.swap`, `m.inc`, `m.or_insert`) are methods for the same reason -
 they operate by side-effect on the receiver.
 
-The same transformations also exist as **data-last free functions in
+The same transformations also exist as **free functions in
 `std::iter`** (§4.6), which is the shape `|>` pipelines want:
-`0..n |> iter::sum`. The two spellings name one implementation; the
-method form is the default and the free form exists for piping.
+`0..n |> iter::sum`. Each takes its data first, so `iter::map(xs, f)`
+reads as the `xs.map(f)` it stands for. The two spellings name one
+implementation; the method form is the default and the free form exists
+for piping.
 
 Arrays and slices reach the eager combinators through `iter()` first;
 `Vec` carries them directly. `%i` in the REPL reports each type's real
@@ -2448,7 +2540,7 @@ iterable directly. A range stored in a binding retains its iterator state:
 `let a = 0..3` followed by `for i in a { body }` visits `0`, `1`, and `2`.
 
 The public `std::iter` module is currently Experimental and eager. Its free
-functions use data-last argument order (§4.6), accept `Vec<T>` inputs, and
+functions take their data first (§4.6), accept `Vec<T>` inputs, and
 materialize `Vec` results for transformations such as `map`, `filter`, `take`,
 `skip`, `zip`, `chain`, `flatten`, `flat_map`, `scan`, `windows`, and `chunks`.
 Consumers including `fold`, `reduce`, `sum`, `count`, `any`, `all`, `find`, and
@@ -2465,26 +2557,25 @@ Current eager example:
 
 ```
 let squares = [1, 2, 3, 4]
-  |> |v| iter::filter(|n| n % 2 == 0, v)
-  |> |v| iter::map(|n| n * n, v)
+  |> |v| iter::filter(v, |n| n % 2 == 0)
+  |> |v| iter::map(v, |n| n * n)
 let total = squares |> iter::sum
 ```
 
 ### 10.4a `std::option`
 
-Free-function chaining surface for `Option<T>`. Mirrors F# `Option`
-module. Argument order is data-last so every entry threads with `|>`.
+Free-function chaining surface for `Option<T>`. Every entry takes the
+option first, so the free form reads as the method it mirrors.
 
-- `map(f, opt) -> Option<U>`.
-- `and_then(f, opt) -> Option<U>` - F# `Option.bind`; flat-map.
-- `filter(p, opt) -> Option<T>`.
-- `default(v, opt) -> T` - F# `Option.defaultValue`.
-- `default_with(f, opt) -> T` - lazy default.
-- `or(alt, opt) -> Option<T>` / `or_else(f, opt) -> Option<T>`.
-- `iter(f, opt) -> ()` - F# `Option.iter`.
+- `map(opt, f) -> Option<U>`.
+- `and_then(opt, f) -> Option<U>` - flat-map.
+- `filter(opt, p) -> Option<T>`.
+- `unwrap_or(opt, v) -> T`, `unwrap_or_else(opt, f) -> T`.
+- `or(opt, alt) -> Option<T>` / `or_else(opt, f) -> Option<T>`.
+- `iter(opt) -> Vec<T>`.
 - `is_some(opt) -> bool`, `is_none(opt) -> bool`.
 - `flatten(opt: Option<Option<T>>) -> Option<T>`.
-- `zip(a, b) -> Option<(A, B)>`.
+- `zip(opt, other) -> Option<(T, U)>`.
 
 The same surface is mirrored as methods on `Option<T>` for the
 Rust-style call form (`opt.map(f)`, `opt.unwrap_or(0)`). Pick the
@@ -2492,14 +2583,14 @@ form that fits the surrounding code; don't mix in one chain.
 
 ### 10.4b `std::result`
 
-Free-function chaining surface for `Result<T, E>`. Mirrors F#
-`Result` module. Data-last.
+Free-function chaining surface for `Result<T, E>`. Every entry takes
+the result first, so the free form reads as the method it mirrors.
 
-- `map(f, r) -> Result<U, E>`.
-- `map_err(f, r) -> Result<T, F>`.
-- `and_then(f, r) -> Result<U, E>` - F# `Result.bind`.
-- `or_else(f, r) -> Result<T, F>`.
-- `default(v, r) -> T`, `default_with(f, r) -> T`.
+- `map(r, f) -> Result<U, E>`.
+- `map_err(r, f) -> Result<T, F>`.
+- `and_then(r, f) -> Result<U, E>` - flat-map.
+- `or_else(r, f) -> Result<T, F>`.
+- `unwrap_or(r, v) -> T`, `unwrap_or_else(r, f) -> T`.
 - `ok(r) -> Option<T>`, `err(r) -> Option<E>`.
 - `is_ok(r) -> bool`, `is_err(r) -> bool`.
 
@@ -2600,7 +2691,7 @@ compatibility promise without improving fidelity.
 
 - `thread::yield_now()` and `thread::num_cpus()` expose OS-thread scheduling
   hints and CPU availability only. There is no user-facing `thread::spawn`.
-- `go expr` and `spawn(f)` create Gossamer goroutines; channels coordinate
+- `spawn(f)` creates a Gossamer goroutine; channels coordinate
   goroutines with `channel()` and `channel(cap)` from `std::sync`. There is
   no `std::channel` module path.
 - Runtime workers, blocking pools, and protocol threads are implementation
@@ -2608,7 +2699,7 @@ compatibility promise without improving fidelity.
 
 ### 10.13 `std::panic`
 
-- `panic!(msg: String)`.
+- `panic(msg: String)`.
 - A panic is goroutine-scoped: a spawned goroutine's panic ends that
   goroutine alone, and a main-goroutine panic is fatal (exit 101).
   `spawn(f)` reports it through `handle.join() -> Result<T, String>`.
@@ -2798,18 +2889,18 @@ error for forward-compatibility).
 
 Gossamer has a small fixed macro set, expanded at parse time; there is
 no runtime macro engine and no user-defined macros. Six are
-format-shaped (below); plus the desugar macros `matches!(e, pat)`,
-`todo!` / `unimplemented!` / `unreachable!`, and `dbg!(e)`, and the
+format-shaped (below); plus the desugar macros `matches(e, pat)`,
+`todo!` / `unimplemented!` / `unreachable!`, and `dbg(e)`, and the
 build-time `regex!` / `sql!` / `codegen!`.
 
 | Macro | Returns | Destination |
 |---|---|---|
-| `format!("…", …)` | `String` | - |
-| `println!("…", …)` | `()` | stdout + newline |
-| `print!("…", …)` | `()` | stdout, no newline |
-| `eprintln!("…", …)` | `()` | stderr + newline |
-| `eprint!("…", …)` | `()` | stderr, no newline |
-| `panic!("…", …)` | `!` | unwinds with the rendered message |
+| `format("…", …)` | `String` | - |
+| `println("…", …)` | `()` | stdout + newline |
+| `print("…", …)` | `()` | stdout, no newline |
+| `eprintln("…", …)` | `()` | stderr + newline |
+| `eprint("…", …)` | `()` | stderr, no newline |
+| `panic("…", …)` | `!` | unwinds with the rendered message |
 
 Beyond the six format macros and the desugar / build-time macros
 listed above, **every other `name!(...)` is a parse error** (`GP0001`),
@@ -2831,6 +2922,11 @@ instead **Zig-style `comptime`** - ordinary Gossamer functions and
 blocks evaluated at compile time, rather than a `macro_rules!`-style
 macro language, with no separate macro grammar, no hygiene model, and no
 token-tree DSL.
+
+`comptime` is contextual (§2.4): the word opens a block directly before
+`{`, declares a function directly before `fn`, and marks a parameter
+when a pattern rather than its own `:` follows, so a binding or field
+may still be called `comptime`.
 
 A `comptime { ... }` block, every call to a `comptime fn`, and every
 argument to a `comptime` parameter are evaluated on the bytecode VM
@@ -2887,7 +2983,7 @@ MultiLineParams  = newline Param { [ "," ] newline Param } [ "," ] newline
 Param        = ( "self" | "&" "self" | "&" "mut" "self" | Pattern ":" Type )
 
 Block        = "{" { Stmt } [ Expr ] "}"
-Stmt         = LetStmt | Item | ExprStmt | DeferStmt | GoStmt
+Stmt         = LetStmt | Item | ExprStmt | DeferStmt
 ExprStmt     = Expr
 
 Expr         = LiteralExpr | PathExpr | CallExpr | MethodCall | FieldAccess
@@ -3193,27 +3289,25 @@ idiom, a new type-system theory, or machinery the reader cannot see.
    cleanup tied to scope; the runtime reclaims memory.
 4. No `Box<T>` / `Rc<T>` / `Arc<T>` - plain references are
    runtime-managed and safe to share across goroutines.
-5. `&T` is a managed reference, not a borrow. `&T` and `&mut T` have the
-   same runtime; the distinction is a type-check-only aliasing hint.
+5. `&T` is a managed reference, not a borrow, and never a parameter type:
+   a parameter is `T` or `&mut T` (§3.4). `&T` and `&mut T` have the same
+   runtime; the distinction is a type-check-only aliasing hint.
 6. No `async`/`await` - goroutines replace the entire async story.
-7. No macros in v1 (beyond built-ins).
-8. `go` and `select` keywords added.
-9. `defer` keyword added.
-10. **Forward pipe `|>`** (F#-style, left-associative, appends the
-    piped value as the **last** argument). See §4.6. Rust has no pipe
-    operator; Gossamer adds it as a first-class part of the grammar.
-11. **F#-style free-function combinator surface in stdlib.**
-    `std::iter`, `std::option`, and `std::result` ship F#-style
-    free-function chaining APIs (see §10.4-§10.4b) with data-last
-    argument order so they thread cleanly through `|>`. Unlike
-    Rust, collections (`Vec<T>`, `Map<K, V>`, `Set<T>`,
-    `BTreeMap<K, V>`) do **not** carry `.map`/`.filter`/`.fold`/
-    `.reduce`/`.partition`/etc. methods - `iter::*` free functions
-    are the one obvious way to chain transformations. `Option<T>`
-    and `Result<T, E>` keep their Rust-style methods
-    (`opt.map(f)`, `opt.unwrap_or(0)`) alongside the free
-    functions because the method form fits how those types are
-    commonly used inline.
+7. No user macros. The built-in call names are ordinary calls, spelled
+   without a `!`.
+8. `select`, `defer`, `cohort`, `arena`, and `comptime` added, each as
+   a contextual word rather than a reserved keyword (§2.4). `spawn` is a
+   prelude call name and, being the one way to start a goroutine, is one
+   nothing may declare (GR0020).
+9. **Forward pipe `|>`** (left-associative). A bare step takes the piped
+   value as its only argument; a step that writes arguments is a closure
+   whose parameter is the slot the value fills. See §4.6. Rust has no
+   pipe operator; Gossamer adds it as a first-class part of the grammar.
+10. **Free-function combinator surface in stdlib.** `std::iter`,
+    `std::option`, and `std::result` ship free-function chaining APIs
+    (see §10.4-§10.4b) alongside the method surface that every
+    collection and iterator carries, so the same operation reads the
+    same way whether it is chained from a receiver or piped.
 
 ## Appendix C - Go features not ported
 

@@ -16,7 +16,7 @@ fn lengths(rounds: i64) -> i64 {
 }
 
 fn main() {
-    println!("{:?}", popped().map(|p| p.value))
-    println!("{:?}", popped().map(|p| p.key.len()))
-    println!("{}", lengths(200))
+    println("{:?}", popped().map(|p| p.value))
+    println("{:?}", popped().map(|p| p.key.len()))
+    println("{}", lengths(200))
 }

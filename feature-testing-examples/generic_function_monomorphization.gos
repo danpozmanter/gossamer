@@ -44,34 +44,34 @@ fn main() {
     // Integer domain
     let nums = Vec::from([1, 2, 3, 4, 5])
     let doubled = map_i64(nums, |x| x * 2)
-    println!("doubled[4] = {}", doubled[4])
+    println("doubled[4] = {}", doubled[4])
 
     let sum = reduce_i64(nums, 0, |acc, x| acc + x)
-    println!("sum = {}", sum)
+    println("sum = {}", sum)
 
     let product = reduce_i64(nums, 1, |acc, x| acc * x)
-    println!("product = {}", product)
+    println("product = {}", product)
 
     // Float domain - same algorithm, different type
     let fs: Vec<f64> = Vec::from([1.0, 2.0, 3.0, 4.0])
     let halved = map_f64(fs, |x| x * 0.5)
-    println!("halved[0] = {}", halved[0])
+    println("halved[0] = {}", halved[0])
 
     let fsum = reduce_f64(fs, 0.0, |acc, x| acc + x)
-    println!("fsum = {}", fsum)
+    println("fsum = {}", fsum)
 
     // Partial application via closure capture
     let add_ten = |x| x + 10
     let shifted = map_i64(nums, add_ten)
-    println!("shifted[0] = {}", shifted[0])
+    println("shifted[0] = {}", shifted[0])
 
     // clamp via partial application
     let clamp5 = |x| clamp_i64(1, 5, x)
     let raw = Vec::from([0, 3, 7, -1, 5])
     let clamped = map_i64(raw, clamp5)
-    println!("clamped[0] = {}", clamped[0])
-    println!("clamped[2] = {}", clamped[2])
-    println!("clamped[3] = {}", clamped[3])
+    println("clamped[0] = {}", clamped[0])
+    println("clamped[2] = {}", clamped[2])
+    println("clamped[3] = {}", clamped[3])
 }
 
 #[cfg(test)]
@@ -82,14 +82,14 @@ mod tests {
     fn map_i64_squares() {
         let xs = #[1, 2, 3, 4]
         let r = super::map_i64(xs, |x| x * x)
-        let _ = testing::check_eq(&r[0], &1, "1^2")
-        let _ = testing::check_eq(&r[3], &16, "4^2")
+        let _ = testing::check_eq(r[0], 1, "1^2")
+        let _ = testing::check_eq(r[3], 16, "4^2")
     }
 
     #[test]
     fn reduce_i64_sum() {
         let s = super::reduce_i64(#[1, 2, 3, 4, 5], 0, |acc, x| acc + x)
-        let _ = testing::check_eq(&s, &15, "sum 1..5")
+        let _ = testing::check_eq(s, 15, "sum 1..5")
     }
 
     #[test]
@@ -100,8 +100,8 @@ mod tests {
 
     #[test]
     fn clamp_bounds() {
-        let _ = testing::check_eq(&super::clamp_i64(0, 10, -5), &0, "below lo")
-        let _ = testing::check_eq(&super::clamp_i64(0, 10, 15), &10, "above hi")
-        let _ = testing::check_eq(&super::clamp_i64(0, 10, 7), &7, "within")
+        let _ = testing::check_eq(super::clamp_i64(0, 10, -5), 0, "below lo")
+        let _ = testing::check_eq(super::clamp_i64(0, 10, 15), 10, "above hi")
+        let _ = testing::check_eq(super::clamp_i64(0, 10, 7), 7, "within")
     }
 }

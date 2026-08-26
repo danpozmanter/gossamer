@@ -168,7 +168,7 @@ impl<'tcx> FnBuilder<'tcx> {
 
     /// Releases the loop body's per-iteration `Value` registers at the
     /// fall-through back-edge, so an aggregate built this iteration (a tree,
-    /// a scratch `Vec`, the temporary tuple a `let (a, b) = f()` destructure
+    /// a scratch `Vec`, the temporary tuple a `let a, b = f()` destructure
     /// leaves behind) is dropped before the next iteration allocates,
     /// instead of staying live in its register until the next write. Without
     /// this, an iteration's freshly built structure overlaps the next

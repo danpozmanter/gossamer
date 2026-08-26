@@ -51,35 +51,35 @@ use tuigoose::render::drop_paragraph
 
 fn main() {
     let quad = rect(0, 0, 12, 4)
-    println!("rect: {}", quad)
+    println("rect: {}", quad)
 
     let parts = split_vertical(quad, [2, 2])
-    println!("split_count: {}", parts)
+    println("split_count: {}", parts)
 
     let block = bordered_all()
     let block = with_title(block, "hi")
     let para = new("hello world")
     let para = with_block(para, block)
     let rendered = paragraph_to_string(para, 12, 4)
-    println!("rendered: {}", rendered)
+    println("rendered: {}", rendered)
 
     let _ = drop_block(block)
     let _ = drop_paragraph(para)
-    println!("done")
+    println("done")
 }
 """
 
 /// The checkout this harness lives in.
 fn repo_root() -> String {
-    if let Some(root) = env::var(&"GOSSAMER_ROOT") {
+    if let Some(root) = env::var("GOSSAMER_ROOT") {
         return root
     }
     let mut directory = env::current_dir().unwrap_or(".")
     loop {
-        if fs::is_dir(&path::join(&directory, &"example-external-libraries")) {
+        if fs::is_dir(path::join(directory, "example-external-libraries")) {
             return directory
         }
-        match path::parent(&directory) {
+        match path::parent(directory) {
             Some(parent) => directory = parent
             None => return "."
         }
@@ -88,50 +88,50 @@ fn repo_root() -> String {
 
 /// Ends the run with `message` on standard error and `code`.
 fn fail(message: String, code: i64) {
-    eprintln!("test_rust_binding_e2e: {}", message)
+    eprintln("test_rust_binding_e2e: {}", message)
     process::exit(code)
 }
 
 fn main() {
     let root = repo_root()
-    let tuigoose = env::var(&"TUIGOOSE_ROOT")
-        .unwrap_or(path::join(&root, &"../tuigoose"))
-    if !fs::is_dir(&tuigoose) {
-        eprintln!("test_rust_binding_e2e: tuigoose not found at {}", tuigoose)
-        eprintln!("  Set TUIGOOSE_ROOT or place tuigoose at <GOSSAMER_ROOT>/../tuigoose.")
+    let tuigoose = env::var("TUIGOOSE_ROOT")
+        .unwrap_or(path::join(root, "../tuigoose"))
+    if !fs::is_dir(tuigoose) {
+        eprintln("test_rust_binding_e2e: tuigoose not found at {}", tuigoose)
+        eprintln("  Set TUIGOOSE_ROOT or place tuigoose at <GOSSAMER_ROOT>/../tuigoose.")
         process::exit(2)
     }
 
-    println!("=> building gossamer-cli (debug)...")
-    match process::run_in(&"cargo", &#["build", "-p", "gossamer-cli"], &root, &#[]) {
+    println("=> building gossamer-cli (debug)...")
+    match process::run_in("cargo", #["build", "-p", "gossamer-cli"], root, #[]) {
         Ok(result) => {
             if result.code != 0 {
-                eprint!("{}", result.stderr)
+                eprint("{}", result.stderr)
                 fail("cargo build failed", 2)
             }
         }
-        Err(e) => fail(format!("cargo build: {}", e), 2)
+        Err(e) => fail(format("cargo build: {}", e), 2)
     }
-    let gos = path::join(&root, &"target/debug/gos")
-    if !fs::is_file(&gos) {
-        fail(format!("gos binary not produced at {}", gos), 2)
+    let gos = path::join(root, "target/debug/gos")
+    if !fs::is_file(gos) {
+        fail(format("gos binary not produced at {}", gos), 2)
     }
 
-    let work = match fs::temp_dir(&"gos-binding-e2e-") {
+    let work = match fs::temp_dir("gos-binding-e2e-") {
         Ok(work) => work
         Err(e) => {
-            fail(format!("creating a scratch directory: {}", e), 2)
+            fail(format("creating a scratch directory: {}", e), 2)
             return
         }
     }
-    let keep = env::var(&"KEEP_TEMP").unwrap_or("")
+    let keep = env::var("KEEP_TEMP").unwrap_or("")
     if !keep.is_empty() {
-        println!("test_rust_binding_e2e: leaving {} for inspection", work)
+        println("test_rust_binding_e2e: leaving {} for inspection", work)
     }
 
-    let project = path::join(&work, &"sample-app")
-    let _ = fs::create_dir_all(&path::join(&project, &"src"))
-    let manifest = format!(
+    let project = path::join(work, "sample-app")
+    let _ = fs::create_dir_all(path::join(project, "src"))
+    let manifest = format(
         """
         [project]
         id = "example.com/binding-e2e"
@@ -144,38 +144,38 @@ fn main() {
         """
         tuigoose
     )
-    let _ = fs::write(path::join(&project, &"project.toml"), manifest.as_bytes())
-    let _ = fs::write(path::join(&project, &"src/main.gos"), SAMPLE_SOURCE.as_bytes())
+    let _ = fs::write(path::join(project, "project.toml"), manifest.as_bytes())
+    let _ = fs::write(path::join(project, "src/main.gos"), SAMPLE_SOURCE.as_bytes())
 
-    println!("=> running gos in {}...", project)
+    println("=> running gos in {}...", project)
     // The runner builds synchronously and its output is forwarded, so a
     // cargo failure surfaces here rather than as a bare exit code.
     let mut environment = #[]
-    if let Some(cache) = env::var(&"GOSSAMER_CACHE") {
+    if let Some(cache) = env::var("GOSSAMER_CACHE") {
         environment.push(("XDG_CACHE_HOME", cache))
     }
-    let outcome = process::run_in(&gos, &#["run", "src/main.gos"], &project, &environment)
-    let (output, code) = match outcome {
-        Ok(result) => (format!("{}{}", result.stdout, result.stderr), result.code)
+    let outcome = process::run_in(gos, #["run", "src/main.gos"], project, environment)
+    let output, code = match outcome {
+        Ok(result) => (format("{}{}", result.stdout, result.stderr), result.code)
         Err(e) => {
-            fail(format!("running the project: {}", e), 1)
+            fail(format("running the project: {}", e), 1)
             return
         }
     }
-    print!("{}", output)
+    print("{}", output)
     if !output.ends_with("\n") {
-        println!("")
+        println("")
     }
     if code != 0 {
-        fail(format!("gos failed (exit {})", code), 1)
+        fail(format("gos failed (exit {})", code), 1)
     }
     for marker in #["rect:", "split_count:", "rendered:", "hello", "done", "┌hi"] {
         if !output.contains(marker) {
-            fail(format!("missing marker '{}' on stdout", marker), 1)
+            fail(format("missing marker '{}' on stdout", marker), 1)
         }
     }
     if keep.is_empty() {
-        let _ = fs::remove_dir_all(&work)
+        let _ = fs::remove_dir_all(work)
     }
-    println!("=> ok (cached runner: {})", project)
+    println("=> ok (cached runner: {})", project)
 }

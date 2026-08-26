@@ -27,34 +27,34 @@ fn reversed_head(n: i64) -> i64 {
 fn main() {
     let mut hot = 0
     for _ in 0..200 { hot += reversed_head(16) }
-    println!("hot={}", hot)
+    println("hot={}", hot)
 
     let mut ints: Vec<i64> = #[1, 2, 3, 4, 5]
     reverse_in_place(&mut ints)
-    println!("ints={:?}", ints)
+    println("ints={:?}", ints)
 
     let mut floats: Vec<f64> = #[1.5, 2.5, 3.5]
     floats.swap(0, 2)
-    println!("floats={:?}", floats)
+    println("floats={:?}", floats)
 
     let mut names: Vec<String> = #["pear", "apple", "fig"]
     bubble(&mut names)
-    println!("names={:?}", names)
+    println("names={:?}", names)
 
     let mut fixed: [i64; 4] = [10, 20, 30, 40]
     fixed.swap(1, 3)
-    println!("fixed={:?}", fixed)
+    println("fixed={:?}", fixed)
 
     let mut bytes: Vec<u8> = #[b'a', b'b', b'c']
     bytes.swap(0, 2)
-    println!("bytes={:?}", bytes)
+    println("bytes={:?}", bytes)
 
     let mut raw: [u8; 4] = [b'w', b'x', b'y', b'z']
     raw.swap(0, 3)
     raw.swap(1, 2)
-    println!("raw={:?}", raw)
+    println("raw={:?}", raw)
 
     // A no-move swap of an index with itself is still an in-bounds write.
     ints.swap(2, 2)
-    println!("same={:?}", ints)
+    println("same={:?}", ints)
 }

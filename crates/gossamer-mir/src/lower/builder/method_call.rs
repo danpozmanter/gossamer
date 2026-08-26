@@ -2322,7 +2322,7 @@ impl<'a> Builder<'a> {
             // older identity-copy path was a leftover from the
             // pre-discriminator layout and silently returned the
             // aggregate pointer for callers expecting an i64 -
-            // see e.g. fasta's `args[0].parse().unwrap_or(1000)`,
+            // see e.g. fasta's `args[0].to_i64().unwrap_or(1000)`,
             // which yielded an arena address instead of 10. Fall
             // back to identity for non-Result receivers (e.g.
             // stdlib helpers that still return raw inner values
@@ -5148,7 +5148,7 @@ impl<'a> Builder<'a> {
         // Re-check the dispatch for Result/Option methods now that
         // the receiver has been lowered. The HIR-side `receiver_ty`
         // is often a `Var` for chained method calls (e.g.
-        // `s.parse().unwrap_or(...)`), so the table at the top
+        // `s.to_i64().unwrap_or(...)`), so the table at the top
         // selected `Some("")` (identity) without seeing that the
         // pinned local type is in fact a Result/Option Adt. Without
         // this fix-up `.unwrap_or(default)` returns the aggregate
@@ -5893,6 +5893,22 @@ impl<'a> Builder<'a> {
             ("windows", 1) => Some("iter::windows"),
             ("dedup", 0) => Some("iter::dedup"),
             ("flatten", 0) => Some("iter::flatten"),
+            // Every adapter is a method. These had a data-last free call and
+            // no receiver form, which made the rule "an adapter chains" hold
+            // everywhere except here.
+            ("filter_map", 1) => Some("iter::filter_map"),
+            ("find_map", 1) => Some("iter::find_map"),
+            ("flat_map", 1) => Some("iter::flat_map"),
+            ("chunk_by", 1) => Some("iter::chunk_by"),
+            ("count_by", 1) => Some("iter::count_by"),
+            ("max_by", 1) => Some("iter::max_by"),
+            ("min_by", 1) => Some("iter::min_by"),
+            ("partition", 1) => Some("iter::partition"),
+            ("product_by", 1) => Some("iter::product_by"),
+            ("reduce", 1) => Some("iter::reduce"),
+            ("sum_by", 1) => Some("iter::sum_by"),
+            ("unzip", 0) => Some("iter::unzip"),
+            ("scan", 2) => Some("iter::scan"),
             _ => None,
         };
         let is_pred_count = method.name.as_str() == "count" && args.len() == 1;

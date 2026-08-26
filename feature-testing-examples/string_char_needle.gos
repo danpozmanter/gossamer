@@ -6,54 +6,54 @@
 // trim_matches / split / strip_* so all three tiers agree.
 
 fn main() {
-    println!("{}", "hello".contains('e'))
-    println!("{}", "hello".contains('z'))
-    println!("{}", "hello".starts_with('h'))
-    println!("{}", "hello".ends_with('o'))
-    println!("{}", "hello".replace('l', "L"))
-    println!("{}", "aaabbb".replacen('a', "X", 2))
-    println!("{}", "xxhelloxx".trim_matches('x'))
-    println!("{}", "xxhello".trim_start_matches('x'))
-    println!("{}", "helloxx".trim_end_matches('x'))
-    println!("{}", "hello".count('l'))
+    println("{}", "hello".contains('e'))
+    println("{}", "hello".contains('z'))
+    println("{}", "hello".starts_with('h'))
+    println("{}", "hello".ends_with('o'))
+    println("{}", "hello".replace('l', "L"))
+    println("{}", "aaabbb".replacen('a', "X", 2))
+    println("{}", "xxhelloxx".trim_matches('x'))
+    println("{}", "xxhello".trim_start_matches('x'))
+    println("{}", "helloxx".trim_end_matches('x'))
+    println("{}", "hello".count('l'))
 
     let idx = match "hello".find('l') {
         Some(i) => i
         None => -1
     }
-    println!("{}", idx)
+    println("{}", idx)
 
     let ridx = match "hello".rfind('l') {
         Some(i) => i
         None => -1
     }
-    println!("{}", ridx)
+    println("{}", ridx)
 
-    let (head, tail) = match "key:value".split_once(':') {
+    let head, tail = match "key:value".split_once(':') {
         Some(parts) => parts
         None => (String::new(), String::new())
     }
-    println!("{}/{}", head, tail)
+    println("{}/{}", head, tail)
 
-    let (rh, rt) = match "a:b:c".rsplit_once(':') {
+    let rh, rt = match "a:b:c".rsplit_once(':') {
         Some(parts) => parts
         None => (String::new(), String::new())
     }
-    println!("{}/{}", rh, rt)
+    println("{}/{}", rh, rt)
 
     let stripped = match "hello".strip_prefix('h') {
         Some(s) => s
         None => String::new()
     }
-    println!("{}", stripped)
+    println("{}", stripped)
 
     let suffixed = match "hello".strip_suffix('o') {
         Some(s) => s
         None => String::new()
     }
-    println!("{}", suffixed)
+    println("{}", suffixed)
 
-    println!("{}", "a,b,c".split(',').len())
+    println("{}", "a,b,c".split(',').len())
 }
 
 #[cfg(test)]
@@ -62,17 +62,17 @@ mod string_char_needle_tests {
 
     #[test]
     fn contains_char_needle() {
-        let _ = testing::check(&"hello".contains('e'), "contains e")
-        let _ = testing::check(&!"hello".contains('z'), "not contains z")
+        let _ = testing::check("hello".contains('e'), "contains e")
+        let _ = testing::check(!"hello".contains('z'), "not contains z")
     }
 
     #[test]
     fn replace_char_needle() {
-        let _ = testing::check_eq(&"hello".replace('l', "L"), &"heLLo", "replace l")
+        let _ = testing::check_eq("hello".replace('l', "L"), "heLLo", "replace l")
     }
 
     #[test]
     fn trim_matches_char_needle() {
-        let _ = testing::check_eq(&"xxhixx".trim_matches('x'), &"hi", "trim x")
+        let _ = testing::check_eq("xxhixx".trim_matches('x'), "hi", "trim x")
     }
 }

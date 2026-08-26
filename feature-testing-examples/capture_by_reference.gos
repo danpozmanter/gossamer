@@ -19,12 +19,12 @@ fn main() {
     let mut v: Vec<i64> = #[9]
     let add = || { v.push(2) }
     add()
-    println!("push {}", v.len())
+    println("push {}", v.len())
 
     // The enclosing binding's own mutation reaches the closure.
     v.push(3)
     add()
-    println!("both ways {}", v.len())
+    println("both ways {}", v.len())
 
     // Indexed and sorting mutations travel through the same buffer.
     let mut nums: Vec<i64> = #[3, 1, 2]
@@ -33,14 +33,14 @@ fn main() {
         nums.sort()
     }
     fix()
-    println!("index+sort {} {}", nums[0], nums[2])
+    println("index+sort {} {}", nums[0], nums[2])
 
     // A read-only capture still sees the enclosing binding's writes.
     let mut log: Vec<i64> = #[]
     let size = || log.len()
     log.push(1)
     log.push(2)
-    println!("read-only {}", size())
+    println("read-only {}", size())
 
     // Assigning the whole variable installs new storage for the binding
     // alone; the closure keeps pushing onto what it captured.
@@ -48,19 +48,19 @@ fn main() {
     let grow = || { items.push(2) }
     items = #[10, 20, 30]
     grow()
-    println!("reassigned {}", items.len())
+    println("reassigned {}", items.len())
 
     // A `Copy` scalar is captured by value.
     let mut k = 10
     let bump = || { k += 1 }
     bump()
-    println!("scalar {}", k)
+    println("scalar {}", k)
 
     // A captured `String` is rebound by `+=`, never mutated in place.
     let mut s = "a"
     let append = || { s += "b" }
     append()
-    println!("string {}", s)
+    println("string {}", s)
 
     // Combinators run the closure against the captured binding.
     let mut seen: Vec<i64> = #[]
@@ -68,10 +68,10 @@ fn main() {
         seen.push(x)
         x * 2
     })
-    println!("combinator {} {}", seen.len(), doubled.count())
+    println("combinator {} {}", seen.len(), doubled.count())
 
     // A closure outliving the frame that built it keeps its capture
     // alive across calls.
     let counter = make_counter()
-    println!("escaping {} {} {}", counter(), counter(), counter())
+    println("escaping {} {} {}", counter(), counter(), counter())
 }

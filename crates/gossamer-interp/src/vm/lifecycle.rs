@@ -1431,8 +1431,7 @@ impl Vm {
                     }
                 }
                 gossamer_hir::HirStmtKind::Expr { expr, .. }
-                | gossamer_hir::HirStmtKind::Defer(expr)
-                | gossamer_hir::HirStmtKind::Go(expr) => {
+                | gossamer_hir::HirStmtKind::Defer(expr) => {
                     self.collect_nested_const_values_in_expr(
                         expr,
                         tcx,
@@ -1635,7 +1634,7 @@ impl Vm {
                     )?;
                 }
             }
-            K::Closure { body, .. } | K::Go(body) => self.collect_nested_const_values_in_expr(
+            K::Closure { body, .. } => self.collect_nested_const_values_in_expr(
                 body,
                 tcx,
                 layouts,

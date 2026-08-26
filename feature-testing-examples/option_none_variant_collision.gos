@@ -21,9 +21,9 @@ struct Field {
     filename: String
 }
 
-fn attr(disp: &String, key: &String) -> String {
+fn attr(disp: String, key: String) -> String {
     let needle = key.clone() + "=\""
-    match disp.split_once(&needle) {
+    match disp.split_once(needle) {
         Some((_, rest)) => match rest.split_once("\"") {
             Some((value, _)) => value
             None => ""
@@ -34,8 +34,8 @@ fn attr(disp: &String, key: &String) -> String {
 
 fn main() {
     // Pull the request-security bundle (and its `RouteAuth::None`) in.
-    let form = http::form::parse(&"a=1&b=2")
-    println!("form_count={}", http::form::count(&form))
+    let form = http::form::parse("a=1&b=2")
+    println("form_count={}", http::form::count(form))
 
     let dispositions: Vec<String> = Vec::from([
         "form-data; name=\"alpha\""
@@ -44,11 +44,11 @@ fn main() {
     let mut fields: Vec<Field> = Vec::from([])
     for disp in dispositions {
         let d: String = disp
-        let name = attr(&d, &"name")
-        let filename = attr(&d, &"filename")
+        let name = attr(d, "name")
+        let filename = attr(d, "filename")
         fields.push(Field { name: name, filename: filename })
     }
     for f in fields {
-        println!("name=[{}] filename=[{}]", f.name, f.filename)
+        println("name=[{}] filename=[{}]", f.name, f.filename)
     }
 }

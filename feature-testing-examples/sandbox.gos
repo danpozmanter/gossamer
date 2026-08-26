@@ -10,7 +10,7 @@ use std::sandbox
 
 // Every enforcement verdict is one of three arms, so a caller can match
 // on it instead of parsing the sentence a report prints.
-fn verdict_known(kind: &String) -> bool {
+fn verdict_known(kind: String) -> bool {
     kind == "full" || kind == "partial" || kind == "none"
 }
 
@@ -18,7 +18,7 @@ fn verdict_known(kind: &String) -> bool {
 // banner out exactly like this, and a parameter carries no construction
 // site, so the annotation is the only thing that can say what the receiver
 // is - including the element type of a list a reader answers.
-fn describes(policy: &sandbox::Policy) -> bool {
+fn describes(policy: sandbox::Policy) -> bool {
     let mut named = 0
     for path in policy.read_write_grants() {
         if path.len() > 0 { named += 1 }
@@ -26,7 +26,7 @@ fn describes(policy: &sandbox::Policy) -> bool {
     for line in policy.mechanisms() {
         if line.len() > 0 { named += 1 }
     }
-    named >= 1 && policy.level_name().len() > 0 && verdict_known(&policy.network_enforcement_kind())
+    named >= 1 && policy.level_name().len() > 0 && verdict_known(policy.network_enforcement_kind())
 }
 
 fn main() {
@@ -34,93 +34,93 @@ fn main() {
     // branch on what the host honors instead of assuming Linux.
     let level = sandbox::max_level()
     let known = level == "none" || level == "basic" || level == "standard" || level == "strict"
-    println!("max_level known: {}", known)
-    println!("platform known: {}", sandbox::platform().len() > 0)
-    println!("notes are a list: {}", sandbox::notes().len() >= 0)
-    println!("os described: {}", sandbox::os_description().len() > 0)
+    println("max_level known: {}", known)
+    println("platform known: {}", sandbox::platform().len() > 0)
+    println("notes are a list: {}", sandbox::notes().len() >= 0)
+    println("os described: {}", sandbox::os_description().len() > 0)
 
     // Each dimension answers an arm and a reason, so a report can say
     // what is enforced AND what a partial verdict leaves uncovered.
-    println!("filesystem verdict: {}", verdict_known(&sandbox::filesystem_kind()))
-    println!("network verdict: {}", verdict_known(&sandbox::network_kind()))
-    println!("isolation verdict: {}", verdict_known(&sandbox::process_isolation_kind()))
-    println!("reasons are text: {}", sandbox::filesystem_reason().len() >= 0)
+    println("filesystem verdict: {}", verdict_known(sandbox::filesystem_kind()))
+    println("network verdict: {}", verdict_known(sandbox::network_kind()))
+    println("isolation verdict: {}", verdict_known(sandbox::process_isolation_kind()))
+    println("reasons are text: {}", sandbox::filesystem_reason().len() >= 0)
 
     // A policy is built by chaining; each step answers the policy as it
     // now stands, so `|>` reads as one expression.
-    let policy = sandbox::Policy::new().read_write(&".").network_mode(&"none").env_allow(&"PATH").level(&"none")
+    let policy = sandbox::Policy::new().read_write(".").network_mode("none").env_allow("PATH").level("none")
 
-    println!("policy names the level: {}", policy.level_name() == "none")
+    println("policy names the level: {}", policy.level_name() == "none")
 
     // At level `none` nothing is enforced, so this runs everywhere and
     // exercises the run path itself rather than the host's enforcement.
-    match sandbox::run(&policy, &#["echo", "sandboxed"]) {
+    match sandbox::run(policy, #["echo", "sandboxed"]) {
         Ok(out) => {
-            println!("code: {}", out.code)
-            println!("stdout: {}", out.stdout.trim())
+            println("code: {}", out.code)
+            println("stdout: {}", out.stdout.trim())
         }
-        Err(e) => println!("run failed: {}", e)
+        Err(e) => println("run failed: {}", e)
     }
 
     // A level the host cannot honor fails closed rather than quietly
     // becoming something weaker.
-    let impossible = sandbox::Policy::new().level(&"strict")
-    println!("strict is decided: {}", impossible.level_name() == "strict")
+    let impossible = sandbox::Policy::new().level("strict")
+    println("strict is decided: {}", impossible.level_name() == "strict")
 
     // The whole builder surface, in one chain.
-    let full = sandbox::Policy::new().read_write(&".").network_mode(&"client").temp(&"private").level(&"none")
+    let full = sandbox::Policy::new().read_write(".").network_mode("client").temp("private").level("none")
 
-    println!("network mode: {}", full.network_name())
-    println!("level asked for: {}", full.level_name())
-    println!("access here: {}", full.access(&"."))
-    println!("grants a path: {}", full.read_write_grants().len() > 0)
-    println!("read-only list: {}", full.read_only_grants().len() >= 0)
-    println!("denies by default: {}", full.denials().len() >= 0)
-    println!("names an environment: {}", full.environment_names().len() >= 0)
-    println!("json describes it: {}", full.to_json().len() > 0)
-    println!("mechanisms listed: {}", full.mechanisms().len() >= 0)
-    println!("working directory optional: {}", full.working_directory_path().len() >= 0)
+    println("network mode: {}", full.network_name())
+    println("level asked for: {}", full.level_name())
+    println("access here: {}", full.access("."))
+    println("grants a path: {}", full.read_write_grants().len() > 0)
+    println("read-only list: {}", full.read_only_grants().len() >= 0)
+    println("denies by default: {}", full.denials().len() >= 0)
+    println("names an environment: {}", full.environment_names().len() >= 0)
+    println("json describes it: {}", full.to_json().len() > 0)
+    println("mechanisms listed: {}", full.mechanisms().len() >= 0)
+    println("working directory optional: {}", full.working_directory_path().len() >= 0)
 
     // What the policy asks for and what this host will honor are two
     // different questions, so they are two different calls.
-    println!("a helper reads it by reference: {}", describes(&full))
-    println!("run network verdict: {}", verdict_known(&full.network_enforcement_kind()))
+    println("a helper reads it by reference: {}", describes(full))
+    println("run network verdict: {}", verdict_known(full.network_enforcement_kind()))
 
     // An explicit allow outranks a denial the policy carries, and a
     // denial still covers everything the allow does not name.
-    let carved = sandbox::Policy::new().deny(&".").read_write(&".").level(&"none")
-    println!("an explicit allow wins: {}", carved.access(&".") == "read-write")
+    let carved = sandbox::Policy::new().deny(".").read_write(".").level("none")
+    println("an explicit allow wins: {}", carved.access(".") == "read-write")
 
     // `none` is honorable everywhere, so nothing blocks it and the
     // check passes on every host the fixture runs on.
-    println!("nothing blocks none: {}", full.level_blocker() == "")
+    println("nothing blocks none: {}", full.level_blocker() == "")
     match full.check() {
-        Ok(_) => println!("check: ok")
-        Err(e) => println!("check failed: {}", e)
+        Ok(_) => println("check: ok")
+        Err(e) => println("check failed: {}", e)
     }
 
     // An unknown name is refused rather than applied, so a typo can
     // never weaken a policy that was written to be strict.
-    let typo = sandbox::Policy::new().network_mode(&"open").network_mode(&"opne")
-    println!("typo kept the mode: {}", typo.network_name())
+    let typo = sandbox::Policy::new().network_mode("open").network_mode("opne")
+    println("typo kept the mode: {}", typo.network_name())
 
     // A fetch phase is outbound-only: it may connect out and may not
     // bind or listen.
-    println!("fetch is client-only: {}", sandbox::Policy::new().for_fetch_phase().network_name())
+    println("fetch is client-only: {}", sandbox::Policy::new().for_fetch_phase().network_name())
 
     // The exit-code contract, shared so every consumer reports the same
     // failure the same way.
-    println!("policy error: {}", sandbox::exit_policy_error())
-    println!("command not found: {}", sandbox::exit_command_not_found())
-    println!("level unavailable: {}", sandbox::exit_level_unavailable())
-    println!("signal base: {}", sandbox::exit_signal_base())
+    println("policy error: {}", sandbox::exit_policy_error())
+    println("command not found: {}", sandbox::exit_command_not_found())
+    println("level unavailable: {}", sandbox::exit_level_unavailable())
+    println("signal base: {}", sandbox::exit_signal_base())
 
     // The wrapper shape: the child writes to the caller's own terminal
     // and the run answers the code the contract gives.
-    println!("inherited run code: {}", sandbox::run_inherit(&policy, &#["true"]))
+    println("inherited run code: {}", sandbox::run_inherit(policy, #["true"]))
 
     // Discovery, so a profile can name a path the way an operator does.
-    println!("home resolves: {}", sandbox::home_directory().is_some())
-    println!("tilde expands: {}", sandbox::expand(&"~").is_some())
-    println!("nonexistent tool: {}", sandbox::prefix_of(&"gos-not-a-real-tool").is_some())
+    println("home resolves: {}", sandbox::home_directory().is_some())
+    println("tilde expands: {}", sandbox::expand("~").is_some())
+    println("nonexistent tool: {}", sandbox::prefix_of("gos-not-a-real-tool").is_some())
 }

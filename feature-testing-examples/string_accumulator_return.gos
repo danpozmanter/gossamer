@@ -23,5 +23,5 @@ fn main() {
         total += s.len()
         r += 1
     }
-    println!("total: {}", total)
+    println("total: {}", total)
 }

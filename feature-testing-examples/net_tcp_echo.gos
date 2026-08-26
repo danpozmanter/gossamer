@@ -25,7 +25,7 @@ const CONNECT_FAILED: i64 = -1
 const READ_FAILED: i64 = -2
 
 fn client(addr: String, tx: Sender<i64>) {
-    let stream = match net::TcpStream::connect(&addr) {
+    let stream = match net::TcpStream::connect(addr) {
         Ok(s) => s
         Err(_) => { tx.send(CONNECT_FAILED)
             return }
@@ -44,43 +44,43 @@ fn client(addr: String, tx: Sender<i64>) {
 fn main() {
     let listener = match net::TcpListener::bind("127.0.0.1:0") {
         Ok(l) => l
-        Err(e) => { println!("bind failed: {}", e)
+        Err(e) => { println("bind failed: {}", e)
             return }
     }
     let addr = match listener.local_addr() {
         Ok(a) => a
-        Err(e) => { println!("addr failed: {}", e)
+        Err(e) => { println("addr failed: {}", e)
             return }
     }
-    let (tx, rx) = channel()
-    go client(addr, tx)
-    let (stream, _peer) = match listener.accept() {
+    let tx, rx = channel()
+    spawn(|| client(addr, tx))
+    let stream, _peer = match listener.accept() {
         Ok(p) => p
-        Err(e) => { println!("accept failed: {}", e)
+        Err(e) => { println("accept failed: {}", e)
             return }
     }
     let req = match stream.read(64) {
         Ok(b) => b
-        Err(e) => { println!("server read failed: {}", e)
+        Err(e) => { println("server read failed: {}", e)
             return }
     }
-    let _ = stream.write(&req)
+    let _ = stream.write(req)
     let _ = stream.close()
     let _ = listener.close()
     let code = match rx.recv() {
         Some(c) => c
-        None => { println!("no client result")
+        None => { println("no client result")
             return }
     }
     if code == OK {
-        println!("tcp echo ok")
+        println("tcp echo ok")
     } else if code == MISMATCH {
-        println!("tcp echo MISMATCH")
+        println("tcp echo MISMATCH")
     } else if code == CONNECT_FAILED {
-        println!("client connect failed")
+        println("client connect failed")
     } else if code == READ_FAILED {
-        println!("client read failed")
+        println("client read failed")
     } else {
-        println!("unexpected code {}", code)
+        println("unexpected code {}", code)
     }
 }

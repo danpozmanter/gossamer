@@ -38,11 +38,11 @@ fn orbit(steps: i64) -> Vec3 {
 
 fn main() {
     let p = orbit(1000)
-    println!("orbit: {} {} {}", p.x, p.y, p.z)
-    println!("index: {} {} {}", p[0], p[1], p[2])
+    println("orbit: {} {} {}", p.x, p.y, p.z)
+    println("index: {} {} {}", p[0], p[1], p[2])
     let mut acc = Vec3 { x: 0.0, y: 0.0, z: 0.0 }
     acc += Vec3 { x: 1.5, y: 2.0, z: -0.5 }
     acc += Vec3 { x: 0.25, y: -1.0, z: 4.0 }
     acc *= 2.0
-    println!("acc: {} {} {}", acc.x, acc.y, acc.z)
+    println("acc: {} {} {}", acc.x, acc.y, acc.z)
 }

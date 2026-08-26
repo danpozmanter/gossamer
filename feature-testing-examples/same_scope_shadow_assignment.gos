@@ -6,10 +6,10 @@ fn main() {
     let i = 1
     let mut i = 2
     i = 3
-    println!("i={}", i)
+    println("i={}", i)
 
     let base = 10
     let mut base = base + 1
     base += 9
-    println!("base={}", base)
+    println("base={}", base)
 }

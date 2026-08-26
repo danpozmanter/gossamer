@@ -348,8 +348,12 @@ impl<'a> Builder<'a> {
                 for arg in &pad_args[1..] {
                     locals.push(self.lower_expr(arg)?);
                 }
-                let handle_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let dest = self.fresh(handle_ty);
+                // The helper answers the joined `String`, so the destination
+                // carries that type: a backend that reads the MIR type to pick
+                // the value's machine shape needs it to say `String`, not the
+                // word a string handle happens to fit in.
+                let string_ty = self.tcx.string_ty();
+                let dest = self.fresh(string_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_concat_pad_i64".to_string())),

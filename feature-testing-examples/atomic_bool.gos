@@ -14,10 +14,10 @@ fn read(b: sync::AtomicBool) -> bool {
 
 fn main() {
     let b = sync::AtomicBool::new(false)
-    println!("initial={}", b.load())
+    println("initial={}", b.load())
     b.store(true)
-    println!("after_store={}", b.load())
-    println!("via_param={}", read(b))
+    println("after_store={}", b.load())
+    println("via_param={}", read(b))
     b.store(false)
-    println!("reset={}", read(b))
+    println("reset={}", read(b))
 }

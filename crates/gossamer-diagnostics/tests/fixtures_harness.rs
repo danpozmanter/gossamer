@@ -19,13 +19,14 @@ use gossamer_types::{TyCtxt, check_arena_escapes, typecheck_source_file};
 fn collect_diagnostics(source: &str, file_name: &str) -> Vec<Diagnostic> {
     let mut map = SourceMap::new();
     let file = map.add_file(file_name.to_string(), source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     let mut out: Vec<Diagnostic> = parse_diags
         .iter()
         .map(gossamer_parse::ParseDiagnostic::to_diagnostic)
         .collect();
 
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let in_scope = collect_names(&sf);
     // Every resolver diagnostic, matching what `gos check` reports: a
     // whitelist here would silently exclude any new one from fixturing.

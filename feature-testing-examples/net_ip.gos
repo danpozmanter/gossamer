@@ -22,5 +22,5 @@ fn main() {
     assert(!net::ip::is_loopback("8.8.8.8"))
     assert(net::ip::parse("10.0.0.1").is_ok())
     assert(net::ip::parse("nope").is_err())
-    println!("net_ip ok")
+    println("net_ip ok")
 }

@@ -41,21 +41,21 @@ version = "0.1.0"
 /// cargo at all.
 const PLAIN_SOURCE: String = """
 fn main() {
-    println!("plain-project ok")
+    println("plain-project ok")
 }
 """
 
 /// The checkout the examples live in.
 fn repo_root() -> String {
-    if let Some(root) = env::var(&"GOSSAMER_ROOT") {
+    if let Some(root) = env::var("GOSSAMER_ROOT") {
         return root
     }
     let mut directory = env::current_dir().unwrap_or(".")
     loop {
-        if fs::is_dir(&path::join(&directory, &"example-external-libraries")) {
+        if fs::is_dir(path::join(directory, "example-external-libraries")) {
             return directory
         }
-        match path::parent(&directory) {
+        match path::parent(directory) {
             Some(parent) => directory = parent
             None => return "."
         }
@@ -64,135 +64,135 @@ fn repo_root() -> String {
 
 /// Ends the run with `message` on standard error.
 fn fail(message: String) {
-    eprintln!("test_external_libs_full: {}", message)
+    eprintln("test_external_libs_full: {}", message)
     process::exit(1)
 }
 
 /// Runs one cell and checks every marker it must print.
-fn run_cell(gos: &String, cell: &Cell, cache: &String) {
-    println!("=> {}", cell.label)
+fn run_cell(gos: String, cell: Cell, cache: String) {
+    println("=> {}", cell.label)
     let environment = #[("XDG_CACHE_HOME", *cache)]
-    let outcome = process::run_in(gos, &#["run", cell.entry], &cell.project, &environment)
+    let outcome = process::run_in(gos, #["run", cell.entry], cell.project, environment)
     let output = match outcome {
-        Ok(result) => format!("{}{}", result.stdout, result.stderr)
+        Ok(result) => format("{}{}", result.stdout, result.stderr)
         Err(e) => {
-            fail(format!("{}: {}", cell.label, e))
+            fail(format("{}: {}", cell.label, e))
             return
         }
     }
-    print!("{}", output)
+    print("{}", output)
     if !output.ends_with("\n") {
-        println!("")
+        println("")
     }
     for marker in cell.markers {
         if !output.contains(marker) {
-            fail(format!("missing marker '{}' for {}", marker, cell.label))
+            fail(format("missing marker '{}' for {}", marker, cell.label))
         }
     }
 }
 
 fn main() {
     let root = repo_root()
-    println!("=> building gos...")
-    match process::run_in(&"cargo", &#["build", "-p", "gossamer-cli"], &root, &#[]) {
+    println("=> building gos...")
+    match process::run_in("cargo", #["build", "-p", "gossamer-cli"], root, #[]) {
         Ok(result) => {
             if result.code != 0 {
-                eprint!("{}", result.stderr)
+                eprint("{}", result.stderr)
                 fail("cargo build failed")
             }
         }
-        Err(e) => fail(format!("cargo build: {}", e))
+        Err(e) => fail(format("cargo build: {}", e))
     }
-    let gos = path::join(&root, &"target/debug/gos")
-    if !fs::is_file(&gos) {
-        fail(format!("gos binary not produced at {}", gos))
+    let gos = path::join(root, "target/debug/gos")
+    if !fs::is_file(gos) {
+        fail(format("gos binary not produced at {}", gos))
     }
 
     // Every child shares one throwaway cache root, so a cold cell is
     // genuinely cold and the warm cell that follows it is genuinely
     // warm.
-    let cache = match fs::temp_dir(&"gos-extlibs-cache-") {
+    let cache = match fs::temp_dir("gos-extlibs-cache-") {
         Ok(cache) => cache
         Err(e) => {
-            fail(format!("creating a cache directory: {}", e))
+            fail(format("creating a cache directory: {}", e))
             return
         }
     }
 
-    let examples = path::join(&root, &"example-external-libraries")
-    let aware = path::join(&examples, &"01-gossamer-aware")
-    let wrapped = path::join(&examples, &"02-plain-rust-wrapped")
+    let examples = path::join(root, "example-external-libraries")
+    let aware = path::join(examples, "01-gossamer-aware")
+    let wrapped = path::join(examples, "02-plain-rust-wrapped")
 
-    println!("=> phase 1: example 01 (echo-binding)")
+    println("=> phase 1: example 01 (echo-binding)")
     let aware_markers = #["HELLO, GOSSAMER", "sum: 15", "count: 3"]
     run_cell(
-        &gos
-        &Cell {
+        gos
+        Cell {
             label: "01-gossamer-aware (cold)"
             project: aware
             entry: "src/main.gos"
             markers: aware_markers
         }
-        &cache
+        cache
     )
     // The second invocation must hit the cache rather than build.
     run_cell(
-        &gos
-        &Cell {
+        gos
+        Cell {
             label: "01-gossamer-aware (warm)"
             project: aware
             entry: "src/main.gos"
             markers: aware_markers
         }
-        &cache
+        cache
     )
 
-    println!("=> phase 2: example 02 (unic-segment wrapper)")
+    println("=> phase 2: example 02 (unic-segment wrapper)")
     let wrapped_markers = #["count: 10", "grapheme: n", "grapheme: ï"]
     run_cell(
-        &gos
-        &Cell {
+        gos
+        Cell {
             label: "02-plain-rust-wrapped (cold)"
             project: wrapped
             entry: "src/main.gos"
             markers: wrapped_markers
         }
-        &cache
+        cache
     )
     run_cell(
-        &gos
-        &Cell {
+        gos
+        Cell {
             label: "02-plain-rust-wrapped (warm)"
             project: wrapped
             entry: "src/main.gos"
             markers: wrapped_markers
         }
-        &cache
+        cache
     )
 
-    println!("=> phase 3: no-bindings fast path")
-    let plain = match fs::temp_dir(&"gos-nobindings-") {
+    println("=> phase 3: no-bindings fast path")
+    let plain = match fs::temp_dir("gos-nobindings-") {
         Ok(plain) => plain
         Err(e) => {
-            fail(format!("creating a scratch project: {}", e))
+            fail(format("creating a scratch project: {}", e))
             return
         }
     }
-    let _ = fs::create_dir_all(&path::join(&plain, &"src"))
-    let _ = fs::write(path::join(&plain, &"project.toml"), PLAIN_MANIFEST.as_bytes())
-    let _ = fs::write(path::join(&plain, &"src/main.gos"), PLAIN_SOURCE.as_bytes())
+    let _ = fs::create_dir_all(path::join(plain, "src"))
+    let _ = fs::write(path::join(plain, "project.toml"), PLAIN_MANIFEST.as_bytes())
+    let _ = fs::write(path::join(plain, "src/main.gos"), PLAIN_SOURCE.as_bytes())
     run_cell(
-        &gos
-        &Cell {
+        gos
+        Cell {
             label: "no-bindings project"
             project: plain
             entry: "src/main.gos"
             markers: #["plain-project ok"]
         }
-        &cache
+        cache
     )
-    let _ = fs::remove_dir_all(&plain)
-    let _ = fs::remove_dir_all(&cache)
+    let _ = fs::remove_dir_all(plain)
+    let _ = fs::remove_dir_all(cache)
 
-    println!("=> all matrix cells green")
+    println("=> all matrix cells green")
 }

@@ -5,8 +5,8 @@
 use std::net
 
 fn main() {
-    match net::lookup(&"localhost") {
-        Ok(ips) => println!("resolved={}", ips.len() > 0)
-        Err(_) => println!("resolved=false")
+    match net::lookup("localhost") {
+        Ok(ips) => println("resolved={}", ips.len() > 0)
+        Err(_) => println("resolved=false")
     }
 }

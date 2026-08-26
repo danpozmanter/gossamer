@@ -37,6 +37,6 @@ for n in [38, 99, 1234, 9999, 100, 0, 65536] {
     let r = digital_root(n)
     let expected = cast_out_nines(n)
     let ok = if r == expected { "ok" } else { "MISMATCH" }
-    println!("n={}, digit_sum={}, digital_root={} (cast-out-nines: {}, {})"
+    println("n={}, digit_sum={}, digital_root={} (cast-out-nines: {}, {})"
         n, s, r, expected, ok)
 }

@@ -43,28 +43,28 @@ fn batch_sum(vals: Vec<i64>) -> i64 {
 
 fn main() {
     // Basic drain: 0..10
-    let (tx, rx) = channel()
-    go count_producer(tx, 10)
+    let tx, rx = channel()
+    spawn(|| count_producer(tx, 10))
     time::sleep(30)
     let mut collected: Vec<i64> = Vec::from([])
     while let Some(v) = rx.recv() {
         collected.push(v)
     }
-    println!("drain count = {}", collected.len())
-    println!("drain sum = {}", batch_sum(collected))
+    println("drain count = {}", collected.len())
+    println("drain sum = {}", batch_sum(collected))
 
     // Fibonacci drain
-    let (ftx, frx) = channel()
-    go fibonacci_producer(ftx, 50)
+    let ftx, frx = channel()
+    spawn(|| fibonacci_producer(ftx, 50))
     time::sleep(30)
     let mut fibs: Vec<i64> = Vec::from([])
     while let Some(v) = frx.recv() {
         fibs.push(v)
     }
-    println!("fibs count = {}", fibs.len())
-    println!("fibs[0] = {}", fibs[0])
-    println!("fibs[1] = {}", fibs[1])
-    println!("fibs[5] = {}", fibs[5])
+    println("fibs count = {}", fibs.len())
+    println("fibs[0] = {}", fibs[0])
+    println("fibs[1] = {}", fibs[1])
+    println("fibs[5] = {}", fibs[5])
 
     // Multiple producers, single consumer. Each producer closes
     // its own send handle after pushing - but with two senders
@@ -73,16 +73,16 @@ fn main() {
     // collect via `try_recv` after a sleep instead. The
     // close+drain pattern requires a single owner of the close
     // step (typically the last sender to finish).
-    let (mtx, mrx) = channel::unbounded()
-    go count_sender(mtx, 5)
-    go count_sender(mtx, 5)
+    let mtx, mrx = channel::unbounded()
+    spawn(|| count_sender(mtx, 5))
+    spawn(|| count_sender(mtx, 5))
     time::sleep(40)
     let mut all: Vec<i64> = Vec::from([])
     while let Some(v) = mrx.try_recv() {
         all.push(v)
     }
-    println!("two-producer count = {}", all.len())
-    println!("two-producer sum = {}", batch_sum(all))
+    println("two-producer count = {}", all.len())
+    println("two-producer sum = {}", batch_sum(all))
 }
 
 #[cfg(test)]
@@ -93,41 +93,41 @@ mod tests {
 
     #[test]
     fn drain_all_items() {
-        let (tx, rx) = channel()
-        go super::count_producer(tx, 7)
+        let tx, rx = channel()
+        spawn(|| super::count_producer(tx, 7))
         time::sleep(30)
         let mut count = 0
         while let Some(_) = rx.recv() {
             count += 1
         }
-        let _ = testing::check_eq(&count, &7, "7 items drained")
+        let _ = testing::check_eq(count, 7, "7 items drained")
     }
 
     #[test]
     fn drain_sum_correct() {
-        let (tx, rx) = channel()
-        go super::count_producer(tx, 5)
+        let tx, rx = channel()
+        spawn(|| super::count_producer(tx, 5))
         time::sleep(20)
         let mut total = 0
         while let Some(v) = rx.recv() {
             total += v
         }
-        let _ = testing::check_eq(&total, &10, "0+1+2+3+4=10")
+        let _ = testing::check_eq(total, 10, "0+1+2+3+4=10")
     }
 
     #[test]
     fn fibonacci_first_values() {
-        let (tx, rx) = channel()
-        go super::fibonacci_producer(tx, 20)
+        let tx, rx = channel()
+        spawn(|| super::fibonacci_producer(tx, 20))
         time::sleep(20)
         let mut fibs: Vec<i64> = Vec::from([])
         while let Some(v) = rx.recv() {
             fibs.push(v)
         }
         let _ = testing::check(fibs.len() >= 6, "at least 6 fibs up to 20")
-        let _ = testing::check_eq(&fibs[0], &0, "fib[0]=0")
-        let _ = testing::check_eq(&fibs[1], &1, "fib[1]=1")
-        let _ = testing::check_eq(&fibs[2], &1, "fib[2]=1")
-        let _ = testing::check_eq(&fibs[5], &5, "fib[5]=5")
+        let _ = testing::check_eq(fibs[0], 0, "fib[0]=0")
+        let _ = testing::check_eq(fibs[1], 1, "fib[1]=1")
+        let _ = testing::check_eq(fibs[2], 1, "fib[2]=1")
+        let _ = testing::check_eq(fibs[5], 5, "fib[5]=5")
     }
 }

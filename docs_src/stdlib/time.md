@@ -37,8 +37,8 @@ use std::time
 let ny = time::Location::lookup("America/New_York")?
 let local = ny.civil(-1)?
 match ny.resolve(local)? {
-    time::CivilResolution::Unique(ms) => println!("{}", ms),
-    time::CivilResolution::Gap => println!("nonexistent local time"),
-    time::CivilResolution::Fold(earlier, later) => println!("{} {}", earlier, later),
+    time::CivilResolution::Unique(ms) => println("{}", ms),
+    time::CivilResolution::Gap => println("nonexistent local time"),
+    time::CivilResolution::Fold(earlier, later) => println("{} {}", earlier, later),
 }
 ```

@@ -360,6 +360,37 @@ pub fn leave_child(id: i64, index: i64, failure: Option<String>) {
     }
 }
 
+/// How long the root drain waits at exit before it reports what is still
+/// running and lets the process end.
+///
+/// A `cohort { }` block drains without a deadline: leaving it is the
+/// program's own statement that its children are finished, and a bound
+/// there would cut short work the author asked for. The root drain runs
+/// after `main` has returned, where a child still going is one nothing
+/// is waiting on, and an unbounded wait there turns a goroutine that
+/// never reaches a safepoint into a process that never exits. The
+/// duration is generous because it only ever elapses when something has
+/// already gone wrong, and what happens then is a report, not a kill.
+const ROOT_DRAIN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Waits for `node`'s children with a deadline, on the OS thread the
+/// root drain runs on. Answers the number still outstanding, which is
+/// zero when they all finished.
+fn wait_for_drain_bounded(node: &Arc<Cohort>, deadline: std::time::Duration) -> i64 {
+    let until = std::time::Instant::now() + deadline;
+    let mut state = node.state.lock();
+    while state.outstanding > 0 {
+        let now = std::time::Instant::now();
+        if now >= until {
+            return state.outstanding;
+        }
+        if node.progress.wait_for(&mut state, until - now).timed_out() && state.outstanding > 0 {
+            return state.outstanding;
+        }
+    }
+    0
+}
+
 /// Blocks until `id` has no outstanding children. A goroutine gives its
 /// carrier back while it waits; a plain OS thread keeps the condvar.
 fn wait_for_drain(node: &Arc<Cohort>) {
@@ -602,7 +633,21 @@ pub fn close_root() {
     let Some(node) = cohort_at(id) else {
         return;
     };
-    wait_for_drain(&node);
+    // The root drain runs on the main OS thread, after `main` has
+    // returned: a goroutine still running here is one nothing joined.
+    let outstanding = if crate::sched_global::current_gid().is_some() {
+        wait_for_drain(&node);
+        0
+    } else {
+        wait_for_drain_bounded(&node, ROOT_DRAIN_DEADLINE)
+    };
+    if outstanding > 0 {
+        eprintln!(
+            "gossamer: {outstanding} spawned goroutine(s) had not finished {} seconds after \
+             `main` returned; exiting without them",
+            ROOT_DRAIN_DEADLINE.as_secs()
+        );
+    }
     let orphaned: Vec<String> = {
         let state = node.state.lock();
         state

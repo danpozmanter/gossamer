@@ -19,5 +19,5 @@ impl Holder for Label {
 }
 
 fn main() {
-    println!("{}", Label { text: "x" }.get())
+    println("{}", Label { text: "x" }.get())
 }

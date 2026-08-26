@@ -7,10 +7,10 @@ use std::time
 
 fn main() {
     let d = time::Duration::from_millis(2500)
-    println!("{}", time::Duration::as_millis(d))
-    println!("{}", time::Duration::as_secs(d))
+    println("{}", time::Duration::as_millis(d))
+    println("{}", time::Duration::as_secs(d))
     let s = time::Duration::from_secs(3)
-    println!("{}", time::Duration::as_millis(s))
+    println("{}", time::Duration::as_millis(s))
     let u = time::Duration::from_micros(4000)
-    println!("{}", time::Duration::as_millis(u))
+    println("{}", time::Duration::as_millis(u))
 }

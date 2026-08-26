@@ -39,21 +39,21 @@ fn serve_app() {
             2500)
         middleware::RateLimit::per_ip(2, 1))
     if let Err(e) = http::serve("127.0.0.1:23947", stack) {
-        eprintln!("serve failed: {e}")
+        eprintln("serve failed: {e}")
     }
 }
 
-fn header_of(response: &http::Response, wanted: String) -> String {
+fn header_of(response: http::Response, wanted: String) -> String {
     for (name, value) in response.headers {
-        if strings::to_lowercase(&name) == wanted {
+        if strings::to_lowercase(name) == wanted {
             return value
         }
     }
     "<absent>"
 }
 
-fn report(label: String, response: &http::Response) {
-    println!("{} status={} body={}", label, response.status, response.body)
+fn report(label: String, response: http::Response) {
+    println("{} status={} body={}", label, response.status, response.body)
     let wanted = #[
         "access-control-allow-origin"
         "access-control-allow-methods"
@@ -70,11 +70,11 @@ fn report(label: String, response: &http::Response) {
         "retry-after"
     ]
     for name in wanted {
-        println!("  {}: {}", name, header_of(response, name))
+        println("  {}: {}", name, header_of(response, name))
     }
 }
 
-fn await_ready(url: &String) {
+fn await_ready(url: String) {
     let mut tries = 0
     while tries < 400 {
         if let Ok(_) = http::get(url, Vec::from([])) { return }
@@ -84,27 +84,27 @@ fn await_ready(url: &String) {
 }
 
 fn print_configs() {
-    println!("cors={}", middleware::CorsConfig::new("https://app.test", "GET, PUT", "X-Api-Key", 600))
-    println!("hsts={}", middleware::HstsConfig::strict())
-    println!("security={}", middleware::SecurityHeaders::off())
-    println!("cache={}", middleware::CacheControl::immutable_for(31536000))
-    println!("rate={}", middleware::RateLimit::per_ip(100, 10))
+    println("cors={}", middleware::CorsConfig::new("https://app.test", "GET, PUT", "X-Api-Key", 600))
+    println("hsts={}", middleware::HstsConfig::strict())
+    println("security={}", middleware::SecurityHeaders::off())
+    println("cache={}", middleware::CacheControl::immutable_for(31536000))
+    println("rate={}", middleware::RateLimit::per_ip(100, 10))
 }
 
 fn main() {
     print_configs()
-    go serve_app()
+    spawn(|| serve_app())
     let url = "http://127.0.0.1:23947/probe"
-    await_ready(&url)
+    await_ready(url)
 
     // The readiness probe already consumed one token.
-    match http::get(&url, Vec::from([])) {
-        Ok(r) => report("allowed", &r)
-        Err(e) => println!("error: {}", e)
+    match http::get(url, Vec::from([])) {
+        Ok(r) => report("allowed", r)
+        Err(e) => println("error: {}", e)
     }
-    match http::get(&url, Vec::from([])) {
-        Ok(r) => report("limited", &r)
-        Err(e) => println!("error: {}", e)
+    match http::get(url, Vec::from([])) {
+        Ok(r) => report("limited", r)
+        Err(e) => println("error: {}", e)
     }
 
     process::exit(0)

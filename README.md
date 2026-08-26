@@ -230,7 +230,7 @@ bare statements at file scope become the body of an implicit `fn main()`,
 so this is a complete program:
 
 ```gossamer
-println!("Hello World")
+println("Hello World")
 ```
 
 A top-level `?` makes the implicit main return `Result<(),
@@ -255,14 +255,14 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 fn main() {
     // 3 -> double -> add 10 -> clamp to [0, 100]
     let n = 3 |> double |> |v| add(10, v) |> |v| clamp(0, 100, v)
-    println!("arithmetic: {}", n)
+    println("arithmetic: {}", n)
 
     // A method chain is an ordinary operand, so it can feed a pipe.
     let words = "  Hello  World  ".to_lowercase()
         |> strings::split_whitespace
         |> iter::count
 
-    println!("words: {}", words)
+    println("words: {}", words)
 }
 ```
 
@@ -280,8 +280,8 @@ impl Add for Vec2 {
 
 fn main() {
     let sum = Vec2 { x: 1.5, y: 2.0 } + Vec2 { x: 3.0, y: 4.0 }
-    println!("({}, {})", sum.x, sum.y)   // (4.5, 6)
-    println!("{}", sum == sum.clone())   // true
+    println("({}, {})", sum.x, sum.y)   // (4.5, 6)
+    println("{}", sum == sum.clone())   // true
 }
 ```
 
@@ -293,10 +293,10 @@ use std::sync::channel
 fn add(a: i64, b: i64) -> i64 { a + b }
 
 fn main() {
-    let (tx, rx) = channel::<i64>()
-    go fn() { tx.send(40 |> |v| add(2, v)) }()
+    let tx, rx = channel::<i64>()
+    spawn(|| { tx.send(40 |> |v| add(2, v)) })
     if let Some(answer) = rx.recv() {
-        println!("answer: {}", answer)
+        println("answer: {}", answer)
     }
 }
 ```
@@ -310,8 +310,8 @@ fn add(a: i64, b: i64) -> i64 { a + b }
 fn main() {
     let h = spawn(|| 40 |> |v| add(2, v))
     match h.join() {
-        Ok(v) => println!("answer: {}", v),
-        Err(e) => println!("worker failed: {}", e),
+        Ok(v) => println("answer: {}", v),
+        Err(e) => println("worker failed: {}", e),
     }
 }
 ```
@@ -329,17 +329,17 @@ fn gather() -> Result<(), errors::Error> {
     cohort {
         let a = spawn(|| fetch("one"))
         let b = spawn(|| fetch("two"))
-        println!("{} {}", a.join()??, b.join()??)
+        println("{} {}", a.join()??, b.join()??)
     }
 }
 
 fn main() {
-    println!("{:?}", gather())
+    println("{:?}", gather())
 }
 ```
 
 `main` itself runs inside a cohort, so no goroutine outlives the program
-and a spawned failure nobody joins is reported rather than lost. `go expr`
+and a spawned failure nobody joins is reported rather than lost. `spawn(|| expr)`
 remains the detached form for work that should outlive its block.
 
 ## REPL meta commands
@@ -427,7 +427,7 @@ mod bindings {
 
 ```gossamer
 use echo::shout
-fn main() { println!("{}", shout("hello")) }
+fn main() { println("{}", shout("hello")) }
 ```
 
 The boundary uses the typed `gossamer-binding` ABI (integers, floats,

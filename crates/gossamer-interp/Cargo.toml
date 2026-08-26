@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 itoa = "1"
+gossamer-abi = { workspace = true }
 gossamer-ast = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-hir = { workspace = true }

@@ -23,8 +23,9 @@ use gossamer_types::{TyCtxt, typecheck_source_file};
 fn compile(src: &str) -> (gossamer_hir::HirProgram, TyCtxt) {
     let mut map = SourceMap::new();
     let file = map.add_file("workload.gos", src.to_string());
-    let (sf, _) = parse_with_autoderive(src, file);
+    let (mut sf, _) = parse_with_autoderive(src, file);
     let (res, _) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &res);
     let mut tcx = TyCtxt::new();
     let (tbl, _) = typecheck_source_file(&sf, &res, &mut tcx);
     let program = lower_source_file(&sf, &res, &tbl, &mut tcx);
@@ -120,7 +121,7 @@ fn main() -> i64 {
 ";
 
 const FNV_LOOP_SRC: &str = r#"
-fn fnv1a(s: &str) -> i64 {
+fn fnv1a(s: str) -> i64 {
     let mut h: i64 = -3750763034362895579
     for byte in s.as_bytes().iter() {
         h ^= *byte as i64

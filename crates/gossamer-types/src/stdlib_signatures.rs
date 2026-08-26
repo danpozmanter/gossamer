@@ -94,181 +94,6 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         signature: "fn split(haystack: Vec<u8>, sep: Vec<u8>) -> Vec<Vec<u8>>",
     },
     StdFunctionSignature {
-        module_path: "std::collections::deque",
-        name: "len",
-        signature: "fn len(xs: Vec<i64>) -> i64",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::deque",
-        name: "peek_back",
-        signature: "fn peek_back(xs: Vec<i64>) -> Option<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::deque",
-        name: "peek_front",
-        signature: "fn peek_front(xs: Vec<i64>) -> Option<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::deque",
-        name: "pop_back",
-        signature: "fn pop_back(xs: Vec<i64>) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::deque",
-        name: "pop_front",
-        signature: "fn pop_front(xs: Vec<i64>) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::deque",
-        name: "push_back",
-        signature: "fn push_back(xs: Vec<i64>, value: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::deque",
-        name: "push_front",
-        signature: "fn push_front(xs: Vec<i64>, value: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::heap",
-        name: "len",
-        signature: "fn len(xs: Vec<i64>) -> i64",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::heap",
-        name: "peek",
-        signature: "fn peek(xs: Vec<i64>) -> Option<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::heap",
-        name: "pop",
-        signature: "fn pop(xs: Vec<i64>) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::heap",
-        name: "push",
-        signature: "fn push(xs: Vec<i64>, value: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_map",
-        name: "contains_key",
-        signature: "fn contains_key(map: Vec<i64>, key: i64) -> bool",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_map",
-        name: "get",
-        signature: "fn get(map: Vec<i64>, key: i64) -> Option<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_map",
-        name: "insert",
-        signature: "fn insert(map: Vec<i64>, key: i64, value: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_map",
-        name: "len",
-        signature: "fn len(map: Vec<i64>) -> i64",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_map",
-        name: "remove",
-        signature: "fn remove(map: Vec<i64>, key: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_set",
-        name: "contains",
-        signature: "fn contains(xs: Vec<i64>, value: i64) -> bool",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_set",
-        name: "insert",
-        signature: "fn insert(xs: Vec<i64>, value: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_set",
-        name: "len",
-        signature: "fn len(xs: Vec<i64>) -> i64",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_set",
-        name: "remove",
-        signature: "fn remove(xs: Vec<i64>, value: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_vec",
-        name: "contains",
-        signature: "fn contains(xs: Vec<i64>, value: i64) -> bool",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_vec",
-        name: "index_of",
-        signature: "fn index_of(xs: Vec<i64>, value: i64) -> Option<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_vec",
-        name: "insert",
-        signature: "fn insert(xs: Vec<i64>, value: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_vec",
-        name: "len",
-        signature: "fn len(xs: Vec<i64>) -> i64",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_vec",
-        name: "peek_max",
-        signature: "fn peek_max(xs: Vec<i64>) -> Option<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_vec",
-        name: "peek_min",
-        signature: "fn peek_min(xs: Vec<i64>) -> Option<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::ordered_vec",
-        name: "remove_at",
-        signature: "fn remove_at(xs: Vec<i64>, index: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::queue",
-        name: "len",
-        signature: "fn len(xs: Vec<i64>) -> i64",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::queue",
-        name: "peek",
-        signature: "fn peek(xs: Vec<i64>) -> Option<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::queue",
-        name: "pop",
-        signature: "fn pop(xs: Vec<i64>) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::queue",
-        name: "push",
-        signature: "fn push(xs: Vec<i64>, value: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::stack",
-        name: "len",
-        signature: "fn len(xs: Vec<i64>) -> i64",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::stack",
-        name: "peek",
-        signature: "fn peek(xs: Vec<i64>) -> Option<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::stack",
-        name: "pop",
-        signature: "fn pop(xs: Vec<i64>) -> Vec<i64>",
-    },
-    StdFunctionSignature {
-        module_path: "std::collections::stack",
-        name: "push",
-        signature: "fn push(xs: Vec<i64>, value: i64) -> Vec<i64>",
-    },
-    StdFunctionSignature {
         module_path: "std::compress::bzip2",
         name: "compress",
         signature: "fn compress(data: Vec<u8>, level: i64) -> Result<Vec<u8>, errors::Error>",
@@ -606,7 +431,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::encoding::binary",
         name: "get_u16_be_at",
-        signature: "fn get_u16_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
+        signature: "fn get_u16_be_at(bytes: Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::encoding::binary",
@@ -616,7 +441,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::encoding::binary",
         name: "get_u16_le_at",
-        signature: "fn get_u16_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
+        signature: "fn get_u16_le_at(bytes: Vec<u8>, offset: i64) -> Result<u16, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::encoding::binary",
@@ -626,7 +451,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::encoding::binary",
         name: "get_u32_be_at",
-        signature: "fn get_u32_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
+        signature: "fn get_u32_be_at(bytes: Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::encoding::binary",
@@ -636,7 +461,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::encoding::binary",
         name: "get_u32_le_at",
-        signature: "fn get_u32_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
+        signature: "fn get_u32_le_at(bytes: Vec<u8>, offset: i64) -> Result<u32, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::encoding::binary",
@@ -646,7 +471,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::encoding::binary",
         name: "get_u64_be_at",
-        signature: "fn get_u64_be_at(bytes: &Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
+        signature: "fn get_u64_be_at(bytes: Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::encoding::binary",
@@ -656,7 +481,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::encoding::binary",
         name: "get_u64_le_at",
-        signature: "fn get_u64_le_at(bytes: &Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
+        signature: "fn get_u64_le_at(bytes: Vec<u8>, offset: i64) -> Result<u64, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::encoding::binary",
@@ -1546,12 +1371,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "all",
-        signature: "fn all<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> bool",
+        signature: "fn all<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> bool",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "any",
-        signature: "fn any<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> bool",
+        signature: "fn any<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> bool",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1561,12 +1386,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "chunk_by",
-        signature: "fn chunk_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Map<K, Vec<T>>",
+        signature: "fn chunk_by<T, K: Eq>(items: Vec<T>, key: Fn(T) -> K) -> Map<K, Vec<T>>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "chunks",
-        signature: "fn chunks<T>(n: i64, items: Vec<T>) -> Vec<Vec<T>>",
+        signature: "fn chunks<T>(items: Vec<T>, n: i64) -> Vec<Vec<T>>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1581,7 +1406,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "count_by",
-        signature: "fn count_by<T, K: Eq>(key: Fn(T) -> K, items: Vec<T>) -> Map<K, i64>",
+        signature: "fn count_by<T, K: Eq>(items: Vec<T>, key: Fn(T) -> K) -> Map<K, i64>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1601,27 +1426,27 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "filter",
-        signature: "fn filter<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Vec<T>",
+        signature: "fn filter<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "filter_map",
-        signature: "fn filter_map<T, U>(f: Fn(T) -> Option<U>, items: Vec<T>) -> Vec<U>",
+        signature: "fn filter_map<T, U>(items: Vec<T>, f: Fn(T) -> Option<U>) -> Vec<U>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "find",
-        signature: "fn find<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Option<T>",
+        signature: "fn find<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> Option<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "find_map",
-        signature: "fn find_map<T, U>(f: Fn(T) -> Option<U>, items: Vec<T>) -> Option<U>",
+        signature: "fn find_map<T, U>(items: Vec<T>, f: Fn(T) -> Option<U>) -> Option<U>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "flat_map",
-        signature: "fn flat_map<T, U>(f: Fn(T) -> Vec<U>, items: Vec<T>) -> Vec<U>",
+        signature: "fn flat_map<T, U>(items: Vec<T>, f: Fn(T) -> Vec<U>) -> Vec<U>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1631,17 +1456,17 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "fold",
-        signature: "fn fold<T, U>(init: U, f: Fn(U, T) -> U, items: Vec<T>) -> U",
+        signature: "fn fold<T, U>(items: Vec<T>, init: U, f: Fn(U, T) -> U) -> U",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "for_each",
-        signature: "fn for_each<T>(f: Fn(T) -> (), items: Vec<T>) -> ()",
+        signature: "fn for_each<T>(items: Vec<T>, f: Fn(T) -> ()) -> ()",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "map",
-        signature: "fn map<T, U>(f: Fn(T) -> U, items: Vec<T>) -> Vec<U>",
+        signature: "fn map<T, U>(items: Vec<T>, f: Fn(T) -> U) -> Vec<U>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1651,12 +1476,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "max_by",
-        signature: "fn max_by<T>(compare: Fn(T, T) -> i64, items: Vec<T>) -> Option<T>",
+        signature: "fn max_by<T>(items: Vec<T>, compare: Fn(T, T) -> i64) -> Option<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "max_by_key",
-        signature: "fn max_by_key<T, K: Ord>(key: Fn(T) -> K, items: Vec<T>) -> Option<T>",
+        signature: "fn max_by_key<T, K: Ord>(items: Vec<T>, key: Fn(T) -> K) -> Option<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1666,12 +1491,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "min_by",
-        signature: "fn min_by<T>(compare: Fn(T, T) -> i64, items: Vec<T>) -> Option<T>",
+        signature: "fn min_by<T>(items: Vec<T>, compare: Fn(T, T) -> i64) -> Option<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "min_by_key",
-        signature: "fn min_by_key<T, K: Ord>(key: Fn(T) -> K, items: Vec<T>) -> Option<T>",
+        signature: "fn min_by_key<T, K: Ord>(items: Vec<T>, key: Fn(T) -> K) -> Option<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1686,12 +1511,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "partition",
-        signature: "fn partition<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> (Vec<T>, Vec<T>)",
+        signature: "fn partition<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> (Vec<T>, Vec<T>)",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "position",
-        signature: "fn position<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Option<i64>",
+        signature: "fn position<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> Option<i64>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1701,7 +1526,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "product_by",
-        signature: "fn product_by<T>(f: Fn(T) -> i64, items: Vec<T>) -> i64",
+        signature: "fn product_by<T>(items: Vec<T>, f: Fn(T) -> i64) -> i64",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1716,7 +1541,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "reduce",
-        signature: "fn reduce<T>(f: Fn(T, T) -> T, items: Vec<T>) -> Option<T>",
+        signature: "fn reduce<T>(items: Vec<T>, f: Fn(T, T) -> T) -> Option<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1731,27 +1556,27 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "scan",
-        signature: "fn scan<T, S>(init: S, f: Fn(S, T) -> S, items: Vec<T>) -> Vec<S>",
+        signature: "fn scan<T, S>(items: Vec<T>, init: S, f: Fn(S, T) -> S) -> Vec<S>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "skip",
-        signature: "fn skip<T>(n: i64, items: Vec<T>) -> Vec<T>",
+        signature: "fn skip<T>(items: Vec<T>, n: i64) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "skip_while",
-        signature: "fn skip_while<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Vec<T>",
+        signature: "fn skip_while<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "sort_by",
-        signature: "fn sort_by<T>(compare: Fn(T, T) -> i64, items: Vec<T>) -> Vec<T>",
+        signature: "fn sort_by<T>(items: Vec<T>, compare: Fn(T, T) -> i64) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "sort_by_key",
-        signature: "fn sort_by_key<T, K: Ord>(key: Fn(T) -> K, items: Vec<T>) -> Vec<T>",
+        signature: "fn sort_by_key<T, K: Ord>(items: Vec<T>, key: Fn(T) -> K) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1761,22 +1586,22 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "sum_by",
-        signature: "fn sum_by<T>(f: Fn(T) -> i64, items: Vec<T>) -> i64",
+        signature: "fn sum_by<T>(items: Vec<T>, f: Fn(T) -> i64) -> i64",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "take",
-        signature: "fn take<T>(n: i64, items: Vec<T>) -> Vec<T>",
+        signature: "fn take<T>(items: Vec<T>, n: i64) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "take_while",
-        signature: "fn take_while<T>(predicate: Fn(T) -> bool, items: Vec<T>) -> Vec<T>",
+        signature: "fn take_while<T>(items: Vec<T>, predicate: Fn(T) -> bool) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
         name: "step_by",
-        signature: "fn step_by<T>(step: i64, items: Vec<T>) -> Vec<T>",
+        signature: "fn step_by<T>(items: Vec<T>, step: i64) -> Vec<T>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -1786,7 +1611,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::iter",
         name: "windows",
-        signature: "fn windows<T>(n: i64, items: Vec<T>) -> Vec<Vec<T>>",
+        signature: "fn windows<T>(items: Vec<T>, n: i64) -> Vec<Vec<T>>",
     },
     StdFunctionSignature {
         module_path: "std::iter",
@@ -2401,17 +2226,17 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::option",
         name: "and_then",
-        signature: "fn and_then<T, U>(f: Fn(T) -> Option<U>, value: Option<T>) -> Option<U>",
+        signature: "fn and_then<T, U>(value: Option<T>, f: Fn(T) -> Option<U>) -> Option<U>",
     },
     StdFunctionSignature {
         module_path: "std::option",
         name: "expect",
-        signature: "fn expect<T>(message: String, value: Option<T>) -> T",
+        signature: "fn expect<T>(value: Option<T>, message: String) -> T",
     },
     StdFunctionSignature {
         module_path: "std::option",
         name: "filter",
-        signature: "fn filter<T>(predicate: Fn(T) -> bool, value: Option<T>) -> Option<T>",
+        signature: "fn filter<T>(value: Option<T>, predicate: Fn(T) -> bool) -> Option<T>",
     },
     StdFunctionSignature {
         module_path: "std::option",
@@ -2431,12 +2256,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::option",
         name: "ok_or",
-        signature: "fn ok_or<T, E>(err: E, value: Option<T>) -> Result<T, E>",
+        signature: "fn ok_or<T, E>(value: Option<T>, err: E) -> Result<T, E>",
     },
     StdFunctionSignature {
         module_path: "std::option",
         name: "ok_or_else",
-        signature: "fn ok_or_else<T, E>(err: Fn() -> E, value: Option<T>) -> Result<T, E>",
+        signature: "fn ok_or_else<T, E>(value: Option<T>, err: Fn() -> E) -> Result<T, E>",
     },
     StdFunctionSignature {
         module_path: "std::option",
@@ -2446,27 +2271,27 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::option",
         name: "map",
-        signature: "fn map<T, U>(f: Fn(T) -> U, value: Option<T>) -> Option<U>",
+        signature: "fn map<T, U>(value: Option<T>, f: Fn(T) -> U) -> Option<U>",
     },
     StdFunctionSignature {
         module_path: "std::option",
         name: "or",
-        signature: "fn or<T>(fallback: Option<T>, value: Option<T>) -> Option<T>",
+        signature: "fn or<T>(value: Option<T>, fallback: Option<T>) -> Option<T>",
     },
     StdFunctionSignature {
         module_path: "std::option",
         name: "or_else",
-        signature: "fn or_else<T>(fallback: Fn() -> Option<T>, value: Option<T>) -> Option<T>",
+        signature: "fn or_else<T>(value: Option<T>, fallback: Fn() -> Option<T>) -> Option<T>",
     },
     StdFunctionSignature {
         module_path: "std::option",
         name: "unwrap_or",
-        signature: "fn unwrap_or<T>(fallback: T, value: Option<T>) -> T",
+        signature: "fn unwrap_or<T>(value: Option<T>, fallback: T) -> T",
     },
     StdFunctionSignature {
         module_path: "std::option",
         name: "unwrap_or_else",
-        signature: "fn unwrap_or_else<T>(fallback: Fn() -> T, value: Option<T>) -> T",
+        signature: "fn unwrap_or_else<T>(value: Option<T>, fallback: Fn() -> T) -> T",
     },
     StdFunctionSignature {
         module_path: "std::option",
@@ -2476,7 +2301,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::option",
         name: "zip",
-        signature: "fn zip<T, U>(other: Option<U>, value: Option<T>) -> Option<(T, U)>",
+        signature: "fn zip<T, U>(value: Option<T>, other: Option<U>) -> Option<(T, U)>",
     },
     StdFunctionSignature {
         module_path: "std::os",
@@ -3021,7 +2846,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::result",
         name: "and_then",
-        signature: "fn and_then<T, E, U>(f: Fn(T) -> Result<U, E>, value: Result<T, E>) -> Result<U, E>",
+        signature: "fn and_then<T, E, U>(value: Result<T, E>, f: Fn(T) -> Result<U, E>) -> Result<U, E>",
     },
     StdFunctionSignature {
         module_path: "std::result",
@@ -3041,12 +2866,12 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::result",
         name: "map",
-        signature: "fn map<T, E, U>(f: Fn(T) -> U, value: Result<T, E>) -> Result<U, E>",
+        signature: "fn map<T, E, U>(value: Result<T, E>, f: Fn(T) -> U) -> Result<U, E>",
     },
     StdFunctionSignature {
         module_path: "std::result",
         name: "map_err",
-        signature: "fn map_err<T, E, F>(f: Fn(E) -> F, value: Result<T, E>) -> Result<T, F>",
+        signature: "fn map_err<T, E, F>(value: Result<T, E>, f: Fn(E) -> F) -> Result<T, F>",
     },
     StdFunctionSignature {
         module_path: "std::result",
@@ -3056,17 +2881,17 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::result",
         name: "or_else",
-        signature: "fn or_else<T, E, F>(f: Fn(E) -> Result<T, F>, value: Result<T, E>) -> Result<T, F>",
+        signature: "fn or_else<T, E, F>(value: Result<T, E>, f: Fn(E) -> Result<T, F>) -> Result<T, F>",
     },
     StdFunctionSignature {
         module_path: "std::result",
         name: "unwrap_or",
-        signature: "fn unwrap_or<T, E>(fallback: T, value: Result<T, E>) -> T",
+        signature: "fn unwrap_or<T, E>(value: Result<T, E>, fallback: T) -> T",
     },
     StdFunctionSignature {
         module_path: "std::result",
         name: "unwrap_or_else",
-        signature: "fn unwrap_or_else<T, E>(f: Fn(E) -> T, value: Result<T, E>) -> T",
+        signature: "fn unwrap_or_else<T, E>(value: Result<T, E>, f: Fn(E) -> T) -> T",
     },
     StdFunctionSignature {
         module_path: "std::lifecycle",
@@ -3332,11 +3157,6 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::strings",
         name: "pad_right",
         signature: "fn pad_right(text: String, width: i64, fill: char) -> String",
-    },
-    StdFunctionSignature {
-        module_path: "std::strings",
-        name: "parse",
-        signature: "fn parse<T>(text: String) -> Result<T, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::strings",
@@ -3611,7 +3431,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::time",
         name: "sleep_ctx",
-        signature: "fn sleep_ctx(ctx: &context::Context, ms: i64) -> bool",
+        signature: "fn sleep_ctx(ctx: context::Context, ms: i64) -> bool",
     },
     StdFunctionSignature {
         module_path: "std::time",
@@ -4005,17 +3825,113 @@ pub fn parse_signature(signature: &'static str) -> Option<StdSignatureShape> {
     Some(StdSignatureShape { params, return_ty })
 }
 
-/// Returns the parsed signature shape for a canonical stdlib function.
+/// Returns the parsed signature shape for a canonical stdlib function,
+/// in the order a caller writes it.
 #[must_use]
 pub fn function_shape(module_path: &str, name: &str) -> Option<StdSignatureShape> {
     parse_signature(function_signature(module_path, name)?)
 }
 
-/// Returns the parsed signature shape for a source-path stdlib function.
+/// Returns the parsed signature shape for a source-path stdlib function,
+/// in the order a caller writes it.
 #[must_use]
 pub fn function_shape_for_path(module_segments: &[&str], name: &str) -> Option<StdSignatureShape> {
     parse_signature(function_for_path(module_segments, name)?.signature)
 }
+
+/// Whether `name` in `module_segments` is one of the free functions whose
+/// data parameter moved to the front for 0.56.0.
+///
+/// Every std free function now takes its data first, which is what makes
+/// `iter::map(xs, f)` read like `xs.map(f)`. Method lowering and both
+/// tiers' free-call lowering still pass the data LAST, so the front end
+/// rotates a written call into that order once
+/// ([`crate::normalize_caller_side_spellings`]) and everything after it
+/// sees one shape.
+#[must_use]
+pub fn takes_data_first(module_segments: &[&str], name: &str) -> bool {
+    let module = match module_segments {
+        ["std", rest @ ..] => rest,
+        rest => rest,
+    };
+    let names: &[&str] = match module {
+        ["iter"] => &DATA_FIRST_ITER,
+        ["option"] => &DATA_FIRST_OPTION,
+        ["result"] => &DATA_FIRST_RESULT,
+        _ => return false,
+    };
+    names.contains(&name)
+}
+
+/// The parameter order every pass after the front end sees: the data
+/// parameter last, which is the slot method lowering and the runtime
+/// helpers already use.
+#[must_use]
+pub fn internal_shape_for_path(module_segments: &[&str], name: &str) -> Option<StdSignatureShape> {
+    let mut shape = function_shape_for_path(module_segments, name)?;
+    if takes_data_first(module_segments, name) && shape.params.len() >= 2 {
+        let data = shape.params.remove(0);
+        shape.params.push(data);
+    }
+    Some(shape)
+}
+
+const DATA_FIRST_ITER: [&str; 31] = [
+    "all",
+    "any",
+    "chunk_by",
+    "chunks",
+    "count_by",
+    "filter",
+    "filter_map",
+    "find",
+    "find_map",
+    "flat_map",
+    "fold",
+    "for_each",
+    "map",
+    "max_by",
+    "max_by_key",
+    "min_by",
+    "min_by_key",
+    "partition",
+    "position",
+    "product_by",
+    "reduce",
+    "scan",
+    "skip",
+    "skip_while",
+    "sort_by",
+    "sort_by_key",
+    "step_by",
+    "sum_by",
+    "take",
+    "take_while",
+    "windows",
+];
+
+const DATA_FIRST_OPTION: [&str; 11] = [
+    "and_then",
+    "expect",
+    "filter",
+    "map",
+    "ok_or",
+    "ok_or_else",
+    "or",
+    "or_else",
+    "unwrap_or",
+    "unwrap_or_else",
+    "zip",
+];
+
+const DATA_FIRST_RESULT: [&str; 6] = [
+    "and_then",
+    "map",
+    "map_err",
+    "or_else",
+    "unwrap_or",
+    "unwrap_or_else",
+];
 
 fn matching_delimiter(s: &str, open: usize, left: char, right: char) -> Option<usize> {
     let mut depth = 0usize;

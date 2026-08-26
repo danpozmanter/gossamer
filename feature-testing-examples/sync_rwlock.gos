@@ -11,20 +11,20 @@ use std::sync
 
 fn main() {
     let lock = sync::RwLock::new(10)
-    println!("init: {}", lock.read())
+    println("init: {}", lock.read())
 
     let doubled = sync::RwLock::with_read(lock, |v| v * 2)
-    println!("with_read result: {}", doubled)
-    println!("after read unchanged: {}", lock.read())
+    println("with_read result: {}", doubled)
+    println("after read unchanged: {}", lock.read())
 
     let updated = sync::RwLock::with_write(lock, |v| v + 5)
-    println!("with_write result: {}", updated)
-    println!("after write: {}", lock.read())
+    println("with_write result: {}", updated)
+    println("after write: {}", lock.read())
 
     lock.write(100)
-    println!("after write: {}", lock.read())
+    println("after write: {}", lock.read())
 
     let squared = sync::RwLock::with_write(lock, |v| v * v)
-    println!("squared result: {}", squared)
-    println!("final: {}", lock.read())
+    println("squared result: {}", squared)
+    println("final: {}", lock.read())
 }

@@ -42,11 +42,8 @@ impl StdItem {
 
 /// The call form of `name` for an item of `kind`.
 #[must_use]
-pub fn call_name(name: &str, kind: StdItemKind) -> String {
-    match kind {
-        StdItemKind::Macro => format!("{name}!"),
-        _ => name.to_string(),
-    }
+pub fn call_name(name: &str, _kind: StdItemKind) -> String {
+    name.to_string()
 }
 
 /// Fully-qualified item metadata derived from the stdlib manifest.
@@ -87,8 +84,8 @@ pub enum StdItemKind {
     Type,
     /// Trait declaration.
     Trait,
-    /// Macro / built-in compiler intrinsic exposed as a callable.
-    Macro,
+    /// Compiler-known call the parser expands where it is written.
+    Builtin,
     /// Module-level constant.
     Const,
 }

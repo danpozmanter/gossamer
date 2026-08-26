@@ -3,7 +3,7 @@
 // arms; the compiler desugars the chain through `gos_rt_str_eq` so all
 // three tiers (VM, Cranelift JIT, LLVM AOT) produce identical output.
 
-fn classify(s: &String) -> String {
+fn classify(s: String) -> String {
     match s {
         "GET" => "read"
         "POST" => "write"
@@ -22,7 +22,7 @@ fn describe(s: String) -> String {
 }
 
 // String literal pattern with a guard.
-fn guarded(s: &String, n: i64) -> String {
+fn guarded(s: String, n: i64) -> String {
     match s {
         "big" if n > 100 => "big and large"
         "big" => "big but small"
@@ -31,17 +31,17 @@ fn guarded(s: &String, n: i64) -> String {
 }
 
 fn main() {
-    println!("{}", classify(&"GET"))
-    println!("{}", classify(&"POST"))
-    println!("{}", classify(&"DELETE"))
+    println("{}", classify("GET"))
+    println("{}", classify("POST"))
+    println("{}", classify("DELETE"))
 
-    println!("{}", describe("SELECT"))
-    println!("{}", describe("INSERT"))
-    println!("{}", describe("UPDATE"))
+    println("{}", describe("SELECT"))
+    println("{}", describe("INSERT"))
+    println("{}", describe("UPDATE"))
 
-    println!("{}", guarded(&"big", 200))
-    println!("{}", guarded(&"big", 50))
-    println!("{}", guarded(&"small", 200))
+    println("{}", guarded("big", 200))
+    println("{}", guarded("big", 50))
+    println("{}", guarded("small", 200))
 }
 
 #[cfg(test)]
@@ -50,33 +50,33 @@ mod string_match_patterns_tests {
 
     #[test]
     fn ref_string_classify() {
-        let _ = testing::check_eq(&super::classify(&"GET"), &"read", "GET=read")
-        let _ = testing::check_eq(&super::classify(&"POST"), &"write", "POST=write")
-        let _ = testing::check_eq(&super::classify(&"DELETE"), &"other", "DELETE=other")
+        let _ = testing::check_eq(super::classify("GET"), "read", "GET=read")
+        let _ = testing::check_eq(super::classify("POST"), "write", "POST=write")
+        let _ = testing::check_eq(super::classify("DELETE"), "other", "DELETE=other")
     }
 
     #[test]
     fn owned_string_describe() {
-        let _ = testing::check_eq(&super::describe("SELECT"), &"query", "SELECT=query")
-        let _ = testing::check_eq(&super::describe("INSERT"), &"write", "INSERT=write")
-        let _ = testing::check_eq(&super::describe("UPDATE"), &"unknown", "UPDATE=unknown")
+        let _ = testing::check_eq(super::describe("SELECT"), "query", "SELECT=query")
+        let _ = testing::check_eq(super::describe("INSERT"), "write", "INSERT=write")
+        let _ = testing::check_eq(super::describe("UPDATE"), "unknown", "UPDATE=unknown")
     }
 
     #[test]
     fn string_pattern_with_guard() {
         let _ = testing::check_eq(
-            &super::guarded(&"big", 200)
-            &"big and large"
+            super::guarded("big", 200)
+            "big and large"
             "big+200"
         )
         let _ = testing::check_eq(
-            &super::guarded(&"big", 50)
-            &"big but small"
+            super::guarded("big", 50)
+            "big but small"
             "big+50"
         )
         let _ = testing::check_eq(
-            &super::guarded(&"small", 200)
-            &"other"
+            super::guarded("small", 200)
+            "other"
             "small+200"
         )
     }

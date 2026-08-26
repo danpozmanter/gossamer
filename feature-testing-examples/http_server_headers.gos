@@ -22,15 +22,15 @@ impl http::Handler for App {
 }
 
 fn serve() {
-    if let Err(e) = http::serve(&ADDR, App { }) {
-        eprintln!("serve failed: {e}")
+    if let Err(e) = http::serve(ADDR, App { }) {
+        eprintln("serve failed: {e}")
     }
 }
 
 fn await_ready() {
     let mut tries = 0
     while tries < 400 {
-        if let Ok(_) = http::get(&URL, Vec::from([])) {
+        if let Ok(_) = http::get(URL, Vec::from([])) {
             return
         }
         time::sleep(25)
@@ -39,9 +39,9 @@ fn await_ready() {
 }
 
 fn main() {
-    go serve()
+    spawn(|| serve())
     await_ready()
-    match http::get(&URL, Vec::from([])) {
+    match http::get(URL, Vec::from([])) {
         Ok(r) => {
             let mut has_server = false
             let mut has_date = false
@@ -54,10 +54,10 @@ fn main() {
                     has_date = true
                 }
             }
-            println!("server-header: {}", has_server)
-            println!("date-header: {}", has_date)
+            println("server-header: {}", has_server)
+            println("date-header: {}", has_date)
         }
-        Err(e) => println!("get error: {}", e)
+        Err(e) => println("get error: {}", e)
     }
     process::exit(0)
 }

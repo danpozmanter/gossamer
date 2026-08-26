@@ -195,7 +195,7 @@ fn cross_file_project_bundles_sibling_modules() {
     .unwrap();
     fs::write(
         src.join("main.gos"),
-        "fn main() { println!(\"{}\", util::add(1, 2)) }\n",
+        "fn main() { println(\"{}\", util::add(1, 2)) }\n",
     )
     .unwrap();
 
@@ -234,11 +234,11 @@ fn directory_modules_nest_and_carry_types() {
         &[
             (
                 "src/main.gos",
-                "fn main() {\n    println!(\"{}\", deep::depth())\n    \
-                 println!(\"{}\", deep::nest::nested())\n    \
+                "fn main() {\n    println(\"{}\", deep::depth())\n    \
+                 println(\"{}\", deep::nest::nested())\n    \
                  let a = deep::nest::Nested { n: 5 }\n    \
                  let b = deep::nest::Nested { n: 5 }\n    \
-                 println!(\"{} {}\", a.n, a == b)\n}\n",
+                 println(\"{} {}\", a.n, a == b)\n}\n",
             ),
             (
                 "src/deep/mod.gos",
@@ -272,7 +272,7 @@ fn module_relative_paths_reach_child_and_sibling_modules() {
         &[
             (
                 "src/main.gos",
-                "fn main() { println!(\"{}\", outer::all()) }\n",
+                "fn main() { println(\"{}\", outer::all()) }\n",
             ),
             (
                 "src/outer/mod.gos",
@@ -294,6 +294,80 @@ fn module_relative_paths_reach_child_and_sibling_modules() {
 }
 
 #[test]
+fn every_sibling_file_may_declare_its_own_test_module() {
+    // A module belongs to the file that declares it, so each sibling in a
+    // project writes the same `mod tests` without the three of them
+    // competing for one name at the unit root. The explicit `mod NAME`
+    // declarations are the newline-terminated spelling, which the bundler
+    // fills from the project layout.
+    let dir = write_project(
+        "sibling-test-modules",
+        "example.com/sibtests",
+        &[
+            (
+                "src/main.gos",
+                "mod util
+mod other
+
+                 fn main() { println(\"{}\", util::add(1, 2) + other::mul(2, 3)) }
+
+                 #[cfg(test)]
+mod tests {
+    #[test]
+                     fn entry_test() { assert_eq(1, 1) }
+}
+",
+            ),
+            (
+                "src/util.gos",
+                "pub fn add(a: i64, b: i64) -> i64 { a + b }
+
+                 #[cfg(test)]
+mod tests {
+    #[test]
+                     fn add_adds() { assert_eq(super::add(2, 3), 5) }
+}
+",
+            ),
+            (
+                "src/other.gos",
+                "pub fn mul(a: i64, b: i64) -> i64 { a * b }
+
+                 #[cfg(test)]
+mod tests {
+    #[test]
+                     fn mul_multiplies() { assert_eq(super::mul(2, 3), 6) }
+}
+",
+            ),
+        ],
+    );
+    let expected = "9\n";
+    let vm = project_run_vm(&dir);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected, "vm stdout");
+    let native = project_build_run(&dir, "sibtests");
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(native.0, expected, "native stdout");
+
+    let out = std::process::Command::new(gos_bin())
+        .arg("test")
+        .current_dir(&dir)
+        .output()
+        .expect("gos test");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        out.status.success(),
+        "gos test stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for name in ["entry_test", "add_adds", "mul_multiplies"] {
+        assert!(stdout.contains(name), "`{name}` did not run: {stdout}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cross_file_chained_sibling_module_calls() {
     // Three sibling modules where each call cascades into the next:
     // main → a::foo → b::bar → util::helper. Pins both the qualified-
@@ -310,17 +384,17 @@ fn cross_file_chained_sibling_module_calls() {
     .unwrap();
     fs::write(
         src.join("main.gos"),
-        "fn main() { println!(\"{}\", a::foo()) }\n",
+        "fn main() { println(\"{}\", a::foo()) }\n",
     )
     .unwrap();
     fs::write(
         src.join("a.gos"),
-        "pub fn foo() -> String { format!(\"a({})\", b::bar()) }\n",
+        "pub fn foo() -> String { format(\"a({})\", b::bar()) }\n",
     )
     .unwrap();
     fs::write(
         src.join("b.gos"),
-        "pub fn bar() -> String { format!(\"b({})\", util::helper()) }\n",
+        "pub fn bar() -> String { format(\"b({})\", util::helper()) }\n",
     )
     .unwrap();
     fs::write(
@@ -384,7 +458,7 @@ fn named_module_body_resolves_qualified_calls() {
 mod util {
     pub fn add(a: i64, b: i64) -> i64 { a + b }
 }
-fn main() { println!("{}", util::add(2, 5)) }
+fn main() { println("{}", util::add(2, 5)) }
 "#;
     let dir = fresh_dir("named-mod");
     let path = write_source(&dir, "named_mod", src);
@@ -407,11 +481,11 @@ fn native_binary_os_read_file_to_string_returns_real_contents() {
         r#"use std::fs
 fn main() {{
     let p: String = "{p}"
-    match fs::read_to_string(&p) {{
-        Ok(s) => println!("ok len={{}} content={{}}", s.len(), s),
-        Err(e) => println!("err: {{}}", e),
+    match fs::read_to_string(p) {{
+        Ok(s) => println("ok len={{}} content={{}}", s.len(), s),
+        Err(e) => println("err: {{}}", e),
     }}
-    println!("exists = {{}}", fs::exists(&p))
+    println("exists = {{}}", fs::exists(p))
 }}
 "#,
         // Embed with forward slashes: a Windows path has backslashes, and
@@ -444,12 +518,12 @@ fn native_binary_exec_run_returns_subprocess_output() {
     let src = r#"
 use std::os::exec
 fn main() {
-    println!("calling exec::run")
+    println("calling exec::run")
     let mut argv: Vec<String> = Vec::from([])
     argv.push("hello-via-echo")
-    match exec::run(&"echo", &argv) {
-        Ok(o) => println!("code={} stdout={}", o.code, o.stdout),
-        Err(e) => println!("err: {}", e),
+    match exec::run("echo", argv) {
+        Ok(o) => println("code={} stdout={}", o.code, o.stdout),
+        Err(e) => println("err: {}", e),
     }
 }
 "#;
@@ -495,9 +569,9 @@ fn main() {
         "-n",
         "from-literal-array",
     ].to_vec()
-    match exec::run(&"echo", &args) {
-        Ok(o) => println!("ok code={} stdout={}", o.code, o.stdout),
-        Err(e) => println!("err: {}", e),
+    match exec::run("echo", args) {
+        Ok(o) => println("ok code={} stdout={}", o.code, o.stdout),
+        Err(e) => println("err: {}", e),
     }
 }
 "#;
@@ -542,18 +616,18 @@ fn main() {
     let raw = "{\"a\":{\"b\":{\"c\":42}}}"
     let mut iter: i64 = 0
     while iter < 1000 {
-        let v = json::parse(&raw).unwrap_or(json::Value::Null)
-        if let Some(a) = json::get(&v, &"a") {
-            if let Some(b) = json::get(a, &"b") {
-                if let Some(c) = json::get(b, &"c") {
+        let v = json::parse(raw).unwrap_or(json::Value::Null)
+        if let Some(a) = json::get(v, "a") {
+            if let Some(b) = json::get(a, "b") {
+                if let Some(c) = json::get(b, "c") {
                     let n = json::as_i64(c).unwrap_or(0)
-                    if n != 42 { println!("UNEXPECTED iter={} n={}", iter, n) }
+                    if n != 42 { println("UNEXPECTED iter={} n={}", iter, n) }
                 }
             }
         }
         iter += 1
     }
-    println!("ok iter={}", iter)
+    println("ok iter={}", iter)
 }
 "#;
     let dir = fresh_dir("json-arc");
@@ -593,10 +667,10 @@ fn native_binary_result_map_non_capturing_closure_abi() {
 use std::encoding::json
 fn main() {
     let raw = "{\"x\":42}"
-    let r1 = json::parse(&raw)
+    let r1 = json::parse(raw)
     let r2 = r1.map(|v| v.clone())
     let r3 = r2.unwrap_or(json::Value::Null)
-    println!("r3.is_null={}", json::is_null(&r3))
+    println("r3.is_null={}", json::is_null(r3))
 }
 "#;
     let dir = fresh_dir("non-cap-map");
@@ -627,14 +701,14 @@ fn native_binary_json_value_null_path_expression() {
 use std::encoding::json
 fn main() {
     let v1 = json::Value::Null
-    println!("v1 is_null={}", json::is_null(&v1))
+    println("v1 is_null={}", json::is_null(v1))
     let raw = "{\"path\":\"/tmp\"}"
-    let parsed = json::parse(&raw).unwrap_or(json::Value::Null)
-    if let Some(child) = json::get(&parsed, &"path") {
-        let s = json::as_str(&child).unwrap_or("")
-        println!("path={}", s)
+    let parsed = json::parse(raw).unwrap_or(json::Value::Null)
+    if let Some(child) = json::get(parsed, "path") {
+        let s = json::as_str(child).unwrap_or("")
+        println("path={}", s)
     }
-    println!("done")
+    println("done")
 }
 "#;
     let dir = fresh_dir("json-null-path");
@@ -686,7 +760,7 @@ fn main() {
     xs.push("b")
     xs[0] = "X"
     xs[1] = "Y"
-    println!("xs[0]={} xs[1]={}", xs[0], xs[1])
+    println("xs[0]={} xs[1]={}", xs[0], xs[1])
 }
 "#;
     let dir = fresh_dir("vec-set");
@@ -719,11 +793,11 @@ fn native_binary_literal_array_to_vec_does_not_segfault() {
     let src = r#"
 fn main() {
     let xs: Vec<i64> = [10, 20, 30].to_vec()
-    println!("i64 len={} 0={} 1={} 2={}", xs.len(), xs[0], xs[1], xs[2])
+    println("i64 len={} 0={} 1={} 2={}", xs.len(), xs[0], xs[1], xs[2])
     let ys: Vec<String> = ["a", "b", "c"].to_vec()
-    println!("str len={} 0={} 1={} 2={}", ys.len(), ys[0], ys[1], ys[2])
+    println("str len={} 0={} 1={} 2={}", ys.len(), ys[0], ys[1], ys[2])
     let zs: Vec<String> = ["aa", "bb", "cc"].to_vec()
-    println!("lit len={} 0={} 1={} 2={}", zs.len(), zs[0], zs[1], zs[2])
+    println("lit len={} 0={} 1={} 2={}", zs.len(), zs[0], zs[1], zs[2])
 }
 "#;
     let dir = fresh_dir("literal-to-vec");
@@ -762,18 +836,18 @@ fn json_get_returns_option_with_correct_discriminator() {
     let src = r#"
 use std::encoding::json
 fn main() {
-    let v = json::parse(&"{\"a\":1}").unwrap()
-    let opt = json::get(&v, &"a")
-    println!("is_some? {}", opt.is_some())
-    println!("is_none? {}", opt.is_none())
+    let v = json::parse("{\"a\":1}").unwrap()
+    let opt = json::get(v, "a")
+    println("is_some? {}", opt.is_some())
+    println("is_none? {}", opt.is_none())
     if let Some(_) = opt {
-        println!("matched Some")
+        println("matched Some")
     } else {
-        println!("matched None")
+        println("matched None")
     }
-    let missing = json::get(&v, &"absent")
-    println!("missing is_some? {}", missing.is_some())
-    println!("missing is_none? {}", missing.is_none())
+    let missing = json::get(v, "absent")
+    println("missing is_some? {}", missing.is_some())
+    println("missing is_none? {}", missing.is_none())
 }
 "#;
     let dir = fresh_dir("json-option");
@@ -817,10 +891,10 @@ fn slice_of_tuples_indexing_works_in_native_build() {
     // subsequent index dispatch. Asserting on both `gos` and
     // a native build guards the path against future regressions.
     let src = r#"
-fn first_key(vars: &[(String, String)]) -> String {
+fn first_key(vars: [(String, String)]) -> String {
     vars[0].0.clone()
 }
-fn second_value(vars: &[(String, String)]) -> String {
+fn second_value(vars: [(String, String)]) -> String {
     vars[1].1.clone()
 }
 fn main() {
@@ -828,8 +902,8 @@ fn main() {
         ("alpha", "1"),
         ("beta", "2"),
     ].to_vec()
-    println!("{}", first_key(&pairs))
-    println!("{}", second_value(&pairs))
+    println("{}", first_key(pairs))
+    println("{}", second_value(pairs))
 }
 "#;
     let dir = fresh_dir("slice-tuples");
@@ -869,18 +943,18 @@ fn empty_pattern() -> regex::Pattern {
     regex::compile("").unwrap_or(regex::compile("a").unwrap())
 }
 
-pub fn substring(s: &String, start: i64, end: i64) -> String {
+pub fn substring(s: String, start: i64, end: i64) -> String {
     let n = s.len() as i64
     let mut a = start
     let mut b = end
     if a < 0 { a = 0 }
     if b > n { b = n }
     if a >= b { return "" }
-    let drop_pat = regex::compile(&format!("(?s)^.{{0,{}}}", a)).unwrap_or(empty_pattern())
-    let after = regex::replace(&drop_pat, s, &"")
+    let drop_pat = regex::compile(format("(?s)^.{{0,{}}}", a)).unwrap_or(empty_pattern())
+    let after = regex::replace(drop_pat, s, "")
     let len = b - a
-    let take_pat = regex::compile(&format!("(?s)^(.{{0,{}}})", len)).unwrap_or(empty_pattern())
-    let row = regex::captures(&take_pat, &after).map(|r| r.clone()).unwrap_or([].to_vec())
+    let take_pat = regex::compile(format("(?s)^(.{{0,{}}})", len)).unwrap_or(empty_pattern())
+    let row = regex::captures(take_pat, after).map(|r| r.clone()).unwrap_or([].to_vec())
     if row.len() < 2 { return "" }
     row[1].clone().map(|x| x.clone()).unwrap_or("")
 }
@@ -891,16 +965,16 @@ fn warmup_jit() {
     let s = "padding-padding-padding-padding-padding-padding"
     let mut i: i64 = 0
     while i < (s.len() as i64) {
-        let _ = substring(&s, i, i + 5)
+        let _ = substring(s, i, i + 5)
         i += 1
     }
-    let _ = testing::check_eq(&s.len(), &47, "length sanity")
+    let _ = testing::check_eq(s.len(), 47, "length sanity")
 }
 
 #[cfg(test)]
 #[test]
 fn after_jit_string_eq() {
-    let _ = testing::check_eq(&"hi", &"hi", "string eq")
+    let _ = testing::check_eq("hi", "hi", "string eq")
 }
 
 #[cfg(test)]
@@ -968,7 +1042,7 @@ fn main() {
         total += parts.len() as i64
         i += 1
     }
-    println!("total={}", total)
+    println("total={}", total)
 }
 "#;
     let dir = fresh_dir("vec-double-free");
@@ -995,7 +1069,7 @@ struct User { name: String, age: i64 }
 
 impl User {
     fn render(&self) -> String {
-        format!("{} ({})", self.name, self.age)
+        format("{} ({})", self.name, self.age)
     }
 }
 
@@ -1005,7 +1079,7 @@ fn show(client: User) -> String {
 
 fn main() {
     let u = User { name: "alice", age: 30 }
-    println!("{}", show(u))
+    println("{}", show(u))
 }
 "#;
     let dir = fresh_dir("client-param");
@@ -1030,7 +1104,7 @@ fn i128_use_panics_native_build_rather_than_silently_truncating() {
     let src = r#"
 fn main() {
     let n: i128 = 1
-    println!("{}", n)
+    println("{}", n)
 }
 "#;
     let dir = fresh_dir("i128-reject");
@@ -1066,14 +1140,14 @@ fn user_fn_named_substring_does_not_recurse_via_method_dispatch() {
     // beat the builtin). The VM now consults a `String::method`
     // qualified key first, so the builtin wins.
     let src = r#"
-pub fn substring(s: &String, a: i64, b: i64) -> String {
+pub fn substring(s: String, a: i64, b: i64) -> String {
     s.substring(a, b)
 }
 
 fn main() {
     let s = "hello world"
-    println!("{}", substring(&s, 0, 5))
-    println!("{}", substring(&s, 6, 11))
+    println("{}", substring(s, 0, 5))
+    println("{}", substring(s, 6, 11))
 }
 "#;
     let dir = fresh_dir("user-fn-substring");
@@ -1097,25 +1171,25 @@ use std::encoding::json
 fn main() {
     // Parse a JSON string. `as_object` keys / `as_array` iter on
     // a string value must return None.
-    let s = json::parse(&"\"plain\"").unwrap()
-    match json::as_array(&s) {
-        Some(_) => println!("array? wrong"),
-        None => println!("not-array ok"),
+    let s = json::parse("\"plain\"").unwrap()
+    match json::as_array(s) {
+        Some(_) => println("array? wrong"),
+        None => println("not-array ok"),
     }
-    match json::keys(&s) {
-        Some(_) => println!("keys? wrong"),
-        None => println!("not-object-keys ok"),
+    match json::keys(s) {
+        Some(_) => println("keys? wrong"),
+        None => println("not-object-keys ok"),
     }
-    let missing = json::get(&s, &"nope")
+    let missing = json::get(s, "nope")
     match missing {
-        Some(_) => println!("got? wrong"),
-        None => println!("missing ok"),
+        Some(_) => println("got? wrong"),
+        None => println("missing ok"),
     }
     // Object lookup with a key that doesn't exist.
-    let obj = json::parse(&"{\"a\": 1}").unwrap()
-    match json::get(&obj, &"b") {
-        Some(_) => println!("b? wrong"),
-        None => println!("b missing ok"),
+    let obj = json::parse("{\"a\": 1}").unwrap()
+    match json::get(obj, "b") {
+        Some(_) => println("b? wrong"),
+        None => println("b missing ok"),
     }
 }
 "#;
@@ -1149,16 +1223,16 @@ fn json_as_array_iter_native() {
     let src = r#"
 use std::encoding::json
 fn main() {
-    let v = json::parse(&"[10, 20, 30]").unwrap()
-    let arr = json::as_array(&v).unwrap()
+    let v = json::parse("[10, 20, 30]").unwrap()
+    let arr = json::as_array(v).unwrap()
     let n = arr.len() as i64
     let mut i: i64 = 0
     while i < n {
         let item = arr[i]
-        println!("{}", json::as_i64(&item).unwrap_or(-1))
+        println("{}", json::as_i64(item).unwrap_or(-1))
         i += 1
     }
-    println!("len={}", n)
+    println("len={}", n)
 }
 "#;
     let dir = fresh_dir("json-as-array-iter");
@@ -1197,11 +1271,11 @@ fn regex_replace_singular_native() {
     let src = r#"
 use std::regex
 fn main() {
-    let pat = regex::compile(&"foo").unwrap()
+    let pat = regex::compile("foo").unwrap()
     let s = "foo and foo"
-    let one = pat.replace(&s, &"BAR")
-    let all = pat.replace_all(&s, &"BAR")
-    println!("{} | {}", one, all)
+    let one = pat.replace(s, "BAR")
+    let all = pat.replace_all(s, "BAR")
+    println("{} | {}", one, all)
 }
 "#;
     let dir = fresh_dir("regex-replace-singular");
@@ -1244,21 +1318,21 @@ fn test_runner_isolates_jit_state_across_json_iteration() {
 use std::encoding::json
 use std::testing
 
-pub fn json_string(v: &json::Value, key: &String) -> String {
+pub fn json_string(v: json::Value, key: String) -> String {
     if let Some(child) = json::get(v, key) {
-        json::as_str(&child).unwrap_or("")
+        json::as_str(child).unwrap_or("")
     } else {
         ""
     }
 }
 
-pub fn count_user_messages(messages_json: &String) -> i64 {
+pub fn count_user_messages(messages_json: String) -> i64 {
     let parsed = json::parse(messages_json).unwrap_or(json::Value::Null)
-    if json::is_null(&parsed) { return 0 }
-    let arr = json::as_array(&parsed).unwrap()
+    if json::is_null(parsed) { return 0 }
+    let arr = json::as_array(parsed).unwrap()
     let mut n: i64 = 0
     for msg in arr.iter() {
-        let role = json_string(msg, &"role")
+        let role = json_string(msg, "role")
         if role == "user" { n += 1 }
     }
     n
@@ -1283,8 +1357,8 @@ pub fn count_user_messages(messages_json: &String) -> i64 {
 #[test]
 fn after_jit_array_iteration_works() {
     let raw = "[{\"role\":\"user\",\"content\":\"hi\"},{\"role\":\"assistant\",\"content\":\"there\"},{\"role\":\"user\",\"content\":\"again\"}]"
-    let n = super::count_user_messages(&raw)
-    let _ = testing::check_eq(&n, &2, "two user messages survive iteration")
+    let n = super::count_user_messages(raw)
+    let _ = testing::check_eq(n, 2, "two user messages survive iteration")
 }
 
 fn main() {}
@@ -1330,11 +1404,11 @@ fn main() {}
 fn peephole_does_not_drop_literal_const_loads_feeding_call_args() {
     let src = r#"
 fn main() {
-    println!("hello")
+    println("hello")
     println(42)
-    println!("{}", "world")
-    println!("{}", 7)
-    let s = format!("{}", "ok")
+    println("{}", "world")
+    println("{}", 7)
+    let s = format("{}", "ok")
     println(s)
 }
 "#;
@@ -1367,7 +1441,7 @@ fn test_runner_failed_test_prints_call_chain_traceback() {
     let src = r#"
 fn deepest(n: i64) -> i64 {
     if n == 0 {
-        panic!("boom at the bottom")
+        panic("boom at the bottom")
     }
     n
 }
@@ -1452,13 +1526,13 @@ fn cross_module_struct_field_access_resolves_on_all_tiers() {
     fs::write(
         src.join("main.gos"),
         concat!(
-            "fn describe(r: &util::Rec) -> String {\n",
-            "    format!(\"{} is {}\", r.name, r.age)\n",
+            "fn describe(r: util::Rec) -> String {\n",
+            "    format(\"{} is {}\", r.name, r.age)\n",
             "}\n",
             "fn main() {\n",
             "    let mut r = util::make(\"ada\", 36)\n",
             "    util::birthday(&mut r)\n",
-            "    println!(\"{}\", describe(&r))\n",
+            "    println(\"{}\", describe(r))\n",
             "}\n",
         ),
     )
@@ -1527,16 +1601,16 @@ fn cross_file_from_json_on_sibling_struct() {
             (
                 "src/codec.gos",
                 "use std::errors\n\
-                 pub fn describe(text: &String) -> String {\n\
+                 pub fn describe(text: String) -> String {\n\
                  \x20   match from_json::<types::Point>(text) {\n\
-                 \x20       Ok(p) => format!(\"{},{},{}\", p.x, p.y, p.label),\n\
-                 \x20       Err(e) => format!(\"err: {}\", e),\n\
+                 \x20       Ok(p) => format(\"{},{},{}\", p.x, p.y, p.label),\n\
+                 \x20       Err(e) => format(\"err: {}\", e),\n\
                  \x20   }\n\
                  }\n",
             ),
             (
                 "src/main.gos",
-                "fn main() { println!(\"{}\", codec::describe(&\"{\\\"x\\\":3,\\\"y\\\":4,\\\"label\\\":\\\"origin\\\"}\")) }\n",
+                "fn main() { println(\"{}\", codec::describe(\"{\\\"x\\\":3,\\\"y\\\":4,\\\"label\\\":\\\"origin\\\"}\")) }\n",
             ),
         ],
     );
@@ -1566,7 +1640,7 @@ fn cross_file_to_json_derive_and_typeinfo_on_sibling_struct() {
                  pub fn roundtrip(r: Rec) -> String {\n\
                  \x20   match to_json::<Rec>(r) {\n\
                  \x20       Ok(s) => s,\n\
-                 \x20       Err(e) => format!(\"err: {}\", e),\n\
+                 \x20       Err(e) => format(\"err: {}\", e),\n\
                  \x20   }\n\
                  }\n\
                  pub fn describe() -> String {\n\
@@ -1574,14 +1648,14 @@ fn cross_file_to_json_derive_and_typeinfo_on_sibling_struct() {
                  \x20   let b = Rec { id: 1, name: \"x\" }\n\
                  \x20   let mut fields = \"\"\n\
                  \x20   for (n, t) in typeInfo::<Rec>() { fields += n\n fields += \":\"\n fields += t\n fields += \";\" }\n\
-                 \x20   format!(\"{:?} eq={} fields={}\", a, a == b, fields)\n\
+                 \x20   format(\"{:?} eq={} fields={}\", a, a == b, fields)\n\
                  }\n",
             ),
             (
                 "src/main.gos",
                 "fn main() {\n\
-                 \x20   println!(\"{}\", model::roundtrip(model::new(7, \"hi\")))\n\
-                 \x20   println!(\"{}\", model::describe())\n\
+                 \x20   println(\"{}\", model::roundtrip(model::new(7, \"hi\")))\n\
+                 \x20   println(\"{}\", model::describe())\n\
                  }\n",
             ),
         ],
@@ -1614,9 +1688,9 @@ fn cross_file_from_json_nested_struct_on_vm() {
             (
                 "src/main.gos",
                 "fn main() {\n\
-                 \x20   match from_json::<types::Outer>(&\"{\\\"is_error\\\":false,\\\"inner\\\":{\\\"status\\\":\\\"ok\\\"}}\") {\n\
-                 \x20       Ok(v) => println!(\"{} {}\", v.is_error, v.inner.status),\n\
-                 \x20       Err(e) => println!(\"err: {}\", e),\n\
+                 \x20   match from_json::<types::Outer>(\"{\\\"is_error\\\":false,\\\"inner\\\":{\\\"status\\\":\\\"ok\\\"}}\") {\n\
+                 \x20       Ok(v) => println(\"{} {}\", v.is_error, v.inner.status),\n\
+                 \x20       Err(e) => println(\"err: {}\", e),\n\
                  \x20   }\n\
                  }\n",
             ),
@@ -1645,13 +1719,13 @@ fn gos_test_discovers_tests_in_cross_referencing_files() {
                 "src/main.gos",
                 "use helper::base\n\
                  fn total() -> i64 { base() + 2 }\n\
-                 fn main() { println!(\"{}\", total()) }\n\
+                 fn main() { println(\"{}\", total()) }\n\
                  #[cfg(test)]\n\
                  mod main_tests {\n\
                  \x20   use std::testing\n\
                  \x20   #[test]\n\
                  \x20   fn total_uses_sibling() {\n\
-                 \x20       let _ = testing::check_eq(&super::total(), &42, \"40 + 2\")\n\
+                 \x20       let _ = testing::check_eq(super::total(), 42, \"40 + 2\")\n\
                  \x20   }\n\
                  }\n",
             ),
@@ -1700,7 +1774,7 @@ fn relative_entry_path_bundles_siblings() {
     .unwrap();
     fs::write(
         dir.join("main.gos"),
-        "fn main() { println!(\"{}\", util::add(1, 2)) }\n",
+        "fn main() { println(\"{}\", util::add(1, 2)) }\n",
     )
     .unwrap();
     let child = Command::new(gos_bin())
@@ -1753,12 +1827,12 @@ fn path_dependency_links_at_run() {
         &root,
         "dep",
         "example.com/dep",
-        "pub fn greet(name: &String) -> String { format!(\"hi {}\", name) }\n",
+        "pub fn greet(name: String) -> String { format(\"hi {}\", name) }\n",
     );
     let app = write_app_project(
         &root,
         "dep = { path = \"../dep\" }\n",
-        "use \"example.com/dep\" as dep\n\nfn main() { println!(\"{}\", dep::greet(&\"gos\")) }\n",
+        "use \"example.com/dep\" as dep\n\nfn main() { println(\"{}\", dep::greet(\"gos\")) }\n",
     );
     let out = project_run_vm(&app);
     let _ = fs::remove_dir_all(&root);
@@ -1777,28 +1851,28 @@ fn every_import_spelling_reaches_a_hyphenated_package() {
         &root,
         "pgsql-gos",
         "example.com/pgsql-gos",
-        "pub fn greet(name: &String) -> String { format!(\"hi {}\", name) }\n",
+        "pub fn greet(name: String) -> String { format(\"hi {}\", name) }\n",
     );
     for (label, main) in [
         (
             "bare",
-            "use pgsql_gos\n\nfn main() { println!(\"{}\", pgsql_gos::greet(&\"gos\")) }\n",
+            "use pgsql_gos\n\nfn main() { println(\"{}\", pgsql_gos::greet(\"gos\")) }\n",
         ),
         (
             "item path",
-            "use pgsql_gos::greet\n\nfn main() { println!(\"{}\", greet(&\"gos\")) }\n",
+            "use pgsql_gos::greet\n\nfn main() { println(\"{}\", greet(\"gos\")) }\n",
         ),
         (
             "list",
-            "use pgsql_gos::{greet}\n\nfn main() { println!(\"{}\", greet(&\"gos\")) }\n",
+            "use pgsql_gos::{greet}\n\nfn main() { println(\"{}\", greet(\"gos\")) }\n",
         ),
         (
             "alias",
-            "use pgsql_gos as pg\n\nfn main() { println!(\"{}\", pg::greet(&\"gos\")) }\n",
+            "use pgsql_gos as pg\n\nfn main() { println(\"{}\", pg::greet(\"gos\")) }\n",
         ),
         (
             "package id",
-            "use \"example.com/pgsql-gos\"\n\nfn main() { println!(\"{}\", pgsql_gos::greet(&\"gos\")) }\n",
+            "use \"example.com/pgsql-gos\"\n\nfn main() { println(\"{}\", pgsql_gos::greet(\"gos\")) }\n",
         ),
     ] {
         let app = write_app_project(&root, "pgsql_gos = { path = \"../pgsql-gos\" }\n", main);
@@ -1818,12 +1892,12 @@ fn a_hyphenated_use_path_is_rejected_with_the_module_spelling() {
         &root,
         "pgsql-gos",
         "example.com/pgsql-gos",
-        "pub fn greet(name: &String) -> String { format!(\"hi {}\", name) }\n",
+        "pub fn greet(name: String) -> String { format(\"hi {}\", name) }\n",
     );
     let app = write_app_project(
         &root,
         "pgsql_gos = { path = \"../pgsql-gos\" }\n",
-        "use pgsql-gos\n\nfn main() { println!(\"{}\", pgsql_gos::greet(&\"gos\")) }\n",
+        "use pgsql-gos\n\nfn main() { println(\"{}\", pgsql_gos::greet(\"gos\")) }\n",
     );
     let out = project_run_vm(&app);
     let _ = fs::remove_dir_all(&root);
@@ -1859,7 +1933,7 @@ fn two_packages_normalizing_to_one_module_name_collide() {
     let app = write_app_project(
         &root,
         "first = { path = \"../hyphened\" }\nsecond = { path = \"../underscored\" }\n",
-        "use pgsql_gos\n\nfn main() { println!(\"{}\", pgsql_gos::a()) }\n",
+        "use pgsql_gos\n\nfn main() { println(\"{}\", pgsql_gos::a()) }\n",
     );
     let out = project_run_vm(&app);
     let _ = fs::remove_dir_all(&root);
@@ -1900,7 +1974,7 @@ fn a_module_override_lets_two_same_named_packages_coexist() {
         "\"ownera.example.com/pgsql-gos\" = { path = \"../first\", module = \"pg_a\" }\n\
          \"ownerb.example.com/pgsql-gos\" = { path = \"../second\" }\n",
         "use pg_a\nuse pgsql_gos\n\n\
-         fn main() { println!(\"{} {}\", pg_a::who(), pgsql_gos::who()) }\n",
+         fn main() { println(\"{} {}\", pg_a::who(), pgsql_gos::who()) }\n",
     );
     let out = project_run_vm(&app);
     assert_eq!(out.2, Some(0), "stderr: {}", out.1);
@@ -1912,7 +1986,7 @@ fn a_module_override_lets_two_same_named_packages_coexist() {
         app.join("main.gos"),
         "use \"ownera.example.com/pgsql-gos\" as pa\n\
          use \"ownerb.example.com/pgsql-gos\" as pb\n\n\
-         fn main() { println!(\"{} {}\", pa::who(), pb::who()) }\n",
+         fn main() { println(\"{} {}\", pa::who(), pb::who()) }\n",
     )
     .unwrap();
     let out = project_run_vm(&app);
@@ -1938,23 +2012,23 @@ fn a_serde_bearing_dependency_checks_under_every_import_spelling() {
     for (label, main) in [
         (
             "bare",
-            "use pgsql_gos\n\nfn main() { println!(\"{}\", pgsql_gos::begin().id) }\n",
+            "use pgsql_gos\n\nfn main() { println(\"{}\", pgsql_gos::begin().id) }\n",
         ),
         (
             "alias",
-            "use pgsql_gos as pg\n\nfn main() { println!(\"{}\", pg::begin().id) }\n",
+            "use pgsql_gos as pg\n\nfn main() { println(\"{}\", pg::begin().id) }\n",
         ),
         (
             "list",
-            "use pgsql_gos::{begin}\n\nfn main() { println!(\"{}\", begin().id) }\n",
+            "use pgsql_gos::{begin}\n\nfn main() { println(\"{}\", begin().id) }\n",
         ),
         (
             "package id",
-            "use \"example.com/pgsql-gos\"\n\nfn main() { println!(\"{}\", pgsql_gos::begin().id) }\n",
+            "use \"example.com/pgsql-gos\"\n\nfn main() { println(\"{}\", pgsql_gos::begin().id) }\n",
         ),
         (
             "aliased package id",
-            "use \"example.com/pgsql-gos\" as pg\n\nfn main() { println!(\"{}\", pg::begin().id) }\n",
+            "use \"example.com/pgsql-gos\" as pg\n\nfn main() { println(\"{}\", pg::begin().id) }\n",
         ),
     ] {
         let app = write_app_project(&root, "pgsql_gos = { path = \"../pgsql-gos\" }\n", main);
@@ -1974,12 +2048,12 @@ fn tidy_keeps_a_dependency_reached_by_its_module_name() {
         &root,
         "pgsql-gos",
         "example.com/pgsql-gos",
-        "pub fn greet(name: &String) -> String { format!(\"hi {}\", name) }\n",
+        "pub fn greet(name: String) -> String { format(\"hi {}\", name) }\n",
     );
     let app = write_app_project(
         &root,
         "pgsql_gos = { path = \"../pgsql-gos\" }\n",
-        "use pgsql_gos\n\nfn main() { println!(\"{}\", pgsql_gos::greet(&\"gos\")) }\n",
+        "use pgsql_gos\n\nfn main() { println(\"{}\", pgsql_gos::greet(\"gos\")) }\n",
     );
     let child = Command::new(gos_bin())
         .arg("tidy")
@@ -2008,12 +2082,12 @@ fn a_dependency_path_requires_the_matching_import() {
         &root,
         "dep",
         "example.com/dep",
-        "pub fn greet(name: &String) -> String { format!(\"hi {}\", name) }\n",
+        "pub fn greet(name: String) -> String { format(\"hi {}\", name) }\n",
     );
     let app = write_app_project(
         &root,
         "dep = { path = \"../dep\" }\n",
-        "fn main() { println!(\"{}\", dep::greet(&\"gos\")) }\n",
+        "fn main() { println(\"{}\", dep::greet(\"gos\")) }\n",
     );
     let out = project_run_vm(&app);
     let _ = fs::remove_dir_all(&root);
@@ -2043,7 +2117,7 @@ fn a_dependency_alias_names_a_type_in_an_annotation() {
     let app = write_app_project(
         &root,
         "dep = { path = \"../dep\" }\n",
-        "use \"example.com/dep\" as d\n\nfn main() {\n    let c: d::Counter = d::Counter::new()\n    println!(\"{}\", c.get())\n}\n",
+        "use \"example.com/dep\" as d\n\nfn main() {\n    let c: d::Counter = d::Counter::new()\n    println(\"{}\", c.get())\n}\n",
     );
     let out = project_run_vm(&app);
     let _ = fs::remove_dir_all(&root);
@@ -2063,7 +2137,7 @@ fn path_dependency_links_at_build() {
     let app = write_app_project(
         &root,
         "dep = { path = \"../dep\" }\n",
-        "use \"example.com/dep\" as d\n\nfn main() { println!(\"{}\", d::add(20, 22)) }\n",
+        "use \"example.com/dep\" as d\n\nfn main() { println(\"{}\", d::add(20, 22)) }\n",
     );
     let out = project_build_run(&app, "app");
     let _ = fs::remove_dir_all(&root);
@@ -2083,7 +2157,7 @@ fn check_rejects_unknown_path_dep_member() {
     let app = write_app_project(
         &root,
         "dep = { path = \"../dep\" }\n",
-        "use \"example.com/dep\" as dep\n\nfn main() { println!(\"{}\", dep::nonexistent()) }\n",
+        "use \"example.com/dep\" as dep\n\nfn main() { println(\"{}\", dep::nonexistent()) }\n",
     );
     let out = Command::new(gos_bin())
         .arg("check")
@@ -2127,7 +2201,7 @@ fn transitive_path_dependency_links_at_run() {
     let app = write_app_project(
         &root,
         "mid = { path = \"../mid\" }\n",
-        "use \"example.com/mid\" as mid\n\nfn main() { println!(\"{}\", mid::double_two()) }\n",
+        "use \"example.com/mid\" as mid\n\nfn main() { println(\"{}\", mid::double_two()) }\n",
     );
     let out = project_run_vm(&app);
     let _ = fs::remove_dir_all(&root);
@@ -2155,7 +2229,7 @@ fn same_fn_name_in_two_sibling_modules_runs() {
             ),
             (
                 "main.gos",
-                "fn main() {\n    println!(\"{} {} {}\", alpha::add(1, 2), beta::add(1, 2), alpha::twice(4))\n}\n",
+                "fn main() {\n    println(\"{} {} {}\", alpha::add(1, 2), beta::add(1, 2), alpha::twice(4))\n}\n",
             ),
         ],
     );
@@ -2191,7 +2265,7 @@ fn a_librarys_impl_reaches_its_own_private_method() {
         "use \"example.com/lib\" as lib\n\n\
          fn main() {\n\
              let point = lib::Point::new(1, 2)\n\
-             println!(\"{}\", point.public_dist())\n\
+             println(\"{}\", point.public_dist())\n\
          }\n",
     );
     let run = project_run_vm(&app);
@@ -2222,7 +2296,7 @@ fn a_diagnostic_in_a_path_dependency_names_the_dependencys_file() {
         &root,
         "lib = { path = \"../lib\" }\n",
         "use \"example.com/lib\" as lib\n\n\
-         fn main() { println!(\"{}\", lib::Point { x: 1 }.get()) }\n",
+         fn main() { println(\"{}\", lib::Point { x: 1 }.get()) }\n",
     );
     let out = project_run_vm(&app);
     let _ = fs::remove_dir_all(&root);
@@ -2262,7 +2336,7 @@ fn a_renaming_alias_reaches_a_dependencys_associated_function() {
         "lib = { path = \"../lib\" }\n",
         "use \"example.com/lib\" as mylib\n\n\
          fn main() {\n\
-             println!(\"{} {}\", mylib::Point::new(1, 2).sum(), mylib::answer())\n\
+             println(\"{} {}\", mylib::Point::new(1, 2).sum(), mylib::answer())\n\
          }\n",
     );
     let run = project_run_vm(&app);
@@ -2289,7 +2363,7 @@ fn a_phantom_member_through_an_alias_is_still_rejected() {
         &root,
         "lib = { path = \"../lib\" }\n",
         "use \"example.com/lib\" as mylib\n\n\
-         fn main() { println!(\"{}\", mylib::nosuchfn()) }\n",
+         fn main() { println(\"{}\", mylib::nosuchfn()) }\n",
     );
     let out = project_run_vm(&app);
     let _ = fs::remove_dir_all(&root);
@@ -2327,7 +2401,7 @@ fn a_dependencys_private_surface_stays_inside_the_dependency() {
     let ok = reachable(
         "use \"example.com/lib\"\n\n\
          fn main() {\n\
-             println!(\"{} {}\", lib::wrapper(), lib::Point::new(1, 2).public_dist())\n\
+             println(\"{} {}\", lib::wrapper(), lib::Point::new(1, 2).public_dist())\n\
          }\n",
     );
     assert_eq!(
@@ -2339,7 +2413,7 @@ fn a_dependencys_private_surface_stays_inside_the_dependency() {
     assert_eq!(ok.0.trim(), "99 3", "stdout: {:?}", ok.0);
 
     let private_fn =
-        reachable("use \"example.com/lib\"\n\nfn main() { println!(\"{}\", lib::helper()) }\n");
+        reachable("use \"example.com/lib\"\n\nfn main() { println(\"{}\", lib::helper()) }\n");
     assert_ne!(
         private_fn.2,
         Some(0),
@@ -2354,7 +2428,7 @@ fn a_dependencys_private_surface_stays_inside_the_dependency() {
 
     let private_method = reachable(
         "use \"example.com/lib\"\n\n\
-         fn main() { println!(\"{}\", lib::Point::new(1, 2).internal_dist()) }\n",
+         fn main() { println(\"{}\", lib::Point::new(1, 2).internal_dist()) }\n",
     );
     assert_ne!(
         private_method.2,
@@ -2389,7 +2463,7 @@ fn a_nested_module_reaches_its_parents_private_items() {
              mod inner {\n\
                  pub fn reach() -> i64 { super::P::new(2).secret() + super::hidden() }\n\
              }\n\n\
-             fn main() { println!(\"{}\", inner::reach()) }\n",
+             fn main() { println(\"{}\", inner::reach()) }\n",
         )],
     );
     let run = project_run_vm(&dir);
@@ -2416,7 +2490,7 @@ fn a_descendant_module_reaches_its_parents_private_items() {
             ),
             (
                 "src/main.gos",
-                "fn main() { println!(\"{} {}\", sub::own(), sub::child::peek()) }\n",
+                "fn main() { println(\"{} {}\", sub::own(), sub::child::peek()) }\n",
             ),
         ],
     );
@@ -2426,7 +2500,7 @@ fn a_descendant_module_reaches_its_parents_private_items() {
 
     fs::write(
         dir.join("src/main.gos"),
-        "fn main() { println!(\"{}\", sub::secret()) }\n",
+        "fn main() { println(\"{}\", sub::secret()) }\n",
     )
     .unwrap();
     let outside = project_run_vm(&dir);
@@ -2490,9 +2564,9 @@ fn a_dependency_reaches_an_associated_fn_in_its_own_sibling_module() {
          fn main() {\n\
          \x20   let mut a = widgets::imported(\"one\")\n\
          \x20   a.grow(10)\n\
-         \x20   println!(\"{} {}\", a.name, a.size)\n\
+         \x20   println(\"{} {}\", a.name, a.size)\n\
          \x20   let b = widgets::qualified(\"two\")\n\
-         \x20   println!(\"{} {}\", b.name, b.size)\n\
+         \x20   println(\"{} {}\", b.name, b.size)\n\
          }\n",
     )
     .unwrap();
@@ -2539,8 +2613,8 @@ fn a_mut_self_method_on_a_module_type_writes_back_to_its_caller() {
                 "src/main.gos",
                 "fn main() {\n\
                  \x20   let mut c = engine::open()\n\
-                 \x20   println!(\"{} {} {}\", c.take(), c.take(), c.take())\n\
-                 \x20   println!(\"counter={} seen={:?}\", c.pg.counter, c.seen)\n\
+                 \x20   println(\"{} {} {}\", c.take(), c.take(), c.take())\n\
+                 \x20   println(\"counter={} seen={:?}\", c.pg.counter, c.seen)\n\
                  }\n",
             ),
         ],
@@ -2581,7 +2655,7 @@ fn a_dependency_module_reaches_its_siblings_types_consts_and_variants() {
     fs::write(
         lib.join("src/engine.gos"),
         "use crate::model\n\n\
-         pub fn sum(cells: &Vec<model::Cell>) -> i64 {\n\
+         pub fn sum(cells: Vec<model::Cell>) -> i64 {\n\
          \x20   let mut tally = model::Tally::start()\n\
          \x20   for cell in cells {\n\
          \x20       tally.total += match cell {\n\
@@ -2598,7 +2672,7 @@ fn a_dependency_module_reaches_its_siblings_types_consts_and_variants() {
         "use crate::{engine, model}\n\n\
          pub fn number(v: i64) -> model::Cell { model::Cell::Number(v) }\n\
          pub fn empty() -> model::Cell { model::Cell::Empty }\n\
-         pub fn total(cells: &Vec<model::Cell>) -> i64 { engine::sum(cells) }\n",
+         pub fn total(cells: Vec<model::Cell>) -> i64 { engine::sum(cells) }\n",
     )
     .unwrap();
 
@@ -2619,9 +2693,9 @@ fn a_dependency_module_reaches_its_siblings_types_consts_and_variants() {
         "use \"example.com/reach\" as reach\n\n\
          fn main() {\n\
          \x20   let cells = #[reach::number(2), reach::empty(), reach::number(3)]\n\
-         \x20   println!(\"{}\", reach::total(&cells))\n\
+         \x20   println(\"{}\", reach::total(cells))\n\
          \x20   let capped = #[reach::number(50)]\n\
-         \x20   println!(\"{}\", reach::total(&capped))\n\
+         \x20   println(\"{}\", reach::total(capped))\n\
          }\n",
     )
     .unwrap();
@@ -2645,16 +2719,16 @@ fn forwarding_a_mut_map_parameter_keeps_the_callers_container() {
         &[
             (
                 "src/params.gos",
-                "fn take_one(kv: &mut Map<String, String>, key: &String) -> Option<String> {\n\
+                "fn take_one(kv: &mut Map<String, String>, key: String) -> Option<String> {\n\
                  \x20   Map::pop(kv, key)\n\
                  }\n\
                  \n\
                  pub fn drain(kv: &mut Map<String, String>) -> String {\n\
-                 \x20   let host = match take_one(kv, &\"host\") {\n\
+                 \x20   let host = match take_one(kv, \"host\") {\n\
                  \x20       Some(v) => v,\n\
                  \x20       None => \"none\",\n\
                  \x20   }\n\
-                 \x20   format!(\"{} left={}\", host, kv.len())\n\
+                 \x20   format(\"{} left={}\", host, kv.len())\n\
                  }\n",
             ),
             (
@@ -2662,7 +2736,7 @@ fn forwarding_a_mut_map_parameter_keeps_the_callers_container() {
                 "fn main() {\n\
                  \x20   let mut kv: Map<String, String> = {\"host\": \"h\", \"dbname\": \"d\"}\n\
                  \x20   let summary = params::drain(&mut kv)\n\
-                 \x20   println!(\"{} after={}\", summary, kv.len())\n\
+                 \x20   println(\"{} after={}\", summary, kv.len())\n\
                  }\n",
             ),
         ],
@@ -2749,7 +2823,7 @@ fn split_impl_blocks_are_visible_to_a_consumer() {
         "example.com/consumer",
         &[(
             "src/main.gos",
-            "use tylib\n\nfn main() { println!(\"{}\", tylib::make().doubled()) }\n",
+            "use tylib\n\nfn main() { println(\"{}\", tylib::make().doubled()) }\n",
         )],
     );
     let vm = project_run_vm(&app);
@@ -2770,13 +2844,13 @@ fn entry_module_call_binds_its_own_function() {
         &[
             (
                 "src/helper.gos",
-                "pub fn label(text: &String) -> String { format!(\"helper: {}\", text) }\n",
+                "pub fn label(text: String) -> String { format(\"helper: {}\", text) }\n",
             ),
             (
                 "src/main.gos",
                 "use crate::helper\n\n\
-                 pub fn label(n: i64) -> String { format!(\"entry: {}\", n) }\n\n\
-                 fn main() { println!(\"{} {}\", label(7), helper::label(&\"t\")) }\n",
+                 pub fn label(n: i64) -> String { format(\"entry: {}\", n) }\n\n\
+                 fn main() { println(\"{} {}\", label(7), helper::label(\"t\")) }\n",
             ),
         ],
     );
@@ -2809,7 +2883,7 @@ fn package_visible_method_reaches_a_sibling_module() {
                  fn main() {\n\
                  \x20   let mut c = conn::Conn { n: 0 }\n\
                  \x20   c.note(5)\n\
-                 \x20   println!(\"{} {}\", c.value(), conn::helper_free())\n\
+                 \x20   println(\"{} {}\", c.value(), conn::helper_free())\n\
                  }\n",
             ),
         ],
@@ -2833,7 +2907,7 @@ fn cross_package_struct_variant_holding_itself_renders_and_builds() {
             "pub enum Value {\n\
              \x20   Nil\n\
              \x20   Int(i64)\n\
-             \x20   Attr { data: Box<Value>, pairs: Vec<(Value, Value)> }\n\
+             \x20   Attr { data: Value, pairs: Vec<(Value, Value)> }\n\
              }\n\n\
              pub fn wrapped() -> Value {\n\
              \x20   Value::Attr { data: Box::new(Value::Int(7)), pairs: #[] }\n\
@@ -2842,7 +2916,7 @@ fn cross_package_struct_variant_holding_itself_renders_and_builds() {
         "example.com/vapp",
         &[(
             "src/main.gos",
-            "use vlib\n\nfn main() { println!(\"{:?}\", vlib::wrapped()) }\n",
+            "use vlib\n\nfn main() { println(\"{:?}\", vlib::wrapped()) }\n",
         )],
     );
     let vm = project_run_vm(&app);
@@ -2866,7 +2940,7 @@ fn a_project_alias_roots_a_submodule_import() {
                 "src/config.gos",
                 "use std::errors\n\n\
                  pub struct Config { pub host: String }\n\n\
-                 pub fn parse(url: &String) -> Result<Config, errors::Error> {\n\
+                 pub fn parse(url: String) -> Result<Config, errors::Error> {\n\
                  \x20   if url.is_empty() { return Err(errors::new(\"empty\")) }\n\
                  \x20   Ok(Config { host: url.clone() })\n\
                  }\n",
@@ -2879,8 +2953,8 @@ fn a_project_alias_roots_a_submodule_import() {
              use \"example.com/redis-gos\" as redis\n\
              use redis::config\n\n\
              fn run() -> Result<(), errors::Error> {\n\
-             \x20   let cfg = config::parse(&\"localhost\")?\n\
-             \x20   println!(\"{}\", cfg.host)\n\
+             \x20   let cfg = config::parse(\"localhost\")?\n\
+             \x20   println(\"{}\", cfg.host)\n\
              \x20   Ok(())\n\
              }\n\n\
              fn main() { let _ = run() }\n",
@@ -2912,7 +2986,7 @@ fn a_declared_but_unimported_dependency_checks_clean() {
              pub fn make() -> SlotRange { SlotRange { start: 1, end: 2 } }\n",
         )],
         "example.com/unimported",
-        &[("src/main.gos", "fn main() { println!(\"hello\") }\n")],
+        &[("src/main.gos", "fn main() { println(\"hello\") }\n")],
     );
     let check = project_check(&app);
     let vm = project_run_vm(&app);
@@ -2943,7 +3017,7 @@ fn checking_a_directory_of_projects_checks_each_as_one_unit() {
         .unwrap();
         fs::write(
             project.join("src/main.gos"),
-            "fn main() { println!(\"{}\", util::add(1, 2)) }\n",
+            "fn main() { println(\"{}\", util::add(1, 2)) }\n",
         )
         .unwrap();
     }
@@ -2962,4 +3036,51 @@ fn checking_a_directory_of_projects_checks_each_as_one_unit() {
         check.0,
         check.1
     );
+}
+
+#[test]
+fn a_bare_call_naming_a_module_reports_the_import_it_needs() {
+    // A module and one of its items may share a name. The module lives in
+    // the type namespace, so a bare call to that name must not pick it up:
+    // a module is not a value, and resolving one here reaches the backends
+    // as a function reference nothing declares.
+    let dir = write_project(
+        "module-named-like-its-item",
+        "example.com/modname",
+        &[
+            (
+                "src/physics_sys.gos",
+                "pub fn physics_sys(x: i64) -> i64 { x * 3 }\n",
+            ),
+            (
+                "src/main.gos",
+                "fn main() { println(\"{}\", physics_sys(4)) }\n",
+            ),
+        ],
+    );
+    let check = project_check(&dir);
+    assert_eq!(
+        check.2,
+        Some(1),
+        "check accepted a bare call to a module name:\n{}{}",
+        check.0,
+        check.1
+    );
+    let reported = format!("{}{}", check.0, check.1);
+    assert!(
+        reported.contains("GR0011") && reported.contains("physics_sys::physics_sys"),
+        "expected GR0011 naming the import: {reported}"
+    );
+
+    // The imported spelling runs on every tier.
+    fs::write(
+        dir.join("src/main.gos"),
+        "use physics_sys::physics_sys\nfn main() { println(\"{}\", physics_sys(4)) }\n",
+    )
+    .unwrap();
+    let vm = project_run_vm(&dir);
+    assert_eq!(vm.0.trim(), "12", "vm stderr: {}", vm.1);
+    let native = project_build_run(&dir, "modname");
+    assert_eq!(native.0.trim(), "12", "native stderr: {}", native.1);
+    let _ = fs::remove_dir_all(&dir);
 }

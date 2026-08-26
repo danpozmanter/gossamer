@@ -39,7 +39,7 @@ mod bindings {
 
     /// Greet the supplied name.
     pub fn greet(name: String) -> String {
-        format!("hello, {name}")
+        format("hello, {name}")
     }
 
     /// Fallible example: parse an integer.
@@ -75,8 +75,8 @@ through it resolves:
 use native
 
 fn main() {
-    println!("{}", native::greet("world"))
-    println!("{:?}", native::parse_int("41"))
+    println("{}", native::greet("world"))
+    println("{:?}", native::parse_int("41"))
 }
 ```
 
@@ -157,8 +157,8 @@ pub fn parse_int(s: String) -> Result<i64, GosError> {
 
 ```gossamer
 match native::parse_int("nope") {
-    Ok(n) => println!("{}", n),
-    Err(e) => eprintln!("{}", e),
+    Ok(n) => println("{}", n),
+    Err(e) => eprintln("{}", e),
 }
 ```
 
@@ -223,8 +223,8 @@ use Counter
 
 fn main() {
     let c = Counter::new()
-    println!("{}", Counter::bump(c, 5))    // 5
-    println!("{}", Counter::value(c))      // 5
+    println("{}", Counter::bump(c, 5))    // 5
+    println("{}", Counter::value(c))      // 5
 }
 ```
 
@@ -260,9 +260,9 @@ no mirror enum, and no Rust needed to build one:
 ```gossamer
 let row = DynValue::tagged("Row", #[DynValue::int(9), DynValue::string("ok")])
 
-println!("{} {} {}", row.kind(), row.name(), row.len())   // tagged Row 2
+println("{} {} {}", row.kind(), row.name(), row.len())   // tagged Row 2
 if row.name() == "Row" {
-    println!("{:?} {:?}", row.at(0).as_i64(), row.at(1).as_str())
+    println("{:?} {:?}", row.at(0).as_i64(), row.at(1).as_str())
 }
 ```
 
@@ -292,9 +292,9 @@ const TYPE: Type = Type::Variant(&[
 enum Reply { Integer(i64), Text(String), Nothing }
 
 match conn::reply(id) {
-    Reply::Integer(n) => println!("int {}", n),
-    Reply::Text(s) => println!("text {}", s),
-    Reply::Nothing => println!("nothing"),
+    Reply::Integer(n) => println("int {}", n),
+    Reply::Text(s) => println("text {}", s),
+    Reply::Nothing => println("nothing"),
 }
 ```
 
@@ -341,7 +341,7 @@ mod bindings {
 
 `gos bindgen path/to/lib.rs` goes one step further: it reads a Rust
 source file, and for every `pub fn` whose signature already fits the
-ABI vocabulary it emits a `#[gos_module]` item with a `todo!()` body.
+ABI vocabulary it emits a `#[gos_module]` item with a `todo()` body.
 Functions it cannot express are listed as comments, so the gap is
 visible rather than silent.
 

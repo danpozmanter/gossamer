@@ -164,8 +164,6 @@ fn reads_capture_binding_by_value(op: Op, home: Reg) -> bool {
     match op {
         Op::Call { .. }
         | Op::CallGlobal { .. }
-        | Op::Spawn { .. }
-        | Op::SpawnMethod { .. }
         | Op::MakeClosure { .. }
         | Op::Select { .. }
         | Op::Return { .. }

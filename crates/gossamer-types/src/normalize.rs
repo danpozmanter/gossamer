@@ -11,7 +11,7 @@
 
 #![forbid(unsafe_code)]
 
-use gossamer_ast::SourceFile;
+use gossamer_ast::{ImplItem, Item, ItemKind, ModBody, SourceFile};
 use gossamer_resolve::{Resolutions, ResolveDiagnostic};
 
 /// Rewrites `sf` in place into the canonical call spellings and returns
@@ -22,5 +22,44 @@ pub fn normalize_caller_side_spellings(
 ) -> Vec<ResolveDiagnostic> {
     let diagnostics = gossamer_resolve::resolve_named_arguments(sf, resolutions);
     let _ = crate::std_fn_eta::expand_std_fn_values(sf, resolutions);
+    let mut diagnostics = diagnostics;
+    diagnostics.extend(crate::data_first::rotate_data_first_calls(sf, resolutions));
+    name_display_channel(&mut sf.items);
     diagnostics
+}
+
+/// Renames the `fn fmt` of an `impl Display for T` block to the name the
+/// `{}` channel dispatches on. `Display` and `Debug` each declare one
+/// method that answers a `String` and both are written `fn fmt`, so the
+/// `impl` header is what separates the two renderings; downstream every
+/// channel needs a name of its own, and `to_string` is the one `{}` and
+/// `x.to_string()` both reach.
+fn name_display_channel(items: &mut [Item]) {
+    for item in items {
+        match &mut item.kind {
+            ItemKind::Impl(decl) => {
+                let displays = decl
+                    .trait_ref
+                    .as_ref()
+                    .and_then(|bound| bound.path.segments.last())
+                    .is_some_and(|segment| segment.name.name == "Display");
+                if !displays {
+                    continue;
+                }
+                for impl_item in &mut decl.items {
+                    if let ImplItem::Fn(fn_decl) = impl_item
+                        && fn_decl.name.name == "fmt"
+                    {
+                        fn_decl.name.name = "to_string".to_string();
+                    }
+                }
+            }
+            ItemKind::Mod(decl) => {
+                if let ModBody::Inline(inner) = &mut decl.body {
+                    name_display_channel(inner);
+                }
+            }
+            _ => {}
+        }
+    }
 }

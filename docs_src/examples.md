@@ -26,18 +26,18 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 
 fn main() {
     let n = 3 |> double |> |v| add(10, v) |> |v| clamp(0, 100, v)
-    println!("arithmetic: {n}")
+    println("arithmetic: {n}")
 
     let total = iter::range_inclusive(1, 10)
-        |> |v| iter::filter(|n: i64| n % 2 == 0, v)
-        |> |v| iter::sum_by(|n: i64| n * n, v)
-    println!("sum of even squares: {total}")
+        |> |v| iter::filter(v, |n: i64| n % 2 == 0)
+        |> |v| iter::sum_by(v, |n: i64| n * n)
+    println("sum of even squares: {total}")
 
     let xs = #[1, 3, 5, 9, 14, 21]
     let first_big = xs
-        |> |v| iter::find(|n: i64| n > 10, v)
-        |> |v| option::unwrap_or(-1, v)
-    println!("first > 10 (or -1): {first_big}")
+        |> |v| iter::find(v, |n: i64| n > 10)
+        |> |v| option::unwrap_or(v, -1)
+    println("first > 10 (or -1): {first_big}")
 }
 ```
 

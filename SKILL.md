@@ -61,15 +61,15 @@ impl Area for Shape {
     }
 }
 
-fn sum(xs: &[i64]) -> i64 {
+fn sum(xs: [i64]) -> i64 {
     let mut acc = 0
     for n in xs { acc += n }
     acc
 }
 
 fn main() {
-    let total = sum(&[1, 2, 3])
-    println!("total: {}", total)
+    let total = sum([1, 2, 3])
+    println("total: {}", total)
 }
 ```
 
@@ -122,7 +122,7 @@ show up:
 | `HashSet` / `BTreeSet::from` | `#{a, b}` |
 | `include!` / `#[path]` | a file IS a module - reach it with `use` |
 | `"text".to_string()` | a string literal already IS a `String` |
-| `&str` vs `String` | one `String` type; `&"lit"` where `&String` is asked |
+| `&str` vs `String` | one `String` type; no parameter asks for a `&` |
 | `move` closures, lifetimes, `Rc<RefCell<_>>` | capture is automatic; RC is the memory model |
 | `impl Display` to print | `{}` renders every type; `impl Display` only to override |
 | `?` on an `Option` in a `Result` fn | works, but the fn must return `Option` for the `Option` case |
@@ -156,14 +156,19 @@ Write clear, low-complexity, concise code.
   `while let Some(v) = rx.recv()` is the canonical channel drain.
   Let-chains: `if let Some(x) = a && let Some(y) = b && x > 0 { .. }`
   (`&&`-only; earlier binds visible later).
-- **Tuple destructuring everywhere**: `let (a, b) = pair`, `for (k, v)
-  in m.iter()`, `let (tx, rx) = channel()`. A tuple on the left of `=`
-  destructures for mutation too: `(a, b) = (b, a)` swaps with no
-  temporary, since the right side is evaluated before the first write.
-  Each element must be a writable place (a binding, field, index, tuple
-  position, or dereference) or `_` to discard it; elements nest, and
-  only plain `=` destructures - `(a, b) += ..` reports GT0078, as does
-  any target naming no place (`5 = 1`).
+- **Comma-separated destructuring everywhere**: `let a, b = pair`,
+  `let tx, rx = channel()`, `let mut x, mut y = 7, 8`. A `let` target is
+  a plain list, never a parenthesised tuple pattern - `let (a, b) = pair`
+  reports GP0042 with the rewrite. Parentheses still group a pattern that
+  sits beside others, so `for (k, v) in m` and `match p { (x, y) => .. }`
+  keep them, as does a nested element: `let a, (b, c) = 1, (2, 3)`.
+  The same list assigns: `a, b = b, a` swaps with no temporary, since the
+  right side is evaluated before the first write, and a compound operator
+  pairs element-wise (`x, y += 2, 3`). One value on the right spreads over
+  the list when it is a tuple (`let a, b = pair`). Each assignment target
+  must be a writable place (a binding, field, index, tuple position, or
+  dereference) or `_` to discard it; a target naming no place (`5 = 1`)
+  reports GT0078.
 - **`for x in xs`** over collections - no `.iter()`, no `*x`.
   Bare `String` iteration yields Unicode `char` values; use `.bytes()`
   for UTF-8 bytes; `s.chars()` is a cursor, so `.collect()` materialises it. An omitted range start begins at zero (`..3` yields
@@ -194,15 +199,18 @@ Write clear, low-complexity, concise code.
   something else into text.
 - **`to_string()` renders whatever `{}` renders.** A scalar, a tuple, a
   struct, an enum, a `Vec`, a `Map`, a `Set`, an `Option`, a `Result`, and
-  every nesting of them answer the same text `format!("{}", x)` builds; a
+  every nesting of them answer the same text `format("{}", x)` builds; a
   handle, a closure, a channel, and a `JoinHandle` have no rendering and
   report GT0062. `#[derive(Display)]` is not written - the rendering is
-  synthesized, and `impl Display for T { fn to_string(&self) -> String }`
+  synthesized, and `impl Display for T { fn fmt(&self) -> String }`
   overrides it everywhere a value of that type is shown, including inside a
   `Vec`, `Map`, tuple, `Option`, or struct field. `impl Debug for T { fn fmt }`
-  is the same override for `{:?}`. The two are distinct contracts, exactly as
-  in Rust: `{}` reaches only `to_string` and `{:?}` only `fmt`, so a type
-  implementing one keeps the synthesized rendering on the other channel. A
+  is the same override for `{:?}`. Both contracts declare one method that
+  answers a `String` and both are written `fn fmt`; the `impl` header is what
+  says which channel it is, so `{}` reaches only `Display`'s and `{:?}` only
+  `Debug`'s, and a type implementing one keeps the synthesized rendering on
+  the other channel. `x.to_string()` renders through `Display`. Writing
+  `fn to_string` inside an `impl Display` block reports GP0053. A
   trait names behaviour, never a value's type: `fn f(x: Display)` reports
   GT0071, and an `impl` header naming a trait nothing declares reports GT0070.
 - **An `impl Trait for Type` block defines the trait's items and nothing
@@ -229,9 +237,12 @@ Write clear, low-complexity, concise code.
   lazy; terminals (`collect`, `sum`, `count`, `min`/`max`, `fold`,
   `any`/`all`, `find`/`position`, `max_by_key`, `join`) end the chain
   and hand back a value. An iterator is single-use (GT0042) - bind a
-  fresh `.iter()` per pipeline. Data-last `iter::` free forms take an
-  iterator too, for `|>` pipelines, and a few operations exist only in that
-  form - `iter::flat_map(f, xs)` has no method spelling. `xs.join(sep)` Display-joins any
+  fresh `.iter()` per pipeline. The `iter::` free forms take an iterator
+  too, for `|>` pipelines. **Every std free function takes its data
+  first**, so a free call reads as the method it stands for -
+  `iter::map(xs, f)` beside `xs.map(f)`, `option::unwrap_or(opt, 0)` beside
+  `opt.unwrap_or(0)` - and a call written with the data last reports
+  GR0021. `xs.join(sep)` Display-joins any
   sequence whose element `{}` renders, without a traversal.
 - **A `Set` has no element order, so its traversal is the iterator's.**
   The set itself answers membership and cardinality (`insert`, `remove`,
@@ -249,7 +260,7 @@ Write clear, low-complexity, concise code.
 - **A callback has one shorthand.** A std free function named in
   value position IS the closure that calls it, so `xs.map(math::abs)`
   and `xs.map(base64::encode)` need no `|v|` (a macro is not a function:
-  `fmt::format` reports GR0018 and is written `format!(..)`, so pass a
+  `fmt::format` reports GR0018 and is written `format(..)`, so pass a
   closure that calls it). Everything else is a written closure:
   `xs.map(|v| v.abs())`, `people.map(|p| p.name)`. `$` is not part of
   the language: `xs.map($.abs)` reports GP0027.
@@ -257,7 +268,7 @@ Write clear, low-complexity, concise code.
   `fs::read_dir` or `fs::walk_dir`, inspect `entry.is_file`,
   `entry.is_dir`, `entry.is_symlink`, `entry.size`, `entry.path`, and
   `entry.name` directly. Do not repeat the lookup with
-  `fs::is_symlink(&entry.path)`, `fs::is_file`, `fs::is_dir`, or
+  `fs::is_symlink(entry.path)`, `fs::is_file`, `fs::is_dir`, or
   `fs::file_size`; redundant filesystem calls are slower and can race
   with changes after the directory read.
 - **`s.to_i64()` / `to_f64()` / `to_bool()`** - strict full-string
@@ -296,14 +307,14 @@ Write clear, low-complexity, concise code.
   (`s.byte_at(i) >= b'0'`), render with `as char`; prefer it over a
   per-step `substring`. Do not mix the two: `s[i]` is not the byte at
   byte offset `i` for any non-ASCII string.
-- **Format captures walk field paths**: `println!("{name}:
+- **Format captures walk field paths**: `println("{name}:
   {a.balance} {t.0} {o.inner.hits} {a.balance:>8} {f.0:.2}")`.
   `{:?}` renders any nesting of collections, tuples, structs, enums,
   `Option`, and `Result` identically on every tier.
 - **Range binds looser than arithmetic, tighter than `|>`**:
   `i * i..n` is `(i * i)..n`; `0..n |> iter::sum` pipes the range.
 - **Recursive enums work directly**: `enum List { Cons(i64,
-  Box<List>), Nil }`; `Box`/`Arc`/`Rc` are transparent (bare
+  List), Nil }`; `Box`/`Arc`/`Rc` are transparent (bare
   `Cons(i64, List)` works too).
 - **Structs, enums, arrays, Vecs, tuples compare structurally** - no
   derive; lexicographic by declaration order / variant rank. A user
@@ -333,16 +344,19 @@ Write clear, low-complexity, concise code.
   case genuinely means the same thing.
 - **Goroutines under a `cohort { }`** for concurrent work: `spawn`
   inside the block, which joins every child on every exit path and
-  reports the first failure. `go expr` is the detached escape hatch.
-  Channels carry values; `sync::Mutex` only when shared memory is
-  simpler.
+  reports the first failure. `spawn` is the only way to start one, and
+  it always attaches to the enclosing cohort - `main` is an implicit
+  root cohort, so nothing is left unaccounted for. A closure body runs
+  on the child, so bind an operand you need read at the spawn site
+  first. Channels carry values; `sync::Mutex` only when shared memory
+  is simpler.
 - **`arena { ... }`** for object graphs that die together:
   bump-allocated, freed wholesale at every exit. Nothing allocated
   inside may be referenced after the block - statically enforced
   (`GM0003`). Statement position only; nests.
 - **Bare numeric literals** - `0`, `1.5`, never `0i64`; suffix only
   with no contextual hint. String literals are already `String` - no
-  `.to_string()`; `&"foo"` borrows where `&String`/`&str` is expected.
+  `.to_string()`, and no parameter asks for a `&` around one.
 - **HTML lives in its own file**, read at run time or embedded with a
   `comptime` read, never written as markup inside `.gos` source: an
   `.html` file is what an editor, a formatter, and a template engine can
@@ -354,6 +368,13 @@ Write clear, low-complexity, concise code.
   decode after the strip; only whitespace may follow the opening `"""`
   (GP0033). `gos fmt` moves the body with the line that opens it, so
   re-indenting the statement re-indents the block.
+- **The block words are contextual, never reserved**: `arena`, `cohort`,
+  `comptime`, `defer`, `newtype`, `packed`, and `select` are keywords
+  only where their construct starts and ordinary names everywhere else,
+  so a binding, field, parameter, or method may carry any of them
+  (`q.select(1)`, `let defer = 5`, `s.comptime`). `spawn` is not among
+  them: it is the one way to start a goroutine, so declaring anything
+  under that name reports GR0020.
 - **Fixed macro set** - everything else `name!(..)` is a parse error
   (no user macros): `println!` `print!` `eprintln!` `eprint!`
   `format!` `panic!` (Rust `{}` / `{name}` / `{:spec}` formatting:
@@ -377,10 +398,9 @@ and a chain can feed a pipe. Left-associative, very low precedence.
   slot the piped value fills: `x |> |v| f(a, v)` is `f(a, x)`, and
   `x |> |v| f(v, a)` is `f(x, a)`. The parameter may sit anywhere the
   body reaches, so `x |> |v| f(a, v).len()` is `f(a, x).len()`. No
-  argument order is assumed, so a data-first callee (`strings::`,
-  `path::`, `bytes::`, `sort::`) reads like a data-last one (`iter::`,
-  `option::`, `result::`). An argument-taking step that is not a
-  closure is GP0041.
+  argument order is assumed, so the slot the reader sees is the slot the
+  value fills - which stays true whatever a callee's parameters are. An
+  argument-taking step that is not a closure is GP0041.
 - A closure written directly as a step IS the call it stands for: the
   parameter is bound in the caller's frame, so the step costs nothing a
   hand-written call would not, and a `let mut` the body updates is the
@@ -441,7 +461,7 @@ let shout = "  Hi  ".trim().to_lowercase() |> exclaim
 - **Entry file may omit `fn main`**: top-level statements become the
   implicit main (only the entry file; `?` there makes it return
   `Result<(), errors::Error>`; exit code via `process::exit(n)`).
-- **Generics**: `fn f<T: Trait>(x: &T)` monomorphises per call site
+- **Generics**: `fn f<T: Trait>(x: T)` monomorphises per call site
   on every tier (one or more bounds `T: A + B`, in the parameter list or a
   `where` clause; struct-typed params; no `dyn Trait`).
   Generic structs `struct Wrapper<T>` + `impl<T>` work. Const-generic
@@ -456,21 +476,32 @@ let shout = "  Hi  ".trim().to_lowercase() |> exclaim
   the trait default, the trait's single implementor - several impls with
   no constraint is GT0061, an impl missing a required item is GT0059.
   No generic associated types, none on `dyn`.
-- **References**: `&x` is shared and `&mut x` writes through to the same
-  source place; both are aliases, never copies. There are no lifetimes or
-  non-lexical borrow analysis. A lightweight lexical check rejects a second
-  named `&mut` to the same root, overlap with an active named mutable alias,
-  and repeated mutable roots in one call.
+- **A parameter is `T` or `&mut T`, and nothing else.** Passing a value
+  copies nothing whatever its type, and a callee writes to the caller's
+  variable only through `&mut`, so a shared `&` in a parameter names no
+  choice and reports GP0054; a shared `&` on an argument reports GP0055,
+  and a reference reaching a parameter that takes the value reports GT0082
+  with the `*x` rewrite.
+  A sequence view is written `[T]` and takes an array, a `Vec`, or another
+  view; `&mut [T]` is the form that writes through. A method receiver is
+  `&self` (reads) or `&mut self` (writes), and `&self` names the same value
+  `self` does.
   Calls never create `&mut` implicitly: pass a writable place as
   `change(&mut value)`. Forward an existing `&mut T` as `change(value)`.
-  A parameter's reference lives in its TYPE: write `fn f(m: &Map<String, i64>)`,
-  never `fn f(&m: Map<String, i64>)` - a `&` in the pattern destructures a
+  A parameter's reference lives in its TYPE: write `fn f(xs: &mut Vec<i64>)`,
+  never `fn f(&mut xs: Vec<i64>)` - a `&` in the pattern destructures a
   reference the type already names, so over a value type it reports GT0069.
+  `*` reaches the place a reference names, so a write through one over a
+  value (`*x = v` where `x` is an `i64`) reports GT0083.
+- **`&x` and `&mut x` are aliases, never copies**, and there are no
+  lifetimes or non-lexical borrow analysis. A lightweight lexical check
+  rejects a second named `&mut` to the same root, overlap with an active
+  named mutable alias, and repeated mutable roots in one call.
 - **Types**: `bool char i8..i64 u8..u64 isize usize f32 f64 String
-  [T] [T; N] (A, B) Option<T> Result<T, E> &T` + user types. `i128`
+  [T] [T; N] (A, B) Option<T> Result<T, E> &mut T` + user types. `i128`
   / `u128` are rejected (GT0014). Transparent `type Id = i64` /
   `type Pair<A> = (A, A)` aliases substitute everywhere (cycle =
-  GT0024). `type UserId = new i64` is the OPAQUE form: a distinct
+  GT0024). `newtype UserId = i64` is the OPAQUE form: a distinct
   type over the same representation, at no runtime cost. `.into()`
   converts to and from its own representation only; a fixed array
   into the `Vec` of its element is the one other built-in pair, and
@@ -493,6 +524,14 @@ let shout = "  Hi  ".trim().to_lowercase() |> exclaim
   covers structs (with renames), nested enums/tuple-structs, and
   or-patterns binding the same names.
 - **Byte literals**: `b'A'` is a `u8`.
+- **An enum says how wide its discriminant is stored**: `enum Foo { .. }`
+  takes the smallest byte-aligned width, `packed enum Foo { .. }` the
+  smallest number of bits, and either may name one with `: uN` for any
+  unsigned width `u1`..`u64` (`enum Level: u16`, `packed enum Bit: u1`).
+  Too narrow for the variants is GT0081, a representation that is not an
+  unsigned width is GP0050, and `packed` is a keyword only before `enum`.
+  Nothing else changes with the width: matching, `==`, ordering, `{}` /
+  `{:?}`, serialization, `Map` keys, arrays, and tuples behave the same.
 - Enums cap at 256 variants (GT0012).
 
 ## 7. Comptime (the metaprogramming story)
@@ -515,9 +554,9 @@ errors through `From`, and works inside macro args).
 ```gossamer
 use std::{errors, fs}
 
-fn load(path: &String) -> Result<String, errors::Error> {
+fn load(path: String) -> Result<String, errors::Error> {
     fs::read_to_string(path)
-        .map_err(|e| errors::wrap(e, format!("reading {}", path)))
+        .map_err(|e| errors::wrap(e, format("reading {}", path)))
 }
 ```
 
@@ -525,8 +564,8 @@ fn load(path: &String) -> Result<String, errors::Error> {
 `is(err, needle)` / `join([..])`; walk chains with `err.cause()`.
 `{}` on a wrapped error prints the colon-joined chain;
 `.message()` is the top message only. Ok-path piping:
-`fs::read_to_string(f) |> |v| result::map(|s| print!("{s}"), v)
-|> |v| result::unwrap_or_else(|e| eprintln!("{e}"), v)`.
+`fs::read_to_string(f) |> |v| result::map(v, |s| print("{s}"))
+|> |v| result::unwrap_or_else(v, |e| eprintln("{e}"))`.
 
 Panics are goroutine-scoped: a spawned goroutine's panic ends only
 that goroutine; a main-goroutine panic is fatal (exit 101). Integer
@@ -549,17 +588,16 @@ spawned goroutine never outlives the program and a failure nobody joined
 is reported on stderr at exit instead of vanishing.
 
 `spawn(f)` returns a `JoinHandle<T>` (`handle.join()` ->
-`Result<T, String>`) and attaches to the enclosing cohort. `go expr` is
-the detached form, for work that should outlive the block; a `go` inside
-a cohort is `GL0053`. Typed channels: `recv()` blocks until a value or
-every sender is gone; producers `close()`.
+`Result<T, String>`) and attaches to the enclosing cohort. There is no
+detached form. Typed channels: `recv()` blocks until a value or every
+sender is gone; producers `close()`.
 
 ```gossamer
 fn gather() -> Result<(), errors::Error> {
     cohort {
         let a = spawn(|| fetch("one"))
         let b = spawn(|| fetch("two"))
-        println!("{} {}", a.join()??, b.join()??)
+        println("{} {}", a.join()??, b.join()??)
     }
 }
 ```
@@ -594,24 +632,24 @@ fn produce(tx: Sender<i64>) {
 }
 
 fn main() {
-    let (tx, rx) = channel()
-    go produce(tx)
+    let tx, rx = channel()
+    spawn(|| produce(tx))
     let mut total = 0
     while let Some(v) = rx.recv() { total += v }
-    println!("total: {}", total)
+    println("total: {}", total)
 }
 ```
 
 `select { x = rx_a.recv() => .., default => .. }` multiplexes (arms
-poll in source order; `default` makes it non-blocking). `select` is a
-keyword, so nothing may be named it - a method that picks one of
-several values wants `pick`, `choose`, or `one_of`. One-shot
-timer: `time::after(d) -> Receiver` as a select timeout arm.
+poll in source order; `default` makes it non-blocking). `select` is
+contextual, never reserved - only the word directly before `{` opens
+the expression - so a method or binding may still be named `select`.
+One-shot timer: `time::after(Duration::from_millis(n)) -> Receiver`,
+whose `.recv()` is a select timeout arm.
 `std::sync` also has `Mutex`, `RwLock`, atomics, `Once`, `WaitGroup`,
 `Barrier`, and `Map` (concurrent string->string). `std::thread`
 provides scheduling hints and CPU introspection only: user code has no
-OS-thread spawn API. Use `cohort { }` with `spawn(f)`, or `go expr` when
-the work is genuinely detached.
+OS-thread spawn API. Use `cohort { }` with `spawn(f)`.
 
 **Closures**: `|x: T| body`; capture is automatic (no `move`).
 Use `Fn(args) -> ret` for callback parameters. Plain `fn(args) -> ret`
@@ -671,11 +709,10 @@ are callable as methods/free functions and materialize results.
   `MaxHeap`, `MinHeap` (any element the language orders: scalars and `String`
   by value, tuples and structs field by field, sequences lexicographically,
   `Option`/`Result` by arm then payload, an enum by variant rank then payload;
-  a `Map`, a `Set`, and a `u64`/`usize` are declined with GT0068). A separate i64-only
-  `queue`/`stack`/`deque`/`heap`/`ordered_*` family is functional re-bind
-  style (`let q = queue::push(q, v)`), not mutating.
+  a `Map`, a `Set`, and a `u64`/`usize` are declined with GT0068).
 - Bracket literals create Vec values unless an expected fixed-array type is
-  present. Borrow arrays or Vecs as `&[T]` / `&mut [T]`.
+  present. A parameter typed `[T]` takes an array, a `Vec`, or another
+  view; `&mut [T]` is the form that writes through.
 - **`DynValue` is the value whose shape the data decides**: `Nil | Bool | Int
   | Float | Char | String | Bytes | List | Map | Tagged { name, payload }`, a
   prelude type needing no import. Build with `DynValue::int(7)`,
@@ -696,17 +733,16 @@ are callable as methods/free functions and materialize results.
 
 ## 11. Testing
 
-Unit tests live in the file they cover under `#[cfg(test)] mod
-<file>_tests { ... }` reaching items via `super::`. **Give each
-file's test module a unique name** (`util_tests`, `parser_tests`):
-multiple `mod tests` across bundled siblings collide (GR0003).
+Unit tests live in the file they cover under `#[cfg(test)] mod tests
+{ ... }`, reaching items via `super::`. A module belongs to the file
+that declares it, so every file in a project may write `mod tests`.
 `assert(cond[, msg])` / `assert_eq(a, b[, msg])` are prelude
 builtins; `std::testing::check*` record without panicking. `gos
 test` also compiles and runs fenced code in doc comments.
 
 ```gossamer
 #[cfg(test)]
-mod arith_tests {
+mod tests {
     use std::testing
     #[test]
     fn add_adds() { let _ = testing::check_eq(&super::add(2, 3), &5, "2+3") }
@@ -858,7 +894,6 @@ build`. Known sharp edges:
   `String`/`Map`/`Vec` receivers, and typed stdlib receivers.
   Qualified paths (`Point::origin()`) remain the most explicit form
   when several types intentionally share a method name.
-- Per-file test modules need unique names (GR0003; section 11).
 - `Weak` into a strong cycle is Experimental (section 10); break real
   cycles explicitly and do not depend on liveness inside a cycle.
 - Not implemented (parse or reject cleanly): `async`/`await`,

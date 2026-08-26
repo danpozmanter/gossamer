@@ -26,15 +26,15 @@ const SCRUBBED_PATH: String = "PATH=/usr/bin:/bin"
 
 /// The checkout the examples live in.
 fn repo_root() -> String {
-    if let Some(root) = env::var(&"GOSSAMER_ROOT") {
+    if let Some(root) = env::var("GOSSAMER_ROOT") {
         return root
     }
     let mut directory = env::current_dir().unwrap_or(".")
     loop {
-        if fs::is_dir(&path::join(&directory, &"example-external-libraries")) {
+        if fs::is_dir(path::join(directory, "example-external-libraries")) {
             return directory
         }
-        match path::parent(&directory) {
+        match path::parent(directory) {
             Some(parent) => directory = parent
             None => return "."
         }
@@ -43,12 +43,12 @@ fn repo_root() -> String {
 
 /// Ends the run with `message` on standard error.
 fn fail(message: String) {
-    eprintln!("test_rust_binding_static_e2e: {}", message)
+    eprintln("test_rust_binding_static_e2e: {}", message)
     process::exit(1)
 }
 
 /// The first file `gos build` left in `directory`, by name.
-fn produced_binary(directory: &String) -> Option<String> {
+fn produced_binary(directory: String) -> Option<String> {
     let mut names = #[]
     for entry in fs::read_dir(directory).unwrap_or(#[]) {
         if entry.is_file {
@@ -59,95 +59,95 @@ fn produced_binary(directory: &String) -> Option<String> {
     if ordered.is_empty() {
         return None
     }
-    Some(path::join(directory, &ordered[0]))
+    Some(path::join(directory, ordered[0]))
 }
 
 /// Builds one example and runs what it produced, scrubbed.
 fn build_and_run(
-    gos: &String
+    gos: String
     label: String
-    project: &String
+    project: String
     entry: String
-    cache: &String
+    cache: String
     markers: Vec<String>
 ) {
-    println!("=> {}", label)
-    let _ = fs::remove_dir_all(&path::join(project, &"target"))
+    println("=> {}", label)
+    let _ = fs::remove_dir_all(path::join(project, "target"))
     let environment = #[("XDG_CACHE_HOME", *cache)]
-    match process::run_in(gos, &#["build", entry], project, &environment) {
+    match process::run_in(gos, #["build", entry], project, environment) {
         Ok(result) => {
-            print!("{}", result.stdout)
+            print("{}", result.stdout)
             if result.code != 0 {
-                eprint!("{}", result.stderr)
-                fail(format!("{}: the build failed", label))
+                eprint("{}", result.stderr)
+                fail(format("{}: the build failed", label))
             }
         }
-        Err(e) => fail(format!("{}: {}", label, e))
+        Err(e) => fail(format("{}: {}", label, e))
     }
-    let Some(binary) = produced_binary(&path::join(project, &"target/debug")) else {
-        fail(format!("build did not produce a binary in {}/target/debug", project))
+    let Some(binary) = produced_binary(path::join(project, "target/debug")) else {
+        fail(format("build did not produce a binary in {}/target/debug", project))
         return
     }
-    let scrubbed = process::run_in(&ENV_BINARY, &#["-i", SCRUBBED_PATH, binary], project, &#[])
+    let scrubbed = process::run_in(ENV_BINARY, #["-i", SCRUBBED_PATH, binary], project, #[])
     let output = match scrubbed {
-        Ok(result) => format!("{}{}", result.stdout, result.stderr)
+        Ok(result) => format("{}{}", result.stdout, result.stderr)
         Err(e) => {
-            fail(format!("{}: {}", label, e))
+            fail(format("{}: {}", label, e))
             return
         }
     }
-    print!("{}", output)
+    print("{}", output)
     if !output.ends_with("\n") {
-        println!("")
+        println("")
     }
     for marker in markers {
         if !output.contains(marker) {
-            fail(format!("missing marker '{}' for {}", marker, label))
+            fail(format("missing marker '{}' for {}", marker, label))
         }
     }
 }
 
 fn main() {
     let root = repo_root()
-    println!("=> building gos...")
-    match process::run_in(&"cargo", &#["build", "-p", "gossamer-cli"], &root, &#[]) {
+    println("=> building gos...")
+    match process::run_in("cargo", #["build", "-p", "gossamer-cli"], root, #[]) {
         Ok(result) => {
             if result.code != 0 {
-                eprint!("{}", result.stderr)
+                eprint("{}", result.stderr)
                 fail("cargo build failed")
             }
         }
-        Err(e) => fail(format!("cargo build: {}", e))
+        Err(e) => fail(format("cargo build: {}", e))
     }
-    let gos = path::join(&root, &"target/debug/gos")
-    if !fs::is_file(&gos) {
-        fail(format!("gos binary not produced at {}", gos))
+    let gos = path::join(root, "target/debug/gos")
+    if !fs::is_file(gos) {
+        fail(format("gos binary not produced at {}", gos))
     }
-    let cache = match fs::temp_dir(&"gos-static-cache-") {
+    let cache = match fs::temp_dir("gos-static-cache-") {
         Ok(cache) => cache
         Err(e) => {
-            fail(format!("creating a cache directory: {}", e))
+            fail(format("creating a cache directory: {}", e))
             return
         }
     }
 
-    let examples = path::join(&root, &"example-external-libraries")
+    let examples = path::join(root, "example-external-libraries")
     build_and_run(
-        &gos
+        gos
         "example 01 (echo-binding) - gos build"
-        &path::join(&examples, &"01-gossamer-aware")
+        path::join(examples, "01-gossamer-aware")
         "src/main.gos"
-        &cache
+        cache
         #["HELLO, GOSSAMER", "sum: 15", "count: 3"]
     )
     build_and_run(
-        &gos
+        gos
         "example 02 (unic-segment wrapper) - gos build"
-        &path::join(&examples, &"02-plain-rust-wrapped")
+        path::join(examples, "02-plain-rust-wrapped")
         "src/main.gos"
-        &cache
+        cache
         #["count: 10", "grapheme: n", "grapheme: ï"]
     )
-    let _ = fs::remove_dir_all(&cache)
-    println!("=> static-link e2e green")
+    let _ = fs::remove_dir_all(cache)
+    println("=> static-link e2e green")
 }

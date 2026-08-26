@@ -717,7 +717,7 @@ pub const IO: StdModule = StdModule {
         StdItem {
             name: "pipe",
             kind: StdItemKind::Function,
-            doc: "`pipe() -> (i64, i64)` - a connected `(reader, writer)` pair sharing one in-memory buffer. Reads return the bytes written so far and never block; `io::close_writer` marks the writer done. Example: `let (r, w) = io::pipe()`.",
+            doc: "`pipe() -> (i64, i64)` - a connected `(reader, writer)` pair sharing one in-memory buffer. Reads return the bytes written so far and never block; `io::close_writer` marks the writer done. Example: `let r, w = io::pipe()`.",
         },
         StdItem {
             name: "copy_n",
@@ -936,7 +936,7 @@ pub const OS_USER: StdModule = StdModule {
 
 pub const LIFECYCLE: StdModule = StdModule {
     path: "std::lifecycle",
-    summary: "Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - `go serve()`, `lifecycle::ready()`, `lifecycle::await_shutdown()`, then the cleanup.",
+    summary: "Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - `spawn(|| serve())`, `lifecycle::ready()`, `lifecycle::await_shutdown()`, then the cleanup.",
     items: &[
         StdItem {
             name: "ready",

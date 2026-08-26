@@ -9,9 +9,10 @@ use gossamer_types::{ExhaustivenessError, TyCtxt, check_exhaustiveness, typechec
 fn run(source: &str) -> Vec<gossamer_types::ExhaustivenessDiagnostic> {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     check_exhaustiveness(&sf, &resolutions, &table, &tcx)
@@ -264,7 +265,7 @@ fn main() {
     let a = true
     let b = true
     let r = match (a, b) { (true, true) => 1 }
-    println!("{}", r)
+    println("{}", r)
 }
 "#;
     let diagnostics = run(source);
@@ -289,7 +290,7 @@ fn main() {
         (false, true) => 3,
         (false, false) => 4,
     }
-    println!("{}", r)
+    println("{}", r)
 }
 "#;
     let diagnostics = run(source);
@@ -312,7 +313,7 @@ fn main() {
         (_, true) => 2,
         (_, false) => 3,
     }
-    println!("{}", r)
+    println("{}", r)
 }
 "#;
     let diagnostics = run(source);
@@ -330,7 +331,7 @@ fn nested_option_of_result_reports_the_missing_payload_shape() {
 fn main() {
     let o: Option<Result<i64, String>> = Some(Ok(1))
     let r = match o { Some(Ok(x)) => x }
-    println!("{}", r)
+    println("{}", r)
 }
 "#;
     let diagnostics = run(source);
@@ -362,7 +363,7 @@ fn main() {
         Some(Err(_)) => 0,
         None => -1,
     }
-    println!("{}", r)
+    println("{}", r)
 }
 "#;
     let diagnostics = run(source);
@@ -385,7 +386,7 @@ fn main() {
         Flag::On(true) => 1,
         Flag::Off => 2,
     }
-    println!("{}", r)
+    println("{}", r)
 }
 "#;
     let diagnostics = run(source);
@@ -412,7 +413,7 @@ fn pick(xs: [i64; 2]) -> i64 {
     }
 }
 
-fn main() { println!("{}", pick([1, 2])) }
+fn main() { println("{}", pick([1, 2])) }
 "#;
     let diagnostics = run(source);
     assert!(
@@ -433,7 +434,7 @@ fn head(xs: [i64; 3]) -> i64 {
     }
 }
 
-fn main() { println!("{}", head([1, 2, 3])) }
+fn main() { println("{}", head([1, 2, 3])) }
 "#;
     let diagnostics = run(source);
     assert!(
@@ -450,7 +451,7 @@ fn range_patterns_still_require_a_catch_all_arm() {
 fn main() {
     let n = 3
     let r = match n { 1..=5 => 1 }
-    println!("{}", r)
+    println("{}", r)
 }
 "#;
     let diagnostics = run(source);
@@ -474,7 +475,7 @@ fn main() {
         Shape::Line(..) => 1,
         Shape::Box(..) => 2,
     }
-    println!("{}", kind)
+    println("{}", kind)
 }
 "#;
     let diagnostics = run(source);

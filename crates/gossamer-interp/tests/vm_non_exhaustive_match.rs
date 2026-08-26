@@ -19,9 +19,10 @@ const NON_EXHAUSTIVE_MATCH_MESSAGE: &str = "non-exhaustive match: no pattern mat
 fn run_main_result(source: &str) -> gossamer_interp::RuntimeResult<Value> {
     let mut map = SourceMap::new();
     let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
+    let (mut sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
     let (resolutions, _resolve_diags) = resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
@@ -48,7 +49,7 @@ fn f(o: Option<i64>) -> i64 {
 }
 
 fn main() {
-    println!("{}", f(Some(2)))
+    println("{}", f(Some(2)))
 }
 "#;
 
@@ -75,7 +76,7 @@ fn f(o: Option<i64>) -> i64 {
 }
 
 fn main() {
-    println!("{}", f(Some(2)))
+    println("{}", f(Some(2)))
 }
 "#;
 
@@ -100,7 +101,7 @@ fn area(s: Shape) -> i64 {
 }
 
 fn main() {
-    println!("{}", area(Shape::Square(4)))
+    println("{}", area(Shape::Square(4)))
 }
 "#;
 

@@ -76,7 +76,7 @@ impl Wake for GoroutineWaker {
 /// # Panics
 ///
 /// Panics if the calling thread is not driving a goroutine.
-/// Production paths spawn the driver via `go fn() { drive(fut) }`
+/// Production paths spawn the driver via `spawn(|| drive(fut))`
 /// or, in Rust-level harnesses, via
 /// `gossamer_runtime::sched_global::scheduler().spawn(...)`.
 pub fn drive<F>(fut: F) -> F::Output

@@ -15,18 +15,18 @@ use std::errors
 use std::fs
 use std::path
 
-let dir = path::join(&env::temp_dir(), &"gossamer-file-io-demo")
-let text_path = path::join(&dir, &"greeting.txt")
-let json_path = path::join(&dir, &"settings.json")
+let dir = path::join(env::temp_dir(), "gossamer-file-io-demo")
+let text_path = path::join(dir, "greeting.txt")
+let json_path = path::join(dir, "settings.json")
 
-fs::create_dir_all(&dir).map_err(|e| errors::wrap(e, "mkdir"))?
+fs::create_dir_all(dir).map_err(|e| errors::wrap(e, "mkdir"))?
 
 // --- text ---
-fs::write(&text_path, "hello, gossamer\n".as_bytes())
+fs::write(text_path, "hello, gossamer\n".as_bytes())
     .map_err(|e| errors::wrap(e, "write text"))?
-let contents = fs::read_to_string(&text_path)
+let contents = fs::read_to_string(text_path)
     .map_err(|e| errors::wrap(e, "read text"))?
-println!("read {} bytes: {}", contents.len(), contents.trim())
+println("read {} bytes: {}", contents.len(), contents.trim())
 
 // --- JSON ---
 let features = #[
@@ -38,14 +38,14 @@ let payload = json::Value::object(#[
     ("addr", json::Value::String("0.0.0.0"))
     ("features", json::Value::Array(features))
 ])
-let rendered = json::render(&payload)
-fs::write(&json_path, rendered.as_bytes())
+let rendered = json::render(payload)
+fs::write(json_path, rendered.as_bytes())
     .map_err(|e| errors::wrap(e, "write json"))?
 
-let parsed_text = fs::read_to_string(&json_path)
+let parsed_text = fs::read_to_string(json_path)
     .map_err(|e| errors::wrap(e, "read json"))?
-let parsed = json::parse(&parsed_text)
+let parsed = json::parse(parsed_text)
     .map_err(|e| errors::wrap(e, "parse json"))?
-println!("parsed json: {}", json::render(&parsed))
+println("parsed json: {}", json::render(parsed))
 
-fs::remove_dir_all(&dir).map_err(|e| errors::wrap(e, "cleanup"))?
+fs::remove_dir_all(dir).map_err(|e| errors::wrap(e, "cleanup"))?

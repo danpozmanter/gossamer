@@ -1,4 +1,4 @@
-// Code-emitting comptime (P2): `codegen!(...)` splices a `comptime fn`'s
+// Code-emitting comptime (P2): `codegen(...)` splices a `comptime fn`'s
 // String result back as raw source, so reflection over a type's fields
 // generates a native serializer - the autoderive shape, written in user
 // space. `typeInfo::<T>()` and the generator run only at compile time;
@@ -20,20 +20,20 @@ comptime fn gen_record(fields: Vec<(String, String)>, v: String) -> String {
             "f64" => "real"
             _ => "int"
         }
-        out += " + \"" + name + ":" + label + "=\" + format!(\"{}\", " + v + "." + name + ") + \";\""
+        out += " + \"" + name + ":" + label + "=\" + format(\"{}\", " + v + "." + name + ") + \";\""
     }
     out
 }
 
 fn point_record(p: Point) -> String {
-    codegen!(gen_record(typeInfo::<Point>(), "p"))
+    codegen(gen_record(typeInfo::<Point>(), "p"))
 }
 
 fn user_record(u: User) -> String {
-    codegen!(gen_record(typeInfo::<User>(), "u"))
+    codegen(gen_record(typeInfo::<User>(), "u"))
 }
 
 fn main() {
-    println!("{}", point_record(Point { x: 1, y: 2 }))
-    println!("{}", user_record(User { id: 7, name: "jane", active: true }))
+    println("{}", point_record(Point { x: 1, y: 2 }))
+    println("{}", user_record(User { id: 7, name: "jane", active: true }))
 }

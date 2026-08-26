@@ -6,18 +6,18 @@
 // rather than as a silent pass.
 
 enum ListNode {
-    Cons(i64, Box<ListNode>)
+    Cons(i64, ListNode)
     Nil
 }
 
 enum Tree {
-    Node(i64, Box<Tree>, Box<Tree>)
+    Node(i64, Tree, Tree)
     Leaf
 }
 
 // Byte offsets, not character offsets: `as_bytes` and `byte_len` share one
 // index space and `len` counts scalars.
-fn byte_chunks(text: &String, chunk: i64) -> i64 {
+fn byte_chunks(text: String, chunk: i64) -> i64 {
     let bytes = text.as_bytes()
     let mut chunks = #[]
     let mut start = 0
@@ -43,7 +43,7 @@ fn string_pool(rounds: i64) -> i64 {
     let mut pool = Map::new()
     let mut ids = #[]
     for i in 0..rounds {
-        let word = format!("w{}", i % 16)
+        let word = format("w{}", i % 16)
         let next = pool.len()
         ids.push(pool.or_insert(word, next))
     }
@@ -57,11 +57,11 @@ fn string_pool(rounds: i64) -> i64 {
 fn hash_index(entries: i64) -> i64 {
     let mut index = Map::new()
     for i in 0..entries {
-        index.insert(format!("key-{}", i), i * i % 251)
+        index.insert(format("key-{}", i), i * i % 251)
     }
     let mut found = 0
     for i in 0..entries {
-        if let Some(v) = index.get(format!("key-{}", i)) {
+        if let Some(v) = index.get(format("key-{}", i)) {
             found += v
         }
     }
@@ -97,7 +97,7 @@ fn build_tree(depth: i64, label: i64) -> Tree {
     )
 }
 
-fn tree_sum(t: &Tree) -> i64 {
+fn tree_sum(t: Tree) -> i64 {
     match t {
         Tree::Leaf => 0
         Tree::Node(v, l, r) => v + tree_sum(l) + tree_sum(r)
@@ -151,7 +151,7 @@ fn build_list(len: i64) -> ListNode {
     list
 }
 
-fn list_sum(list: &ListNode) -> i64 {
+fn list_sum(list: ListNode) -> i64 {
     let mut total = 0
     let mut cursor = list
     while let ListNode::Cons(value, rest) = cursor {
@@ -162,15 +162,15 @@ fn list_sum(list: &ListNode) -> i64 {
 }
 
 fn main() {
-    println!("byte-chunks {}", byte_chunks(&"the quick brown fox jumps", 4))
-    println!("string-pool {}", string_pool(64))
-    println!("hash-index {}", hash_index(64))
-    println!("graph-adjacency {}", graph_adjacency(24, 3))
+    println("byte-chunks {}", byte_chunks("the quick brown fox jumps", 4))
+    println("string-pool {}", string_pool(64))
+    println("hash-index {}", hash_index(64))
+    println("graph-adjacency {}", graph_adjacency(24, 3))
 
     let tree = build_tree(8, 1)
-    println!("tree-sum {}", tree_sum(&tree))
+    println("tree-sum {}", tree_sum(tree))
 
-    println!("int-buffer {}", int_buffer(128, 3))
-    println!("matrix-rows {}", matrix_rows(16, 12))
-    println!("linked-list {}", list_sum(&build_list(256)))
+    println("int-buffer {}", int_buffer(128, 3))
+    println("matrix-rows {}", matrix_rows(16, 12))
+    println("linked-list {}", list_sum(build_list(256)))
 }

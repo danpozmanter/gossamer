@@ -1570,6 +1570,35 @@ impl<'a> Lowerer<'a> {
         widened
     }
 
+    /// Clamps an i64 `value` into the inclusive range `target` holds.
+    ///
+    /// Saturation, not masking: this is the float-to-integer path, where an
+    /// out-of-range magnitude reads as the nearest representable value.
+    pub(crate) fn clamp_to_int_range(&mut self, value: &str, target: IntTy) -> String {
+        let width = int_width(target);
+        if width >= 64 {
+            return value.to_string();
+        }
+        let (low, high) = gossamer_abi::int_range::bounds(width, int_signed(target));
+        let below = self.fresh();
+        writeln!(self.out, "  {below} = icmp slt i64 {value}, {low}").unwrap();
+        let lifted = self.fresh();
+        writeln!(
+            self.out,
+            "  {lifted} = select i1 {below}, i64 {low}, i64 {value}"
+        )
+        .unwrap();
+        let above = self.fresh();
+        writeln!(self.out, "  {above} = icmp sgt i64 {lifted}, {high}").unwrap();
+        let clamped = self.fresh();
+        writeln!(
+            self.out,
+            "  {clamped} = select i1 {above}, i64 {high}, i64 {lifted}"
+        )
+        .unwrap();
+        clamped
+    }
+
     /// Inserts the LLVM cast that brings `value` (of type
     /// `from_ty`) over to `to_ty`, returning the new SSA name.
     /// No-op when the types already match. Handles the common

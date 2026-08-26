@@ -297,7 +297,7 @@ fn render_lib_rs(
     buf.push_str(&format!(
         "//! Generated bindings for `{module_name}`.\n\
          //!\n\
-         //! Bodies marked `todo!()` are placeholders - fill them in.\n\
+         //! Bodies marked `todo()` are placeholders - fill them in.\n\
          //! Items flagged `Unsupported` need hand-shaped wrappers\n\
          //! before they can cross the binding boundary.\n\
          \n\
@@ -312,7 +312,7 @@ fn render_lib_rs(
             buf.push_str(&format!("\x20\x20\x20\x20///{d}\n"));
         }
         buf.push_str(&format!(
-            "\x20\x20\x20\x20pub {} {{ todo!() }}\n\n",
+            "\x20\x20\x20\x20pub {} {{ todo() }}\n\n",
             item.signature
         ));
     }

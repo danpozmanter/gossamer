@@ -127,8 +127,7 @@ impl Checker<'_> {
             | ExprKind::FieldAccess {
                 receiver: operand, ..
             }
-            | ExprKind::Try(operand)
-            | ExprKind::Go(operand) => self.walk_expr(operand),
+            | ExprKind::Try(operand) => self.walk_expr(operand),
             ExprKind::If {
                 condition,
                 then_branch,
@@ -230,7 +229,7 @@ impl Checker<'_> {
                     self.walk_expr(init);
                 }
             }
-            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) | StmtKind::Go(expr) => {
+            StmtKind::Expr { expr, .. } | StmtKind::Defer(expr) => {
                 self.walk_expr(expr);
             }
             StmtKind::Item(item) => self.walk_items(std::slice::from_ref(item)),

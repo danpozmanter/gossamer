@@ -13,7 +13,7 @@ fn churn() -> i64 {
     let mut acc = 0
     let mut i = 0
     while i < 10000 {
-        let s = format!("noise-{}", i)
+        let s = format("noise-{}", i)
         acc += s.len()
         i += 1
     }
@@ -22,12 +22,12 @@ fn churn() -> i64 {
 
 fn main() {
     let mut m: Map<i64, Person> = Map::new()
-    m.insert(1, Person { name: format!("ada"), age: 36 })
-    m.insert(2, Person { name: format!("grace"), age: 45 })
+    m.insert(1, Person { name: format("ada"), age: 36 })
+    m.insert(2, Person { name: format("grace"), age: 45 })
 
     let popped = match Map::pop(m, 1) {
         Some(p) => p.name
-        None => format!("none")
+        None => format("none")
     }
     let _ = churn()
 
@@ -35,5 +35,5 @@ fn main() {
         Some(_) => 1
         None => 0
     }
-    println!("popped={} present_after={} remaining={}", popped, present_after, m.len())
+    println("popped={} present_after={} remaining={}", popped, present_after, m.len())
 }

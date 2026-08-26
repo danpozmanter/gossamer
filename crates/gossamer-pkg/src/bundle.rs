@@ -453,19 +453,22 @@ fn neutralize_external_mod_decls(source: &str, sibling_stems: &[&str]) -> String
     let mut out = String::with_capacity(source.len());
     for line in source.split_inclusive('\n') {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("mod ") {
-            if let Some(name) = rest.strip_suffix(';') {
-                let name = name.trim();
-                if sibling_stems.contains(&name) {
-                    // Blank the declaration in place rather than
-                    // prefixing a comment: an editor maps positions
-                    // against this text, so the rewrite must not move
-                    // any byte that follows it on the line.
-                    for ch in line.chars() {
-                        out.push(if ch == '\n' || ch == '\r' { ch } else { ' ' });
-                    }
-                    continue;
+        // A declaration is newline-terminated; the legacy `;` form still
+        // parses (reported as GP0043), so both spellings are neutralized.
+        let decl = trimmed
+            .strip_prefix("pub mod ")
+            .or_else(|| trimmed.strip_prefix("mod "));
+        if let Some(rest) = decl {
+            let name = rest.strip_suffix(';').unwrap_or(rest).trim();
+            if sibling_stems.contains(&name) {
+                // Blank the declaration in place rather than prefixing a
+                // comment: an editor maps positions against this text, so
+                // the rewrite must not move any byte that follows it on
+                // the line.
+                for ch in line.chars() {
+                    out.push(if ch == '\n' || ch == '\r' { ch } else { ' ' });
                 }
+                continue;
             }
         }
         out.push_str(line);
@@ -800,6 +803,33 @@ mod bundle_tests {
             source.find("fn main"),
             blanked.find("fn main"),
             "code after a neutralized decl must keep its offset"
+        );
+    }
+
+    #[test]
+    fn every_module_declaration_spelling_is_neutralized() {
+        for source in [
+            "mod helper\nfn main() { }\n",
+            "mod helper;\nfn main() { }\n",
+            "pub mod helper\nfn main() { }\n",
+            "pub mod helper;\nfn main() { }\n",
+        ] {
+            let blanked = neutralize_external_mod_decls(source, &["helper"]);
+            assert!(
+                !blanked.contains("mod helper"),
+                "declaration left in place: {blanked:?}"
+            );
+            assert_eq!(blanked.len(), source.len(), "offsets moved: {blanked:?}");
+        }
+    }
+
+    #[test]
+    fn a_module_with_no_sibling_file_keeps_its_declaration() {
+        let source = "mod absent\nfn main() { }\n";
+        assert_eq!(
+            neutralize_external_mod_decls(source, &["helper"]),
+            source,
+            "only a declaration the bundler fills is neutralized"
         );
     }
 }

@@ -6,17 +6,17 @@ fn main() {
     m.insert("apple", 1)
     m.insert("cherry", 3)
     for k in m.keys() {
-        println!("ik {}", k)
+        println("ik {}", k)
     }
     let ks = m.keys()
     for k in ks {
-        println!("bk {}", k)
+        println("bk {}", k)
     }
     for v in m.values() {
-        println!("v {}", v)
+        println("v {}", v)
     }
     for (k, val) in m.iter() {
-        println!("kv {} {}", k, val)
+        println("kv {} {}", k, val)
     }
-    println!("contains_apple={} len={}", m.contains("apple"), m.len())
+    println("contains_apple={} len={}", m.contains("apple"), m.len())
 }

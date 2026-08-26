@@ -50,48 +50,48 @@ fn workspace(tag: &str) -> PathBuf {
 const EXEC: &str = r#"use std::process
 
 fn main() {
-    let n = comptime { let _ = process::run(&"/bin/sh", &#["-c", "true"]); 1 }
-    println!("{}", n)
+    let n = comptime { let _ = process::run("/bin/sh", #["-c", "true"]); 1 }
+    println("{}", n)
 }
 "#;
 
 const WRITE: &str = r#"use std::fs
 
 fn main() {
-    let n = comptime { let _ = fs::write(&"escaped.txt", &#[120u8]); 1 }
-    println!("{}", n)
+    let n = comptime { let _ = fs::write("escaped.txt", #[120u8]); 1 }
+    println("{}", n)
 }
 "#;
 
 const NETWORK: &str = r#"use std::net
 
 fn main() {
-    let n = comptime { let _ = net::TcpStream::connect(&"127.0.0.1:1"); 1 }
-    println!("{}", n)
+    let n = comptime { let _ = net::TcpStream::connect("127.0.0.1:1"); 1 }
+    println("{}", n)
 }
 "#;
 
 const ENV_MUTATION: &str = r#"use std::env
 
 fn main() {
-    let n = comptime { env::set_var(&"GOS_COMPTIME_PROBE", &"1"); 1 }
-    println!("{}", n)
+    let n = comptime { env::set_var("GOS_COMPTIME_PROBE", "1"); 1 }
+    println("{}", n)
 }
 "#;
 
 const READ_OUT_OF_TREE: &str = r#"use std::fs
 
 fn main() {
-    let s = comptime { fs::read_to_string(&"../outside.txt").unwrap_or("?") }
-    println!("{}", s)
+    let s = comptime { fs::read_to_string("../outside.txt").unwrap_or("?") }
+    println("{}", s)
 }
 "#;
 
 const READ_IN_TREE: &str = r#"use std::fs
 
 fn main() {
-    let s = comptime { fs::read_to_string(&"asset.txt").unwrap_or("?") }
-    println!("{}", s)
+    let s = comptime { fs::read_to_string("asset.txt").unwrap_or("?") }
+    println("{}", s)
 }
 "#;
 
@@ -100,8 +100,8 @@ fn main() {
 const READ_THROUGH_SYMLINK: &str = r#"use std::fs
 
 fn main() {
-    let s = comptime { fs::read_to_string(&"link.txt").unwrap_or("?") }
-    println!("{}", s)
+    let s = comptime { fs::read_to_string("link.txt").unwrap_or("?") }
+    println("{}", s)
 }
 "#;
 
@@ -110,11 +110,11 @@ const CODEGEN: &str = r#"comptime fn emit() -> String {
 }
 
 fn label() -> String {
-    codegen!(emit())
+    codegen(emit())
 }
 
 fn main() {
-    println!("{}", label())
+    println("{}", label())
 }
 "#;
 
@@ -280,7 +280,7 @@ fn a_refused_comptime_region_fails_the_test_run_rather_than_passing_it() {
         "use std::fs\n\
          comptime fn embedded() -> String { fs::read_to_string(\"../outside.txt\").unwrap_or(\"x\") }\n\
          const EMBEDDED: String = embedded()\n\
-         fn main() { println!(\"{}\", EMBEDDED) }\n\
+         fn main() { println(\"{}\", EMBEDDED) }\n\
          #[cfg(test)]\n\
          mod main_tests { #[test] fn must_fail() { assert(false, \"the body ran\") } }\n",
     );

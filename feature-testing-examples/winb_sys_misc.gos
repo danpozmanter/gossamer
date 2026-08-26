@@ -11,8 +11,8 @@ fn main() {
     // os identity is constant on a given host; the harness compares
     // VM and compiled output at runtime, so printing the raw values
     // directly proves family/arch are bit-identical across tiers.
-    println!("family={}", os::family())
-    println!("arch={}", os::arch())
+    println("family={}", os::family())
+    println("arch={}", os::arch())
 
     // bufio::split_whitespace: pure tokenisation on runs of whitespace.
     let cases = #[
@@ -20,20 +20,20 @@ fn main() {
         "one\ttwo\nthree", "single"
     ]
     for c in cases {
-        let parts = bufio::split_whitespace(&c)
-        println!("ws({}) n={} joined=[{}]", c, parts.len(), parts.join("|"))
+        let parts = bufio::split_whitespace(c)
+        println("ws({}) n={} joined=[{}]", c, parts.len(), parts.join("|"))
     }
 
     // env round-trip: set then read back a fixed key. env::var returns
     // Option<String> (Some when present, None when absent).
-    env::set_var(&"WINB_SYS_KEY", &"winb-value")
-    match env::var(&"WINB_SYS_KEY") {
-        Some(v) => println!("var=[{}]", v)
-        None => println!("var=<none>")
+    env::set_var("WINB_SYS_KEY", "winb-value")
+    match env::var("WINB_SYS_KEY") {
+        Some(v) => println("var=[{}]", v)
+        None => println("var=<none>")
     }
-    env::unset_var(&"WINB_SYS_KEY")
-    match env::var(&"WINB_SYS_KEY") {
-        Some(v) => println!("after_unset=[{}]", v)
-        None => println!("after_unset=<none>")
+    env::unset_var("WINB_SYS_KEY")
+    match env::var("WINB_SYS_KEY") {
+        Some(v) => println("after_unset=[{}]", v)
+        None => println("after_unset=<none>")
     }
 }

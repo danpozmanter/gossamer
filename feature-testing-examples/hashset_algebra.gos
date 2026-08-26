@@ -21,19 +21,19 @@ fn main() {
     let b = set_of("y", "z", "w")
 
     let u = a.union(b)
-    println!("union len={} has_w={} has_x={}", u.len(), u.contains("w"), u.contains("x"))
+    println("union len={} has_w={} has_x={}", u.len(), u.contains("w"), u.contains("x"))
 
     let i = a.intersection(b)
-    println!("inter len={} has_y={} has_x={}", i.len(), i.contains("y"), i.contains("x"))
+    println("inter len={} has_y={} has_x={}", i.len(), i.contains("y"), i.contains("x"))
 
     let d = a.difference(b)
-    println!("diff len={} has_x={} has_y={}", d.len(), d.contains("x"), d.contains("y"))
+    println("diff len={} has_x={} has_y={}", d.len(), d.contains("x"), d.contains("y"))
 
     let sd = a.symmetric_difference(b)
-    println!("symdiff len={} has_x={} has_w={} has_y={}"
+    println("symdiff len={} has_x={} has_w={} has_y={}"
         sd.len(), sd.contains("x"), sd.contains("w"), sd.contains("y"))
 
-    println!("subset={} superset={} disjoint={}"
+    println("subset={} superset={} disjoint={}"
         set_of("x", "y", "x").is_subset(a)
         a.is_superset(set_of("x", "x", "x"))
         a.is_disjoint(set_of("q", "r", "s")))
@@ -58,21 +58,21 @@ mod tests {
 
     #[test]
     fn union_and_intersection() {
-        let (a, b) = pair()
+        let a, b = pair()
         let u = a.union(b)
         let _ = testing::check(u.len() == 4, "union has 4 elements")
         let _ = testing::check(u.contains("a") && u.contains("d"), "union holds both extremes")
-        let (a2, b2) = pair()
+        let a2, b2 = pair()
         let i = a2.intersection(b2)
         let _ = testing::check(i.len() == 2 && i.contains("b") && !i.contains("a"), "intersection is {b,c}")
     }
 
     #[test]
     fn difference_and_predicates() {
-        let (a, b) = pair()
+        let a, b = pair()
         let d = a.difference(b)
         let _ = testing::check(d.len() == 1 && d.contains("a"), "difference is {a}")
-        let (a2, b2) = pair()
+        let a2, b2 = pair()
         let _ = testing::check(!a2.is_disjoint(b2), "sharing b,c is not disjoint")
         let mut sub = Set::new()
         sub.insert("b")

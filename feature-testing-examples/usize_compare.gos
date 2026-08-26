@@ -3,9 +3,9 @@
 fn main() {
     let x = 5
     let y = 10
-    if (x as usize) < (y as usize) { println!("less") } else { println!("ge") }
+    if (x as usize) < (y as usize) { println("less") } else { println("ge") }
     let big = 300
-    println!("{}", (big as usize) + (big as usize))
+    println("{}", (big as usize) + (big as usize))
     let a = 9
-    if (a as u64) >= (y as u64) { println!("a>=y") } else { println!("a<y") }
+    if (a as u64) >= (y as u64) { println("a>=y") } else { println("a<y") }
 }

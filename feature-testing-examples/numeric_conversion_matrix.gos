@@ -7,46 +7,46 @@ fn main() {
     let big: i64 = 9007199254740992
     let as_f = big as f64
     let back = as_f as i64
-    println!("i64 9007199254740992 -> f64 -> i64 = {}", back)
+    println("i64 9007199254740992 -> f64 -> i64 = {}", back)
 
     // i64 → i32 truncation (wrapping cast)
     let large: i64 = 2147483648
     let truncated = large as i32
-    println!("2147483648 as i32 = {}", truncated)
+    println("2147483648 as i32 = {}", truncated)
 
     // Negative i64 → u64 (reinterpret)
     let neg: i64 = -1
     let as_u64 = neg as u64
-    println!("-1 as u64 = {}", as_u64)
+    println("-1 as u64 = {}", as_u64)
 
     // u64 → i64 (high bit)
     let max_u: u64 = 18446744073709551615
     let as_signed = max_u as i64
-    println!("u64::MAX as i64 = {}", as_signed)
+    println("u64::MAX as i64 = {}", as_signed)
 
     // f64 → i64 truncation
     let pi: f64 = 3.14159
-    println!("3.14159 as i64 = {}", pi as i64)
+    println("3.14159 as i64 = {}", pi as i64)
 
     let neg_pi: f64 = -3.14159
-    println!("-3.14159 as i64 = {}", neg_pi as i64)
+    println("-3.14159 as i64 = {}", neg_pi as i64)
 
     // f64 very small
     let tiny: f64 = 0.9999
-    println!("0.9999 as i64 = {}", tiny as i64)
+    println("0.9999 as i64 = {}", tiny as i64)
 
     // i32 → i64 sign extension
     let small_neg: i32 = -42
     let wide = small_neg as i64
-    println!("-42i32 as i64 = {}", wide)
+    println("-42i32 as i64 = {}", wide)
 
     // i64 bit ops (cast-like reinterpretation)
     let v: i64 = 255
-    println!("255 & 0xF0 = {}", v & 240)
-    println!("255 | 0x100 = {}", v | 256)
-    println!("255 ^ 0xFF = {}", v ^ 255)
-    println!("1 << 10 = {}", 1 as i64 << 10)
-    println!("1024 >> 3 = {}", 1024 as i64 >> 3)
+    println("255 & 0xF0 = {}", v & 240)
+    println("255 | 0x100 = {}", v | 256)
+    println("255 ^ 0xFF = {}", v ^ 255)
+    println("1 << 10 = {}", 1 as i64 << 10)
+    println("1024 >> 3 = {}", 1024 as i64 >> 3)
 }
 
 #[cfg(test)]
@@ -57,7 +57,7 @@ mod tests {
     fn i64_to_f64_precision_boundary() {
         let v: i64 = 9007199254740992
         let f = v as f64
-        let _ = testing::check_eq(&(f as i64), &v, "i64->f64->i64 at 2^53")
+        let _ = testing::check_eq((f as i64), v, "i64->f64->i64 at 2^53")
     }
 
     #[test]
@@ -65,14 +65,14 @@ mod tests {
         let v: i64 = -1
         let u = v as u64
         // Round-trip: cast back to i64 to avoid overflow in the expected literal.
-        let _ = testing::check_eq(&(u as i64), &v, "neg 1 as u64 round-trip")
+        let _ = testing::check_eq((u as i64), v, "neg 1 as u64 round-trip")
     }
 
     #[test]
     fn float_truncates_toward_zero() {
         let pos: f64 = 3.9
         let neg: f64 = -3.9
-        let _ = testing::check_eq(&(pos as i64), &3, "3.9 as i64")
-        let _ = testing::check_eq(&(neg as i64), &-3, "-3.9 as i64")
+        let _ = testing::check_eq((pos as i64), 3, "3.9 as i64")
+        let _ = testing::check_eq((neg as i64), -3, "-3.9 as i64")
     }
 }

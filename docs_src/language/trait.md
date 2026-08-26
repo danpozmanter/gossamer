@@ -6,7 +6,7 @@ Behaviour interface declaration.
 
 A trait declares method signatures; a type provides them with `impl Trait
 for Type`. A generic function bounds a parameter by a trait and calls its
-methods (`fn report<T: Shape>(s: &T)`) - see [generics](generics.md).
+methods (`fn report<T: Shape>(s: T)`) - see [generics](generics.md).
 
 ```gossamer
 trait Area { fn area(&self) -> f64 }
@@ -41,7 +41,7 @@ impl Holder for Label {
     fn get(&self) -> Self::Item { self.text }
 }
 
-fn shout<T: Holder>(holder: &T) -> T::Item { holder.get() }
+fn shout<T: Holder>(holder: T) -> T::Item { holder.get() }
 ```
 
 A trait may give the associated type a default (`type Count = i64`),
@@ -51,7 +51,7 @@ When several impls supply different types, pin the projection with an
 equality constraint on the bound:
 
 ```gossamer
-fn sum_of<T: Source<Item = i64>>(source: &T) -> T::Item { source.take() + 1 }
+fn sum_of<T: Source<Item = i64>>(source: T) -> T::Item { source.take() + 1 }
 ```
 
 Resolution order is: the equality constraint, the impl named by a
@@ -86,7 +86,7 @@ impl Bounded for Gauge {
     fn width(&self) -> i64 { self.span + Self::MAX }
 }
 
-fn headroom<T: Bounded>(gauge: &T) -> i64 { T::MAX - gauge.width() + T::STEP }
+fn headroom<T: Bounded>(gauge: T) -> i64 { T::MAX - gauge.width() + T::STEP }
 ```
 
 Each associated constant compiles to an ordinary constant, so its value

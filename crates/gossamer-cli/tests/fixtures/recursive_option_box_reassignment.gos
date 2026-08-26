@@ -1,20 +1,20 @@
 use std::env
 
 struct Node {
-    value: i64,
-    next: Option<Box<Node>>,
+    value: i64
+    next: Option<Node>
 }
 
 fn linked_option(n: i64) -> i64 {
-    let mut head: Option<Box<Node>> = None
+    let mut head: Option<Node> = None
     let mut checksum: i64 = 0
     for i in 0..n {
         head = Some(Node { value: i, next: head })
         checksum = (checksum + (i & 65535)) % 1000000007
     }
-    println!("{} {}", n, checksum + n)
+    println("{} {}", n, checksum + n)
     checksum + n
 }
 
-let n: i64 = env::args()[0].parse().unwrap_or(1000)
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
 let _ = linked_option(n)

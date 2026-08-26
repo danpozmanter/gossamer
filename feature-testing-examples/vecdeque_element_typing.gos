@@ -9,21 +9,21 @@ fn main() {
     q.push_back(1)
     q.push_back(2)
     while let Some(n) = q.pop_front() {
-        println!("drain {}", n)
+        println("drain {}", n)
     }
 
     // Inferred numeric element.
     let mut inferred = Deque::new()
     inferred.push_back(3)
     match inferred.pop_front() {
-        Some(n) => println!("inferred {}", n)
-        None => println!("inferred none")
+        Some(n) => println("inferred {}", n)
+        None => println("inferred none")
     }
 
     // Numeric element is preserved.
     let mut nums: Deque<i64> = Deque::new()
     nums.push_back(10)
     nums.push_back(20)
-    println!("len {}", nums.len())
-    println!("front {}", nums.pop_front().unwrap_or(-1))
+    println("len {}", nums.len())
+    println("front {}", nums.pop_front().unwrap_or(-1))
 }

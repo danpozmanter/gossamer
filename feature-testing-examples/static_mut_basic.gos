@@ -13,11 +13,11 @@ fn read() -> i64 {
 }
 
 fn main() {
-    println!("start = {}", read())
+    println("start = {}", read())
     bump()
     bump()
     bump()
-    println!("after 3 bumps = {}", read())
+    println("after 3 bumps = {}", read())
     COUNTER = 100
-    println!("after assign 100 = {}", read())
+    println("after assign 100 = {}", read())
 }

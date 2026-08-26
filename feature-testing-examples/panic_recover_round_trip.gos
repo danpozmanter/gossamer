@@ -5,15 +5,15 @@
 // wrapping, and recovery at the call site.
 
 fn parse_positive(s: String) -> Result<i64, String> {
-    match s.parse::<i64>() {
-        Ok(n) => {
+    match s.to_i64() {
+        Some(n) => {
             if n <= 0 {
-                Err(format!("expected positive, got {}", n))
+                Err(format("expected positive, got {}", n))
             } else {
                 Ok(n)
             }
         }
-        Err(e) => Err(format!("parse error: {}", e))
+        None => Err(format("parse error: not a number: {}", s))
     }
 }
 
@@ -36,14 +36,14 @@ fn run_with_recovery(inputs: Vec<Vec<String>>) -> Vec<String> {
     for pair in inputs {
         let raw = pair[0].clone()
         let divisor_str = pair[1].clone()
-        match divisor_str.parse::<i64>() {
-            Ok(d) => {
+        match divisor_str.to_i64() {
+            Some(d) => {
                 match pipeline(raw, d) {
-                    Ok(v) => results.push(format!("ok:{}", v))
-                    Err(e) => results.push(format!("err:{}", e))
+                    Ok(v) => results.push(format("ok:{}", v))
+                    Err(e) => results.push(format("err:{}", e))
                 }
             }
-            Err(_) => results.push("err:bad divisor")
+            None => results.push("err:bad divisor")
         }
     }
     results
@@ -52,26 +52,26 @@ fn run_with_recovery(inputs: Vec<Vec<String>>) -> Vec<String> {
 fn main() {
     // Happy path
     match pipeline("50", 5) {
-        Ok(v) => println!("pipeline ok: {}", v)
-        Err(e) => println!("pipeline err: {}", e)
+        Ok(v) => println("pipeline ok: {}", v)
+        Err(e) => println("pipeline err: {}", e)
     }
 
     // Parse failure
     match pipeline("abc", 5) {
-        Ok(v) => println!("unexpected ok: {}", v)
-        Err(e) => println!("parse failure caught: {}", e.starts_with("parse error"))
+        Ok(v) => println("unexpected ok: {}", v)
+        Err(e) => println("parse failure caught: {}", e.starts_with("parse error"))
     }
 
     // Domain failure
     match pipeline("-10", 5) {
-        Ok(v) => println!("unexpected ok: {}", v)
-        Err(e) => println!("domain failure caught: {}", e.contains("positive"))
+        Ok(v) => println("unexpected ok: {}", v)
+        Err(e) => println("domain failure caught: {}", e.contains("positive"))
     }
 
     // Division by zero
     match pipeline("100", 0) {
-        Ok(v) => println!("unexpected ok: {}", v)
-        Err(e) => println!("div zero caught: {}", e.contains("zero"))
+        Ok(v) => println("unexpected ok: {}", v)
+        Err(e) => println("div zero caught: {}", e.contains("zero"))
     }
 
     // Batch with recovery
@@ -83,7 +83,7 @@ fn main() {
     ])
     let results = run_with_recovery(pairs)
     for r in results {
-        println!("result: {}", r)
+        println("result: {}", r)
     }
 }
 
@@ -94,7 +94,7 @@ mod tests {
     #[test]
     fn pipeline_success() {
         match super::pipeline("40", 4) {
-            Ok(v) => { let _ = testing::check_eq(&v, &20, "40/4*2=20")
+            Ok(v) => { let _ = testing::check_eq(v, 20, "40/4*2=20")
             }
             Err(e) => { let _ = testing::check(false, e)
             }
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn divide_checked_ok() {
         match super::divide_checked(15, 3) {
-            Ok(v) => { let _ = testing::check_eq(&v, &5, "15/3=5")
+            Ok(v) => { let _ = testing::check_eq(v, 5, "15/3=5")
             }
             Err(e) => { let _ = testing::check(false, e)
             }
