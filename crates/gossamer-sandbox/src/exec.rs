@@ -340,7 +340,7 @@ fn wait_for_exit<C: ChildProcess>(
     bound: Option<Duration>,
 ) -> Result<Exit, SandboxError> {
     let deadline = bound.map(Deadline::new);
-    let waiter = signals::Waiter::new();
+    let mut waiter = signals::Waiter::new();
     // Only the Unix waiter has an interrupt to forward.
     #[cfg(unix)]
     let mut forwarded = false;
@@ -485,13 +485,13 @@ pub(crate) fn kill_tree(child: &mut Child) {
 pub(crate) mod signals {
     #![allow(
         unsafe_code,
-        reason = "a signal disposition, a pipe, and a poll have no safe \
-                  wrappers; the handler touches only atomics and `write`, \
-                  which is the async-signal-safety contract"
+        reason = "a signal disposition and a pipe have no safe wrappers; the \
+                  handler touches only an atomic and `write`, which is the \
+                  async-signal-safety contract"
     )]
 
-    use std::sync::Once;
     use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::{Condvar, Mutex, Once, PoisonError};
     use std::time::Duration;
 
     /// Why a wait ended.
@@ -508,49 +508,76 @@ pub(crate) mod signals {
     /// Signals a supervisor forwards rather than dies on.
     const FORWARDED: [i32; 4] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT];
 
-    /// Wake-up pipes, one write end per live [`Waiter`].
-    ///
-    /// A fixed array rather than a list because the handler runs in a
-    /// signal context, where allocation and locking are both out. Eight
-    /// concurrent supervisors in one process is far past any real use;
-    /// a ninth simply waits on its deadline.
-    const WAITERS: usize = 8;
-    #[allow(
-        clippy::declare_interior_mutable_const,
-        reason = "the const is an array initializer, and each element is a distinct atomic"
-    )]
-    const NO_WAITER: AtomicI32 = AtomicI32::new(-1);
-    static WAKEUPS: [AtomicI32; WAITERS] = [NO_WAITER; WAITERS];
-    /// The signal most recently seen by the handler, for the waiter to
-    /// read once it is awake.
-    static LAST_SIGNAL: AtomicI32 = AtomicI32::new(0);
+    /// What every waiter in this process has to be told about.
+    struct Arrivals {
+        /// Signals seen so far. A waiter blocks until this moves past
+        /// what it last saw, which is what makes a signal that lands
+        /// before the wait begins a wake-up rather than a missed one.
+        seen: u64,
+        /// Interrupts seen so far, counted apart from `seen` so each
+        /// waiter forwards one interrupt once.
+        interrupts: u64,
+        /// The most recent interrupt's number.
+        signal: i32,
+    }
 
-    /// One byte to every registered waiter. Async-signal-safe: an
-    /// atomic load, an atomic store, and `write`.
+    static ARRIVALS: Mutex<Arrivals> = Mutex::new(Arrivals {
+        seen: 0,
+        interrupts: 0,
+        signal: 0,
+    });
+    static ARRIVED: Condvar = Condvar::new();
+
+    /// The write end of the pipe the handler reports on, or `-1` before
+    /// the dispositions are installed and when the process could not
+    /// give the supervisor a pipe.
+    static REPORT: AtomicI32 = AtomicI32::new(-1);
+
+    /// The longest a waiter blocks when no dispatcher is carrying
+    /// signals to it, so a supervisor whose process could not spare a
+    /// pipe still re-reads its child rather than waiting on a wake-up
+    /// that cannot come.
+    const UNDISPATCHED_SLICE: Duration = Duration::from_millis(50);
+
+    /// One byte down the report pipe. Async-signal-safe: an atomic load
+    /// and `write`.
     extern "C" fn handler(signal: i32) {
-        if signal != libc::SIGCHLD {
-            LAST_SIGNAL.store(signal, Ordering::SeqCst);
-        }
-        for slot in &WAKEUPS {
-            let fd = slot.load(Ordering::SeqCst);
-            if fd >= 0 {
-                let byte = u8::try_from(signal.clamp(0, 255)).unwrap_or(0);
-                unsafe {
-                    libc::write(fd, std::ptr::from_ref(&byte).cast(), 1);
-                }
+        let fd = REPORT.load(Ordering::SeqCst);
+        if fd >= 0 {
+            let byte = u8::try_from(signal.clamp(0, 255)).unwrap_or(0);
+            unsafe {
+                libc::write(fd, std::ptr::from_ref(&byte).cast(), 1);
             }
         }
     }
 
-    /// Installs the dispositions once per process.
+    /// Installs the dispositions and starts the dispatcher, once per
+    /// process.
     ///
     /// `SIGCHLD` is caught rather than left default so a child exiting
     /// is an event the wait can block on; the forwarded signals are
     /// caught so an interrupt reaches the child instead of ending the
     /// supervisor and orphaning it.
+    ///
+    /// A signal handler may not lock, so what it can do is write a byte
+    /// the dispatcher reads on an ordinary thread; the fan-out to every
+    /// waiter happens there, under the lock, where it costs nothing to
+    /// have as many waiters as the caller has runs.
     fn install() {
         static ONCE: Once = Once::new();
         ONCE.call_once(|| {
+            let Some(read) = report_pipe() else {
+                return;
+            };
+            if std::thread::Builder::new()
+                .name("gos-sandbox-signals".to_string())
+                .spawn(move || dispatch(read))
+                .is_err()
+            {
+                REPORT.store(-1, Ordering::SeqCst);
+                unsafe { libc::close(read) };
+                return;
+            }
             for signal in FORWARDED.iter().copied().chain([libc::SIGCHLD]) {
                 let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
                 action.sa_sigaction = handler as *const () as usize;
@@ -563,94 +590,109 @@ pub(crate) mod signals {
         });
     }
 
-    /// A registered wake-up pipe, blocking until the supervisor has
-    /// something to do.
+    /// Creates the pipe the handler reports on and publishes its write
+    /// end, answering the read end the dispatcher owns.
+    ///
+    /// The write end is non-blocking so a handler can never stall the
+    /// thread it interrupted, and both ends are close-on-exec so no
+    /// child inherits the supervisor's wake-ups.
+    fn report_pipe() -> Option<libc::c_int> {
+        let mut fds = [-1; 2];
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        for fd in fds {
+            unsafe {
+                libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            }
+        }
+        unsafe {
+            let flags = libc::fcntl(fds[1], libc::F_GETFL);
+            libc::fcntl(fds[1], libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+        REPORT.store(fds[1], Ordering::SeqCst);
+        Some(fds[0])
+    }
+
+    /// Carries what the handler reported to every waiter.
+    fn dispatch(read: libc::c_int) {
+        let mut buffer = [0_u8; 64];
+        loop {
+            let count = unsafe { libc::read(read, buffer.as_mut_ptr().cast(), buffer.len()) };
+            if count <= 0 {
+                // Nothing can arrive on a pipe that cannot be read, so
+                // waiters fall back to re-reading their own children.
+                REPORT.store(-1, Ordering::SeqCst);
+                ARRIVED.notify_all();
+                return;
+            }
+            let mut arrivals = ARRIVALS.lock().unwrap_or_else(PoisonError::into_inner);
+            arrivals.seen += 1;
+            for byte in &buffer[..count as usize] {
+                let signal = i32::from(*byte);
+                if FORWARDED.contains(&signal) {
+                    arrivals.interrupts += 1;
+                    arrivals.signal = signal;
+                }
+            }
+            drop(arrivals);
+            ARRIVED.notify_all();
+        }
+    }
+
+    /// A supervisor's place in the process's signal stream.
     pub(crate) struct Waiter {
-        read: libc::c_int,
-        write: libc::c_int,
-        slot: Option<usize>,
+        seen: u64,
+        interrupts: u64,
     }
 
     impl Waiter {
-        /// Registers a wake-up pipe and installs the dispositions.
+        /// Starts watching from whatever has already arrived, so a
+        /// signal older than this supervisor is not its business.
         pub(crate) fn new() -> Self {
             install();
-            let mut fds = [-1; 2];
-            let created = unsafe { libc::pipe(fds.as_mut_ptr()) } == 0;
-            if !created {
-                return Self {
-                    read: -1,
-                    write: -1,
-                    slot: None,
-                };
-            }
-            for fd in fds {
-                unsafe {
-                    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
-                    let flags = libc::fcntl(fd, libc::F_GETFL);
-                    libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
-                }
-            }
-            let slot = WAKEUPS.iter().position(|slot| {
-                slot.compare_exchange(-1, fds[1], Ordering::SeqCst, Ordering::SeqCst)
-                    .is_ok()
-            });
+            let arrivals = ARRIVALS.lock().unwrap_or_else(PoisonError::into_inner);
             Self {
-                read: fds[0],
-                write: fds[1],
-                slot,
+                seen: arrivals.seen,
+                interrupts: arrivals.interrupts,
             }
         }
 
         /// Blocks until a signal arrives or `timeout` runs out.
-        pub(crate) fn wait(&self, timeout: Option<Duration>) -> Wake {
-            if self.read < 0 {
-                // No pipe: the wait still has to make progress, and the
-                // caller re-checks the child on every return.
-                std::thread::sleep(timeout.unwrap_or(Duration::from_millis(50)));
-                return Wake::Deadline;
-            }
-            let mut poller = libc::pollfd {
-                fd: self.read,
-                events: libc::POLLIN,
-                revents: 0,
+        pub(crate) fn wait(&mut self, timeout: Option<Duration>) -> Wake {
+            let dispatched = REPORT.load(Ordering::SeqCst) >= 0;
+            let limit = match (timeout, dispatched) {
+                (Some(limit), true) => Some(limit),
+                (Some(limit), false) => Some(limit.min(UNDISPATCHED_SLICE)),
+                (None, true) => None,
+                (None, false) => Some(UNDISPATCHED_SLICE),
             };
-            let milliseconds = timeout.map_or(-1, |limit| {
-                i32::try_from(limit.as_millis()).unwrap_or(i32::MAX)
-            });
-            let ready = unsafe { libc::poll(&raw mut poller, 1, milliseconds) };
-            if ready <= 0 {
-                // Zero is the deadline. A negative is `EINTR`, which
-                // means a signal arrived while the handler was running;
-                // treating it as a wake-up is correct, because the
-                // caller re-checks both the child and the deadline.
-                return if ready == 0 {
-                    Wake::Deadline
-                } else {
-                    Wake::ChildChanged
-                };
-            }
-            let mut drain = [0_u8; 64];
-            while unsafe { libc::read(self.read, drain.as_mut_ptr().cast(), drain.len()) } > 0 {}
-            let signal = LAST_SIGNAL.swap(0, Ordering::SeqCst);
-            if FORWARDED.contains(&signal) {
+            let arrivals = ARRIVALS.lock().unwrap_or_else(PoisonError::into_inner);
+            let (arrivals, ran_out) = match limit {
+                Some(limit) => {
+                    let (arrivals, outcome) = ARRIVED
+                        .wait_timeout_while(arrivals, limit, |arrivals| arrivals.seen == self.seen)
+                        .unwrap_or_else(PoisonError::into_inner);
+                    (arrivals, outcome.timed_out())
+                }
+                None => (
+                    ARRIVED
+                        .wait_while(arrivals, |arrivals| arrivals.seen == self.seen)
+                        .unwrap_or_else(PoisonError::into_inner),
+                    false,
+                ),
+            };
+            self.seen = arrivals.seen;
+            let interrupted = arrivals.interrupts > self.interrupts;
+            self.interrupts = arrivals.interrupts;
+            let signal = arrivals.signal;
+            drop(arrivals);
+            if interrupted {
                 Wake::Interrupt(signal)
+            } else if ran_out {
+                Wake::Deadline
             } else {
                 Wake::ChildChanged
-            }
-        }
-    }
-
-    impl Drop for Waiter {
-        fn drop(&mut self) {
-            if let Some(slot) = self.slot {
-                WAKEUPS[slot].store(-1, Ordering::SeqCst);
-            }
-            if self.read >= 0 {
-                unsafe {
-                    libc::close(self.read);
-                    libc::close(self.write);
-                }
             }
         }
     }
@@ -686,7 +728,7 @@ pub(crate) mod signals {
         /// on Windows already reaches every process in the console
         /// group, so there is no signal for the supervisor to forward
         /// and nothing else to block on.
-        pub(crate) fn wait(&self, timeout: Option<Duration>) -> Wake {
+        pub(crate) fn wait(&mut self, timeout: Option<Duration>) -> Wake {
             let slice = Duration::from_millis(20);
             match timeout {
                 Some(remaining) if remaining <= slice => {
@@ -748,6 +790,84 @@ mod exec_tests {
             .env_set("PATH", directory.to_string_lossy().into_owned())
             .compile()
             .expect("the policy compiles")
+    }
+
+    /// A pipe on disk that a reader blocks on until a writer opens it.
+    #[cfg(unix)]
+    fn make_gate(path: &Path) {
+        let spelling = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
+            .expect("a path with no interior nul");
+        #[allow(
+            unsafe_code,
+            reason = "mkfifo has no safe wrapper; the argument is a C string this \
+                      function owns"
+        )]
+        let made = unsafe { libc::mkfifo(spelling.as_ptr(), 0o600) };
+        assert_eq!(made, 0, "create the gate at {}", path.display());
+    }
+
+    /// A supervisor blocks until a signal says its child changed, and a
+    /// process supervises as many runs at once as its caller starts.
+    /// Every one of those waits has to be reachable: a supervisor no
+    /// signal can wake never learns its child exited, and a run with no
+    /// deadline has nothing else to end it.
+    #[cfg(unix)]
+    #[test]
+    fn every_concurrent_supervisor_is_woken_by_its_own_child() {
+        use std::io::Write;
+
+        const RUNS: usize = 16;
+        let root = std::env::temp_dir().join("gos-exec-concurrent-supervisors");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create the fixture directory");
+        let gates: Vec<PathBuf> = (0..RUNS)
+            .map(|index| {
+                let gate = root.join(format!("gate-{index}"));
+                make_gate(&gate);
+                gate
+            })
+            .collect();
+
+        let sandbox = std::sync::Arc::new(
+            crate::Sandbox::new(&SandboxPolicy::new().level(Level::None)).expect("build a sandbox"),
+        );
+        let runs: Vec<_> = gates
+            .iter()
+            .enumerate()
+            .map(|(index, gate)| {
+                let sandbox = std::sync::Arc::clone(&sandbox);
+                let script = format!("read _ < {}; printf {index}", gate.display());
+                std::thread::spawn(move || {
+                    let argv = ["/bin/sh".to_string(), "-c".to_string(), script];
+                    sandbox.run_captured(&argv).map(|output| output.stdout)
+                })
+            })
+            .collect();
+
+        // Opening the writing end blocks until the child has the
+        // reading end open, so holding every gate open at once is what
+        // puts every supervisor on a child that has not exited yet.
+        let held: Vec<std::fs::File> = gates
+            .iter()
+            .map(|gate| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(gate)
+                    .expect("open a gate")
+            })
+            .collect();
+        for mut gate in held {
+            gate.write_all(b"go\n").expect("let a child go");
+        }
+
+        for (index, run) in runs.into_iter().enumerate() {
+            let stdout = run
+                .join()
+                .expect("join a supervisor")
+                .expect("a run whose child's exit reached its supervisor");
+            assert_eq!(stdout, index.to_string().into_bytes());
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

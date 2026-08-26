@@ -96,6 +96,24 @@
   policy reported back carried the same spelling. A drive or UNC path is now
   recorded in its plain form; a volume GUID path keeps the prefix that is
   what reaches it.
+- A process may supervise as many sandboxed runs at once as its caller
+  starts. A supervisor waits for its child by blocking on a signal, and the
+  wake-ups went to a fixed table of eight: a ninth concurrent run was left
+  waiting on a deadline it had not been given, so its child exited and the
+  run never returned. The signal handler now reports to one pipe a
+  dispatcher reads, and the wake-up reaches every waiting supervisor,
+  however many there are. An interrupt reaches all of them too, so each
+  supervisor forwards it to its own child rather than only whichever one
+  read it first.
+- Two sandboxed runs at once no longer reach into each other's trees. Where
+  no delegated cgroup holds a run, its teardown finds what outlived it by
+  sweeping `/proc` for what reparented to the supervisor, and a child was in
+  that table before the run it belongs to had claimed it: a sweep that
+  overlapped another run's spawn read a live child as an orphan and killed
+  it, and the run it belonged to answered `child terminated by signal 9`. A
+  run claims its child before any sweep can see it. The same sweep also
+  leaves alone a child that never left the supervisor's own session, which
+  is what a compiler or a fetch the caller started itself is.
 - `gos check --fix` applies a suggestion raised in a sibling module to that
   module. A suggestion's span addresses the bundled unit, and it was being
   applied to the entry file's text at the same offsets - a panic once the

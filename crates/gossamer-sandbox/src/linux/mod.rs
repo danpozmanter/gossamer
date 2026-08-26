@@ -19,7 +19,7 @@ pub(crate) mod seccomp;
 
 use std::os::unix::process::CommandExt;
 use std::process::Command;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, PoisonError, RwLock};
 
 use crate::error::{SandboxError, SandboxOutput};
 use crate::exec::{self, Stdio};
@@ -245,14 +245,22 @@ pub(crate) fn run(
     become_child_subreaper();
     let mut command = exec::base_command(policy, argv, stdio)?;
     install_enforcement(&mut command, policy, group.as_ref());
-    let child = command.spawn().map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            SandboxError::CommandNotFound(argv[0].clone())
-        } else {
-            SandboxError::Spawn(format!("{error}"))
-        }
-    })?;
-    exec::wait_for(policy, LinuxChild::new(child, group), stdio, bound)
+    // A sweep tells one run's tree from another's by the session
+    // registry, so the child has to be in it before any sweep can see
+    // the child at all: the guard makes the spawn and the registration
+    // one step as far as a concurrent teardown is concerned.
+    let child = {
+        let _spawning = SPAWNING.read().unwrap_or_else(PoisonError::into_inner);
+        let child = command.spawn().map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                SandboxError::CommandNotFound(argv[0].clone())
+            } else {
+                SandboxError::Spawn(format!("{error}"))
+            }
+        })?;
+        LinuxChild::new(child, group)
+    };
+    exec::wait_for(policy, child, stdio, bound)
 }
 
 /// The session of every run this process is supervising right now.
@@ -262,6 +270,16 @@ pub(crate) fn run(
 /// question exactly as this run's orphan does. The registry is what
 /// separates them, so a teardown reaches only its own tree.
 static LIVE_SESSIONS: Mutex<Vec<libc::pid_t>> = Mutex::new(Vec::new());
+
+/// Held shared while a run starts a child, and exclusively while a
+/// teardown sweeps.
+///
+/// A child exists from the fork onwards, and joins [`LIVE_SESSIONS`]
+/// only once the spawn hands its pid back. A sweep that read `/proc`
+/// in between would find a live child of this process that no run
+/// claims - which is exactly the description of a stray - so the two
+/// are kept apart rather than ordered by chance.
+static SPAWNING: RwLock<()> = RwLock::new(());
 
 /// Whether `session` is the session of some run other than `mine`.
 fn another_run_owns(session: libc::pid_t, mine: libc::pid_t) -> bool {
@@ -362,15 +380,26 @@ fn become_child_subreaper() {
 /// own and reparented here.
 ///
 /// Reparenting is how an orphan becomes findable, so a pid whose parent
-/// is this process is a candidate; it belongs to this run only when no
-/// other live run claims its session. Several runs share one supervisor
-/// whenever a caller sandboxes concurrently, and each one's tree stops
-/// at its own session.
+/// is this process is a candidate. Two things then have to hold for it
+/// to be this run's. Its session is one this process leads no more:
+/// every descendant of a run inherits the run's session until it calls
+/// `setsid`, so a child sharing this process's own session was started
+/// by the caller rather than by any run, and a build tool a caller
+/// spawned itself is not a stray. And no other live run claims its
+/// session - several runs share one supervisor whenever a caller
+/// sandboxes concurrently, and each one's tree stops at its own
+/// session.
 ///
 /// The sweep repeats because a process killed while forking can leave a
 /// child behind, and stops as soon as a pass finds nothing.
 fn kill_strays(session: libc::pid_t) {
+    // A run registers its session after the fork that creates it, so a
+    // sweep that overlapped a spawn would meet a live child no run
+    // claims yet. Sweeping exclusively is what makes the registry an
+    // answer rather than a race.
+    let _sweeping = SPAWNING.write().unwrap_or_else(PoisonError::into_inner);
     let own = std::process::id() as libc::pid_t;
+    let own_session = unsafe { libc::getsid(0) };
     for _ in 0..8 {
         let mut found = false;
         let Ok(entries) = std::fs::read_dir("/proc") else {
@@ -395,7 +424,9 @@ fn kill_strays(session: libc::pid_t) {
                 continue;
             }
             let ours = stray_session == session;
-            let adopted = parent == own && !another_run_owns(stray_session, session);
+            let adopted = parent == own
+                && stray_session != own_session
+                && !another_run_owns(stray_session, session);
             if !ours && !adopted {
                 continue;
             }
@@ -602,6 +633,10 @@ fn join_cgroup_now(path: &std::ffi::CStr) -> std::io::Result<()> {
 mod linux_tests {
     use super::*;
 
+    /// A session number no run in this process was ever given, for a
+    /// sweep that must decide on the adoption rule alone.
+    const NO_RUNS_SESSION: libc::pid_t = libc::pid_t::MAX;
+
     /// Starts a child in a session of its own, the way a sandboxed run
     /// does, and answers its pid.
     fn child_in_its_own_session(script: &str) -> std::process::Child {
@@ -623,6 +658,31 @@ mod linux_tests {
         command.spawn().expect("spawn a child for the sweep to see")
     }
 
+    /// Starts a stand-in for a live run: a child in a session of its
+    /// own, registered before any sweep can see it, exactly as
+    /// [`run`] starts one.
+    fn live_run(script: &str) -> std::process::Child {
+        let _spawning = SPAWNING.read().unwrap_or_else(PoisonError::into_inner);
+        let child = child_in_its_own_session(script);
+        LIVE_SESSIONS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(child.id() as libc::pid_t);
+        child
+    }
+
+    /// Retires the session a [`live_run`] registered.
+    fn end_run(child: &mut std::process::Child) {
+        let session = child.id() as libc::pid_t;
+        let mut live = LIVE_SESSIONS.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(at) = live.iter().position(|live| *live == session) {
+            live.swap_remove(at);
+        }
+        drop(live);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
     /// Whether `pid` is still a running process.
     ///
     /// A killed process answers `kill(pid, 0)` for as long as it is an
@@ -637,29 +697,18 @@ mod linux_tests {
     /// One run's teardown must not reach another run's tree.
     #[test]
     fn a_sweep_leaves_another_live_runs_child_alone() {
-        let mut theirs = child_in_its_own_session("sleep 30");
+        let mut theirs = live_run("sleep 30");
         let their_session = theirs.id() as libc::pid_t;
-        LIVE_SESSIONS
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(their_session);
 
-        let mut ours = child_in_its_own_session("sleep 30");
+        let mut ours = live_run("sleep 30");
         let our_session = ours.id() as libc::pid_t;
         kill_strays(our_session);
 
         let theirs_survived = running(their_session);
         let ours_reached = !running(our_session);
 
-        let mut live = LIVE_SESSIONS.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(at) = live.iter().position(|live| *live == their_session) {
-            live.swap_remove(at);
-        }
-        drop(live);
-        let _ = theirs.kill();
-        let _ = theirs.wait();
-        let _ = ours.kill();
-        let _ = ours.wait();
+        end_run(&mut theirs);
+        end_run(&mut ours);
 
         assert!(
             theirs_survived,
@@ -669,6 +718,59 @@ mod linux_tests {
             ours_reached,
             "the sweep must still reach its own run's tree"
         );
+    }
+
+    /// A caller that sandboxes one command still starts others itself -
+    /// a compiler, a fetch, an editor. They are children of this
+    /// process and they never left its session, so no run's teardown
+    /// may reach them.
+    #[test]
+    fn a_sweep_leaves_a_plain_child_of_this_process_alone() {
+        let mut theirs = Command::new("/bin/sh")
+            .arg("-c")
+            .arg("sleep 30")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn a child of this process");
+        let pid = theirs.id() as libc::pid_t;
+
+        kill_strays(NO_RUNS_SESSION);
+
+        let survived = running(pid);
+        let _ = theirs.kill();
+        let _ = theirs.wait();
+        assert!(survived, "the sweep killed a child no run started");
+    }
+
+    /// A child is a live process from the fork onwards and joins the
+    /// session registry only once the spawn returns. A sweep that ran
+    /// in between would find a child of this process that no run claims
+    /// and read it as a stray, so a run that started a command must be
+    /// able to finish starting it before any sweep looks.
+    #[test]
+    fn a_concurrent_sweep_leaves_a_run_that_is_still_spawning_alone() {
+        let policy = crate::policy::SandboxPolicy::new()
+            .level(Level::None)
+            .compile()
+            .expect("compile policy");
+        let sweeper = std::thread::spawn(|| {
+            for _ in 0..64 {
+                kill_strays(NO_RUNS_SESSION);
+            }
+        });
+
+        let argv = ["/bin/sh", "-c", "printf ok"].map(String::from);
+        let outcomes: Vec<Result<SandboxOutput, SandboxError>> = (0..64)
+            .map(|_| run(&policy, &argv, Stdio::Capture, None))
+            .collect();
+        sweeper.join().expect("join the sweeper");
+
+        for outcome in outcomes {
+            let output = outcome.expect("a run a concurrent sweep must not have reached");
+            assert_eq!(output.code, 0);
+            assert_eq!(output.stdout, b"ok");
+        }
     }
 
     #[test]
