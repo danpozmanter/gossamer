@@ -292,6 +292,9 @@ enum TestStatus {
 
 #[derive(Debug, Clone)]
 struct TestSpec {
+    /// Byte offset of the declaring item in the assembled unit, so a test
+    /// can be attributed to the file its bytes were written in.
+    start: u32,
     function: String,
     name: String,
     args: Vec<gossamer_interp::Value>,
@@ -764,13 +767,49 @@ fn discover_tests(file: &Path) -> Result<Vec<TestSpec>> {
     // The assembled unit, not the file's own bytes: a package entry
     // carries its sibling modules inlined, and a `#[test]` inside one of
     // them is only visible in the assembled source.
-    let source = read_entry_source(file)?;
+    let unit = crate::paths::read_entry_unit(file)?;
     let mut map = gossamer_lex::SourceMap::new();
-    let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
-    let (sf, _diags) = gossamer_parse::parse_source_file(&source, file_id);
+    let file_id = map.add_file(file.to_string_lossy().into_owned(), unit.source.clone());
+    let (sf, _diags) = gossamer_parse::parse_source_file(&unit.source, file_id);
     let mut tests = Vec::new();
     collect_test_metadata(&sf.items, &mut tests)?;
+    // A test belongs to the project whose source declares it. The unit also
+    // carries every path dependency's source inlined, so without this filter
+    // a dependency's tests run again for each project that depends on it.
+    let foreign = foreign_regions(&unit);
+    if foreign.is_empty() {
+        return Ok(tests);
+    }
+    tests.retain(|test| {
+        !foreign
+            .iter()
+            .any(|(lo, hi)| test.start >= *lo && test.start < *hi)
+    });
     Ok(tests)
+}
+
+/// Byte ranges of the assembled unit whose bytes came from outside the
+/// project being tested - a path dependency's source, inlined by the
+/// bundler. Empty when the whole unit is the project's own.
+fn foreign_regions(unit: &crate::paths::EntryUnit) -> Vec<(u32, u32)> {
+    let Some(root) = unit
+        .entry
+        .parent()
+        .and_then(|src| crate::paths::project_root_for_entry(&src.join("project.toml")))
+        .or_else(|| {
+            unit.entry
+                .parent()
+                .and_then(std::path::Path::parent)
+                .map(std::path::Path::to_path_buf)
+        })
+    else {
+        return Vec::new();
+    };
+    unit.origins
+        .iter()
+        .filter(|span| !span.origin.starts_with(&root))
+        .map(|span| (span.start, span.end))
+        .collect()
 }
 
 fn collect_test_metadata(items: &[gossamer_ast::Item], output: &mut Vec<TestSpec>) -> Result<()> {
@@ -804,6 +843,7 @@ fn collect_test_metadata(items: &[gossamer_ast::Item], output: &mut Vec<TestSpec
                 };
                 let mut push_case = |args: Vec<gossamer_interp::Value>, suffix: Option<String>| {
                     output.push(TestSpec {
+                        start: item.span.start,
                         function: decl.name.name.clone(),
                         name: suffix.map_or_else(
                             || decl.name.name.clone(),

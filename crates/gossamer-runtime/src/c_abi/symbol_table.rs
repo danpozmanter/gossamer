@@ -496,6 +496,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::deque::gos_rt_deque_clear as *const u8,
         ),
         (
+            "gos_rt_deque_clone",
+            crate::c_abi::deque::gos_rt_deque_clone as *const u8,
+        ),
+        (
+            "gos_rt_queue_clone",
+            crate::c_abi::deque::gos_rt_queue_clone as *const u8,
+        ),
+        (
+            "gos_rt_stack_clone",
+            crate::c_abi::deque::gos_rt_stack_clone as *const u8,
+        ),
+        (
             "gos_rt_deque_free",
             crate::c_abi::deque::gos_rt_deque_free as *const u8,
         ),
@@ -4946,6 +4958,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_http_server_shutdown",
             crate::c_abi::http_server_handle::gos_rt_http_server_shutdown as *const u8,
+        ),
+        (
+            "gos_rt_cohorts",
+            crate::c_abi::cohort::gos_rt_cohorts as *const u8,
         ),
         (
             "gos_rt_cohort_cancelled",

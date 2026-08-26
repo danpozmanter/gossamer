@@ -230,7 +230,7 @@ pub struct Vm {
     /// counter trips on this `Vm`. Per-`Vm` (not shared across
     /// goroutines) because finalized entry handles carry raw pointers and are
     /// deliberately not `Send + Sync`.
-    /// Goroutines spawned via [`Op::Spawn`] start with an empty
+    /// A spawned goroutine starts with an empty
     /// JIT and stay on bytecode unless their own per-`Vm` hot
     /// counter trips - which only happens for genuinely long-lived
     /// child VMs, where the per-thread compile cost amortises.

@@ -1,7 +1,71 @@
 # Changelog
 
-## 0.56.0 - Major syntax/keyword refinement, packed enums, efficiency & correctness
+## 0.56.0 - Major syntax/keyword & concurrency refinement, packed enums, efficiency & correctness
 
+- A served HTTP request no longer pays the peer-disconnect watch's probe
+  interval. The watch runs on its own thread and probes every 20ms; ending a
+  request set its stop flag and then joined it, so the request waited out
+  whatever remained of a plain `sleep` - a 20ms tail on a response that took
+  a tenth of a millisecond to produce. The watch now waits on a condvar the
+  request's end signals, so the join returns at once. On a keep-alive
+  loopback benchmark the release server went from 1091 to 21509 requests a
+  second.
+- A dependency's tests run once, in its own project. `gos test` discovers
+  tests from the assembled unit, which carries each path dependency's source
+  inlined, so a library's tests ran again for every project that depended on
+  it. A test belongs to the project whose source declares it.
+- `runtime::cohorts()` answers one descriptor line per live cohort, oldest
+  id first: its id, parent, completion policy, error disposition, how many
+  children are outstanding, whether it is cancelled, and the spawn indices
+  that have not left. A cohort is enumerable, so a program can say what it
+  is still waiting on without joining it.
+- A drain that gives up names what it left running rather than only
+  counting it, at the root and under a cohort's own `drain:` bound.
+- A cohort header takes three more settings. `on_error: OnError::{Propagate,
+  Log, Ignore}` says what the cohort does with a child's failure, where
+  `policy:` says when it stops waiting; `cancellable: false` exempts the
+  block and everything under it from cancellation; and `drain: ms` bounds
+  the wait for the children once the body is done, which `timeout:` does not
+  - it bounds the body. No setting can make a child unaccountable: every one
+  is still counted, still drained, and named if it never finishes.
+- A generic method's return type is checked. `fn arg<T: Arg>(self, v: T) ->
+  Cmd` recorded no return, so the call typed as an unknown and every field
+  read through it went unchecked - `let n: i64 = c.args` on a
+  `Vec<String>` field, and `c.no_such_field`, both passed `gos check`.
+- A `Deque`, `Queue`, `Stack`, `MinHeap`, or `MaxHeap` is a value, not an
+  alias. A binding taken from one (`let b = a`) and a by-value parameter each
+  get their own elements, so writing through one leaves the other untouched -
+  the rule every other container already followed. They reach their elements
+  through a handle, so the copy is made where the binding or the argument is
+  taken.
+- A binding taken from a freshly constructed container keeps its own storage.
+  A `let` may take over a constructor's destination temporary, but only while
+  that temporary is anonymous; once a name owned the local, a later `let`
+  could re-point the call that defines it and leave the first name reading a
+  slot nothing writes. `let a = Vec::new()` followed by `let mut b = a`
+  faulted in a native build.
+- A read-only walk of a by-value aggregate costs no reference counting. A
+  binder over a payload of a parameter the caller holds for the whole call
+  cannot outlive it, so it takes no share of its own; minting one cost a
+  retain/release pair per node, and each of those releases decremented a live
+  node to a non-zero count, which is the cycle collector's definition of a
+  candidate root - a walk of an acyclic tree filled the candidate buffer with
+  the whole tree. A recursive tree traversal is now 4x faster and holds half
+  the memory, matching what the same code written against a reference did
+  before shared `&T` parameters were removed.
+- The `profile` feature builds again. The bytecode VM's opcode-name table
+  still listed the two spawn opcodes the `go` removal deleted.
+- A cohort's isolation setting is `isolation: Isolation::Shared` or
+  `Isolation::Thread`. The key names what it decides - whether a child owns
+  an OS thread for its whole life - and leaves `context` to
+  `context::Context`, the cancellation type a cohort may one day inherit.
+  The retired `context: Context::*` spelling reports `GP0056` and `--fix`
+  rewrites it.
+- `defer` runs on the exit edges the compiler can see: block end, `return`,
+  `break`, `continue`, and `?`. A panic is not one of them, and never was;
+  SPEC 8.4 claimed otherwise. Cohort accounting does not ride on `defer` for
+  that reason - the spawn wrapper's unwind backstop retires every cohort a
+  panicking goroutine still had open.
 - A function returning `Result<scalar, E>` or `Option<scalar>` answers its
   arm on every tier. The JIT hands such a return back as a two-word
   `[discriminant, payload]` carrier, and a body with no other aggregate at

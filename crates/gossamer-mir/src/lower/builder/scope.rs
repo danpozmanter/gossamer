@@ -74,6 +74,7 @@ impl<'a> Builder<'a> {
     }
 
     pub(crate) fn bind_local(&mut self, name: &str, local: Local) {
+        self.named_locals.insert(local);
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), local);
         }

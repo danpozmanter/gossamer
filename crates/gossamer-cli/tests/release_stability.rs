@@ -460,6 +460,65 @@ fn main() {
 }
 
 #[test]
+fn release_slot_containers_are_values_not_aliases() {
+    // A binding taken from a slot container, and a by-value parameter, each
+    // get a value of their own. The elements live behind a handle, so this
+    // is built rather than inherited - and the release backend is where a
+    // missed clone shows as a shared pointer.
+    assert_release_stdout_eq(
+        "slot_container_values",
+        r#"
+use std::collections::{Deque, Queue, Stack}
+
+fn grow(mut d: Deque<i64>) -> i64 {
+    d.push_back(99)
+    d.len()
+}
+
+fn main() {
+    let d = Deque::from([1, 2])
+    let mut d2 = d
+    d2.push_back(9)
+    let q = Queue::from([1, 2])
+    let mut q2 = q
+    q2.push(9)
+    let s = Stack::from([1, 2])
+    let mut s2 = s
+    s2.push(9)
+    println("{} {} {} {} {} {}", d.len(), d2.len(), q.len(), q2.len(), s.len(), s2.len())
+    println("{} {}", grow(d), d.len())
+}
+"#,
+        "2 3 2 3 2 3
+3 2
+",
+    );
+}
+
+#[test]
+fn release_a_binding_taken_from_a_constructed_container_keeps_its_own_storage() {
+    // A `let` may take over a constructor's destination temporary, but only
+    // while that temporary is anonymous. Once a name owns the local, the call
+    // that defines it belongs to that name: re-pointing it leaves the first
+    // binding reading a slot nothing ever writes.
+    assert_release_stdout_eq(
+        "ctor_rebind_names",
+        r#"
+fn main() {
+    let a = Vec::new()
+    let mut b = a
+    b.push(9)
+    let m = Map::new()
+    let mut m2 = m
+    m2.insert("k", 1)
+    println("{} {} {} {}", a.len(), b.len(), m.len(), m2.len())
+}
+"#,
+        "0 1 0 1\n",
+    );
+}
+
+#[test]
 fn release_hashmap_inc_idiom_counts_words() {
     // Catches the HashMap.inc counter idiom - a known weak point:
     // a recent fix landed for the round-2 String<->i64 lowering.

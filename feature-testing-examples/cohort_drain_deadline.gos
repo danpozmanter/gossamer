@@ -1,0 +1,35 @@
+// A child still running when the drain bound elapses is reported, not
+// waited for forever and not killed. The cohort is `cancellable: false`
+// so leaving the block cannot cut the child short: it keeps running, the
+// bound elapses, the report names it on stderr, and the block answers.
+// The child then finishes on its own and the program exits cleanly.
+use std::time
+
+fn slow(ms: i64) -> i64 {
+    time::sleep(ms)
+    ms
+}
+
+fn main() {
+    // The bound is far below the child's own duration, so it always
+    // elapses first; the child is exempt from cancellation, so leaving
+    // the block leaves it running rather than ending it.
+    let outstanding = cohort(cancellable: false, drain: 50) {
+        spawn(|| slow(400))
+    }
+    println("outstanding err={}", outstanding.is_err())
+
+    // A bound the children finish well inside never fires.
+    let inside = cohort(drain: 5000) {
+        spawn(|| slow(10))
+        spawn(|| slow(10))
+    }
+    println("inside err={}", inside.is_err())
+
+    // No bound at all: the block waits as long as its children take.
+    let unbounded = cohort {
+        spawn(|| slow(10))
+    }
+    println("unbounded err={}", unbounded.is_err())
+    println("done")
+}

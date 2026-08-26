@@ -660,23 +660,6 @@ fn op_label(tag: usize) -> &'static str {
                 "IntMapContainsKey",
             ),
             (
-                O::Spawn {
-                    callee: 0,
-                    args: 0,
-                    argc: 0,
-                },
-                "Spawn",
-            ),
-            (
-                O::SpawnMethod {
-                    receiver: 0,
-                    name_idx: 0,
-                    args: 0,
-                    argc: 0,
-                },
-                "SpawnMethod",
-            ),
-            (
                 O::IndexGet {
                     dst: 0,
                     base: 0,

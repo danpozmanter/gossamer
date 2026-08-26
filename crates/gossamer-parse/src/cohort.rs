@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! {
-//!     runtime::cohort_push(policy, timeout_ms, context)
+//!     runtime::cohort_push(policy, timeout_ms, isolation)
 //!     defer runtime::cohort_pop()
 //!     <body statements>
 //!     runtime::cohort_join()
@@ -28,8 +28,18 @@ use crate::parser::Parser;
 
 /// Completion policies, in the order the runtime numbers them.
 const POLICIES: &[(&str, i64)] = &[("FailFast", 0), ("CollectAll", 1), ("Race", 2)];
-/// Execution contexts, in the order the runtime numbers them.
-const CONTEXTS: &[(&str, i64)] = &[("Default", 0), ("Isolated", 1)];
+/// Isolation settings, in the order the runtime numbers them.
+const ISOLATIONS: &[(&str, i64)] = &[("Shared", 0), ("Thread", 1)];
+/// Error dispositions, in the order the runtime numbers them. This is what
+/// the cohort DOES with a child's failure; `policy` decides when the block
+/// stops waiting. Neither ever makes a child unaccountable: an ignored
+/// failure is still counted, still drained, and still named by the drain
+/// report at exit.
+const ON_ERRORS: &[(&str, i64)] = &[("Propagate", 0), ("Log", 1), ("Ignore", 2)];
+/// The retired isolation spelling, mapped to the setting that replaced it.
+/// `context::Context` is the cancellation type a cohort may one day inherit,
+/// so the key names what it decides: whether a child owns an OS thread.
+const RETIRED_CONTEXTS: &[(&str, &str)] = &[("Default", "Shared"), ("Isolated", "Thread")];
 
 /// A cohort header's settings. The default is a bare `cohort { }`:
 /// fail-fast, no deadline, children on the shared carriers.
@@ -37,7 +47,15 @@ const CONTEXTS: &[(&str, i64)] = &[("Default", 0), ("Isolated", 1)];
 struct CohortHeader {
     policy: i64,
     timeout_ms: i64,
-    context: i64,
+    isolation: i64,
+    on_error: i64,
+    /// `0` when the cohort's children may be cancelled (the default) and
+    /// `1` when they are exempt - what `sync::shield` compiles to.
+    uncancellable: i64,
+    /// Milliseconds the block waits for its children to finish once the
+    /// body is done, or `0` for "wait as long as it takes". Distinct from
+    /// `timeout_ms`, which bounds the body's own work.
+    drain_ms: i64,
 }
 
 impl Parser<'_> {
@@ -108,7 +126,14 @@ impl Parser<'_> {
         let mut stmts = Vec::with_capacity(block.stmts.len() + 3);
         stmts.push(self.runtime_call_stmt(
             "cohort_push",
-            &[header.policy, header.timeout_ms, header.context],
+            &[
+                header.policy,
+                header.timeout_ms,
+                header.isolation,
+                header.on_error,
+                header.uncancellable,
+                header.drain_ms,
+            ],
             start,
         ));
         stmts.push(Stmt::new(
@@ -159,12 +184,19 @@ impl Parser<'_> {
             }
             match name.as_str() {
                 "policy" => header.policy = self.parse_cohort_enum_arg("Policy", POLICIES),
-                "context" => header.context = self.parse_cohort_enum_arg("Context", CONTEXTS),
+                "isolation" => {
+                    header.isolation = self.parse_cohort_enum_arg("Isolation", ISOLATIONS);
+                }
+                "on_error" => header.on_error = self.parse_cohort_enum_arg("OnError", ON_ERRORS),
+                "cancellable" => header.uncancellable = i64::from(!self.parse_cohort_bool_arg()),
+                "drain" => header.drain_ms = self.parse_cohort_int_arg(),
+                "context" => header.isolation = self.parse_retired_context_arg(name_span),
                 "timeout" => header.timeout_ms = self.parse_cohort_int_arg(),
                 _ => {
                     self.record(
                         ParseError::unexpected(
-                            "one of `policy`, `timeout`, or `context`",
+                            "one of `policy`, `timeout`, `isolation`, `on_error`, \
+                             `cancellable`, or `drain`",
                             format!("`{name}`"),
                         ),
                         name_span,
@@ -180,12 +212,14 @@ impl Parser<'_> {
         header
     }
 
-    /// Parses `Policy::FailFast` / `Context::Isolated` and folds it to
+    /// Parses `Policy::FailFast` / `Isolation::Thread` and folds it to
     /// the runtime's number for that variant.
     fn parse_cohort_enum_arg(&mut self, enum_name: &str, variants: &[(&str, i64)]) -> i64 {
         let span = self.peek_span();
         let mut text = String::new();
-        while matches!(self.peek().kind, TokenKind::Ident) || self.at_punct(Punct::ColonColon) {
+        while (matches!(self.peek().kind, TokenKind::Ident) || self.at_punct(Punct::ColonColon))
+            && (text.is_empty() || !self.newline_before_peek())
+        {
             text.push_str(self.slice(self.peek_span()));
             self.bump();
         }
@@ -217,6 +251,64 @@ impl Parser<'_> {
             span,
         );
         0
+    }
+
+    /// Parses the retired `context: Context::*` isolation spelling. The
+    /// value still folds to the setting it always named, so the rest of the
+    /// file is diagnosed on its own terms.
+    fn parse_retired_context_arg(&mut self, name_span: Span) -> i64 {
+        let mut value_span = self.peek_span();
+        let mut text = String::new();
+        while (matches!(self.peek().kind, TokenKind::Ident) || self.at_punct(Punct::ColonColon))
+            && (text.is_empty() || !self.newline_before_peek())
+        {
+            value_span = self.peek_span();
+            text.push_str(self.slice(value_span));
+            self.bump();
+        }
+        let written = text.rsplit("::").next().unwrap_or_default();
+        let Some((_, renamed)) = RETIRED_CONTEXTS
+            .iter()
+            .find(|(retired, _)| *retired == written)
+        else {
+            self.record(
+                ParseError::unexpected(
+                    "`Isolation::Shared` or `Isolation::Thread`",
+                    if text.is_empty() {
+                        "nothing".to_string()
+                    } else {
+                        text
+                    },
+                ),
+                value_span,
+            );
+            return 0;
+        };
+        self.record(
+            ParseError::CohortIsolationSpelling {
+                replacement: format!("isolation: Isolation::{renamed}"),
+            },
+            name_span.join(value_span),
+        );
+        ISOLATIONS
+            .iter()
+            .find(|(name, _)| name == renamed)
+            .map_or(0, |(_, value)| *value)
+    }
+
+    /// Parses a cohort header's `true` / `false` setting.
+    fn parse_cohort_bool_arg(&mut self) -> bool {
+        let span = self.peek_span();
+        let text = self.slice(span).to_string();
+        if matches!(text.as_str(), "true" | "false") {
+            self.bump();
+            return text == "true";
+        }
+        self.record(
+            ParseError::unexpected("`true` or `false`", format!("`{text}`")),
+            span,
+        );
+        true
     }
 
     /// Parses a cohort header's millisecond count.

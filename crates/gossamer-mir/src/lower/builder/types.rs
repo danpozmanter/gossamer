@@ -73,6 +73,7 @@ impl<'a> Builder<'a> {
             blocks: Vec::new(),
             current: None,
             scopes: vec![HashMap::new()],
+            named_locals: std::collections::HashSet::new(),
             reference_aliases: vec![HashMap::new()],
             fn_span: span,
             structs,

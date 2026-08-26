@@ -3999,7 +3999,7 @@ fn repl_info_names_a_bare_stdlib_trait_and_the_method_to_implement() {
         out.stdout
     );
     assert!(
-        out.stdout.contains("to_string"),
+        out.stdout.contains("fn fmt(&self) -> String"),
         "the entry should name the method an impl supplies: {}",
         out.stdout
     );

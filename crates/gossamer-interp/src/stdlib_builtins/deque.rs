@@ -93,6 +93,53 @@ fn deque_handle_named(id: i64, name: &'static str) -> Value {
     )
 }
 
+/// A deque, queue, or stack with its own registry entry, so a binding taken
+/// from another leaves that one untouched. Any other value clones the cheap
+/// way `Value::clone` does.
+pub(crate) fn deque_deep_clone(value: &Value) -> Value {
+    let Value::Struct(inner) = value else {
+        return value.clone();
+    };
+    let name: &'static str = match inner.name.as_str() {
+        "Deque" => "Deque",
+        "Queue" => "Queue",
+        "Stack" => "Stack",
+        _ => return value.clone(),
+    };
+    let Some(id) = deque_id_of(value) else {
+        return value.clone();
+    };
+    let entries = DEQUE_REGISTRY.with(|r| r.borrow().get(&id).cloned().unwrap_or_default());
+    let new_id = next_deque_handle();
+    DEQUE_REGISTRY.with(|r| {
+        r.borrow_mut().insert(new_id, entries);
+    });
+    let handle = deque_handle_named(new_id, name);
+    carry_render_fields(&handle, inner)
+}
+
+/// `handle` with every non-identity field of `source` copied onto it. A
+/// rendered handle carries the element descriptor that tells a `Vec`
+/// element from a fixed-array one; a clone that dropped it would render
+/// the copy in the other spelling.
+fn carry_render_fields(handle: &Value, source: &crate::value::StructInner) -> Value {
+    let extra: Vec<(&'static str, Value)> = source
+        .fields
+        .iter()
+        .filter(|(name, _)| !matches!(**name, "__deque" | "__queue" | "__stack" | "__heap"))
+        .map(|(name, value)| (*name, value.clone()))
+        .collect();
+    if extra.is_empty() {
+        return handle.clone();
+    }
+    let Value::Struct(new_inner) = handle else {
+        return handle.clone();
+    };
+    let mut fields = new_inner.fields.to_vec();
+    fields.extend(extra);
+    Value::struct_(new_inner.name.as_str(), fields)
+}
+
 pub(crate) fn deque_snapshot(value: &Value) -> Option<Vec<Value>> {
     let id = deque_id_of(value)?;
     DEQUE_REGISTRY.with(|r| r.borrow().get(&id).map(|d| d.iter().cloned().collect()))

@@ -2935,6 +2935,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::runtime",
+        name: "cohorts",
+        signature: "fn cohorts() -> Vec<String>",
+    },
+    StdFunctionSignature {
+        module_path: "std::runtime",
         name: "cohort_cancelled",
         signature: "fn cohort_cancelled() -> bool",
     },
@@ -2951,7 +2956,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::runtime",
         name: "cohort_push",
-        signature: "fn cohort_push(policy: i64, timeout_ms: i64, context: i64) -> ()",
+        signature: "fn cohort_push(policy: i64, timeout_ms: i64, isolation: i64, on_error: i64, uncancellable: i64, drain_ms: i64) -> ()",
     },
     StdFunctionSignature {
         module_path: "std::runtime",

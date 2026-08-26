@@ -67,6 +67,7 @@ version. This page is auto-generated from the catalogue in
 | [`GT0082`](#gt0082) | Types | reference passed where a value is taken |
 | [`GT0083`](#gt0083) | Types | write through a value that is not a reference |
 | [`GP0052`](#gp0052) | Parser | build-time validated call without a literal |
+| [`GP0056`](#gp0056) | Parser | retired cohort isolation spelling |
 | [`GP0053`](#gp0053) | Parser | `Display` rendering declared as `to_string` |
 | [`GP0054`](#gp0054) | Parser | shared reference in parameter position |
 | [`GP0055`](#gp0055) | Parser | shared reference on a call argument |
@@ -419,6 +420,12 @@ A parameter that is not `&mut` takes the value, and a reference names one rather
 **Parser** - build-time validated call without a literal
 
 `sql::statement` was handed something other than a literal. The statement is checked while the program is compiled, so it has to be there to check; a statement built at run time is an ordinary `String` and needs no wrapper.
+
+## `GP0056` <a id="gp0056"></a>
+
+**Parser** - retired cohort isolation spelling
+
+`context::Context` is the cancellation type a cohort may one day inherit; this setting decides whether a child gets an OS thread of its own, so it is `isolation: Isolation::Shared` or `isolation: Isolation::Thread`. `--fix` rewrites it.
 
 ## `GP0053` <a id="gp0053"></a>
 

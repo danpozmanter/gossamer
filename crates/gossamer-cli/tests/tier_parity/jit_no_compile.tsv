@@ -98,6 +98,9 @@ feature-testing-examples/closure_goroutine.gos	bytecode-only local
 feature-testing-examples/closure_payload_typing.gos	callable local
 feature-testing-examples/cohort_basics.gos	cross-goroutine
 feature-testing-examples/cohort_cancel.gos	cross-goroutine
+feature-testing-examples/cohort_drain_deadline.gos	cross-goroutine
+feature-testing-examples/cohort_enumeration.gos	cross-goroutine
+feature-testing-examples/cohort_header_settings.gos	cross-goroutine
 feature-testing-examples/combinator_element_kinds.gos	entry shape
 feature-testing-examples/compress_bzip2.gos	no hot body
 feature-testing-examples/compress_zstd.gos	no hot body
@@ -290,6 +293,7 @@ feature-testing-examples/shared_across_goroutines.gos	admission gate
 feature-testing-examples/single_field_struct_aggregate.gos	bytecode-only local
 feature-testing-examples/slice_methods.gos	no hot body
 feature-testing-examples/slice_pattern_fixed_array.gos	no hot body
+feature-testing-examples/slot_container_value_semantics.gos	container param kinds
 feature-testing-examples/sort_with_closure.gos	no hot body
 feature-testing-examples/spawn_join.gos	no hot body
 feature-testing-examples/spawn_operand_order.gos	cross-goroutine

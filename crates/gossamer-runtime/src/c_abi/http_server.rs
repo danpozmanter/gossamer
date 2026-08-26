@@ -1133,12 +1133,17 @@ fn watch_for_disconnect(stream: &TcpStream, ctx: usize) -> Option<DisconnectWatc
         use std::os::windows::io::AsRawSocket;
         stream.as_raw_socket()
     };
-    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // The waits between probes are interruptible: the request ends far more
+    // often than a peer disappears, and a plain sleep would make every
+    // request pay the remainder of one before the watch could be joined.
+    let done = std::sync::Arc::new((parking_lot::Mutex::new(false), parking_lot::Condvar::new()));
     let stop = std::sync::Arc::clone(&done);
     let handle = std::thread::Builder::new()
         .name("gos-http-peer-watch".to_string())
         .spawn(move || {
-            while !stop.load(Ordering::Acquire) {
+            let (flag, wake) = &*stop;
+            let mut ended = flag.lock();
+            while !*ended {
                 // MSG_PEEK leaves the byte queued; MSG_DONTWAIT keeps the
                 // probe from blocking on a peer that is merely quiet.
                 // Zero means the peer closed its side.
@@ -1146,7 +1151,10 @@ fn watch_for_disconnect(stream: &TcpStream, ctx: usize) -> Option<DisconnectWatc
                     crate::c_abi::context::close_request_context(ctx);
                     return;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(20));
+                wake.wait_for(
+                    &mut ended,
+                    std::time::Duration::from_millis(PEER_WATCH_INTERVAL_MS),
+                );
             }
         })
         .ok()?;
@@ -1156,17 +1164,26 @@ fn watch_for_disconnect(stream: &TcpStream, ctx: usize) -> Option<DisconnectWatc
     })
 }
 
+/// How long the peer watch waits between probes. It only bounds how late a
+/// disconnect is noticed; the request's own end wakes the watch at once.
+const PEER_WATCH_INTERVAL_MS: u64 = 20;
+
 /// Stops the peer watch when the request ends.
 #[cfg(any(unix, windows))]
 struct DisconnectWatch {
-    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    done: std::sync::Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(any(unix, windows))]
 impl Drop for DisconnectWatch {
     fn drop(&mut self) {
-        self.done.store(true, Ordering::Release);
+        let (flag, wake) = &*self.done;
+        *flag.lock() = true;
+        // Waking before the join is what keeps the request off the watch's
+        // probe interval: the thread is waiting on this condvar, not
+        // sleeping through it, so it observes the flag and leaves at once.
+        wake.notify_all();
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

@@ -475,6 +475,49 @@ pub unsafe extern "C" fn gos_rt_stack_format_desc(
 }
 
 /// Release the deque and whatever its live elements own.
+/// A deque with its own element store, so a binding taken from another
+/// leaves that one untouched. `Queue` and `Stack` are the same header and
+/// clone through here.
+///
+/// # Safety
+/// `d` is a live `GosDeque` or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_clone(d: *mut GosDeque) -> *mut GosDeque {
+    ffi_entry!(std::ptr::null_mut(), {
+        if d.is_null() {
+            return unsafe { gos_rt_deque_new() };
+        }
+        // Compacting first puts the live range at index zero, which is the
+        // shape `gos_rt_vec_clone` copies and the element metadata reads.
+        unsafe { deque_compact(d) };
+        let source = unsafe { &*d }.vec;
+        let vec = if source.is_null() {
+            unsafe { crate::c_abi::vec::gos_rt_vec_new_typed(8u32, vec_elem_kind::PRIMITIVE) }
+        } else {
+            unsafe { crate::c_abi::string::gos_rt_vec_clone(source) }
+        };
+        Box::into_raw(Box::new(GosDeque { vec, head: 0 }))
+    })
+}
+
+/// `Queue::clone` - the same header a deque has.
+///
+/// # Safety
+/// `d` is a live `GosDeque` or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_queue_clone(d: *mut GosDeque) -> *mut GosDeque {
+    unsafe { gos_rt_deque_clone(d) }
+}
+
+/// `Stack::clone` - the same header a deque has.
+///
+/// # Safety
+/// `d` is a live `GosDeque` or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_stack_clone(d: *mut GosDeque) -> *mut GosDeque {
+    unsafe { gos_rt_deque_clone(d) }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_free(d: *mut GosDeque) {
     ffi_entry!((), {

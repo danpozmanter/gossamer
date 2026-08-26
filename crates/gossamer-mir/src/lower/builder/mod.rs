@@ -52,6 +52,10 @@ pub(crate) struct Builder<'a> {
     pub(crate) blocks: Vec<BasicBlock>,
     pub(crate) current: Option<BlockId>,
     pub(crate) scopes: Vec<HashMap<String, Local>>,
+    /// Locals a `let` has published under a name. Such a local is the
+    /// binding's own storage for the rest of its scope, so no later
+    /// rebinding may re-point the call that defines it.
+    pub(crate) named_locals: std::collections::HashSet<Local>,
     /// Names bound to a direct local reference. These names resolve to the
     /// source local, while deref lowering uses the marker to avoid adding a
     /// second physical dereference to that source place.

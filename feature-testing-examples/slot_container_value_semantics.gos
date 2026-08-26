@@ -1,0 +1,97 @@
+// A binding taken from a container, and a by-value parameter, each get a
+// value of their own: writing through one leaves the other untouched. The
+// slot containers reach their elements through a handle, so this is the
+// property that has to be built rather than inherited.
+use std::collections::{Deque, Map, MaxHeap, MinHeap, Queue, Set, Stack, Vec}
+
+fn grow_deque(mut d: Deque<i64>) -> i64 {
+    d.push_back(99)
+    d.len()
+}
+
+fn grow_queue(mut q: Queue<i64>) -> i64 {
+    q.push(99)
+    q.len()
+}
+
+fn grow_stack(mut s: Stack<i64>) -> i64 {
+    s.push(99)
+    s.len()
+}
+
+fn grow_min(mut h: MinHeap<i64>) -> i64 {
+    h.push(99)
+    h.len()
+}
+
+fn grow_max(mut h: MaxHeap<i64>) -> i64 {
+    h.push(99)
+    h.len()
+}
+
+fn grow_vec(mut v: Vec<i64>) -> i64 {
+    v.push(99)
+    v.len()
+}
+
+fn grow_map(mut m: Map<String, i64>) -> i64 {
+    m.insert("z", 99)
+    m.len()
+}
+
+fn grow_set(mut s: Set<i64>) -> i64 {
+    s.insert(99)
+    s.len()
+}
+
+fn main() {
+    let d = Deque::from([1, 2])
+    let mut d2 = d
+    d2.push_back(9)
+    println("deque {} {} {}", d.len(), d2.len(), grow_deque(d))
+    println("deque after call {}", d.len())
+
+    let q = Queue::from([1, 2])
+    let mut q2 = q
+    q2.push(9)
+    println("queue {} {} {}", q.len(), q2.len(), grow_queue(q))
+    println("queue after call {}", q.len())
+
+    let s = Stack::from([1, 2])
+    let mut s2 = s
+    s2.push(9)
+    println("stack {} {} {}", s.len(), s2.len(), grow_stack(s))
+    println("stack after call {}", s.len())
+
+    let mn = MinHeap::from([3, 1])
+    let mut mn2 = mn
+    mn2.push(9)
+    println("minheap {} {} {}", mn.len(), mn2.len(), grow_min(mn))
+    println("minheap after call {}", mn.len())
+
+    let mx = MaxHeap::from([3, 1])
+    let mut mx2 = mx
+    mx2.push(9)
+    println("maxheap {} {} {}", mx.len(), mx2.len(), grow_max(mx))
+    println("maxheap after call {}", mx.len())
+
+    let v = #[1, 2]
+    let mut v2 = v
+    v2.push(9)
+    println("vec {} {} {}", v.len(), v2.len(), grow_vec(v))
+    println("vec after call {}", v.len())
+
+    let m = { "k": 1 }
+    let mut m2 = m
+    m2.insert("y", 9)
+    println("map {} {} {}", m.len(), m2.len(), grow_map(m))
+    println("map after call {}", m.len())
+
+    let st = #{ 1, 2 }
+    let mut st2 = st
+    st2.insert(9)
+    println("set {} {} {}", st.len(), st2.len(), grow_set(st))
+    println("set after call {}", st.len())
+
+    println("contents {} {} {} {} {} {}", d, q, s, mn, mx, v)
+}

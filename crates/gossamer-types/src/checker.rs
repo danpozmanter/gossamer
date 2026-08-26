@@ -1667,6 +1667,52 @@ impl<'a> TypeChecker<'a> {
         self.infer.fresh_var(self.tcx)
     }
 
+    /// True when `ty` names a generic parameter anywhere inside it. A
+    /// declared return that does is only meaningful under the call site's
+    /// substitution, so it is not recorded as a concrete method return.
+    fn ty_mentions_generic_param(&self, ty: Ty) -> bool {
+        let mut seen = Vec::new();
+        self.ty_mentions_generic_param_at(ty, 0, &mut seen)
+    }
+
+    fn ty_mentions_generic_param_at(&self, ty: Ty, depth: u32, seen: &mut Vec<Ty>) -> bool {
+        if depth > 12 || seen.contains(&ty) {
+            return false;
+        }
+        seen.push(ty);
+        match self.tcx.kind(ty) {
+            Some(TyKind::Param { .. }) => true,
+            Some(
+                TyKind::Vec(inner)
+                | TyKind::Slice(inner)
+                | TyKind::Array { elem: inner, .. }
+                | TyKind::Ref { inner, .. },
+            ) => self.ty_mentions_generic_param_at(*inner, depth + 1, seen),
+            Some(TyKind::Tuple(parts)) => {
+                for part in parts {
+                    if self.ty_mentions_generic_param_at(*part, depth + 1, seen) {
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(TyKind::HashMap { key, value, .. }) => {
+                let (key, value) = (*key, *value);
+                self.ty_mentions_generic_param_at(key, depth + 1, seen)
+                    || self.ty_mentions_generic_param_at(value, depth + 1, seen)
+            }
+            Some(TyKind::Adt { substs, .. }) => {
+                for arg in substs.types() {
+                    if self.ty_mentions_generic_param_at(arg, depth + 1, seen) {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     /// Walks `ty` and substitutes each `TyKind::Param { idx }`
     /// reference with `substs[idx]`. Used at struct-literal and
     /// generic-call sites where the declared field/parameter
@@ -3361,23 +3407,46 @@ impl<'a> TypeChecker<'a> {
                 let _ = id;
                 self.register_fn_sig_anonymous(fn_decl);
                 self.register_method_arg_sig(fn_decl);
+                // A method with its own type parameters is registered too,
+                // as long as its RETURN names none of them: `fn arg<T:
+                // Arg>(self, v: T) -> Cmd` answers a `Cmd` at every call
+                // site, so recording it is what keeps a field read through
+                // the result checked. Without this the call typed as a fresh
+                // variable and `c.no_such_field` passed `gos check`.
+                let method_ret_is_concrete = fn_decl.generics.params.is_empty()
+                    || fn_decl.ret.as_ref().is_some_and(|ty| {
+                        let scope = self.enter_generic_scope(&fn_decl.generics);
+                        let resolved = self.type_from_ast(ty);
+                        self.leave_generic_scope(scope);
+                        !self.ty_mentions_generic_param(resolved)
+                    });
                 if let Some(names) = &self_names
-                    && fn_decl.generics.params.is_empty()
+                    && method_ret_is_concrete
                 {
+                    // A method with its own type parameters contributes its
+                    // RETURN only: its parameter types carry rigid `Param`
+                    // slots that each call site instantiates for itself, so
+                    // recording them would check the second `arg("two")`
+                    // against the first `arg(1)`'s instantiation.
+                    let own_generics = !fn_decl.generics.params.is_empty();
+                    let scope = self.enter_generic_scope(&fn_decl.generics);
                     let params: Vec<Ty> = fn_decl
                         .params
                         .iter()
                         .filter(|p| matches!(p, FnParam::Typed { .. }))
                         .map(|p| self.param_ty(p))
                         .collect();
-                    let arity = params.len();
                     let ret = match fn_decl.ret.as_ref() {
                         Some(ty) => self.type_from_ast(ty),
                         None => self.tcx.unit(),
                     };
+                    self.leave_generic_scope(scope);
+                    let arity = params.len();
                     for name in names {
-                        self.method_param_types
-                            .insert((name.clone(), fn_decl.name.name.clone()), params.clone());
+                        if !own_generics {
+                            self.method_param_types
+                                .insert((name.clone(), fn_decl.name.name.clone()), params.clone());
+                        }
                         self.method_ret_types
                             .insert((name.clone(), fn_decl.name.name.clone(), arity), ret);
                         self.method_arities

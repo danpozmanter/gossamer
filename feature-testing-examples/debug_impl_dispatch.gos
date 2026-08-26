@@ -1,5 +1,5 @@
 // `Display` and `Debug` are distinct contracts: `{}` answers through a type's
-// `impl Display` (`to_string`) and `{:?}` through its `impl Debug` (`fmt`).
+// `impl Display` and `{:?}` through its `impl Debug`, each declaring `fn fmt`.
 // A type implementing one keeps the synthesized rendering on the other
 // channel, at the top level and inside a container, tuple, `Option`, or
 // struct field.

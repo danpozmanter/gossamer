@@ -333,8 +333,10 @@ Write clear, low-complexity, concise code.
   `x.into()`/`x.try_into()`), `Add` `Sub` `Mul` `Div` `Rem` `Neg`
   `Index` `BitOr` `BitAnd` `BitXor` `Shl` `Shr`.
 - **Labeled loops**: `'outer: for .. { break 'outer }`.
-- **`defer expr`** - runs when control leaves the enclosing `{ }` by
-  any path, LIFO; per-iteration in a loop body.
+- **`defer expr`** - runs when control leaves the enclosing `{ }` by any
+  edge the compiler sees (block end, `return`, `break`, `continue`, `?`),
+  LIFO; per-iteration in a loop body. A panic is not one of those edges, so
+  put what must hold across a panic somewhere other than a `defer`.
 - **`let PAT = expr else { ... }`** - the else block must diverge.
 - **Name an argument or default a parameter** when a call reads better
   for it: `fn volume(width: i64, height: i64 = 2)` then `volume(2)`,
@@ -497,6 +499,8 @@ let shout = "  Hi  ".trim().to_lowercase() |> exclaim
   A parameter's reference lives in its TYPE: write `fn f(xs: &mut Vec<i64>)`,
   never `fn f(&mut xs: Vec<i64>)` - a `&` in the pattern destructures a
   reference the type already names, so over a value type it reports GT0069.
+  `*` reaches the place a reference names, so a write through one over a
+  value (`*x = v` where `x` is an `i64`) reports GT0083.
 - **`&x` and `&mut x` are aliases, never copies**, and there are no
   lifetimes or non-lexical borrow analysis. A lightweight lexical check
   rejects a second named `&mut` to the same root, overlap with an active
@@ -609,8 +613,15 @@ fn gather() -> Result<(), errors::Error> {
 Header settings: `cohort(policy: Policy::CollectAll)` runs every child
 and reports all failures, `Policy::Race` stops at the first success (the
 losers are cancelled, not rolled back), `cohort(timeout: 500)` bounds the
-block in milliseconds, and `cohort(context: Context::Isolated)` gives
-each child its own OS thread - what synchronous Rust FFI and
+block in milliseconds, and `cohort(isolation: Isolation::Thread)` gives
+each child its own OS thread (`Isolation::Shared` is the default).
+`cohort(on_error: OnError::Log)` names each failure on stderr and answers
+`Ok` (`Propagate` is the default, `Ignore` says nothing);
+`cohort(cancellable: false)` exempts the block from cancellation; and
+`cohort(drain: 2000)` bounds the wait for the children once the body is
+done, where `timeout:` bounds the body itself. No setting makes a child
+unaccountable - every one is counted, drained, and named if it never
+finishes - what synchronous Rust FFI and
 never-yielding CPU-bound work need. Cancellation is cooperative and
 never a kill: a cancelled `recv` answers `None` exactly as a closed
 channel does, a `sleep` returns early, and the child leaves through its
@@ -841,7 +852,8 @@ Full path spelling is validated (GR0005); discover signatures with
   `hash::{fnv, crc32, adler32}`, `uuid` (v4/v7), `jwt`,
   `compress::{gzip, flate, zlib, zstd, bzip2}`, `archive::{zip,
   tar}`, `metrics`, `trace`, `slog`, `lifecycle`, `validate`,
-  `testing`, `runtime` (`collect_cycles`, `set_panic_hook`),
+  `testing`, `runtime` (`collect_cycles`, `set_panic_hook`, `cohorts()` -
+  one descriptor line per live cohort),
   `pprof` (`goroutine_profile` / `mutex_profile` / `block_profile` in
   `go tool pprof` text form, `execution_trace(millis)` as Chrome trace
   JSON, `route(path, query)` for `/debug/pprof/...`).

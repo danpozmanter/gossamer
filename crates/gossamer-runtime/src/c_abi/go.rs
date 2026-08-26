@@ -308,7 +308,7 @@ pub unsafe extern "C" fn gos_rt_spawn_ex(
             cohort_guard.report();
             deliver_outcome(ch_addr, 0, value);
         };
-        if cohort != 0 && super::cohort::current_context() == super::cohort::CONTEXT_ISOLATED {
+        if cohort != 0 && super::cohort::current_isolation() == super::cohort::ISOLATION_THREAD {
             // An isolated child owns an OS thread for its whole life, so
             // it may block or call into synchronous Rust without
             // stalling anything else. Channels already work from a

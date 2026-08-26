@@ -13704,8 +13704,27 @@
       "id": "std-runtime-cohort-push",
       "name": "std::runtime::cohort_push",
       "kind": "function",
-      "signature": "fn cohort_push(policy: i64, timeout_ms: i64, context: i64) -> ()",
+      "signature": "fn cohort_push(policy: i64, timeout_ms: i64, isolation: i64, on_error: i64, uncancellable: i64, drain_ms: i64) -> ()",
       "description": "Opens a cohort on the running goroutine. Written `cohort { }` in source; the block desugars to this plus `cohort_join` and a deferred `cohort_pop`.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdruntime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-runtime-cohorts",
+      "name": "std::runtime::cohorts",
+      "kind": "function",
+      "signature": "fn cohorts() -> Vec<String>",
+      "description": "One descriptor line per live cohort, oldest id first: id, parent, completion policy, error disposition, outstanding count, and the spawn indices still running. A cohort is enumerable so a program can say what it is waiting on without joining it.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

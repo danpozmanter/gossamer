@@ -603,7 +603,10 @@ mod policy_tests {
         let root = std::env::temp_dir().join(format!("gos-sandbox-policy-{tag}"));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("inner")).expect("create fixture tree");
-        root.canonicalize().expect("canonicalize fixture")
+        // The policy records a path the way `simplified` spells it, so a
+        // fixture that expects to match a compiled rule must spell it the
+        // same way.
+        simplified(&root.canonicalize().expect("canonicalize fixture"))
     }
 
     #[cfg(unix)]

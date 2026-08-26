@@ -3084,3 +3084,76 @@ fn a_bare_call_naming_a_module_reports_the_import_it_needs() {
     assert_eq!(native.0.trim(), "12", "native stderr: {}", native.1);
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_dependency_s_tests_run_once_in_its_own_project() {
+    // A test belongs to the project whose source declares it. The unit a
+    // dependent is checked in carries the dependency's source inlined, so
+    // without attributing each test to the file its bytes came from, a
+    // dependency's tests run again for every project that depends on it.
+    let root = fresh_dir("dependency-tests-once");
+    let lib = root.join("intcode");
+    fs::create_dir_all(lib.join("src")).unwrap();
+    fs::write(
+        lib.join("project.toml"),
+        "[project]\nid = \"example.com/intcode\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        lib.join("src/lib.gos"),
+        "pub fn run(x: i64) -> i64 { x * 2 }\n\
+         #[cfg(test)]\n\
+         mod tests {\n\
+             use std::testing\n\
+             #[test]\n\
+             fn library_test() { let _ = testing::check_eq(super::run(2), 4, \"doubles\") }\n\
+         }\n",
+    )
+    .unwrap();
+    for app in ["d01", "d02"] {
+        let dir = root.join(app);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("project.toml"),
+            format!(
+                "[project]\nid = \"example.com/{app}\"\nversion = \"0.1.0\"\n\n\
+                 [dependencies]\n\"example.com/intcode\" = {{ path = \"../intcode\" }}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/main.gos"),
+            "use intcode\n\
+             fn main() { println(\"{}\", intcode::run(3)) }\n\
+             #[cfg(test)]\n\
+             mod tests {\n\
+                 use std::testing\n\
+                 #[test]\n\
+                 fn app_test() { let _ = testing::check_eq(intcode::run(1), 2, \"own\") }\n\
+             }\n",
+        )
+        .unwrap();
+    }
+
+    let child = Command::new(gos_bin())
+        .arg("test")
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn gos test");
+    let (stdout, stderr, code) = run_with_timeout(child);
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(code, Some(0), "gos test failed:\n{stdout}{stderr}");
+    assert_eq!(
+        stdout.matches("library_test").count(),
+        1,
+        "the dependency's test ran more than once:\n{stdout}"
+    );
+    assert_eq!(
+        stdout.matches("app_test").count(),
+        2,
+        "each dependent's own test runs once:\n{stdout}"
+    );
+}

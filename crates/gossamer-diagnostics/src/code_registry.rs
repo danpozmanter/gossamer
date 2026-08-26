@@ -625,6 +625,14 @@ pub const REGISTRY: &[(&str, &str)] = &[
             spelled `&mut` at the call too. `--fix` drops the `&`.",
     ),
     (
+        "GP0056",
+        "A cohort header used the retired `context:` isolation spelling.\n\
+            `context::Context` is the cancellation type a cohort may one\n\
+            day inherit; this setting decides whether a child gets an OS\n\
+            thread of its own, so it is `isolation: Isolation::Shared` or\n\
+            `isolation: Isolation::Thread`. `--fix` rewrites it.",
+    ),
+    (
         "GR0001",
         "A name used in source could not be resolved to a declaration.\n\
                      Check the spelling, whether a `use` brings the name into scope,\n\

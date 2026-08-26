@@ -147,6 +147,14 @@ impl<'a> Builder<'a> {
         let Some(cur) = self.current else {
             return false;
         };
+        // Only a fresh temporary may be re-pointed. Once a local is published
+        // under a name it is that binding's own storage, and stealing the call
+        // that defines it leaves the earlier name reading a slot nothing ever
+        // writes - `let a = Vec::new()` followed by `let b = a` would hand `b`
+        // the constructor and leave `a` uninitialised.
+        if self.named_locals.contains(&value) {
+            return false;
+        }
         // Calls lower to a terminator in a prior block whose continuation is
         // the current block. Their destination temporary is fresh by
         // construction and is consumed immediately by this let binding.
@@ -219,12 +227,35 @@ impl<'a> Builder<'a> {
     fn map_or_set_clone_symbol(&self, ty: gossamer_types::Ty) -> Option<&'static str> {
         const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
         const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
+        const VEC_DEQUE_DEF_LOCAL: u32 = u32::MAX - 19;
+        const BINARY_HEAP_DEF_LOCAL: u32 = u32::MAX - 28;
+        const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
+        const VEC_QUEUE_DEF_LOCAL: u32 = u32::MAX - 31;
+        const VEC_STACK_DEF_LOCAL: u32 = u32::MAX - 32;
         match self.tcx.kind_of(ty) {
             gossamer_types::TyKind::HashMap { .. } => Some("gos_rt_map_clone"),
             gossamer_types::TyKind::Adt { def, .. }
                 if matches!(def.local, HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL) =>
             {
                 Some("gos_rt_set_clone")
+            }
+            // A slot container reaches its storage through a handle, so a
+            // binding taken from one copies the storage rather than the
+            // handle. A heap IS a `GosVec`; a deque, a queue, and a stack
+            // share the `GosDeque` header.
+            gossamer_types::TyKind::Adt { def, .. }
+                if matches!(def.local, BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL) =>
+            {
+                Some("gos_rt_vec_clone")
+            }
+            gossamer_types::TyKind::Adt { def, .. } if def.local == VEC_DEQUE_DEF_LOCAL => {
+                Some("gos_rt_deque_clone")
+            }
+            gossamer_types::TyKind::Adt { def, .. } if def.local == VEC_QUEUE_DEF_LOCAL => {
+                Some("gos_rt_queue_clone")
+            }
+            gossamer_types::TyKind::Adt { def, .. } if def.local == VEC_STACK_DEF_LOCAL => {
+                Some("gos_rt_stack_clone")
             }
             _ => None,
         }
@@ -242,6 +273,14 @@ impl<'a> Builder<'a> {
     pub(crate) fn set_clone_symbol_for_local(&self, local: Local) -> Option<&'static str> {
         match self.local_runtime_kind.get(&local) {
             Some(&("collections::HashSet" | "collections::BTreeSet")) => Some("gos_rt_set_clone"),
+            // The slot containers reach their storage through a handle the
+            // same way a `Set` does, so a binding taken from one copies the
+            // storage rather than the handle. A heap IS a `GosVec`; a deque,
+            // a queue, and a stack share the `GosDeque` header.
+            Some(&("collections::MinHeap" | "collections::MaxHeap")) => Some("gos_rt_vec_clone"),
+            Some(&"collections::VecDeque") => Some("gos_rt_deque_clone"),
+            Some(&"collections::VecQueue") => Some("gos_rt_queue_clone"),
+            Some(&"collections::VecStack") => Some("gos_rt_stack_clone"),
             _ => None,
         }
     }

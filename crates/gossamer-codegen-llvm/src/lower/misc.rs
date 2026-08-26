@@ -1911,9 +1911,17 @@ pub(crate) fn container_format_desc_symbol(def_local: u32) -> Option<&'static st
 /// the container's sentinel ADT.
 pub(crate) fn container_ctor_format_symbol(ctor: &str) -> Option<&'static str> {
     Some(match ctor {
-        "gos_rt_deque_new" | "gos_rt_deque_from_vec_i64" => "gos_rt_deque_format",
-        "gos_rt_queue_new" | "gos_rt_queue_from_vec_i64" => "gos_rt_queue_format",
-        "gos_rt_stack_new" | "gos_rt_stack_from_vec_i64" => "gos_rt_stack_format",
+        // The clone a `let` binds through names the container kind exactly
+        // as its constructor does, so the rendering follows it the same way.
+        "gos_rt_deque_new" | "gos_rt_deque_from_vec_i64" | "gos_rt_deque_clone" => {
+            "gos_rt_deque_format"
+        }
+        "gos_rt_queue_new" | "gos_rt_queue_from_vec_i64" | "gos_rt_queue_clone" => {
+            "gos_rt_queue_format"
+        }
+        "gos_rt_stack_new" | "gos_rt_stack_from_vec_i64" | "gos_rt_stack_clone" => {
+            "gos_rt_stack_format"
+        }
         "gos_rt_bheap_max_new_i64" | "gos_rt_bheap_max_from_vec_i64" => "gos_rt_bheap_max_format",
         "gos_rt_bheap_min_new_i64" | "gos_rt_bheap_min_from_vec_i64" => "gos_rt_bheap_min_format",
         _ => return None,

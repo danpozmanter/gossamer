@@ -119,6 +119,11 @@ pub const RUNTIME: StdModule = StdModule {
             doc: "Closes the running goroutine's cohort, cancelling and joining anything still running.",
         },
         StdItem {
+            name: "cohorts",
+            kind: StdItemKind::Function,
+            doc: "One descriptor line per live cohort, oldest id first: id, parent, completion policy, error disposition, outstanding count, and the spawn indices still running. A cohort is enumerable so a program can say what it is waiting on without joining it.",
+        },
+        StdItem {
             name: "cohort_cancelled",
             kind: StdItemKind::Function,
             doc: "Whether the running goroutine's cohort has been cancelled. A CPU-bound child polls this to cooperate at a point of its own choosing.",

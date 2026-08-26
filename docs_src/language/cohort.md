@@ -159,7 +159,10 @@ above is one, and so is any ordinary call on an outer iteration.
 ```gossamer
 cohort(policy: Policy::CollectAll) { ... }
 cohort(timeout: 500) { ... }
-cohort(context: Context::Isolated) { ... }
+cohort(isolation: Isolation::Thread) { ... }
+cohort(on_error: OnError::Log) { ... }
+cohort(cancellable: false) { ... }
+cohort(drain: 2000) { ... }
 ```
 
 - **`policy:`** - `Policy::FailFast` (the default) stops at the first
@@ -169,13 +172,29 @@ cohort(context: Context::Isolated) { ... }
   not a transaction.
 - **`timeout:`** - milliseconds. The cohort is cancelled when the
   deadline passes, and the block reports the timeout as its error.
-- **`context:`** - `Context::Isolated` gives each child a dedicated OS
-  thread for its whole life. That is what a synchronous Rust FFI call or
+- **`on_error:`** - what the cohort does with a child's failure, where
+  `policy:` decides when it stops waiting. `OnError::Propagate` (the
+  default) makes the first failure the block's `Err`. `OnError::Log` names
+  every failure on stderr as it happens and the block answers `Ok`.
+  `OnError::Ignore` answers `Ok` and says nothing. None of them makes a
+  child unaccountable: it is still counted, still drained, and a child that
+  never finishes is still named by the drain report.
+- **`cancellable:`** - `false` exempts the cohort and everything under it
+  from cancellation, which is what a shielded region asks for. The
+  exemption covers cancellation only; the block still drains and reports.
+- **`drain:`** - milliseconds to wait for the children once the body is
+  done. Distinct from `timeout:`, which bounds the body's own work. Without
+  it the block waits as long as its children take, because leaving the
+  block is the program's statement that they are finished; a drain that
+  gives up names what it left running.
+- **`isolation:`** - `Isolation::Thread` gives each child a dedicated OS
+  thread for its whole life; `Isolation::Shared` is the default. That is what a synchronous Rust FFI call or
   never-yielding CPU-bound work needs: neither can be interrupted, and on
   a shared carrier they would stall every goroutine that carrier is
   running. Stdlib blocking calls need no such treatment - the runtime
-  already moves them off the carrier. Channels work across contexts
-  unchanged.
+  already moves them off the carrier. Channels work across both
+  unchanged. The retired `context:` spelling reports `GP0056` with the
+  rewrite, and `--fix` applies it.
 
 ## Nesting
 

@@ -24,7 +24,7 @@
 //!
 //! ## Deadlines
 //!
-//! [`with_deadline`] schedules a one-shot timer (via
+//! [`crate::context::with_deadline`] schedules a one-shot timer (via
 //! [`crate::time::after_func`]) that calls `Cancel::cancel_with`
 //! when the deadline elapses. Deadlines are therefore *active*:
 //! a goroutine parked on a `with_timeout` context wakes up on

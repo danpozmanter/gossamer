@@ -1,0 +1,50 @@
+// `defer` runs on the exit edges the compiler can see, and a panic is not
+// one of them. The cohort accounting a panicking child owes is kept by the
+// spawn wrapper's unwind backstop instead, so a nested cohort is still
+// retired and the program still leaves cleanly.
+fn edges(n: i64) -> i64 {
+    defer println("edges leaving {}", n)
+    if n == 0 {
+        return 10
+    }
+    let mut total = 0
+    for i in 0..n {
+        defer println("iteration {}", i)
+        if i == 2 {
+            break
+        }
+        total += i
+    }
+    total
+}
+
+fn fallible(n: i64) -> Option<i64> {
+    defer println("fallible leaving {}", n)
+    let v = if n > 0 { Some(n) } else { None }
+    Some(v? * 2)
+}
+
+fn panicking() -> i64 {
+    defer println("this defer does not run")
+    panic("invariant violated")
+}
+
+fn nested() -> i64 {
+    let inner = cohort {
+        spawn(|| panicking())
+    }
+    println("inner cohort failed: {}", inner.is_err())
+    7
+}
+
+fn main() {
+    println("{}", edges(0))
+    println("{}", edges(4))
+    println("{:?}", fallible(3))
+    println("{:?}", fallible(0))
+    let outer = cohort {
+        spawn(|| nested())
+    }
+    println("outer failed: {}", outer.is_err())
+    println("done")
+}

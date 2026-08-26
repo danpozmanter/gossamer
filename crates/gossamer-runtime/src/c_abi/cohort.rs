@@ -43,10 +43,17 @@ use crate::sched::Gid;
 pub const POLICY_FAIL_FAST: i64 = 0;
 pub const POLICY_COLLECT_ALL: i64 = 1;
 pub const POLICY_RACE: i64 = 2;
+/// The first failure becomes the block's `Err` - the default.
+pub const ON_ERROR_PROPAGATE: i64 = 0;
+/// Every failure is named on stderr as it happens; the block answers `Ok`.
+pub const ON_ERROR_LOG: i64 = 1;
+/// A failure changes nothing the block answers. It is still counted, still
+/// drained, and still named by the drain report at exit.
+pub const ON_ERROR_IGNORE: i64 = 2;
 
 /// Execution context for children, as spelled by `Context::` in source.
-pub const CONTEXT_DEFAULT: i64 = 0;
-pub const CONTEXT_ISOLATED: i64 = 1;
+pub const ISOLATION_SHARED: i64 = 0;
+pub const ISOLATION_THREAD: i64 = 1;
 
 /// Whether any cohort has ever been opened in this process. Every
 /// cancellation point consults the cohort state, so the common case -
@@ -82,6 +89,10 @@ struct CohortState {
     failures: Vec<ChildFailure>,
     /// Children that completed without failing.
     successes: i64,
+    /// Spawn indices of the children that registered and have not left.
+    /// A drain that gives up names these, so an unfinished child is
+    /// identified rather than only counted.
+    live: Vec<i64>,
     joined: bool,
     /// Set when the cohort's own deadline fired.
     timed_out: bool,
@@ -91,7 +102,14 @@ struct Cohort {
     /// Enclosing cohort on the goroutine that opened this one, or 0.
     parent: i64,
     policy: i64,
-    context: i64,
+    isolation: i64,
+    /// What the cohort does with a child's failure. Never makes a child
+    /// unaccountable: an ignored failure is still counted and still drained.
+    on_error: i64,
+    /// True when the cohort's children are exempt from cancellation.
+    uncancellable: bool,
+    /// Milliseconds the drain waits, or 0 for "as long as it takes".
+    drain_ms: i64,
     cancelled: AtomicBool,
     state: Mutex<CohortState>,
     /// Signalled whenever `outstanding` or the failure set changes.
@@ -228,6 +246,14 @@ fn cancel(id: i64) {
         let Some(node) = cohort_at(current) else {
             continue;
         };
+        // An exempt cohort is not cancelled, and neither is anything under
+        // it: `cancellable: false` is what a shielded region asks for, and a
+        // shield that let cancellation through its own children would be no
+        // shield at all. Its accounting is unaffected - it still drains and
+        // its failures are still reported.
+        if node.uncancellable {
+            continue;
+        }
         {
             // The flag changes and the condvar wake are issued under the
             // lock a joining OS thread holds while it tests `outstanding`,
@@ -255,20 +281,31 @@ fn wake_joiners(node: &Cohort) {
 }
 
 /// Opens a cohort on the running goroutine and makes it current.
-fn push(policy: i64, timeout_ms: i64, context: i64) -> i64 {
+fn push(
+    policy: i64,
+    timeout_ms: i64,
+    isolation: i64,
+    on_error: i64,
+    uncancellable: i64,
+    drain_ms: i64,
+) -> i64 {
     ANY_COHORT.store(true, Ordering::Relaxed);
     let parent = current_cohort();
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let node = Arc::new(Cohort {
         parent,
         policy,
-        context,
+        isolation,
+        on_error,
+        uncancellable: uncancellable != 0,
+        drain_ms,
         cancelled: AtomicBool::new(false),
         state: Mutex::new(CohortState {
             next_index: 0,
             outstanding: 0,
             failures: Vec::new(),
             successes: 0,
+            live: Vec::new(),
             joined: false,
             timed_out: false,
         }),
@@ -317,6 +354,7 @@ pub fn register_child(id: i64) -> i64 {
     let index = state.next_index;
     state.next_index += 1;
     state.outstanding += 1;
+    state.live.push(index);
     index
 }
 
@@ -339,7 +377,13 @@ pub fn leave_child(id: i64, index: i64, failure: Option<String>) {
     {
         let mut state = node.state.lock();
         state.outstanding -= 1;
+        state.live.retain(|live| *live != index);
         if let Some(message) = failure {
+            // `Log` names every failure where it happens; the block still
+            // answers `Ok`, so this is the only place the program sees it.
+            if node.on_error == ON_ERROR_LOG {
+                eprintln!("gossamer: cohort child failed: {message}");
+            }
             state.failures.push(ChildFailure {
                 index,
                 message,
@@ -429,6 +473,18 @@ fn wait_for_drain(node: &Arc<Cohort>) {
 fn outcome_message(node: &Arc<Cohort>) -> Option<String> {
     let mut state = node.state.lock();
     state.joined = true;
+    // `on_error` decides what the cohort DOES with a failure; `policy`
+    // decides when it stops waiting. Under `Log` and `Ignore` the block
+    // answers `Ok`, and the failures are marked observed so the drain
+    // report does not name them a second time - they reached the program
+    // through the disposition it asked for. What no setting can do is stop
+    // a child being counted or drained.
+    if node.on_error != ON_ERROR_PROPAGATE {
+        for failure in &mut state.failures {
+            failure.observed = true;
+        }
+        return None;
+    }
     // Lowest index first, so the reported failure does not depend on
     // which child happened to finish first.
     state.failures.sort_by_key(|failure| failure.index);
@@ -466,8 +522,28 @@ fn outcome_message(node: &Arc<Cohort>) -> Option<String> {
 fn join_current() -> Option<String> {
     let id = current_cohort();
     let node = cohort_at(id)?;
-    wait_for_drain(&node);
+    drain_within_bound(&node);
     outcome_message(&node)
+}
+
+/// Waits for `node`'s children, bounded by its own `drain:` setting when it
+/// named one. A cohort with no bound waits as long as its children take:
+/// leaving the block is the program's statement that they are finished.
+fn drain_within_bound(node: &Arc<Cohort>) {
+    let bound = node.drain_ms;
+    if bound <= 0 {
+        wait_for_drain(node);
+        return;
+    }
+    let outstanding = wait_for_drain_bounded(node, std::time::Duration::from_millis(bound as u64));
+    if outstanding > 0 {
+        // Silence is unconstructible: a drain that gave up names what it
+        // left running, whatever the cohort's error disposition says.
+        eprintln!(
+            "gossamer: cohort drain bound of {bound}ms elapsed with {outstanding} goroutine(s) still running{}",
+            unfinished_children(node)
+        );
+    }
 }
 
 /// Closes the running goroutine's cohort: cancels anything still
@@ -483,7 +559,7 @@ fn pop_current() {
     let already_joined = node.state.lock().joined;
     if !already_joined {
         cancel(id);
-        wait_for_drain(&node);
+        drain_within_bound(&node);
     }
     set_current_cohort(node.parent);
     if node.cancelled.load(Ordering::Acquire) {
@@ -511,10 +587,26 @@ pub fn unwind_open_cohorts() {
     }
 }
 
-/// `runtime::cohort_push(policy, timeout_ms, context)` - opens a cohort.
+/// `runtime::cohort_push(policy, timeout_ms, isolation)` - opens a cohort.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_cohort_push(policy: i64, timeout_ms: i64, context: i64) -> i64 {
-    ffi_entry!(0, { push(policy, timeout_ms, context) })
+pub unsafe extern "C" fn gos_rt_cohort_push(
+    policy: i64,
+    timeout_ms: i64,
+    isolation: i64,
+    on_error: i64,
+    uncancellable: i64,
+    drain_ms: i64,
+) -> i64 {
+    ffi_entry!(0, {
+        push(
+            policy,
+            timeout_ms,
+            isolation,
+            on_error,
+            uncancellable,
+            drain_ms,
+        )
+    })
 }
 
 /// `runtime::cohort_join()` - waits for the cohort's children and
@@ -561,19 +653,19 @@ pub unsafe extern "C" fn gos_rt_cohort_cancel() {
 
 /// Whether children of the running goroutine's cohort run on dedicated
 /// OS threads. Read by the spawn path.
-pub fn current_context() -> i64 {
+pub fn current_isolation() -> i64 {
     let id = current_cohort();
     let mut current = id;
     while current != 0 {
         let Some(node) = cohort_at(current) else {
-            return CONTEXT_DEFAULT;
+            return ISOLATION_SHARED;
         };
-        if node.context != CONTEXT_DEFAULT {
-            return node.context;
+        if node.isolation != ISOLATION_SHARED {
+            return node.isolation;
         }
         current = node.parent;
     }
-    CONTEXT_DEFAULT
+    ISOLATION_SHARED
 }
 
 /// The join handle of every cohort child, by handle address, so joining
@@ -620,7 +712,17 @@ pub fn open_root() {
     if current_cohort() != 0 {
         return;
     }
-    push(POLICY_COLLECT_ALL, 0, CONTEXT_DEFAULT);
+    // The root is collect-all and propagating: it exists to bound lifetimes
+    // and surface failures, not to impose a policy the program never asked
+    // for. Its drain bound is `ROOT_DRAIN_DEADLINE`, applied at close.
+    push(
+        POLICY_COLLECT_ALL,
+        0,
+        ISOLATION_SHARED,
+        ON_ERROR_PROPAGATE,
+        0,
+        0,
+    );
 }
 
 /// Closes the root cohort: waits for every child `main` left running, then
@@ -644,8 +746,9 @@ pub fn close_root() {
     if outstanding > 0 {
         eprintln!(
             "gossamer: {outstanding} spawned goroutine(s) had not finished {} seconds after \
-             `main` returned; exiting without them",
-            ROOT_DRAIN_DEADLINE.as_secs()
+             `main` returned; exiting without them{}",
+            ROOT_DRAIN_DEADLINE.as_secs(),
+            unfinished_children(&node)
         );
     }
     let orphaned: Vec<String> = {
@@ -662,6 +765,87 @@ pub fn close_root() {
     }
     node.state.lock().joined = true;
     pop_current();
+}
+
+/// The spawn indices of `node`'s children that never left, as a phrase to
+/// append to a drain report. Empty when every child finished: an
+/// unfinished child is what the invariant is about, so it is named rather
+/// than only counted.
+fn unfinished_children(node: &Arc<Cohort>) -> String {
+    let live = node.state.lock().live.clone();
+    if live.is_empty() {
+        return String::new();
+    }
+    let names: Vec<String> = live.iter().map(ToString::to_string).collect();
+    format!(" (spawn index {})", names.join(", "))
+}
+
+/// One descriptor line per live cohort, oldest id first: the id, its
+/// parent, its completion policy, its error disposition, how many children
+/// are outstanding, and the spawn indices of the ones that have not left.
+///
+/// A cohort is enumerable so a program can say what it is still waiting on
+/// without joining it. The lines are text on purpose - this is a diagnostic
+/// surface, like `pprof`, and a caller reads it or prints it.
+pub fn cohort_report_lines() -> Vec<String> {
+    let mut nodes: Vec<(i64, Arc<Cohort>)> = COHORTS
+        .lock()
+        .iter()
+        .map(|(id, node)| (*id, Arc::clone(node)))
+        .collect();
+    nodes.sort_by_key(|(id, _)| *id);
+    nodes
+        .into_iter()
+        .map(|(id, node)| {
+            let state = node.state.lock();
+            let live: Vec<String> = state.live.iter().map(ToString::to_string).collect();
+            format!(
+                "id={id} parent={} policy={} on_error={} outstanding={} cancelled={} live=[{}]",
+                node.parent,
+                policy_name(node.policy),
+                on_error_name(node.on_error),
+                state.outstanding,
+                node.cancelled.load(Ordering::Acquire),
+                live.join(", ")
+            )
+        })
+        .collect()
+}
+
+/// Name of a completion policy, for [`cohort_report_lines`].
+fn policy_name(policy: i64) -> &'static str {
+    match policy {
+        POLICY_COLLECT_ALL => "CollectAll",
+        POLICY_RACE => "Race",
+        _ => "FailFast",
+    }
+}
+
+/// Name of an error disposition, for [`cohort_report_lines`].
+fn on_error_name(on_error: i64) -> &'static str {
+    match on_error {
+        ON_ERROR_LOG => "Log",
+        ON_ERROR_IGNORE => "Ignore",
+        _ => "Propagate",
+    }
+}
+
+/// `runtime::cohorts()` - the live cohort descriptors as a `Vec<String>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_cohorts() -> *mut crate::c_abi::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let vec = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::STRING)
+        };
+        if vec.is_null() {
+            return vec;
+        }
+        for line in cohort_report_lines() {
+            let cs = crate::c_abi::string::alloc_cstring(line.as_bytes()) as i64;
+            unsafe { crate::c_abi::vec::gos_rt_vec_push(vec, std::ptr::addr_of!(cs).cast::<u8>()) };
+        }
+        vec
+    })
 }
 
 /// Renders a panic payload the way the join handle does, for a child

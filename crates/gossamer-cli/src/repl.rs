@@ -4992,7 +4992,7 @@ fn normalize_query(arg: &str) -> &str {
 /// listing's signature suffix. `None` for a trait with no required method.
 fn trait_required_signature(name: &str) -> Option<String> {
     match name {
-        "Display" => Some(" { fn to_string(&self) -> String }".to_string()),
+        "Display" => Some(" { fn fmt(&self) -> String }".to_string()),
         "Debug" => Some(" { fn fmt(&self) -> String }".to_string()),
         _ => None,
     }

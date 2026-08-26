@@ -14,6 +14,33 @@ only when the standard library does not provide the primitive
 (e.g. `codespan-reporting` for diagnostics, `parking_lot` for mutexes,
 `thiserror` for library errors, `anyhow` for top-level application code).
 
+## Concurrency: two primitives, and the test for adding a third
+
+The language has exactly two concurrency concepts: `cohort { }` and
+`spawn`. Nothing else is a concurrency keyword, and the default answer to a
+proposal for one is NO.
+
+A proposal earns consideration only by failing this test, in order:
+
+1. **Is it writable with `cohort` + `spawn` today?** Then it is a stdlib
+   function, not syntax. `sync::shield`, `sync::with_timeout`, and every
+   supervisor / restart combinator are library code over the two primitives.
+2. **Is it missing a cohort configuration key or a runtime capability?**
+   Then add the key or the capability. A cohort header setting is a value,
+   so it costs no grammar; `policy:`, `timeout:`, and `isolation:` all
+   arrived that way.
+3. **Only then** is a new construct on the table, and it needs a written
+   argument for why (1) and (2) cannot express it.
+
+Two rules ride along:
+
+- Ownership is fixed at the spawn. Nothing moves a running goroutine
+  between cohorts, and no API may offer to.
+- No cohort header enum may share a name with a stdlib module or type.
+  `context::Context` is why the isolation setting is `isolation:
+  Isolation::Shared` / `Isolation::Thread` rather than `context:` - check a
+  new key's enum against the stdlib before adding it, not after.
+
 ## Safety
 
 Strictly no `unsafe` code. No `unsafe` blocks, no `unsafe fn`, no

@@ -1,0 +1,56 @@
+// Every cohort header setting, and what each one decides. `policy` says
+// when the block stops waiting; `on_error` says what it does with a
+// failure; `cancellable` says whether its children may be cancelled;
+// `drain` bounds the wait once the body is done; `isolation` says whether
+// a child owns an OS thread. None of them can stop a child being counted
+// or drained.
+use std::errors
+
+fn good() -> Result<i64, errors::Error> {
+    Ok(1)
+}
+
+fn bad(tag: String) -> Result<i64, errors::Error> {
+    Err(errors::new(format("{} failed", tag)))
+}
+
+fn main() {
+    let propagate = cohort(policy: Policy::CollectAll) {
+        spawn(|| bad("propagate"))
+    }
+    println("propagate {}", propagate.is_err())
+
+    let ignored = cohort(policy: Policy::CollectAll, on_error: OnError::Ignore) {
+        spawn(|| bad("ignored"))
+        spawn(|| good())
+    }
+    println("ignore {}", ignored.is_err())
+
+    let shielded = cohort(cancellable: false) {
+        spawn(|| good())
+    }
+    println("shielded {}", shielded.is_err())
+
+    let bounded = cohort(drain: 2000) {
+        spawn(|| good())
+        spawn(|| good())
+    }
+    println("bounded {}", bounded.is_err())
+
+    let isolated = cohort(isolation: Isolation::Thread) {
+        spawn(|| good())
+    }
+    println("isolated {}", isolated.is_err())
+
+    let every = cohort(
+        policy: Policy::CollectAll
+        timeout: 5000
+        isolation: Isolation::Shared
+        on_error: OnError::Propagate
+        cancellable: true
+        drain: 2000
+    ) {
+        spawn(|| good())
+    }
+    println("every {}", every.is_err())
+}

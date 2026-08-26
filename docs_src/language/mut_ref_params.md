@@ -14,10 +14,15 @@ overlapping temporary borrow, and two `&mut` arguments rooted at the same
 binding in one call. Every permitted write is observed through the same source
 place.
 
-A `Map`, `Set`, `Deque`, `Queue`, or `Stack` parameter mutates the caller's
-container whether it is written `&mut T`, `&T`, or `T`: the value is a handle
-to storage the runtime owns. Write `&mut` on such a parameter to say the
-function mutates it; reads through it answer the caller's live contents.
+Every container obeys the same rule the rest of the language does: a `&mut T`
+parameter writes through to the caller's container, and a `T` parameter takes
+a value of its own, so the callee's `push` or `insert` leaves the caller's
+untouched. `Map`, `Set`, `BTreeMap`, `BTreeSet`, `Vec`, `Deque`, `Queue`,
+`Stack`, `MinHeap`, and `MaxHeap` all reach their elements through a handle,
+so the copy is made where the binding or the argument is taken rather than
+inherited from the representation - but nothing about that is visible in the
+language. A binding taken from a container (`let b = a`) is a value of its own
+for the same reason.
 
 A call never creates `&mut` implicitly. Pass a mutable place explicitly:
 

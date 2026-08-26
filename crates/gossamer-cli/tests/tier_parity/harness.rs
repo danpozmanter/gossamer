@@ -975,6 +975,11 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/contextual_keywords.gos"),
     spec("feature-testing-examples/carrier_return_tiers.gos"),
     spec("feature-testing-examples/closure_env_ownership.gos"),
+    spec("feature-testing-examples/cohort_drain_deadline.gos"),
+    spec("feature-testing-examples/cohort_enumeration.gos"),
+    spec("feature-testing-examples/cohort_header_settings.gos"),
+    spec("feature-testing-examples/slot_container_value_semantics.gos"),
+    spec("feature-testing-examples/defer_exit_edges.gos"),
     spec("feature-testing-examples/format_spec_matrix.gos"),
     spec("feature-testing-examples/format_argument_forms.gos"),
     Spec {

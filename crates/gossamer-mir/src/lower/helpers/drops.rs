@@ -836,6 +836,105 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             }
         }
     }
+    // Locals that VIEW a child slot of an enum node the frame does not own:
+    // the node is a parameter, so the caller holds it for the whole call and
+    // nothing here reassigns or releases it. Every use of the view is inside
+    // that lifetime, so the binder needs no share of its own - which is what
+    // a traversal written against a reference got for free. Minting one
+    // anyway costs a retain/release pair per node, and the release decrements
+    // a live node to a non-zero count, which is the cycle collector's
+    // definition of a candidate root: a read-only walk of an acyclic tree
+    // would fill the candidate buffer with the whole tree.
+    let enum_child_borrow = {
+        let mut stable_param = vec![false; n_locals];
+        for i in 1..=(body.arity as usize).min(n_locals.saturating_sub(1)) {
+            stable_param[i] = true;
+        }
+        let mut view = vec![false; n_locals];
+        let mut disqualified = vec![false; n_locals];
+        let mut copy_edges: Vec<(usize, usize)> = Vec::new();
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                    continue;
+                };
+                // A write through a projection reaches the pointee's storage,
+                // so the base is more than a view of it.
+                if !place.projection.is_empty() {
+                    if (place.local.0 as usize) < n_locals {
+                        disqualified[place.local.0 as usize] = true;
+                    }
+                    continue;
+                }
+                if (place.local.0 as usize) >= n_locals {
+                    continue;
+                }
+                let i = place.local.0 as usize;
+                // A parameter the body writes to is no longer the caller's
+                // value for the rest of the frame.
+                stable_param[i] = false;
+                match rvalue {
+                    Rvalue::CallIntrinsic { name, args } if *name == "gos_enum_load" => {
+                        match args.first() {
+                            Some(Operand::Copy(src)) if src.projection.is_empty() => {
+                                copy_edges.push((i, src.local.0 as usize));
+                            }
+                            _ => disqualified[i] = true,
+                        }
+                    }
+                    Rvalue::Use(Operand::Copy(src)) if src.projection.is_empty() => {
+                        copy_edges.push((i, src.local.0 as usize));
+                    }
+                    _ => disqualified[i] = true,
+                }
+            }
+            if let Terminator::Call { destination, .. } = &block.terminator
+                && (destination.local.0 as usize) < n_locals
+            {
+                disqualified[destination.local.0 as usize] = true;
+                stable_param[destination.local.0 as usize] = false;
+            }
+        }
+        // A view that is stored into an aggregate, or handed to the caller,
+        // outlives the node it came from and owns its own share.
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                    && place.local == Local::RETURN
+                    && let Rvalue::Use(Operand::Copy(src)) = rvalue
+                    && src.projection.is_empty()
+                    && (src.local.0 as usize) < n_locals
+                {
+                    disqualified[src.local.0 as usize] = true;
+                }
+            }
+        }
+        for i in 0..n_locals {
+            if stored_into_aggregate[i] {
+                disqualified[i] = true;
+            }
+        }
+        // Seed from every `gos_enum_load` off a still-stable parameter, then
+        // let the view travel the copy edges that carry it.
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &(dest, src) in &copy_edges {
+                if disqualified[dest] || view[dest] {
+                    continue;
+                }
+                if (stable_param[src] || view[src]) && src != dest {
+                    view[dest] = true;
+                    changed = true;
+                }
+            }
+        }
+        for i in 0..n_locals {
+            view[i] = view[i] && !disqualified[i] && i > body.arity as usize;
+        }
+        view
+    };
+
     for (block_idx, block) in body.blocks.iter().enumerate() {
         for (stmt_idx, stmt) in block.stmts.iter().enumerate() {
             let StatementKind::Assign { place, rvalue } = &stmt.kind else {
@@ -865,10 +964,15 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                             tcx.kind_of(body.locals[place.local.0 as usize].ty),
                             gossamer_types::TyKind::Ref { .. }
                         );
+                    // A view of a node the caller holds needs no share; see
+                    // `enum_child_borrow`.
+                    let borrowed_view =
+                        place.projection.is_empty() && enum_child_borrow[place.local.0 as usize];
                     if let Some(l) = rc_operand(op)
                         && !copyback_sites.contains(&(block_idx, stmt_idx))
                         && !skip_extraction_move
                         && !ref_alias
+                        && !borrowed_view
                     {
                         retain_sites.push((block_idx, stmt_idx, l, 1));
                     }
@@ -1703,7 +1807,13 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         |i: usize| vec_field_extract[i] && i > arity && i < n_locals && !body.locals[i].region;
     let releasable: Vec<Local> = (0..n_locals)
         .filter(|&i| {
-            (is_rc(i) || is_vec_field_owner(i)) && owned[i] && !moved[i] && !flows_to_return[i]
+            (is_rc(i) || is_vec_field_owner(i))
+                && owned[i]
+                && !moved[i]
+                && !flows_to_return[i]
+                // A view of a node the caller holds took no share, so it has
+                // none to give back; see `enum_child_borrow`.
+                && !enum_child_borrow[i]
         })
         .map(|i| Local(u32::try_from(i).unwrap_or(0)))
         .collect();
@@ -1896,7 +2006,12 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // carrying RC fields that need per-field retain (on copy) + release (on
     // drop), since the stack-slot aggregate itself has no heap teardown.
     let agg_locals: Vec<(usize, AggFieldPaths)> = ((arity + 1)..n_locals)
-        .filter(|&i| !body.locals[i].region && !extraction_seed[i] && !vec_borrow_agg[i])
+        .filter(|&i| {
+            !body.locals[i].region
+                && !extraction_seed[i]
+                && !vec_borrow_agg[i]
+                && !enum_child_borrow[i]
+        })
         .filter_map(|i| {
             let fields = agg_rc_fields(body.locals[i].ty);
             if fields.is_empty() {

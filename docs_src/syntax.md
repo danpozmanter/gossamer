@@ -442,7 +442,7 @@ cancelled. `main` runs inside an implicit root cohort, so a spawned
 goroutine can never outlive the program and a failure nobody joined is
 reported at exit rather than lost. Settings ride the header:
 `cohort(policy: Policy::CollectAll)`, `cohort(timeout: 500)`, and
-`cohort(context: Context::Isolated)` for FFI or CPU-bound children that
+`cohort(isolation: Isolation::Thread)` for FFI or CPU-bound children that
 need a thread of their own. See [cohorts](language/cohort.md).
 
 `spawn(|| expr)` spawns a goroutine - a real stackful coroutine on the

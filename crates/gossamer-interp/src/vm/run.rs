@@ -34,7 +34,16 @@ fn map_like_deep_clone(v: &Value) -> Value {
         Value::StrIntMap(m) => {
             Value::StrIntMap(Arc::new(parking_lot::Mutex::new(m.lock().clone())))
         }
-        Value::Struct(_) => crate::stdlib_builtins::set::set_deep_clone(v),
+        Value::Struct(inner) => match inner.name.as_str() {
+            // The slot containers reach their elements through a registry
+            // handle exactly as a `Set` does, so a binding taken from one
+            // copies the elements rather than the handle.
+            "Deque" | "Queue" | "Stack" => crate::stdlib_builtins::deque::deque_deep_clone(v),
+            "MinHeap" | "MaxHeap" => {
+                crate::stdlib_builtins::container_heap::binary_heap_deep_clone(v)
+            }
+            _ => crate::stdlib_builtins::set::set_deep_clone(v),
+        },
         other => other.clone(),
     }
 }

@@ -1750,7 +1750,7 @@ pub unsafe extern "C" fn gos_rt_vec_get_i128(v: *const GosVec, idx: i64) -> i128
 /// `idx`. The store counterpart of [`gos_rt_vec_get_i128`]: `xs[i] = v` on a
 /// `Vec` of a two-word carrier writes both words, where the i64 store would
 /// keep only the discriminant and drop the payload. Invalid indexing is a
-/// bounds panic, matching [`gos_rt_vec_set_i64`](super::signal::gos_rt_vec_set_i64).
+/// bounds panic, matching [`gos_rt_vec_set_i64`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_set_i128(v: *mut GosVec, idx: i64, value: i128) {
     ffi_entry!((), {

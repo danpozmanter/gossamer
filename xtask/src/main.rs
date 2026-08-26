@@ -1114,6 +1114,12 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "`sql::statement` was handed something other than a literal. The statement is checked while the program is compiled, so it has to be there to check; a statement built at run time is an ordinary `String` and needs no wrapper.",
     ),
     (
+        "GP0056",
+        "Parser",
+        "retired cohort isolation spelling",
+        "`context::Context` is the cancellation type a cohort may one day inherit; this setting decides whether a child gets an OS thread of its own, so it is `isolation: Isolation::Shared` or `isolation: Isolation::Thread`. `--fix` rewrites it.",
+    ),
+    (
         "GP0053",
         "Parser",
         "`Display` rendering declared as `to_string`",

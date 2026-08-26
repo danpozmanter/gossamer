@@ -181,6 +181,48 @@ fn binary_heap_id_of(value: &Value) -> Option<i64> {
     None
 }
 
+/// A heap with its own registry entry, so a binding taken from another
+/// leaves that one untouched. Any other value clones the cheap way
+/// `Value::clone` does.
+pub(crate) fn binary_heap_deep_clone(value: &Value) -> Value {
+    let Value::Struct(inner) = value else {
+        return value.clone();
+    };
+    let owner: &'static str = match inner.name.as_str() {
+        "MaxHeap" => "MaxHeap",
+        "MinHeap" => "MinHeap",
+        _ => return value.clone(),
+    };
+    let Some(id) = binary_heap_id_of(value) else {
+        return value.clone();
+    };
+    let Some(state) = BINARY_HEAP_REGISTRY.with(|r| r.borrow().get(&id).cloned()) else {
+        return value.clone();
+    };
+    let new_id = next_binary_heap_handle();
+    BINARY_HEAP_REGISTRY.with(|r| {
+        r.borrow_mut().insert(new_id, state);
+    });
+    let handle = binary_heap_handle(owner, new_id);
+    // A rendered handle carries the element descriptor that tells a `Vec`
+    // element from a fixed-array one; the copy keeps it.
+    let extra: Vec<(&'static str, Value)> = inner
+        .fields
+        .iter()
+        .filter(|(name, _)| **name != "__heap")
+        .map(|(name, value)| (*name, value.clone()))
+        .collect();
+    if extra.is_empty() {
+        return handle;
+    }
+    let Value::Struct(new_inner) = &handle else {
+        return handle;
+    };
+    let mut fields = new_inner.fields.to_vec();
+    fields.extend(extra);
+    Value::struct_(new_inner.name.as_str(), fields)
+}
+
 pub(crate) fn binary_heap_snapshot(value: &Value) -> Option<Vec<Value>> {
     let id = binary_heap_id_of(value)?;
     BINARY_HEAP_REGISTRY.with(|r| r.borrow().get(&id).map(|state| state.values.clone()))

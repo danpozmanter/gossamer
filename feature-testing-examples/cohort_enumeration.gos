@@ -1,0 +1,31 @@
+// Every live cohort is enumerable: a program can say what it is still
+// waiting on without joining it. `runtime::cohorts()` answers one
+// descriptor line per cohort, oldest id first, and `main` runs inside the
+// implicit root so there is always at least one.
+use std::runtime
+
+fn describe(tag: String) -> i64 {
+    let lines = runtime::cohorts()
+    println("{} sees {} cohort(s)", tag, lines.len())
+    lines.len()
+}
+
+fn main() {
+    println("root {}", describe("root"))
+
+    let nested = cohort(policy: Policy::CollectAll, on_error: OnError::Ignore) {
+        println("inner {}", describe("inner"))
+    }
+    println("nested err={}", nested.is_err())
+
+    let deep = cohort {
+        let inner = cohort(cancellable: false) {
+            println("deep {}", describe("deep"))
+        }
+        println("inner err={}", inner.is_err())
+    }
+    println("deep err={}", deep.is_err())
+
+    // Back at the root, the blocks above have retired.
+    println("after {}", describe("after"))
+}

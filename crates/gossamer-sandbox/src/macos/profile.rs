@@ -254,7 +254,8 @@ mod profile_tests {
 
     #[test]
     fn a_grant_becomes_a_subpath_rule_on_the_resolved_path() {
-        let root = std::env::temp_dir().canonicalize().expect("canonicalize");
+        let root =
+            crate::policy::simplified(&std::env::temp_dir().canonicalize().expect("canonicalize"));
         let rendered = render(&compiled());
         assert!(
             rendered.contains(&format!(
@@ -267,7 +268,8 @@ mod profile_tests {
 
     #[test]
     fn a_denial_is_emitted_after_the_grant_it_overrides() {
-        let root = std::env::temp_dir().canonicalize().expect("canonicalize");
+        let root =
+            crate::policy::simplified(&std::env::temp_dir().canonicalize().expect("canonicalize"));
         let inner = root.join("gos-sandbox-profile-inner");
         std::fs::create_dir_all(&inner).expect("create fixture");
         let policy = SandboxPolicy::new()

@@ -1,0 +1,7 @@
+// ERROR: GP0056
+fn main() {
+    let r = cohort(context: Context::Isolated) {
+        spawn(|| println("child"))
+    }
+    println("{:?}", r)
+}

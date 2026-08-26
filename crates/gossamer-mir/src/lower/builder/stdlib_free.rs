@@ -3804,6 +3804,13 @@ impl<'a> Builder<'a> {
                 "gos_rt_cohort_push",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
+            "runtime::cohorts" => {
+                let string_ty = self.tcx.string_ty();
+                (
+                    "gos_rt_cohorts",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(string_ty)),
+                )
+            }
             "runtime::cohort_join" => ("gos_rt_cohort_join", self.result_unit_error_adt_ty()),
             "runtime::cohort_pop" => ("gos_rt_cohort_pop", self.tcx.unit()),
             "lifecycle::ready" => ("gos_rt_lifecycle_ready", self.tcx.unit()),

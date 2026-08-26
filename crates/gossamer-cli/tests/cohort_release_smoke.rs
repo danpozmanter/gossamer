@@ -68,7 +68,7 @@ fn main() {
     }
     println("bounded: {}", bounded.is_err())
 
-    let isolated = cohort(context: Context::Isolated) {
+    let isolated = cohort(isolation: Isolation::Thread) {
         let _a = spawn(|| work(3))
     }
     println("isolated: {:?}", isolated)
@@ -197,4 +197,76 @@ fn cohort_surface_runs_in_a_release_build() {
         String::from_utf8_lossy(&run.stderr)
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A goroutine that never reaches a safepoint cannot hang the process at
+/// exit. This is the invariant the bounded root drain exists for, and the
+/// only way to observe it is to let the deadline actually elapse - so this
+/// test costs the deadline plus the child's head start.
+#[test]
+fn a_never_cooperating_child_is_reported_and_the_process_still_exits() {
+    let dir = std::env::temp_dir().join(format!("gos-root-drain-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let source = dir.join("root_drain.gos");
+    // Pure computation with no call in the loop body: the compiled tiers
+    // leave a back-edge un-polled, so this child never reaches a
+    // cancellation point and the drain has to give up on it.
+    std::fs::write(
+        &source,
+        "fn spin(rounds: i64) -> i64 {\n\
+         \x20   let mut total = 0\n\
+         \x20   let mut i = 0\n\
+         \x20   while i < rounds {\n\
+         \x20       total += i % 7\n\
+         \x20       i += 1\n\
+         \x20   }\n\
+         \x20   total\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   spawn(|| spin(200000000000))\n\
+         \x20   println(\"main done\")\n\
+         }\n",
+    )
+    .expect("write source");
+
+    let built = Command::new(gos_bin())
+        .arg("build")
+        .arg("--release")
+        .arg(&source)
+        .current_dir(&dir)
+        .output()
+        .expect("gos build --release");
+    assert!(
+        built.status.success(),
+        "gos build --release failed: {}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let binary = dir.join("target").join("release").join("root_drain");
+    let started = std::time::Instant::now();
+    let run = Command::new(&binary).output().expect("run release binary");
+    let elapsed = started.elapsed();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "main done\n",
+        "stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("had not finished") && stderr.contains("spawn index 0"),
+        "the drain report must name what it left running: {stderr}"
+    );
+    // The process leaves rather than waiting on the child forever. The
+    // report is what the invariant promises; the exit code is deliberately
+    // unchanged, so an ordinary program that leaves background work running
+    // is not turned into a failing one.
+    assert_eq!(run.status.code(), Some(0), "stderr={stderr}");
+    assert!(
+        elapsed < std::time::Duration::from_mins(2),
+        "the root drain did not give up: {elapsed:?}"
+    );
 }

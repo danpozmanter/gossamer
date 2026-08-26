@@ -4126,7 +4126,9 @@ impl<'tcx> FnBuilder<'tcx> {
                     src: *arg_reg,
                 });
             } else if is_path_expr(&args[i])
-                && (self.expr_is_map(&args[i]) || self.expr_is_hashset(&args[i]))
+                && (self.expr_is_map(&args[i])
+                    || self.expr_is_hashset(&args[i])
+                    || self.expr_is_slot_container(&args[i]))
                 // A reference is an alias by construction: forwarding an
                 // existing `&mut Map` / `&mut Set` parameter must reach the
                 // callee as the same container, or the callee's `insert` /

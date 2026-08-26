@@ -573,7 +573,7 @@ Raw pointers (`*const T`, `*mut T`) are **not** part of the language
 today: the type spellings do not parse (`GP0001`), and there is no safe
 or unsafe way to construct one in Gossamer source. FFI goes through the
 `gossamer-binding` ABI (§12), not raw pointers. (The `unsafe` keyword
-parses - see §8.6 - but grants no extra powers, because there is nothing
+parses - see §8.7 - but grants no extra powers, because there is nothing
 unsafe to do.)
 
 `&T` and `&mut T` have implicit lexical lifetimes. A named reference remains
@@ -1342,9 +1342,38 @@ computation is not a cancellation point; a CPU-bound child cooperates by
 polling `runtime::cohort_cancelled()`. `timeout:` cancels the cohort once
 the given number of milliseconds has passed.
 
-`context: Context::Isolated` runs each child on a dedicated OS thread for
+`on_error:` decides what the cohort DOES with a child's failure, where
+`policy:` decides when the block stops waiting. `OnError::Propagate` (the
+default) makes the first failure the block's `Err`; `OnError::Log` names
+every failure on stderr as it happens and the block answers `Ok`;
+`OnError::Ignore` answers `Ok` and says nothing. No disposition makes a
+child unaccountable: it is still counted, still drained, and a child that
+never finishes is still named by the drain report.
+
+`cancellable: false` exempts the cohort and everything under it from
+cancellation - what a shielded region asks for. The exemption covers
+cancellation only; the block still drains and still reports.
+
+`drain: ms` bounds the wait for the children once the body is done, which is
+a different question from `timeout:`, that bounds the body's own work. A
+cohort with no `drain:` waits as long as its children take, because leaving
+the block is the program's statement that they are finished. A drain that
+gives up names what it left running.
+
+`isolation: Isolation::Thread` runs each child on a dedicated OS thread for
 its whole life, which is what synchronous Rust FFI and never-yielding
-CPU-bound work need. Channels work across contexts unchanged.
+CPU-bound work need. `Isolation::Shared` is the default, and channels work
+across both unchanged. The key names what it decides - whether a child owns
+a thread - and leaves `context` to `context::Context`, the cancellation type
+a cohort may one day inherit; the retired `context:` spelling reports
+`GP0056` with the rewrite.
+
+`runtime::cohorts()` answers one descriptor line per live cohort, oldest id
+first, naming its id, parent, completion policy, error disposition, how many
+children are outstanding, whether it is cancelled, and the spawn indices that
+have not left. A cohort is enumerable so a program can say what it is still
+waiting on without joining it. A drain that gives up names those same indices
+rather than only counting them.
 
 `main` runs inside an implicit root cohort, so every `spawn` belongs to
 one: no goroutine outlives the program, and a child failure that nothing
@@ -2302,11 +2331,19 @@ select {
 
 Deferred expressions are **block-scoped** (see §`defer`): each runs when
 control leaves its enclosing `{ }` block, not when the whole function or
-goroutine unwinds. As a goroutine's stack unwinds - whether by normal return
-or by a panic - every block it leaves runs that block's pending defers in LIFO
-order. A panic that is not recovered inside the goroutine ends that goroutine
-(its defers still run as the stack unwinds); a panic on the main goroutine
-crashes the process.
+goroutine unwinds. The exit edges are the ones the compiler can see - falling
+off the end of the block, `return`, `break`, `continue`, and `?` - and each
+runs that block's pending defers in LIFO order. `defer` therefore costs
+nothing a hand-written statement at each of those edges would not.
+
+A **panic is not one of those edges**. It is a violated invariant with no
+`recover` to reach (§8.5), so a panicking goroutine's pending defers do not
+run: on the main goroutine the process crashes, and a spawned goroutine's
+panic ends that goroutine alone. Cohort accounting does not ride on `defer`
+for this reason - the spawn wrapper's unwind backstop retires every cohort
+the goroutine still had open, so a panicking child is still counted, still
+reported, and never leaves its cohort undrained. Anything that must hold
+across a panic belongs on that backstop, not on a `defer`.
 
 ### 8.5 Recovering from a panic
 
@@ -2320,7 +2357,32 @@ alone, and `handle.join() -> Result<T, String>` delivers the message to
 the joiner. `runtime::set_panic_hook` observes
 one before it unwinds.
 
-### 8.6 `unsafe`
+### 8.6 Two concurrency primitives
+
+The language has exactly two concurrency concepts: `cohort { }` and
+`spawn`. Every other concurrency shape is a library function over them, a
+cohort header setting, or a runtime capability - never a new construct.
+
+A construct is considered only after both of these fail:
+
+1. It is writable with `cohort` + `spawn` today, in which case it belongs in
+   the standard library.
+2. It is missing a cohort configuration key or a runtime capability, in
+   which case that is what gets added. A header setting is a value and costs
+   no grammar.
+
+Ownership is fixed at the spawn: a goroutine belongs to the cohort that was
+current when `spawn` ran, and nothing moves a running goroutine between
+cohorts. Detachment, if it ever exists, is a header setting rather than a
+second spawn form.
+
+No cohort header enum shares a name with a stdlib module or type, so a
+setting can never read as the module it is not: the isolation setting is
+`isolation: Isolation::Shared` / `Isolation::Thread` rather than `context:`,
+because `context::Context` is the cancellation type a cohort may one day
+inherit.
+
+### 8.7 `unsafe`
 
 ```
 unsafe { ... }

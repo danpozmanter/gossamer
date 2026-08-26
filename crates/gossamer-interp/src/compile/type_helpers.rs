@@ -61,6 +61,30 @@ impl<'tcx> FnBuilder<'tcx> {
         )
     }
 
+    /// True when `expr` is a `Deque`, `Queue`, `Stack`, `MinHeap`, or
+    /// `MaxHeap`. Each reaches its
+    /// elements through a registry handle, so a binding taken from one has to
+    /// copy the elements rather than the handle - exactly as a `Set` does.
+    pub(crate) fn expr_is_slot_container(&self, expr: &HirExpr) -> bool {
+        const VEC_DEQUE_DEF_LOCAL: u32 = u32::MAX - 19;
+        const BINARY_HEAP_DEF_LOCAL: u32 = u32::MAX - 28;
+        const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
+        const VEC_QUEUE_DEF_LOCAL: u32 = u32::MAX - 31;
+        const VEC_STACK_DEF_LOCAL: u32 = u32::MAX - 32;
+        matches!(
+            self.tcx.kind(self.unwrap_ref(expr.ty)),
+            Some(TyKind::Adt { def, .. })
+                if matches!(
+                    def.local,
+                    VEC_DEQUE_DEF_LOCAL
+                        | VEC_QUEUE_DEF_LOCAL
+                        | VEC_STACK_DEF_LOCAL
+                        | BINARY_HEAP_DEF_LOCAL
+                        | MIN_HEAP_DEF_LOCAL
+                )
+        )
+    }
+
     /// True when `expr` is a `HashMap` or `BTreeMap`. Both surface types
     /// share `TyKind::HashMap` and the same runtime storage.
     pub(crate) fn expr_is_map(&self, expr: &HirExpr) -> bool {

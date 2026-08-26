@@ -171,6 +171,12 @@ pub enum ParseError {
     /// `unsafe` was written. It grants nothing the language withholds.
     #[error("`unsafe` grants nothing; drop it")]
     UnsafeGrantsNothing,
+    /// A cohort header used the retired `context:` isolation spelling.
+    #[error("a cohort's isolation setting is `isolation:`, not `context:`")]
+    CohortIsolationSpelling {
+        /// The whole setting as it should be written.
+        replacement: String,
+    },
     /// An argument label was bound with `=` instead of `:`.
     #[error("an argument label binds with `:`, not `=`")]
     ArgumentLabelSeparator {
@@ -441,6 +447,13 @@ impl ParseDiagnostic {
                 location,
                 "drop the `!`".to_string(),
                 String::new(),
+            ));
+        }
+        if let ParseError::CohortIsolationSpelling { replacement } = &self.error {
+            out = out.with_suggestion(Suggestion::replacement(
+                location,
+                format!("write `{replacement}`"),
+                replacement.clone(),
             ));
         }
         if matches!(self.error, ParseError::SharedReferenceArgument) {
@@ -749,6 +762,16 @@ impl ParseError {
                     "the set of compiler-known names is closed and recognised at the \
                      `(`, so there is nothing a sigil disambiguates. The first argument \
                      is still the template when it is a string literal"
+                        .to_string(),
+                ),
+            ),
+            ParseError::CohortIsolationSpelling { replacement } => (
+                "GP0056",
+                format!("write `{replacement}`"),
+                Some(
+                    "`context::Context` is the cancellation type a cohort may one day \
+                     inherit; this setting decides whether a child gets an OS thread of \
+                     its own, which is what `isolation:` names"
                         .to_string(),
                 ),
             ),
