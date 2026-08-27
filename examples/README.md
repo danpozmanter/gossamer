@@ -8,7 +8,7 @@ JIT, and the `gos build` native binary).
 
 | File | Topic | Status |
 |------|-------|--------|
-| `hello_world.gos` | First program; `println!` | runs |
+| `hello_world.gos` | First program; `println` | runs |
 | `input.gos` | Basic interactive input with `std::io` | runs |
 | `web_server.gos` | HTTP/1.1 routed server over `std::http` | runs |
 | `cli_args.gos` | Command-line argument parsing (`std::flag`) | runs |
@@ -45,10 +45,10 @@ gos run src/main.gos
 - File-level docstrings use `/* ... */` block comments. Block
   comments do not nest - the first `*/` closes the comment.
 - Inline comments use `//`.
-- Formatted output goes through the six macros `format!`,
-  `println!`, `print!`, `eprintln!`, `eprint!`, and `panic!` -
+- Formatted output goes through the six compiler-known calls
+  `format`, `println`, `print`, `eprintln`, `eprint`, and `panic` -
   one allocation per render, no `+` chains.
-- No user-defined macros. `name!(...)` on an unrecognised name
-  is a parse error.
+- No user-defined macros. Every `name!(...)` is a parse error, and a
+  `!` after a compiler-known name is `GP0049`.
 - Ordinary double-quoted string literals span multi-line
   without extra syntax.

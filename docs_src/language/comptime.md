@@ -194,22 +194,23 @@ fn show(p: Point) -> String {
 }
 ```
 
-## Compile-time validation - `regex!` / `sql!`
+## Compile-time validation - `regex::compile` / `sql::statement`
 
-`regex!("…")` and `sql!("…")` validate their argument at build time and
+`regex::compile("…")` and `sql::statement("…")` validate their argument at
+build time and
 fold to the validated string. A malformed pattern or statement fails the
 build with a diagnostic rather than reaching runtime - the project's
 "if it compiles, it works" goal:
 
 ```gossamer
-let pattern = regex!("^\\d{4}-\\d{2}-\\d{2}$")   // compiled + checked at build time
-let query   = sql!("SELECT id, name FROM users WHERE id = 1")
+let pattern = regex::compile("^\\d{4}-\\d{2}-\\d{2}$")   // compiled + checked at build time
+let query   = sql::statement("SELECT id, name FROM users WHERE id = 1")
 ```
 
-`regex!("(unclosed")` fails the build with `unclosed group`; an
-unbalanced `sql!` fails with a parenthesis error. These are the only
-compile-time-validation macros; every other `name!(...)` outside the six
-format macros remains a parse error (`GP0001`).
+`regex::compile("(unclosed")` fails the build with `unclosed group`; an
+unbalanced `sql::statement` fails with a parenthesis error. These are the
+only compile-time-validated calls, and both stay module paths rather than
+globals - the older `regex!` / `sql!` spellings report `GP0051`.
 
 ## How it works
 
@@ -227,11 +228,11 @@ automatic.
 
 The shipped surface is compile-time *evaluation*, *reflection over
 named structs*, *comptime parameters*, *build-time validation*, and
-*code generation* (a `for` over `typeInfo::<T>()` and `codegen!`).
+*code generation* (a `for` over `typeInfo::<T>()` and `codegen`).
 Gossamer deliberately does not provide runtime reflection. Libraries that
 need dynamic inspection must expose an explicit generated schema, tagged
 representation, or `comptime`-generated adapter; `typeInfo`, `autoderive`,
-and `codegen!` are the supported replacement for reflection-driven code.
+and `codegen` are the supported replacement for reflection-driven code.
 Comptime regions fold to scalar or string results. You can now write the
 reflection-driven `autoderive` shape yourself, but the built-in
 `to_json` / `from_json` serializers remain built in (not yet re-expressed

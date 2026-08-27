@@ -1,6 +1,6 @@
 # `lang::keyword_arguments`
 
-Keyword arguments and constant parameter defaults: a call may name any parameter (`volume(depth = 4, width = 2)`), and a parameter may declare a constant default (`fn volume(width: i64, height: i64 = 2)`) that is spliced into every call omitting it. Positional arguments come first, then names. Both are caller-side spellings rewritten into the callee's declared order before type checking, so the calling convention is unchanged. A name on a method call is matched when every type declaring that method name would rewrite the call identically; when they disagree the call is reported (GR0013) rather than guessed.
+Keyword arguments and constant parameter defaults: a call may name any parameter (`volume(depth: 4, width: 2)`), and a parameter may declare a constant default (`fn volume(width: i64, height: i64 = 2)`) that is spliced into every call omitting it. Positional arguments come first, then names. Both are caller-side spellings rewritten into the callee's declared order before type checking, so the calling convention is unchanged. A name on a method call is matched when every type declaring that method name would rewrite the call identically; when they disagree the call is reported (GR0013) rather than guessed.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
@@ -15,9 +15,9 @@ fn volume(width: i64, height: i64 = 2, depth: i64 = 3) -> i64 {
 fn main() {
     println("{}", volume(2))                              // 12
     println("{}", volume(2, 3))                           // 18
-    println("{}", volume(width = 2, height = 3, depth = 4))  // 24
-    println("{}", volume(depth = 4, width = 2, height = 3))  // 24
-    println("{}", volume(2, depth = 10))                   // 40
+    println("{}", volume(width: 2, height: 3, depth: 4))  // 24
+    println("{}", volume(depth: 4, width: 2, height: 3))  // 24
+    println("{}", volume(2, depth: 10))                   // 40
 }
 ```
 
@@ -29,14 +29,14 @@ native builds all compile the identical call.
 
 ## Naming an argument
 
-Write `name = value` in place of a positional argument. A name selects the
+Write `name: value` in place of a positional argument. A name selects the
 parameter it fills, so named arguments may appear in any order.
 
 Positional arguments come first, then names:
 
 ```gossamer
-volume(2, depth = 10)        // width positionally, depth by name
-volume(width = 2, 3)         // error[GR0013]
+volume(2, depth: 10)        // width positionally, depth by name
+volume(width: 2, 3)         // error[GR0013]
 ```
 
 Once a name is used the remaining positions are no longer in written
@@ -45,8 +45,8 @@ order, so every later argument needs a name too.
 A name has to name a parameter of the callee, and may be given once:
 
 ```gossamer
-volume(depht = 3)            // error[GR0013]: `depht` is not a parameter
-volume(width = 1, width = 2)  // error[GR0013]: `width` is given twice
+volume(depht: 3)            // error[GR0013]: `depht` is not a parameter
+volume(width: 1, width: 2)  // error[GR0013]: `width` is given twice
 ```
 
 ## Declaring a default
@@ -82,9 +82,9 @@ impl Rect {
     fn scaled(&self, factor: i64 = 2) -> i64 { self.w * self.h * factor }
 }
 
-let r = Rect::make(w = 3)     // h defaults to 5
+let r = Rect::make(w: 3)     // h defaults to 5
 r.scaled()                   // factor defaults to 2
-r.scaled(factor = 10)
+r.scaled(factor: 10)
 ```
 
 A method call is rewritten before its receiver's type is known, so the

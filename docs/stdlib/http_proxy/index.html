@@ -2219,7 +2219,7 @@ buffering).</p>
 <p>Hop-by-hop and engine-managed headers must not be relayed; strip them
 and let the client/server engines manage their own:</p>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>// Drop hop-by-hop / engine-managed names; keep everything else.
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>fn forwardable_headers(headers: &amp;[(String, String)]) -&gt; [(String, String)] {
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>fn forwardable_headers(headers: [(String, String)]) -&gt; [(String, String)] {
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    let mut out: [(String, String)] = []
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    for (name, value) in headers {
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        let n = name.to_lowercase()
@@ -2246,7 +2246,7 @@ struct-literal <code>Response</code> relays status, bytes, and content type:</p>
 <a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>            content_type: up.content_type,
 <a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>            headers: [],
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        },
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>        Err(e) =&gt; http::Response::text(502, format!(&quot;upstream error: {}&quot;, e)),
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>        Err(e) =&gt; http::Response::text(502, format(&quot;upstream error: {}&quot;, e)),
 <a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    }
 <a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>}
 </code></pre></div>
@@ -2259,9 +2259,9 @@ to the downstream socket as chunked frames - no buffering, first bytes
 flow immediately:</p>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>fn forward_stream(method: String, target: String, body: String,
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>                  headers: [(String, String)]) -&gt; http::Response {
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    match http::stream(&amp;method, &amp;target, &amp;body, headers) {
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    match http::stream(method, target, body, headers) {
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>        Ok(up) =&gt; http::Response::stream(up.status, up.content_type, up),
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        Err(e) =&gt; http::Response::text(502, format!(&quot;upstream error: {}&quot;, e)),
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        Err(e) =&gt; http::Response::text(502, format(&quot;upstream error: {}&quot;, e)),
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    }
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>}
 </code></pre></div>
@@ -2274,15 +2274,15 @@ decode.</p>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>impl http::Handler for App {
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    fn serve(&amp;self, r: http::Request) -&gt; http::Response {
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        let suffix = if r.query.len() == 0 { &quot;&quot; } else { &quot;?&quot; + &amp;r.query }
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>        let target = format!(&quot;{}{}{}&quot;, self.target_base, r.path, suffix)
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>        let headers = forwardable_headers(&amp;r.headers)
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>        let target = format(&quot;{}{}{}&quot;, self.target_base, r.path, suffix)
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>        let headers = forwardable_headers(r.headers)
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>        forward_buffered(r.method, target, r.raw_body, headers)
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    }
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>}
 <a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
 <a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>fn main() {
 <a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>    if let Err(e) = http::serve(&quot;127.0.0.1:8080&quot;, App { target_base: &quot;http://localhost:3000&quot; }) {
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>        eprintln!(&quot;{}&quot;, e)
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>        eprintln(&quot;{}&quot;, e)
 <a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>    }
 <a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>}
 </code></pre></div>

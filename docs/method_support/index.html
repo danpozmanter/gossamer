@@ -3006,9 +3006,9 @@ The literal spelling of each container is in
 <td>Non-mutating; <code>v.reverse()</code> is in-place.</td>
 </tr>
 <tr>
-<td><code>v.contains(&amp;x)</code></td>
+<td><code>v.contains(x)</code></td>
 <td><code>bool</code></td>
-<td><code>v.index_of(&amp;x)</code> returns <code>Option&lt;i64&gt;</code>, <code>v.count_of(&amp;x)</code> the tally.</td>
+<td><code>v.index_of(x)</code> returns <code>Option&lt;i64&gt;</code>, <code>v.count_of(x)</code> the tally.</td>
 </tr>
 <tr>
 <td><code>v.sort()</code> / <code>v.sort_by(cmp)</code> / <code>v.sort_by_key(f)</code></td>
@@ -3606,7 +3606,7 @@ share these methods:</p>
 <td>Blocks until a value is available; <code>Some(v)</code>, or <code>None</code> once the channel is closed and drained. The canonical drain is <code>while let Some(v) = rx.recv()</code>.</td>
 </tr>
 <tr>
-<td><code>rx.recv_ctx(&amp;ctx)</code></td>
+<td><code>rx.recv_ctx(ctx)</code></td>
 <td><code>Option&lt;T&gt;</code></td>
 <td>Blocks like <code>recv()</code> but returns <code>None</code> when the supplied <a href="../stdlib/#stdcontext"><code>std::context::Context</code></a> fires. Goroutine callers observe cancellation immediately via the scheduler unpark path; OS-thread callers within 50ms via a bounded condvar timeout.</td>
 </tr>

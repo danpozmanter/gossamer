@@ -2145,12 +2145,12 @@
 <tbody>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>and_then</code></a></td>
-<td><code>fn and_then&lt;T, U&gt;(f: Fn(T) -&gt; Option&lt;U&gt;, value: Option&lt;T&gt;) -&gt; Option&lt;U&gt;</code></td>
+<td><code>fn and_then&lt;T, U&gt;(value: Option&lt;T&gt;, f: Fn(T) -&gt; Option&lt;U&gt;) -&gt; Option&lt;U&gt;</code></td>
 <td>Chains a fallible step: Some(v) -&gt; f(v), None stays None.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>filter</code></a></td>
-<td><code>fn filter&lt;T&gt;(predicate: Fn(T) -&gt; bool, value: Option&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td><code>fn filter&lt;T&gt;(value: Option&lt;T&gt;, predicate: Fn(T) -&gt; bool) -&gt; Option&lt;T&gt;</code></td>
 <td>Keeps Some(v) only when the predicate holds.</td>
 </tr>
 <tr>
@@ -2175,32 +2175,32 @@
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>map</code></a></td>
-<td><code>fn map&lt;T, U&gt;(f: Fn(T) -&gt; U, value: Option&lt;T&gt;) -&gt; Option&lt;U&gt;</code></td>
+<td><code>fn map&lt;T, U&gt;(value: Option&lt;T&gt;, f: Fn(T) -&gt; U) -&gt; Option&lt;U&gt;</code></td>
 <td>Transforms the Some payload, None stays None.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>or</code></a></td>
-<td><code>fn or&lt;T&gt;(fallback: Option&lt;T&gt;, value: Option&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td><code>fn or&lt;T&gt;(value: Option&lt;T&gt;, fallback: Option&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
 <td>First Some of self and the alternative.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>or_else</code></a></td>
-<td><code>fn or_else&lt;T&gt;(fallback: Fn() -&gt; Option&lt;T&gt;, value: Option&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td><code>fn or_else&lt;T&gt;(value: Option&lt;T&gt;, fallback: Fn() -&gt; Option&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
 <td>First Some of self and a lazily built alternative.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>unwrap_or</code></a></td>
-<td><code>fn unwrap_or&lt;T&gt;(fallback: T, value: Option&lt;T&gt;) -&gt; T</code></td>
+<td><code>fn unwrap_or&lt;T&gt;(value: Option&lt;T&gt;, fallback: T) -&gt; T</code></td>
 <td>Unwraps with a fallback value for None.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>unwrap_or_else</code></a></td>
-<td><code>fn unwrap_or_else&lt;T&gt;(fallback: Fn() -&gt; T, value: Option&lt;T&gt;) -&gt; T</code></td>
+<td><code>fn unwrap_or_else&lt;T&gt;(value: Option&lt;T&gt;, fallback: Fn() -&gt; T) -&gt; T</code></td>
 <td>Unwraps with a lazily computed fallback for None.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/option.rs"><code>zip</code></a></td>
-<td><code>fn zip&lt;T, U&gt;(other: Option&lt;U&gt;, value: Option&lt;T&gt;) -&gt; Option&lt;(T, U)&gt;</code></td>
+<td><code>fn zip&lt;T, U&gt;(value: Option&lt;T&gt;, other: Option&lt;U&gt;) -&gt; Option&lt;(T, U)&gt;</code></td>
 <td>Pairs two Somes into Some((a, b)).</td>
 </tr>
 </tbody>

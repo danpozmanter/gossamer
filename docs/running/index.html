@@ -2391,7 +2391,7 @@ literal <code>--</code>. Put <code>gos run</code> options before <code>FILE</cod
 <h2 id="entry-file">Entry file<a class="headerlink" href="#entry-file" title="Permanent link">&para;</a></h2>
 <p><code>gos run file.gos [ARGS...]</code> and <code>gos build file.gos</code> accept a file with no
 <code>fn main</code>: bare statements at the top of the entry file become the
-body of an implicit <code>fn main()</code>. So a one-line <code>println!("Hello
+body of an implicit <code>fn main()</code>. So a one-line <code>println("Hello
 World")</code> file runs as-is. See
 <a href="../language/top_level_statements/">Top-level statements</a>. A project's
 entry file is <code>src/main.gos</code> by convention, or whatever

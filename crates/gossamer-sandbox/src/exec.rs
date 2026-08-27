@@ -795,7 +795,7 @@ pub(crate) mod signals {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod signal_tests {
     use super::signals::{Waiter, Wake};
 
@@ -804,7 +804,6 @@ mod signal_tests {
     /// it. Nothing else ever would: it is waiting for a count that
     /// only the dispatcher moves, and the wait it chose has no
     /// deadline to fall back on.
-    #[cfg(unix)]
     #[test]
     fn a_waiter_with_no_deadline_is_released_when_the_dispatcher_stops() {
         let (blocking, blocked) = std::sync::mpsc::channel();

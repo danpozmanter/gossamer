@@ -31,7 +31,7 @@ of the source tree is denied at its target. A denied call reports
 `GX0010` naming the builtin, the capability class, and the option that
 would permit it; `gos explain GX0010` has the long form.
 
-`codegen!` is unaffected at every level: splicing a `comptime fn`'s
+`codegen` is unaffected at every level: splicing a `comptime fn`'s
 `String` is pure computation, so the metaprogramming story survives
 `none` intact.
 
@@ -133,26 +133,26 @@ use std::sandbox
 
 fn main() {
     let policy = sandbox::Policy::new()
-        .read_write(&".")
-        .read_only(&"/usr")
-        .network_mode(&"none")
-        .env_allow(&"PATH")
-        .level(&"standard")
+        .read_write(".")
+        .read_only("/usr")
+        .network_mode("none")
+        .env_allow("PATH")
+        .level("standard")
 
     // The capability report is a value, so a program branches on what
     // the host honors instead of assuming one operating system.
     if sandbox::max_level() == "strict" {
-        println("{}", sandbox::notes().join(&"\n"))
+        println("{}", sandbox::notes().join("\n"))
     }
 
-    match sandbox::run(&policy, &#["cargo", "build"]) {
+    match sandbox::run(policy, #["cargo", "build"]) {
         Ok(out) => println("{} {}", out.code, out.stdout)
         Err(e) => eprintln("{}", e)
     }
 }
 ```
 
-`sandbox::Policy::command_default(&cwd)` is the shipped policy as a
+`sandbox::Policy::command_default(cwd)` is the shipped policy as a
 constructor, so a program reproduces it without reassembling a dozen
 grants and getting one wrong. `sandbox::run` blocks for the length of
 the child but does so off the scheduler, so one sandboxed build does not

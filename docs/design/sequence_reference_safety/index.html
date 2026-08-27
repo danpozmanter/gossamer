@@ -2347,7 +2347,7 @@ Nested Vec elements are cloned recursively. Named Vec values sent to a
 goroutine or channel are cloned before publication, and every reachable
 String, RC node, nested Vec, or aggregate-owned child is switched to shared
 atomic RC before the handoff. GT0055 rejects every inline struct, tuple, or
-array passed directly to <code>go</code> because that compiled spawn ABI cannot yet copy
+array passed directly to a spawned call because that compiled spawn ABI cannot yet copy
 arbitrary inline layouts. Channels support scalar-only aggregates but reject
 aggregates containing nested Vec storage until their child-ownership
 descriptor is complete. Publish supported fields separately and reconstruct
@@ -2361,7 +2361,7 @@ write-through semantics only when their type is <code>&amp;mut Vec&lt;T&gt;</cod
 <li>enter an owned field, tuple, array, Vec, map, channel, or inferred container;</li>
 <li>borrow a temporary into a named local;</li>
 <li>be captured or returned by a closure;</li>
-<li>cross <code>go</code> or a channel boundary;</li>
+<li>cross a <code>spawn</code> or a channel boundary;</li>
 <li>be rebound to an alias whose backing place has a shorter lexical scope.</li>
 </ul>
 <p>A direct call may borrow a temporary because the view cannot leave that call.
@@ -2431,11 +2431,11 @@ references.</p>
 </tr>
 <tr>
 <td>Reference values do not cross concurrency boundaries</td>
-<td>GT0052 checks <code>go</code>, closure capture, channel types, and channel sends.</td>
+<td>GT0052 checks <code>spawn</code>, closure capture, channel types, and channel sends.</td>
 </tr>
 <tr>
 <td>Nested growable storage does not dangle or double-release across concurrency</td>
-<td>GT0055 rejects all inline aggregate <code>go</code> arguments and aggregate-with-Vec channel sends; top-level Vec publication clones storage and marks every managed child shared.</td>
+<td>GT0055 rejects all inline aggregate spawned-call arguments and aggregate-with-Vec channel sends; top-level Vec publication clones storage and marks every managed child shared.</td>
 </tr>
 <tr>
 <td>Bounds and offset arithmetic are checked</td>

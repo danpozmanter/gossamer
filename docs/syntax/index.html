@@ -2732,7 +2732,7 @@ unit. A body with no tail expression answers a unit and declares nothing.</p>
 <p>The entry file may skip the <code>fn main</code> wrapper. Bare statements at file
 scope become the body of an implicit <code>fn main()</code>; items declared
 alongside them are hoisted out as usual:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;Hello World&quot;</span><span class="p">)</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">println</span><span class="p">(</span><span class="s">&quot;Hello World&quot;</span><span class="p">)</span>
 </code></pre></div>
 <p>A <code>?</code> at the top level makes the implicit main return
 <code>Result&lt;(), errors::Error&gt;</code>; set a process exit code with
@@ -2749,14 +2749,14 @@ site - no turbofish annotation is needed:</p>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="c1">// Parameters inferred: Pair&lt;i64, String&gt;</span>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Pair</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">fst</span>: <span class="mi">42</span><span class="p">,</span><span class="w"> </span><span class="n">snd</span>: <span class="s">&quot;answer&quot;</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} = {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">fst</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">snd</span><span class="p">)</span><span class="w">   </span><span class="c1">// 42 = answer</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="n">println</span><span class="p">(</span><span class="s">&quot;{} = {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">fst</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">snd</span><span class="p">)</span><span class="w">   </span><span class="c1">// 42 = answer</span>
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="c1">// Same struct, different instantiation: Pair&lt;i64, i64&gt;</span>
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">nums</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Pair</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">fst</span>: <span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="n">snd</span>: <span class="mi">32</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">nums</span><span class="p">.</span><span class="n">fst</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">nums</span><span class="p">.</span><span class="n">snd</span><span class="p">)</span><span class="w">  </span><span class="c1">// 42</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="n">println</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">nums</span><span class="p">.</span><span class="n">fst</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">nums</span><span class="p">.</span><span class="n">snd</span><span class="p">)</span><span class="w">  </span><span class="c1">// 42</span>
 <a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
 <a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Cell</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">value</span>: <span class="mi">99</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">c</span><span class="p">.</span><span class="n">value</span><span class="p">)</span><span class="w">              </span><span class="c1">// 99</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">    </span><span class="n">println</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">c</span><span class="p">.</span><span class="n">value</span><span class="p">)</span><span class="w">              </span><span class="c1">// 99</span>
 <a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="p">}</span>
 </code></pre></div>
 <p>Field reads carry the per-instance concrete type. When two fields
@@ -2794,13 +2794,16 @@ right-hand side is evaluated before the first write, so a swap needs no
 temporary:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="p">(</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">b</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">)</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="p">(</span><span class="n">p</span><span class="p">.</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">xs</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span><span class="p">)</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="p">(</span><span class="n">_</span><span class="p">,</span><span class="w"> </span><span class="n">kept</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="mi">99</span><span class="p">,</span><span class="w"> </span><span class="mi">42</span><span class="p">)</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">b</span><span class="p">,</span><span class="w"> </span><span class="n">a</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">p</span><span class="p">.</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">xs</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">_</span><span class="p">,</span><span class="w"> </span><span class="n">kept</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">99</span><span class="p">,</span><span class="w"> </span><span class="mi">42</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span>
 </code></pre></div>
 <p>Each target must be a writable place - a binding, a field, an index, a tuple
 position, or a dereference - or <code>_</code> to discard the element. Targets nest, and
-only plain <code>=</code> destructures.</p>
+a compound operator pairs element-wise. Parentheses group a pattern only
+where one sits beside others, so a parenthesised target list reports
+<code>GP0042</code> with the rewrite.</p>
 <h2 id="forward-pipe">Forward pipe (<code>|&gt;</code>)<a class="headerlink" href="#forward-pipe" title="Permanent link">&para;</a></h2>
 <p>The forward-pipe operator composes free functions, which have no
 receiver to chain from. It is the functional-style tool: reach for it
@@ -2830,21 +2833,20 @@ whose parameter is the slot the value fills:</p>
 all: <code>x |&gt; |v| v * 2</code>. Piping into a method on an external receiver
 works the same way: <code>x |&gt; |v| recv.m(a, v)</code>.</p>
 <h3 id="why-the-slot-is-named">Why the slot is named<a class="headerlink" href="#why-the-slot-is-named" title="Permanent link">&para;</a></h3>
-<p>Gossamer's free functions do not share one argument convention.
-<code>iter::</code>, <code>option::</code>, and <code>result::</code> take their data last; <code>strings::</code>,
-<code>bytes::</code>, <code>path::</code>, <code>sort::</code>, and <code>fs::</code> take it first, mirroring the
-method receiver. An operator that assumed one convention would silently
-mis-fill the other, and those signatures are homogeneous enough that the
-type checker could not catch it - <code>strings::split(String, String)</code>
-accepts its arguments either way round.</p>
-<p>Naming the slot removes the assumption, so both conventions read alike:</p>
+<p>Every std free function takes its data first, so a step could in
+principle assume the leading slot. It does not: a step may pipe into any
+callee - a function this program declares, a package's, or a method on an
+external receiver - and none of those owe the operator a convention.
+Naming the slot means the reader sees which argument the value fills
+without knowing anything about the callee:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">iter</span><span class="p">,</span><span class="w"> </span><span class="n">strings</span><span class="p">}</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">parts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;a,b,c&quot;</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">strings</span>::<span class="n">split</span><span class="p">(</span><span class="n">v</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">)</span><span class="w">     </span><span class="c1">// data first</span>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">doubled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[1, 2]</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">value</span><span class="o">|</span><span class="w"> </span><span class="n">iter</span>::<span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">value</span><span class="p">)</span><span class="w">  </span><span class="c1">// data last</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">parts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;a,b,c&quot;</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">strings</span>::<span class="n">split</span><span class="p">(</span><span class="n">v</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">)</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">doubled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cp">#[1, 2]</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">value</span><span class="o">|</span><span class="w"> </span><span class="n">iter</span>::<span class="n">map</span><span class="p">(</span><span class="n">value</span><span class="p">,</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="kd">let</span><span class="w"> </span><span class="n">bounded</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">v</span><span class="o">|</span><span class="w"> </span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">)</span>
 </code></pre></div>
-<p>An argument-taking step that is not a closure reports <code>GP0041</code>, and a
-formatting macro written as a step reports <code>GP0025</code>. <code>$</code>, which spelled
+<p>An argument-taking step that is not a closure reports <code>GP0041</code>, whatever
+the callee is - a formatting call included. <code>$</code>, which spelled
 the slot in earlier releases, is no longer part of the language and
 reports <code>GP0027</code> wherever it appears. <code>gos check --fix</code> rewrites an
 argument-taking step into the closure it stands for, putting the
@@ -2856,7 +2858,7 @@ needs.</p>
 calls it, so <code>#[1.0, -2.0].map(math::abs)</code> means
 <code>map(|v| math::abs(v))</code>. A std item with no fixed parameter list has no
 such closure and reports <code>GT0015</code>; a macro is not a function at all, so
-<code>fmt::format</code> reports <code>GR0018</code> and is written <code>format!(..)</code> inside a
+<code>fmt::format</code> reports <code>GR0018</code> and is written <code>format(..)</code> inside a
 closure of your own.</p>
 <p>Everything else is a written closure - a method call, a field read, an
 index, and a tuple projection each spell out what they do:</p>
@@ -2967,7 +2969,7 @@ query chains directly with no accumulator:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">fs</span><span class="p">,</span><span class="w"> </span><span class="n">io</span><span class="p">}</span>
 <a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
 <a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="k">fn</span> <span class="nf">load</span><span class="p">(</span><span class="n">path</span>: <span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">io</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">raw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span>::<span class="n">read_to_string</span><span class="p">(</span><span class="o">&amp;</span><span class="n">path</span><span class="p">)</span><span class="o">?</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">raw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span>::<span class="n">read_to_string</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">?</span>
 <a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
 <a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="p">}</span>
 </code></pre></div>
@@ -2976,7 +2978,7 @@ query chains directly with no accumulator:</p>
 <h2 id="arenas">Arenas<a class="headerlink" href="#arenas" title="Permanent link">&para;</a></h2>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">arena</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">tree</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">build_tree</span><span class="p">(</span><span class="mi">16</span><span class="p">)</span>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="n">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">check</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tree</span><span class="p">)</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="n">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">check</span><span class="p">(</span><span class="n">tree</span><span class="p">)</span>
 <a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="p">}</span>
 </code></pre></div>
 <p>Everything allocated inside an <code>arena { }</code> block is bump-allocated
@@ -2994,20 +2996,21 @@ referenced after it exits. See the
 <a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">    </span><span class="n">cohort</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">fetch</span><span class="p">(</span><span class="s">&quot;one&quot;</span><span class="p">))</span>
 <a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">fetch</span><span class="p">(</span><span class="s">&quot;two&quot;</span><span class="p">))</span>
-<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="w">        </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">.</span><span class="n">join</span><span class="p">()</span><span class="o">??</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">.</span><span class="n">join</span><span class="p">()</span><span class="o">??</span><span class="p">)</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="w">        </span><span class="n">println</span><span class="p">(</span><span class="s">&quot;{} {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">.</span><span class="n">join</span><span class="p">()</span><span class="o">??</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">.</span><span class="n">join</span><span class="p">()</span><span class="o">??</span><span class="p">)</span>
 <a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">    </span><span class="p">}</span>
 <a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="p">}</span>
 <a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>
-<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="c1">// Detached: fire-and-forget, for work that should outlive the block.</span>
-<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">tx</span><span class="p">,</span><span class="w"> </span><span class="n">rx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">channel</span>::<span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">()</span>
-<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="n">go</span><span class="w"> </span><span class="k">fn</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span><span class="w"> </span><span class="p">}()</span>
-<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="kd">let</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span>
-<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>
-<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a><span class="n">select</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a><span class="w">    </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx_a</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">handle_a</span><span class="p">(</span><span class="n">a</span><span class="p">),</span>
-<a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="w">    </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx_b</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">handle_b</span><span class="p">(</span><span class="n">b</span><span class="p">),</span>
-<a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="w">    </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">time</span>::<span class="n">after</span><span class="p">(</span><span class="mi">5000</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">timeout</span><span class="p">(),</span>
-<a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a><span class="p">}</span>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="c1">// A spawn outside any `cohort { }` block attaches to the implicit root</span>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="c1">// cohort `main` runs inside; there is no detached form.</span>
+<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="kd">let</span><span class="w"> </span><span class="n">tx</span><span class="p">,</span><span class="w"> </span><span class="n">rx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">channel</span>::<span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">()</span>
+<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span><span class="w"> </span><span class="p">})</span>
+<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="kd">let</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span>
+<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>
+<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a><span class="n">select</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="w">    </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx_a</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">handle_a</span><span class="p">(</span><span class="n">a</span><span class="p">),</span>
+<a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="w">    </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx_b</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">handle_b</span><span class="p">(</span><span class="n">b</span><span class="p">),</span>
+<a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a><span class="w">    </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">time</span>::<span class="n">after</span><span class="p">(</span><span class="n">Duration</span>::<span class="n">from_millis</span><span class="p">(</span><span class="mi">5000</span><span class="p">)).</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">timeout</span><span class="p">(),</span>
+<a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a><span class="p">}</span>
 </code></pre></div>
 <p><code>cohort { }</code> is structured concurrency: every <code>spawn</code> inside it belongs
 to the block, which cannot be left until each child has finished, and a
@@ -3016,9 +3019,9 @@ cancelled. <code>main</code> runs inside an implicit root cohort, so a spawned
 goroutine can never outlive the program and a failure nobody joined is
 reported at exit rather than lost. Settings ride the header:
 <code>cohort(policy: Policy::CollectAll)</code>, <code>cohort(timeout: 500)</code>, and
-<code>cohort(context: Context::Isolated)</code> for FFI or CPU-bound children that
+<code>cohort(isolation: Isolation::Thread)</code> for FFI or CPU-bound children that
 need a thread of their own. See <a href="../language/cohort/">cohorts</a>.</p>
-<p><code>go expr</code> spawns a goroutine - a real stackful coroutine on the
+<p><code>spawn(|| expr)</code> spawns a goroutine - a real stackful coroutine on the
 M:N scheduler. Blocking primitives (channel ops, mutex contention,
 <code>time::sleep</code>, network reads, filesystem syscalls) park the
 goroutine, freeing the worker thread to run other goroutines.
@@ -3065,8 +3068,8 @@ work transparently (runtime-managed, no <code>move</code>).</p>
 <a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">scale</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10</span>
 <a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">scaled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">|</span><span class="n">y</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">scale</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">y</span><span class="w">    </span><span class="c1">// captures `scale`</span>
-<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">scaled</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">))</span><span class="w">   </span><span class="c1">// 50</span>
-<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">add_one</span><span class="p">,</span><span class="w"> </span><span class="mi">41</span><span class="p">))</span><span class="w"> </span><span class="c1">// 42 - bare fn coerces</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">    </span><span class="n">println</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">scaled</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">))</span><span class="w">   </span><span class="c1">// 50</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">    </span><span class="n">println</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">add_one</span><span class="p">,</span><span class="w"> </span><span class="mi">41</span><span class="p">))</span><span class="w"> </span><span class="c1">// 42 - bare fn coerces</span>
 <a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="p">}</span>
 </code></pre></div>
 <p>The conversion at the call boundary is implicit. Single trait
@@ -3084,7 +3087,7 @@ with automatic memory management).</p>
 <a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="k">fn</span> <span class="nf">scratch</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>
 <a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="cp">#[cfg(test)]</span>
-<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="k">mod</span> <span class="nn">point_tests</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="p">.</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="k">mod</span> <span class="nn">tests</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="p">.</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>
 <a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="cp">#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]</span>
 <a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a><span class="k">struct</span> <span class="nc">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="kt">i64</span> <span class="p">}</span>
@@ -3099,17 +3102,19 @@ comparison, hashing, and serialization are automatic and need no derive.</p>
 <a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="k">struct</span> <span class="nc">Tagged</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">id</span>: <span class="kt">i64</span> <span class="p">}</span>
 <a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>
 <a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="k">impl</span><span class="w"> </span><span class="n">Display</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Tagged</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">to_string</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">String</span> <span class="p">{</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;#{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">id</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">fmt</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">String</span> <span class="p">{</span><span class="w"> </span><span class="n">format</span><span class="p">(</span><span class="s">&quot;#{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">id</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="p">}</span>
 </code></pre></div>
-<p><code>Tagged</code> then renders as <code>#1</code> through <code>{}</code>, <code>format!</code>, <code>to_string()</code>,
+<p><code>Tagged</code> then renders as <code>#1</code> through <code>{}</code>, <code>format</code>, <code>to_string()</code>,
 <code>join(sep)</code>, and wherever one sits inside a <code>Vec</code>, <code>Map</code>, tuple, <code>Option</code>, or
 struct field. <code>impl Debug for T { fn fmt(&amp;self) -&gt; String }</code> is the same
 override for <code>{:?}</code>.</p>
-<p><code>Display</code> and <code>Debug</code> are distinct contracts: <code>{}</code> reaches only <code>to_string</code>
-and <code>{:?}</code> only <code>fmt</code>. A type implementing one keeps the synthesized
-rendering on the other channel, so <code>println!("{:?}", Tagged { id: 1 })</code>
-shows <code>Tagged { id: 1 }</code>.</p>
+<p><code>Display</code> and <code>Debug</code> are distinct contracts. Each declares one method that
+answers a <code>String</code>, and both are written <code>fn fmt</code>; the <code>impl</code> header says
+which contract a block supplies. A type implementing one keeps the
+synthesized rendering on the other channel, so
+<code>println("{:?}", Tagged { id: 1 })</code> shows <code>Tagged { id: 1 }</code>. Declaring the
+rendering as <code>fn to_string</code> inside an <code>impl Display</code> block reports <code>GP0053</code>.</p>
 <p>An <code>impl Trait for Type</code> block defines the items the trait declares and
 nothing else. A <code>fn</code> outside that contract reports <code>GT0072</code>: it would
 otherwise become an inherent method under a misleading header, reachable by
@@ -3186,8 +3191,8 @@ Rust-style format string with <code>{}</code> placeholders, plus named captures
 <code>{ident}</code> for bindings in scope:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;jane&quot;</span>
 <a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">age</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">30</span>
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;hello, {name}! you are {age} years old.&quot;</span><span class="p">)</span>
-<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">greeting</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;welcome, {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">)</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="n">println</span><span class="p">(</span><span class="s">&quot;hello, {name}! you are {age} years old.&quot;</span><span class="p">)</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">greeting</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">format</span><span class="p">(</span><span class="s">&quot;welcome, {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">)</span>
 </code></pre></div>
 <p>A named capture may walk a field path - <code>{account.balance}</code>, tuple
 index <code>{t.0}</code>, nested <code>{o.inner.hits}</code> - with specs applying to the
@@ -3201,36 +3206,38 @@ path (<code>{account.balance:&gt;8}</code>).</p>
 </thead>
 <tbody>
 <tr>
-<td><code>format!("…", a, b)</code></td>
+<td><code>format("…", a, b)</code></td>
 <td>Returns a <code>String</code>.</td>
 </tr>
 <tr>
-<td><code>println!("…", a, b)</code></td>
+<td><code>println("…", a, b)</code></td>
 <td>Writes to stdout + newline.</td>
 </tr>
 <tr>
-<td><code>print!("…", a, b)</code></td>
+<td><code>print("…", a, b)</code></td>
 <td>Writes to stdout, no newline.</td>
 </tr>
 <tr>
-<td><code>eprintln!("…", a, b)</code></td>
+<td><code>eprintln("…", a, b)</code></td>
 <td>Writes to stderr + newline.</td>
 </tr>
 <tr>
-<td><code>eprint!("…", a, b)</code></td>
+<td><code>eprint("…", a, b)</code></td>
 <td>Writes to stderr, no newline.</td>
 </tr>
 <tr>
-<td><code>panic!("…", a, b)</code></td>
+<td><code>panic("…", a, b)</code></td>
 <td>Unwinds with the rendered message.</td>
 </tr>
 </tbody>
 </table>
-<p>Alongside the format macros, a fixed set of desugar macros -
-<code>matches!</code>, <code>todo!</code>, <code>unimplemented!</code>, <code>unreachable!</code>, <code>dbg!</code> - and the
-build-time <code>regex!</code> / <code>sql!</code> / <code>codegen!</code> are built in. Any other
-<code>name!(…)</code> is a parse error (<code>GP0001</code>): there is no user-defined macro
-system. Compile-time metaprogramming instead goes through <code>comptime</code> - a
+<p>Alongside the format calls, a fixed set of desugar calls -
+<code>matches</code>, <code>todo</code>, <code>unimplemented</code>, <code>unreachable</code>, <code>dbg</code> - and the
+build-time <code>regex::compile</code> / <code>sql::statement</code> / <code>codegen</code> are built in.
+Every one of them is written as an ordinary call: the set of
+compiler-known names is closed and recognised at the <code>(</code>, so a <code>!</code> after
+any name is a parse error (<code>GP0049</code>), as is any other <code>name!(…)</code>
+(<code>GP0001</code>). There is no user-defined macro system. Compile-time metaprogramming instead goes through <code>comptime</code> - a
 <code>comptime { ... }</code> block or <code>comptime fn</code> call is evaluated at compile
 time and folded to a constant on every tier; see
 <a href="../language/comptime/">Comptime</a>.</p>

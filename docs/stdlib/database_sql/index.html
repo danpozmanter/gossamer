@@ -2191,7 +2191,7 @@
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Select</code></a></td>
 <td><code>type Select</code></td>
-<td>Fluent SELECT builder. <code>Select::new(table).columns(&amp;[..]).where_eq(col, sql::Value::Int(...))...render() -&gt; String</code>; <code>.params()</code> returns the bound parameters. Emits Postgres-style <code>$N</code> placeholders.</td>
+<td>Fluent SELECT builder. <code>Select::new(table).columns([..]).where_eq(col, sql::Value::Int(...))...render() -&gt; String</code>; <code>.params()</code> returns the bound parameters. Emits Postgres-style <code>$N</code> placeholders.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/database/sql/mod.rs"><code>Stmt</code></a></td>

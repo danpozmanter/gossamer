@@ -282,7 +282,14 @@ fn request_shutdown(child: &Child) -> Result<()> {
     }
 }
 
+/// Windows has no process-group terminate signal, so a graceful request
+/// has nothing to deliver and the caller's grace window falls through to
+/// the force-kill.
 #[cfg(not(unix))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the signature is shared with the Unix arm, which is fallible"
+)]
 fn request_shutdown(child: &Child) -> Result<()> {
     let _ = child;
     Ok(())

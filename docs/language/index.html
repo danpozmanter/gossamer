@@ -2209,10 +2209,6 @@
 <td>Type parameters on functions / impls / structs.</td>
 </tr>
 <tr>
-<td><a href="go/"><code>lang::go</code></a></td>
-<td>Goroutine spawn, detached.</td>
-</tr>
-<tr>
 <td><a href="cohort/"><code>lang::cohort</code></a></td>
 <td>Structured concurrency: <code>cohort { }</code> owns the goroutines <code>spawn</code>ed inside it, joins them on every exit path, and reports the first failure as its <code>Result</code>.</td>
 </tr>
@@ -2234,11 +2230,11 @@
 </tr>
 <tr>
 <td><a href="spawn/"><code>lang::spawn</code></a></td>
-<td>Goroutine join handle: <code>spawn(f)</code> -&gt; <code>JoinHandle&lt;T&gt;</code>, <code>.join()</code> -&gt; <code>Result&lt;T, String&gt;</code>.</td>
+<td>Goroutine spawn: <code>spawn(f)</code> -&gt; <code>JoinHandle&lt;T&gt;</code>, <code>.join()</code> -&gt; <code>Result&lt;T, String&gt;</code>. The child attaches to the enclosing cohort, so nothing is detached.</td>
 </tr>
 <tr>
-<td><a href="macros/"><code>lang::macros</code></a></td>
-<td>Built-in macros only - no user-defined macros: the format family (print/println/eprint/eprintln/format/panic), the desugar macros (matches!/todo!/unimplemented!/unreachable!/dbg!), and the build-time regex!/sql!/codegen!.</td>
+<td><a href="builtin_calls/"><code>lang::builtin_calls</code></a></td>
+<td>The compiler-known call names, written without a sigil: the format family (print/println/eprint/eprintln/format/panic), the desugaring calls (matches/todo/unimplemented/unreachable/dbg), and codegen. The set is closed and there are no user-defined macros.</td>
 </tr>
 <tr>
 <td><a href="doctest/"><code>lang::doctest</code></a></td>
@@ -2286,11 +2282,11 @@
 </tr>
 <tr>
 <td><a href="comptime/"><code>lang::comptime</code></a></td>
-<td>Zig-style compile-time evaluation: <code>comptime { ... }</code> blocks, <code>comptime fn</code> calls, and <code>comptime</code> parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. <code>typeInfo::&lt;T&gt;()</code> reflects a struct's fields, a tuple struct's positions, or an enum's variants - substituting the arguments for a generic instantiation - and a <code>for (name, ty) in typeInfo::&lt;T&gt;()</code> loop unrolls into native per-field code, and <code>codegen!(...)</code> splices a <code>comptime fn</code>'s <code>String</code> back as source. Includes the <code>regex!</code> / <code>sql!</code> build-time validation macros.</td>
+<td>Zig-style compile-time evaluation: <code>comptime { ... }</code> blocks, <code>comptime fn</code> calls, and <code>comptime</code> parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. <code>typeInfo::&lt;T&gt;()</code> reflects a struct's fields, a tuple struct's positions, or an enum's variants - substituting the arguments for a generic instantiation - and a <code>for (name, ty) in typeInfo::&lt;T&gt;()</code> loop unrolls into native per-field code, and <code>codegen(...)</code> splices a <code>comptime fn</code>'s <code>String</code> back as source. Includes the <code>regex::compile</code> / <code>sql::statement</code> build-time literal validation.</td>
 </tr>
 <tr>
 <td><a href="keyword_arguments/"><code>lang::keyword_arguments</code></a></td>
-<td>Keyword arguments and constant parameter defaults: a call may name any parameter (<code>volume(depth = 4, width = 2)</code>), and a parameter may declare a constant default (<code>fn volume(width: i64, height: i64 = 2)</code>) that is spliced into every call omitting it. Positional arguments come first, then names. Both are caller-side spellings rewritten into the callee's declared order before type checking, so the calling convention is unchanged. A name on a method call is matched when every type declaring that method name would rewrite the call identically; when they disagree the call is reported (GR0013) rather than guessed.</td>
+<td>Keyword arguments and constant parameter defaults: a call may name any parameter (<code>volume(depth: 4, width: 2)</code>), and a parameter may declare a constant default (<code>fn volume(width: i64, height: i64 = 2)</code>) that is spliced into every call omitting it. Positional arguments come first, then names. Both are caller-side spellings rewritten into the callee's declared order before type checking, so the calling convention is unchanged. A name on a method call is matched when every type declaring that method name would rewrite the call identically; when they disagree the call is reported (GR0013) rather than guessed.</td>
 </tr>
 <tr>
 <td><a href="move_keyword/"><code>lang::move_keyword</code></a></td>

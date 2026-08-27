@@ -2326,7 +2326,7 @@
 <h1 id="lazy-iterator-protocol">Lazy iterator protocol<a class="headerlink" href="#lazy-iterator-protocol" title="Permanent link">&para;</a></h1>
 <p>Integer range expressions produce lazy iterators, and adapters applied to those
 iterator values remain lazy. A collection already holds its values, so it
-traverses them eagerly: <code>xs.map(f)</code> and <code>iter::map(f, xs)</code> answer a <code>Vec</code>, and
+traverses them eagerly: <code>xs.map(f)</code> and <code>iter::map(xs, f)</code> answer a <code>Vec</code>, and
 <code>xs.iter()</code> is how a caller asks for the lazy walk instead.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <p>The public protocol supports lazy <code>map</code>, <code>filter</code>, <code>take</code>, <code>skip</code>,

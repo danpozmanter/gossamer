@@ -158,7 +158,7 @@ fn main() {
     while i < 1000 {
         arena {
             let tree = build_tree(16)
-            total += check(&tree)
+            total += check(tree)
         }
         i += 1
     }

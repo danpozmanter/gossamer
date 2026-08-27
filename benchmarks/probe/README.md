@@ -16,7 +16,7 @@ is the test signal.
 26 / 26 probes go native. Covers every integer and float primitive
 op, `if`/`else`/`while`, function call + early return, fixed-size
 arrays of scalar and struct elements, `struct { … }` field
-read/write, `[Struct; N].field` projected read/write, `println!`
+read/write, `[Struct; N].field` projected read/write, `println`
 formatted output, booleans, characters, tuples, string literals,
 string methods (`.len()`), `for i in range`, capturing closures,
 function-pointer locals (`let f = fn; f(x)`), call results into a

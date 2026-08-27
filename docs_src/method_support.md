@@ -103,7 +103,7 @@ The literal spelling of each container is in
 | `v.first()` / `v.last()` | `Option<T>` | |
 | `v.insert(i, item)` / `v.remove(i)` | `Result<_, errors::Error>` | Bounds-checked mutation helpers. |
 | `v.rev()` | `Vec<T>` | Non-mutating; `v.reverse()` is in-place. |
-| `v.contains(&x)` | `bool` | `v.index_of(&x)` returns `Option<i64>`, `v.count_of(&x)` the tally. |
+| `v.contains(x)` | `bool` | `v.index_of(x)` returns `Option<i64>`, `v.count_of(x)` the tally. |
 | `v.sort()` / `v.sort_by(cmp)` / `v.sort_by_key(f)` | `()` | In-place; `Reverse(k)` keys give descending order. |
 | `v.swap(i, j)` | `()` | Exchanges two existing elements; an index outside `[0, len)` panics. |
 | `v.fill(value)` | `()` | Clones `value` into every existing element without changing length or capacity; also available on mutable arrays and slices. |
@@ -310,7 +310,7 @@ share these methods:
 |---|---|---|
 | `tx.send(v)` | `()` | Enqueues `v`; a buffered send does not block on a waiting receiver. |
 | `rx.recv()` | `Option<T>` | Blocks until a value is available; `Some(v)`, or `None` once the channel is closed and drained. The canonical drain is `while let Some(v) = rx.recv()`. |
-| `rx.recv_ctx(&ctx)` | `Option<T>` | Blocks like `recv()` but returns `None` when the supplied [`std::context::Context`](stdlib.md#stdcontext) fires. Goroutine callers observe cancellation immediately via the scheduler unpark path; OS-thread callers within 50ms via a bounded condvar timeout. |
+| `rx.recv_ctx(ctx)` | `Option<T>` | Blocks like `recv()` but returns `None` when the supplied [`std::context::Context`](stdlib.md#stdcontext) fires. Goroutine callers observe cancellation immediately via the scheduler unpark path; OS-thread callers within 50ms via a bounded condvar timeout. |
 | `rx.try_recv()` | `Option<T>` | Non-blocking; `None` if empty. |
 | `tx.close()` / `rx.close()` | `()` | Subsequent send/recv return immediately. |
 

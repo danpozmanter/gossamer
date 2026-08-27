@@ -2121,6 +2121,17 @@
 
 </li>
 
+        <li class="md-nav__item">
+  <a href="#how-wide-the-discriminant-is" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        How wide the discriminant is
+
+    </span>
+  </a>
+
+</li>
+
     </ul>
 
 </nav>
@@ -2145,8 +2156,8 @@
 <p>Variants carry tuple payloads (<code>Line(i64)</code>, <code>Rect(i64, i64)</code>), struct
 payloads (<code>Named { id: i64 }</code>), or nothing (<code>Dot</code>). Recursive payloads
 work directly with no wrapper - <code>enum List { Cons(i64, List), Nil }</code> -
-because every variant payload is already heap-shared. The <code>Box&lt;List&gt;</code> /
-<code>Arc&lt;List&gt;</code> / <code>Rc&lt;List&gt;</code> spellings are transparent and compile to the
+because every variant payload is already heap-shared. The <code>List</code> /
+<code>List</code> / <code>List</code> spellings are transparent and compile to the
 same thing, so reach for them only when the type reads clearer with the
 wrapper. Match exhaustively.</p>
 <h2 id="compare-by-value-no-derive">Compare by value, no derive<a class="headerlink" href="#compare-by-value-no-derive" title="Permanent link">&para;</a></h2>
@@ -2156,9 +2167,9 @@ payload is comparable. Ordering is by <strong>variant rank first</strong> (decla
 order), then payload lexicographically:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">enum</span> <span class="nc">Shape</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Dot</span><span class="p">,</span><span class="w"> </span><span class="n">Line</span><span class="p">(</span><span class="kt">i64</span><span class="p">),</span><span class="w"> </span><span class="nb">Box</span><span class="p">(</span><span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Dot</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Line</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span><span class="w">     </span><span class="c1">// true: Dot ranks before Line</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Line</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Line</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span><span class="w"> </span><span class="c1">// true: same rank, payload compared</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">Shape</span>::<span class="nb">Box</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">Shape</span>::<span class="nb">Box</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">))</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">println</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Dot</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Line</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span><span class="w">     </span><span class="c1">// true: Dot ranks before Line</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">println</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Line</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Line</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span><span class="w"> </span><span class="c1">// true: same rank, payload compared</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">println</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">Shape</span>::<span class="nb">Box</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">Shape</span>::<span class="nb">Box</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">))</span>
 </code></pre></div>
 <p>A user <code>impl</code> of <code>eq</code> / <code>cmp</code> overrides the synthesized one for custom
 ordering.</p>
@@ -2178,6 +2189,23 @@ container-typed payloads).</p>
 <p><code>Clone</code>, <code>Copy</code>, <code>Hash</code>, <code>Display</code>, <code>Serialize</code>, and <code>Deserialize</code> are
 <strong>not</strong> derivable (<code>GT0025</code>) - copying, hashing, and serialization are
 automatic. The enum cap is 256 variants (<code>GT0012</code>).</p>
+<h2 id="how-wide-the-discriminant-is">How wide the discriminant is<a class="headerlink" href="#how-wide-the-discriminant-is" title="Permanent link">&para;</a></h2>
+<p>A plain <code>enum</code> stores its discriminant in the smallest byte-aligned
+width that holds every variant. <code>packed</code> asks for the smallest number of
+bits instead, and a <code>: uN</code> names a width outright - any unsigned width
+from <code>u1</code> to <code>u64</code>:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">enum</span> <span class="nc">Level</span>: <span class="kt">u16</span> <span class="p">{</span><span class="w"> </span><span class="n">Debug</span><span class="p">,</span><span class="w"> </span><span class="n">Warn</span><span class="p">,</span><span class="w"> </span><span class="n">Error</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// 16 bits, as asked</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">packed</span><span class="w"> </span><span class="k">enum</span> <span class="nc">Direction</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">North</span><span class="p">,</span><span class="w"> </span><span class="n">East</span><span class="p">,</span><span class="w"> </span><span class="n">South</span><span class="p">,</span><span class="w"> </span><span class="n">West</span><span class="w"> </span><span class="p">}</span><span class="w">  </span><span class="c1">// 2 bits</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">packed</span><span class="w"> </span><span class="k">enum</span> <span class="nc">Bit</span>: <span class="nc">u1</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Off</span><span class="p">,</span><span class="w"> </span><span class="n">On</span><span class="w"> </span><span class="p">}</span><span class="w">          </span><span class="c1">// exactly 1 bit</span>
+</code></pre></div>
+<p>A width too narrow for the variants reports <code>GT0081</code> with the width they
+need; a representation that is not an unsigned width reports <code>GP0050</code>.
+Variants number from zero in declaration order.</p>
+<p>The choice is about storage only. Matching, <code>==</code>, ordering, <code>{}</code> and
+<code>{:?}</code>, serialization, <code>Map</code> keys, arrays, and tuples all behave
+identically at every width, on the VM and both compiled tiers.</p>
+<p><code>packed</code> is a keyword only directly before <code>enum</code>, so a value or a
+function may still be named <code>packed</code>.</p>
 
 
 

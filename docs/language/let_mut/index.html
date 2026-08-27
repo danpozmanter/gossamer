@@ -2130,7 +2130,7 @@ referent into the inner pattern:</p>
 </code></pre></div>
 <p><code>copy</code> is an independent <code>[i64; 3]</code> value and is not reassignable. Only
 <code>mut name</code> makes a binding reassignable. Reference patterns also compose with
-other patterns, for example <code>let (name, &amp;mut count) = entry</code>. For a simple
+other patterns, for example <code>let name, &amp;mut count = entry</code>. For a simple
 top-level copy, <code>let copy = *reference</code> is usually clearer.</p>
 <p>An immutable binding cannot be used as the source of <code>&amp;mut</code>, because that
 would create a write path around its immutability.</p>

@@ -2166,12 +2166,12 @@ short-circuiting, overflow, and backend behavior.</p>
 <tbody>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>all</code></a></td>
-<td><code>fn all&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; bool</code></td>
+<td><code>fn all&lt;T&gt;(items: Vec&lt;T&gt;, predicate: Fn(T) -&gt; bool) -&gt; bool</code></td>
 <td>True if every element satisfies f.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>any</code></a></td>
-<td><code>fn any&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; bool</code></td>
+<td><code>fn any&lt;T&gt;(items: Vec&lt;T&gt;, predicate: Fn(T) -&gt; bool) -&gt; bool</code></td>
 <td>True if any element satisfies f.</td>
 </tr>
 <tr>
@@ -2181,12 +2181,12 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>chunk_by</code></a></td>
-<td><code>fn chunk_by&lt;T, K: Eq&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; Map&lt;K, Vec&lt;T&gt;&gt;</code></td>
+<td><code>fn chunk_by&lt;T, K: Eq&gt;(items: Vec&lt;T&gt;, key: Fn(T) -&gt; K) -&gt; Map&lt;K, Vec&lt;T&gt;&gt;</code></td>
 <td>Groups elements into a map keyed by f.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>chunks</code></a></td>
-<td><code>fn chunks&lt;T&gt;(n: i64, items: Vec&lt;T&gt;) -&gt; Vec&lt;Vec&lt;T&gt;&gt;</code></td>
+<td><code>fn chunks&lt;T&gt;(items: Vec&lt;T&gt;, n: i64) -&gt; Vec&lt;Vec&lt;T&gt;&gt;</code></td>
 <td>Non-overlapping chunks of length n.</td>
 </tr>
 <tr>
@@ -2201,7 +2201,7 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>count_by</code></a></td>
-<td><code>fn count_by&lt;T, K: Eq&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; Map&lt;K, i64&gt;</code></td>
+<td><code>fn count_by&lt;T, K: Eq&gt;(items: Vec&lt;T&gt;, key: Fn(T) -&gt; K) -&gt; Map&lt;K, i64&gt;</code></td>
 <td>Counts elements per key derived by f.</td>
 </tr>
 <tr>
@@ -2221,27 +2221,27 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>filter</code></a></td>
-<td><code>fn filter&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td><code>fn filter&lt;T&gt;(items: Vec&lt;T&gt;, predicate: Fn(T) -&gt; bool) -&gt; Vec&lt;T&gt;</code></td>
 <td>Returns elements where f is true.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>filter_map</code></a></td>
-<td><code>fn filter_map&lt;T, U&gt;(f: Fn(T) -&gt; Option&lt;U&gt;, items: Vec&lt;T&gt;) -&gt; Vec&lt;U&gt;</code></td>
+<td><code>fn filter_map&lt;T, U&gt;(items: Vec&lt;T&gt;, f: Fn(T) -&gt; Option&lt;U&gt;) -&gt; Vec&lt;U&gt;</code></td>
 <td>Maps each element and keeps the Some results.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>find</code></a></td>
-<td><code>fn find&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td><code>fn find&lt;T&gt;(items: Vec&lt;T&gt;, predicate: Fn(T) -&gt; bool) -&gt; Option&lt;T&gt;</code></td>
 <td>First element satisfying f, or None.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>find_map</code></a></td>
-<td><code>fn find_map&lt;T, U&gt;(f: Fn(T) -&gt; Option&lt;U&gt;, items: Vec&lt;T&gt;) -&gt; Option&lt;U&gt;</code></td>
+<td><code>fn find_map&lt;T, U&gt;(items: Vec&lt;T&gt;, f: Fn(T) -&gt; Option&lt;U&gt;) -&gt; Option&lt;U&gt;</code></td>
 <td>First Some result of f over the sequence.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>flat_map</code></a></td>
-<td><code>fn flat_map&lt;T, U&gt;(f: Fn(T) -&gt; Vec&lt;U&gt;, items: Vec&lt;T&gt;) -&gt; Vec&lt;U&gt;</code></td>
+<td><code>fn flat_map&lt;T, U&gt;(items: Vec&lt;T&gt;, f: Fn(T) -&gt; Vec&lt;U&gt;) -&gt; Vec&lt;U&gt;</code></td>
 <td>Maps f and flattens one level.</td>
 </tr>
 <tr>
@@ -2251,17 +2251,17 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>fold</code></a></td>
-<td><code>fn fold&lt;T, U&gt;(f: Fn(U, T) -&gt; U, init: U, items: Vec&lt;T&gt;) -&gt; U</code></td>
+<td><code>fn fold&lt;T, U&gt;(items: Vec&lt;T&gt;, init: U, f: Fn(U, T) -&gt; U) -&gt; U</code></td>
 <td>Reduces a sequence with an accumulator.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>for_each</code></a></td>
-<td><code>fn for_each&lt;T&gt;(f: Fn(T) -&gt; (), items: Vec&lt;T&gt;) -&gt; ()</code></td>
+<td><code>fn for_each&lt;T&gt;(items: Vec&lt;T&gt;, f: Fn(T) -&gt; ()) -&gt; ()</code></td>
 <td>Applies f to each element for its side effect.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>map</code></a></td>
-<td><code>fn map&lt;T, U&gt;(f: Fn(T) -&gt; U, items: Vec&lt;T&gt;) -&gt; Vec&lt;U&gt;</code></td>
+<td><code>fn map&lt;T, U&gt;(items: Vec&lt;T&gt;, f: Fn(T) -&gt; U) -&gt; Vec&lt;U&gt;</code></td>
 <td>Applies f to each element, returning a new Vec.</td>
 </tr>
 <tr>
@@ -2271,12 +2271,12 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>max_by</code></a></td>
-<td><code>fn max_by&lt;T&gt;(compare: Fn(T, T) -&gt; i64, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td><code>fn max_by&lt;T&gt;(items: Vec&lt;T&gt;, compare: Fn(T, T) -&gt; i64) -&gt; Option&lt;T&gt;</code></td>
 <td>Largest element by the comparison closure.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>max_by_key</code></a></td>
-<td><code>fn max_by_key&lt;T, K: Ord&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td><code>fn max_by_key&lt;T, K: Ord&gt;(items: Vec&lt;T&gt;, key: Fn(T) -&gt; K) -&gt; Option&lt;T&gt;</code></td>
 <td>Element with the largest derived key.</td>
 </tr>
 <tr>
@@ -2286,12 +2286,12 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>min_by</code></a></td>
-<td><code>fn min_by&lt;T&gt;(compare: Fn(T, T) -&gt; i64, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td><code>fn min_by&lt;T&gt;(items: Vec&lt;T&gt;, compare: Fn(T, T) -&gt; i64) -&gt; Option&lt;T&gt;</code></td>
 <td>Smallest element by the comparison closure.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>min_by_key</code></a></td>
-<td><code>fn min_by_key&lt;T, K: Ord&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td><code>fn min_by_key&lt;T, K: Ord&gt;(items: Vec&lt;T&gt;, key: Fn(T) -&gt; K) -&gt; Option&lt;T&gt;</code></td>
 <td>Element with the smallest derived key.</td>
 </tr>
 <tr>
@@ -2306,12 +2306,12 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>partition</code></a></td>
-<td><code>fn partition&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; (Vec&lt;T&gt;, Vec&lt;T&gt;)</code></td>
+<td><code>fn partition&lt;T&gt;(items: Vec&lt;T&gt;, predicate: Fn(T) -&gt; bool) -&gt; (Vec&lt;T&gt;, Vec&lt;T&gt;)</code></td>
 <td>Splits into (matching, non-matching) by f.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>position</code></a></td>
-<td><code>fn position&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; Option&lt;i64&gt;</code></td>
+<td><code>fn position&lt;T&gt;(items: Vec&lt;T&gt;, predicate: Fn(T) -&gt; bool) -&gt; Option&lt;i64&gt;</code></td>
 <td>Index of the first element satisfying f, or None.</td>
 </tr>
 <tr>
@@ -2321,7 +2321,7 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>product_by</code></a></td>
-<td><code>fn product_by&lt;T&gt;(f: Fn(T) -&gt; i64, items: Vec&lt;T&gt;) -&gt; i64</code></td>
+<td><code>fn product_by&lt;T&gt;(items: Vec&lt;T&gt;, f: Fn(T) -&gt; i64) -&gt; i64</code></td>
 <td>Product of f(element) over the sequence.</td>
 </tr>
 <tr>
@@ -2336,7 +2336,7 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>reduce</code></a></td>
-<td><code>fn reduce&lt;T&gt;(f: Fn(T, T) -&gt; T, items: Vec&lt;T&gt;) -&gt; Option&lt;T&gt;</code></td>
+<td><code>fn reduce&lt;T&gt;(items: Vec&lt;T&gt;, f: Fn(T, T) -&gt; T) -&gt; Option&lt;T&gt;</code></td>
 <td>Folds with the first element as the initial accumulator.</td>
 </tr>
 <tr>
@@ -2351,32 +2351,32 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>scan</code></a></td>
-<td><code>fn scan&lt;T, S, U&gt;(f: Fn(S, T) -&gt; (S, Option&lt;U&gt;), state: S, items: Vec&lt;T&gt;) -&gt; Vec&lt;U&gt;</code></td>
+<td><code>fn scan&lt;T, S, U&gt;(items: Vec&lt;T&gt;, state: S, f: Fn(S, T) -&gt; (S, Option&lt;U&gt;)) -&gt; Vec&lt;U&gt;</code></td>
 <td>Folds while yielding each intermediate accumulator.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>skip</code></a></td>
-<td><code>fn skip&lt;T&gt;(n: i64, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td><code>fn skip&lt;T&gt;(items: Vec&lt;T&gt;, n: i64) -&gt; Vec&lt;T&gt;</code></td>
 <td>All elements after the first n.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>skip_while</code></a></td>
-<td><code>fn skip_while&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td><code>fn skip_while&lt;T&gt;(items: Vec&lt;T&gt;, predicate: Fn(T) -&gt; bool) -&gt; Vec&lt;T&gt;</code></td>
 <td>Elements after the leading run satisfying f.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>sort_by</code></a></td>
-<td><code>fn sort_by&lt;T&gt;(compare: Fn(T, T) -&gt; i64, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td><code>fn sort_by&lt;T&gt;(items: Vec&lt;T&gt;, compare: Fn(T, T) -&gt; i64) -&gt; Vec&lt;T&gt;</code></td>
 <td>Sorted copy ordered by the comparison closure.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>sort_by_key</code></a></td>
-<td><code>fn sort_by_key&lt;T, K: Ord&gt;(key: Fn(T) -&gt; K, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td><code>fn sort_by_key&lt;T, K: Ord&gt;(items: Vec&lt;T&gt;, key: Fn(T) -&gt; K) -&gt; Vec&lt;T&gt;</code></td>
 <td>Sorted copy ordered by a derived key.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>step_by</code></a></td>
-<td><code>fn step_by&lt;T&gt;(step: i64, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td><code>fn step_by&lt;T&gt;(items: Vec&lt;T&gt;, step: i64) -&gt; Vec&lt;T&gt;</code></td>
 <td>Every step-th element, starting at index 0.</td>
 </tr>
 <tr>
@@ -2386,17 +2386,17 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>sum_by</code></a></td>
-<td><code>fn sum_by&lt;T&gt;(f: Fn(T) -&gt; i64, items: Vec&lt;T&gt;) -&gt; i64</code></td>
+<td><code>fn sum_by&lt;T&gt;(items: Vec&lt;T&gt;, f: Fn(T) -&gt; i64) -&gt; i64</code></td>
 <td>Sum of f(element) over the sequence.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>take</code></a></td>
-<td><code>fn take&lt;T&gt;(n: i64, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td><code>fn take&lt;T&gt;(items: Vec&lt;T&gt;, n: i64) -&gt; Vec&lt;T&gt;</code></td>
 <td>First n elements.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>take_while</code></a></td>
-<td><code>fn take_while&lt;T&gt;(predicate: Fn(T) -&gt; bool, items: Vec&lt;T&gt;) -&gt; Vec&lt;T&gt;</code></td>
+<td><code>fn take_while&lt;T&gt;(items: Vec&lt;T&gt;, predicate: Fn(T) -&gt; bool) -&gt; Vec&lt;T&gt;</code></td>
 <td>Leading run of elements satisfying f.</td>
 </tr>
 <tr>
@@ -2406,7 +2406,7 @@ short-circuiting, overflow, and backend behavior.</p>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/iter.rs"><code>windows</code></a></td>
-<td><code>fn windows&lt;T&gt;(n: i64, items: Vec&lt;T&gt;) -&gt; Vec&lt;Vec&lt;T&gt;&gt;</code></td>
+<td><code>fn windows&lt;T&gt;(items: Vec&lt;T&gt;, n: i64) -&gt; Vec&lt;Vec&lt;T&gt;&gt;</code></td>
 <td>Overlapping windows of width n.</td>
 </tr>
 <tr>

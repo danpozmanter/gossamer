@@ -2146,34 +2146,6 @@
 <td>Built-in container types.</td>
 </tr>
 <tr>
-<td><a href="collections_deque/"><code>std::collections::deque</code></a></td>
-<td>Double-ended queue over Vec<i64>. Re-bind shape on every mutator.</td>
-</tr>
-<tr>
-<td><a href="collections_heap/"><code>std::collections::heap</code></a></td>
-<td>Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: <code>let h = heap::push(h, v)</code>.</td>
-</tr>
-<tr>
-<td><a href="collections_ordered_map/"><code>std::collections::ordered_map</code></a></td>
-<td>Sorted key/value map (i64 -&gt; i64) backed by a flat pair Vec. Re-bind on every mutator.</td>
-</tr>
-<tr>
-<td><a href="collections_ordered_set/"><code>std::collections::ordered_set</code></a></td>
-<td>Sorted set of i64 with binary-search lookups. Re-bind shape on every mutator.</td>
-</tr>
-<tr>
-<td><a href="collections_ordered_vec/"><code>std::collections::ordered_vec</code></a></td>
-<td>Sorted-on-insert Vec<i64> with binary-search lookups.</td>
-</tr>
-<tr>
-<td><a href="collections_queue/"><code>std::collections::queue</code></a></td>
-<td>FIFO queue over Vec<i64>. Re-bind shape: <code>let q = queue::push(q, v)</code>.</td>
-</tr>
-<tr>
-<td><a href="collections_stack/"><code>std::collections::stack</code></a></td>
-<td>LIFO stack over Vec<i64>. Re-bind shape: <code>let s = stack::push(s, v)</code>.</td>
-</tr>
-<tr>
 <td><a href="compress_bzip2/"><code>std::compress::bzip2</code></a></td>
 <td>bzip2 encoder / decoder (BZh format).</td>
 </tr>
@@ -2431,7 +2403,7 @@
 </tr>
 <tr>
 <td><a href="lifecycle/"><code>std::lifecycle</code></a></td>
-<td>Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - <code>go serve()</code>, <code>lifecycle::ready()</code>, <code>lifecycle::await_shutdown()</code>, then the cleanup.</td>
+<td>Process readiness and graceful shutdown, with systemd sd_notify. Shutdown is observed, not dispatched: wait for it, then drain with ordinary statements - <code>spawn(|| serve())</code>, <code>lifecycle::ready()</code>, <code>lifecycle::await_shutdown()</code>, then the cleanup.</td>
 </tr>
 <tr>
 <td><a href="math/"><code>std::math</code></a></td>

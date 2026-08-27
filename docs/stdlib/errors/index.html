@@ -2192,7 +2192,7 @@ outermost wrap down to the root cause:</p>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>let root = errors::new(&quot;no such file&quot;)
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>let mid  = errors::wrap(root, &quot;open /etc/app.toml&quot;)
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>let top  = errors::wrap(mid, &quot;reading config&quot;)
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>println!(&quot;{}&quot;, top)
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>println(&quot;{}&quot;, top)
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>// reading config: open /etc/app.toml: no such file
 </code></pre></div>
 <ul>

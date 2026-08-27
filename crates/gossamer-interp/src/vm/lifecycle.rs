@@ -2436,7 +2436,7 @@ fn current_process_rss_bytes() -> Option<u64> {
     // SAFETY: `counters` is a valid PROCESS_MEMORY_COUNTERS buffer whose
     // `cb` advertises its exact size; GetCurrentProcess returns a valid
     // pseudo-handle for the current process.
-    if unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) } == 0 {
+    if unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &raw mut counters, counters.cb) } == 0 {
         return None;
     }
     u64::try_from(counters.WorkingSetSize).ok()

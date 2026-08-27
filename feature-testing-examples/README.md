@@ -27,7 +27,7 @@ gos build example.gos        # compile one non-channel example to native
 | `pipe_operator_precedence.gos` | Long `|>` chains with arithmetic | Works on all tiers (the step names its slot) |
 | `recursive_enum_walk.gos` | Recursive `enum` + `Box` list/tree | Works on all tiers |
 | `tuple_destructuring_loop.gos` | Destructuring in `for`, `let`, `while let`, rest `..` | Works on all tiers |
-| `string_concatenation_stress.gos` | `+`, `+=`, `format!`, `println!` | Works on all tiers |
+| `string_concatenation_stress.gos` | `+`, `+=`, `format`, `println` | Works on all tiers |
 | `hashmap_counter_race.gos` | `HashMap.inc`, `or_insert`, repeated updates, iteration | Works on all tiers |
 | `channel_fan_in.gos` | Multiple goroutines into one channel | Works on VM; `gos build` not wired |
 | `select_default_timing.gos` | Channel polling loop (fallback for `select`) | Works on VM; `gos build` not wired |

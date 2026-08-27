@@ -2145,7 +2145,7 @@
 <tbody>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>and_then</code></a></td>
-<td><code>fn and_then&lt;T, E, U&gt;(f: Fn(T) -&gt; Result&lt;U, E&gt;, value: Result&lt;T, E&gt;) -&gt; Result&lt;U, E&gt;</code></td>
+<td><code>fn and_then&lt;T, E, U&gt;(value: Result&lt;T, E&gt;, f: Fn(T) -&gt; Result&lt;U, E&gt;) -&gt; Result&lt;U, E&gt;</code></td>
 <td>Chains a fallible step on the Ok payload.</td>
 </tr>
 <tr>
@@ -2165,12 +2165,12 @@
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>map</code></a></td>
-<td><code>fn map&lt;T, E, U&gt;(f: Fn(T) -&gt; U, value: Result&lt;T, E&gt;) -&gt; Result&lt;U, E&gt;</code></td>
+<td><code>fn map&lt;T, E, U&gt;(value: Result&lt;T, E&gt;, f: Fn(T) -&gt; U) -&gt; Result&lt;U, E&gt;</code></td>
 <td>Transforms the Ok payload, Err passes through.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>map_err</code></a></td>
-<td><code>fn map_err&lt;T, E, F&gt;(f: Fn(E) -&gt; F, value: Result&lt;T, E&gt;) -&gt; Result&lt;T, F&gt;</code></td>
+<td><code>fn map_err&lt;T, E, F&gt;(value: Result&lt;T, E&gt;, f: Fn(E) -&gt; F) -&gt; Result&lt;T, F&gt;</code></td>
 <td>Transforms the Err payload, Ok passes through.</td>
 </tr>
 <tr>
@@ -2180,17 +2180,17 @@
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>or_else</code></a></td>
-<td><code>fn or_else&lt;T, E, F&gt;(f: Fn(E) -&gt; Result&lt;T, F&gt;, value: Result&lt;T, E&gt;) -&gt; Result&lt;T, F&gt;</code></td>
+<td><code>fn or_else&lt;T, E, F&gt;(value: Result&lt;T, E&gt;, f: Fn(E) -&gt; Result&lt;T, F&gt;) -&gt; Result&lt;T, F&gt;</code></td>
 <td>Recovers from Err with a fallback computation.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>unwrap_or</code></a></td>
-<td><code>fn unwrap_or&lt;T, E&gt;(fallback: T, value: Result&lt;T, E&gt;) -&gt; T</code></td>
+<td><code>fn unwrap_or&lt;T, E&gt;(value: Result&lt;T, E&gt;, fallback: T) -&gt; T</code></td>
 <td>Unwraps Ok with a fallback value for Err.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/result.rs"><code>unwrap_or_else</code></a></td>
-<td><code>fn unwrap_or_else&lt;T, E&gt;(f: Fn(E) -&gt; T, value: Result&lt;T, E&gt;) -&gt; T</code></td>
+<td><code>fn unwrap_or_else&lt;T, E&gt;(value: Result&lt;T, E&gt;, f: Fn(E) -&gt; T) -&gt; T</code></td>
 <td>Consumes the result, handling Err with a callback.</td>
 </tr>
 </tbody>

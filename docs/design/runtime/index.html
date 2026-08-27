@@ -2476,7 +2476,7 @@ owns the stage so a new contributor can find the real source.</p>
    <code>select</code>, <code>defer</code>, or-patterns, goroutines, custom iterators - is
    lowered to native bytecode; nothing is interpreted from HIR.</li>
 </ol>
-<p>Struct values are <code>Rc&lt;Vec&lt;(Ident, Value)&gt;&gt;</code>. Field assignment runs
+<p>Struct values are <code>Vec&lt;(Ident, Value)&gt;</code>. Field assignment runs
 through a copy-on-write helper that allocates a fresh <code>Rc</code> so alias
 bindings never observe each other's mutations.</p>
 <h2 id="memory-management">Memory management<a class="headerlink" href="#memory-management" title="Permanent link">&para;</a></h2>
@@ -2509,7 +2509,7 @@ differential.</p>
 <h2 id="scheduler">Scheduler<a class="headerlink" href="#scheduler" title="Permanent link">&para;</a></h2>
 <p><code>gossamer-runtime::sched</code> is the work-stealing M:N scheduler.
 Every Gossamer binary links it through <code>libgossamer_runtime.a</code>, so
-<code>go expr</code> in compiled code (and the bytecode VM) lands on the same
+<code>spawn(|| expr)</code> in compiled code (and the bytecode VM) lands on the same
 shared pool. The pool size defaults to <code>num_cpus()</code>, overridable
 via <code>GOSSAMER_MAX_PROCS=N</code> or <code>runtime::set_max_procs(n)</code> from
 user code.</p>
@@ -2531,7 +2531,7 @@ snapshot and remains on bytecode.</p>
   more than 100 ms.</li>
 </ul>
 <h2 id="goroutines">Goroutines<a class="headerlink" href="#goroutines" title="Permanent link">&para;</a></h2>
-<p><code>go expr(args)</code> is a real stackful coroutine. Construction:</p>
+<p><code>spawn(|| expr(args))</code> is a real stackful coroutine. Construction:</p>
 <ol>
 <li><code>gossamer_runtime::sched_global::spawn(closure)</code> allocates a
    1 MiB <code>corosensei::Coroutine</code> stack (override:
@@ -2650,10 +2650,10 @@ for it via <code>register_waker(gid, closure)</code>. Default closure: just
 <ul>
 <li><code>GOSSAMER_HTTP_MAX_REQUESTS=N</code> - env var, stop after N requests.</li>
 <li><code>gossamer_interp::set_http_max_requests(N)</code> - safe-Rust test hook.</li>
-<li><code>config.shutdown: Arc&lt;AtomicBool&gt;</code> - for in-process callers.</li>
+<li><code>config.shutdown: AtomicBool</code> - for in-process callers.</li>
 </ul>
 <h2 id="panic-recovery">Panic recovery<a class="headerlink" href="#panic-recovery" title="Permanent link">&para;</a></h2>
-<p><code>panic!(msg)</code> in user code returns <code>RuntimeError::Panic(msg)</code> from
+<p><code>panic(msg)</code> in user code returns <code>RuntimeError::Panic(msg)</code> from
 the evaluator. The native HTTP server catches that per-request,
 logs it, and returns a 500. A panic inside a goroutine body
 unwinds the coroutine's stack and propagates to the worker M's

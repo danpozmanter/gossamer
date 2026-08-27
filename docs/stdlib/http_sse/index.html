@@ -2155,17 +2155,17 @@
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs"><code>encode_comment</code></a></td>
-<td><code>fn encode_comment(comment: String) -&gt; Vec&lt;u8&gt;</code></td>
+<td><code>fn encode_comment(comment: String) -&gt; String</code></td>
 <td>Render a <code>:</code>-prefixed keepalive line. Available in interp + compiled.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs"><code>encode_event</code></a></td>
-<td><code>fn encode_event(event: String, data: String, id: String) -&gt; Vec&lt;u8&gt;</code></td>
+<td><code>fn encode_event(event: String, data: String, id: String) -&gt; String</code></td>
 <td>Render one event block as a string: <code>(event, data, id) -&gt; String</code>. Available in interp + compiled.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http_sse.rs"><code>encode_retry</code></a></td>
-<td><code>fn encode_retry(ms: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td><code>fn encode_retry(ms: i64) -&gt; String</code></td>
 <td>Render a <code>retry:</code> reconnect-hint directive in milliseconds. Available in interp + compiled.</td>
 </tr>
 </tbody>

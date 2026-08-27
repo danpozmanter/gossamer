@@ -2307,8 +2307,8 @@
 created a <code>JITModule</code>, finalized it, copied each callable entry pointer into a
 <code>JitFn</code>, and stored the entire module in <code>JitArtifact</code>. <code>JitArtifact::drop</code>
 called <code>JITModule::free_memory</code>. The interpreter retained the artifact in
-<code>JitState</code> and in a weak per-thread cache. Dispatch maps retained <code>Arc&lt;JitFn&gt;</code>
-metadata, but the VM's <code>Rc&lt;JitArtifact&gt;</code> was the actual allocation owner.</p>
+<code>JitState</code> and in a weak per-thread cache. Dispatch maps retained <code>JitFn</code>
+metadata, but the VM's <code>JitArtifact</code> was the actual allocation owner.</p>
 <p>Only finalized function pointers leave the module. Gossamer does not retain a
 Cranelift function ID, data ID, declaration reference, compilation context, or
 module lookup handle for runtime use. <code>JitFn</code> additionally retains compact

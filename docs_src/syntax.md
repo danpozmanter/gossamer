@@ -650,11 +650,13 @@ path (`{account.balance:>8}`).
 | `eprint("…", a, b)` | Writes to stderr, no newline. |
 | `panic("…", a, b)` | Unwinds with the rendered message. |
 
-Alongside the format macros, a fixed set of desugar macros -
-`matches!`, `todo!`, `unimplemented!`, `unreachable!`, `dbg!` - and the
-build-time `regex!` / `sql!` / `codegen!` are built in. Any other
-`name!(…)` is a parse error (`GP0001`): there is no user-defined macro
-system. Compile-time metaprogramming instead goes through `comptime` - a
+Alongside the format calls, a fixed set of desugar calls -
+`matches`, `todo`, `unimplemented`, `unreachable`, `dbg` - and the
+build-time `regex::compile` / `sql::statement` / `codegen` are built in.
+Every one of them is written as an ordinary call: the set of
+compiler-known names is closed and recognised at the `(`, so a `!` after
+any name is a parse error (`GP0049`), as is any other `name!(…)`
+(`GP0001`). There is no user-defined macro system. Compile-time metaprogramming instead goes through `comptime` - a
 `comptime { ... }` block or `comptime fn` call is evaluated at compile
 time and folded to a constant on every tier; see
 [Comptime](language/comptime.md).

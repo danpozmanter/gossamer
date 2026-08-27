@@ -1165,7 +1165,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     // type checking, so every tier compiles the same positional call.
     lang(
         "lang::keyword_arguments",
-        "Keyword arguments and constant parameter defaults: a call may name any parameter (`volume(depth = 4, width = 2)`), and a parameter may declare a constant default (`fn volume(width: i64, height: i64 = 2)`) that is spliced into every call omitting it. Positional arguments come first, then names. Both are caller-side spellings rewritten into the callee's declared order before type checking, so the calling convention is unchanged. A name on a method call is matched when every type declaring that method name would rewrite the call identically; when they disagree the call is reported (GR0013) rather than guessed.",
+        "Keyword arguments and constant parameter defaults: a call may name any parameter (`volume(depth: 4, width: 2)`), and a parameter may declare a constant default (`fn volume(width: i64, height: i64 = 2)`) that is spliced into every call omitting it. Positional arguments come first, then names. Both are caller-side spellings rewritten into the callee's declared order before type checking, so the calling convention is unchanged. A name on a method call is matched when every type declaring that method name would rewrite the call identically; when they disagree the call is reported (GR0013) rather than guessed.",
     ),
     // Planned / partial language surface.
     FeatureStatus {

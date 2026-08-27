@@ -2150,7 +2150,7 @@ returns <code>()</code>. A parameter takes <code>name: Type</code>, <code>&amp;T
 binding is passed as <code>&amp;mut value</code>, while an existing <code>&amp;mut Type</code> reference can
 be forwarded as-is. Passing a bare value never grants a callee mutable access.</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">fn</span> <span class="nf">area</span><span class="p">(</span><span class="n">w</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">h</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">h</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">fn</span> <span class="nf">greet</span><span class="p">(</span><span class="n">name</span>: <span class="kp">&amp;</span><span class="nb">String</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;hi, {name}&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">fn</span> <span class="nf">greet</span><span class="p">(</span><span class="n">name</span>: <span class="nb">String</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">println</span><span class="p">(</span><span class="s">&quot;hi, {name}&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <h2 id="parameter-pattern-destructuring">Parameter pattern destructuring<a class="headerlink" href="#parameter-pattern-destructuring" title="Permanent link">&para;</a></h2>
 <p>A parameter may be a pattern instead of a plain name - tuple or struct - and
@@ -2164,7 +2164,7 @@ binds its components directly:</p>
 </code></pre></div>
 <h2 id="generics">Generics<a class="headerlink" href="#generics" title="Permanent link">&para;</a></h2>
 <p>A function may take type parameters (<code>fn id&lt;T&gt;(x: T) -&gt; T</code>), a trait bound
-(<code>fn report&lt;T: Shape&gt;(s: &amp;T)</code>), or a const-generic array length
+(<code>fn report&lt;T: Shape&gt;(s: T)</code>), or a const-generic array length
 (<code>fn sum&lt;const N: usize&gt;(xs: [i64; N])</code>). Each instantiation is
 monomorphised - see <a href="../generics/">generics</a>.</p>
 

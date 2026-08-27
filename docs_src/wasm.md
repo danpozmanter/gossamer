@@ -18,7 +18,7 @@ The whole language plus the pure standard library work unchanged:
 - **Collections** - `Vec`, `Map`, `Set`, `BTreeSet`, `BTreeMap`.
 - **Pure stdlib** - `math`, `encoding` (json / yaml / toml / base64 / hex /
   binary / csv / pem / xml / base32), hashing (`crc32` / `adler32` / `fnv`),
-  `regex`, iterators, `format!` / `println!`, `strings`, `unicode` / `utf8`,
+  `regex`, iterators, `format` / `println`, `strings`, `unicode` / `utf8`,
   IP-address parsing, query/form parsing, HTML escaping, `gzip` / `flate` /
   `zlib`, and non-blocking `time`.
 

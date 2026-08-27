@@ -2286,8 +2286,8 @@
 <p>A transparent alias (<code>type Id = i64</code>) is another spelling of its target.
 An <strong>opaque</strong> alias puts <code>new</code> before the target and declares a type of
 its own:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">type</span> <span class="nc">UserId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">new</span><span class="w"> </span><span class="kt">i64</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">type</span> <span class="nc">Score</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">new</span><span class="w"> </span><span class="kt">i64</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">newtype</span><span class="w"> </span><span class="n">UserId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kt">i64</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">newtype</span><span class="w"> </span><span class="n">Score</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kt">i64</span>
 </code></pre></div>
 <p><code>UserId</code> and <code>i64</code> are now different types, and so are <code>UserId</code> and
 <code>Score</code>. Nothing converts between them on its own:</p>
@@ -2326,7 +2326,7 @@ it, never from the receiver.</p>
 <p>Nothing from its representation's behaviour. Hiding what the type is
 made of is the whole point, so the representation's API is not part of
 the alias:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">type</span> <span class="nc">Name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">new</span><span class="w"> </span><span class="nb">String</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">newtype</span><span class="w"> </span><span class="n">Name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">String</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">n</span>: <span class="nc">Name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;ada&quot;</span><span class="p">.</span><span class="n">into</span><span class="p">()</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">n</span><span class="p">.</span><span class="n">len</span><span class="p">()</span><span class="w">          </span><span class="c1">// error[GT0002]: no method named `len` found for type `Name`</span>
@@ -2344,7 +2344,7 @@ share, and they are what let an alias be a <code>Map</code> or <code>Set</code> 
 print:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">seats</span>: <span class="nc">Map</span><span class="o">&lt;</span><span class="n">UserId</span><span class="p">,</span><span class="w"> </span><span class="nb">String</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Map</span>::<span class="n">new</span><span class="p">()</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">seats</span><span class="p">.</span><span class="n">insert</span><span class="p">(</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;front&quot;</span><span class="p">)</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} {} {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">b</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">b</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">)</span><span class="w">   </span><span class="c1">// true false 1</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">println</span><span class="p">(</span><span class="s">&quot;{} {} {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">b</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">b</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">)</span><span class="w">   </span><span class="c1">// true false 1</span>
 </code></pre></div>
 <h2 id="its-own-impl">Its own impl<a class="headerlink" href="#its-own-impl" title="Permanent link">&para;</a></h2>
 <p>An opaque alias carries inherent and operator <code>impl</code> blocks like any
@@ -2375,7 +2375,7 @@ other type:</p>
 </tr>
 <tr>
 <td>A distinct type over the same representation</td>
-<td><code>type Id = new i64</code></td>
+<td><code>newtype Id = i64</code></td>
 </tr>
 <tr>
 <td>Named fields, or a layout of its own</td>
@@ -2387,12 +2387,12 @@ other type:</p>
 <p>A struct field typed by an alias serializes as its representation, and
 decoding converts back, so an alias is usable in the types a program
 actually exchanges:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">type</span> <span class="nc">UserId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">new</span><span class="w"> </span><span class="kt">i64</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">newtype</span><span class="w"> </span><span class="n">UserId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kt">i64</span>
 <a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="k">struct</span> <span class="nc">Rec</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">id</span>: <span class="nc">UserId</span><span class="p">,</span><span class="w"> </span><span class="n">n</span>: <span class="kt">i64</span> <span class="p">}</span>
 <a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
 <a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="kd">let</span><span class="w"> </span><span class="n">text</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">to_json</span>::<span class="o">&lt;</span><span class="n">Rec</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Rec</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">id</span>: <span class="mf">7.</span><span class="n">into</span><span class="p">(),</span><span class="w"> </span><span class="n">n</span>: <span class="mi">2</span><span class="w"> </span><span class="p">})</span><span class="o">?</span><span class="w">   </span><span class="c1">// {&quot;id&quot;:7,&quot;n&quot;:2}</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="kd">let</span><span class="w"> </span><span class="n">back</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">from_json</span>::<span class="o">&lt;</span><span class="n">Rec</span><span class="o">&gt;</span><span class="p">(</span><span class="o">&amp;</span><span class="n">text</span><span class="p">)</span><span class="o">?</span><span class="w">                      </span><span class="c1">// back.id is a UserId</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="kd">let</span><span class="w"> </span><span class="n">back</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">from_json</span>::<span class="o">&lt;</span><span class="n">Rec</span><span class="o">&gt;</span><span class="p">(</span><span class="n">text</span><span class="p">)</span><span class="o">?</span><span class="w">                      </span><span class="c1">// back.id is a UserId</span>
 </code></pre></div>
 
 

@@ -23,22 +23,22 @@ const LESSONS = [
       default</strong> - reach for <code>let mut</code> only when a value
       genuinely changes after construction.</p>
       <p>String literals are already <code>String</code>, so there is no
-      <code>.to_string()</code> noise. <code>println!</code> pulls bindings
+      <code>.to_string()</code> noise. <code>println</code> pulls bindings
       straight from scope by name - <code>{name}</code> - and the
       format macros are built in: there are no user-defined macros.</p>
       <p>Press <strong>Run</strong> (or Ctrl / Cmd + Enter) to execute the
       program on the right. Edit it freely and run it again.</p>`,
-    code: `// Bindings are immutable by default; reach for \\\`let mut\\\` only when
-// a value really changes. String literals are already \\\`String\\\`.
+    code: `// Bindings are immutable by default; reach for \`let mut\` only when
+// a value really changes. String literals are already \`String\`.
 let name = "Gossamer"
 let pi = 3.14159
 
-let greeting = "hello, " + &name
-println!("{greeting}!")
+let greeting = "hello, " + name
+println("{greeting}!")
 
 // Named interpolation reads bindings straight from scope.
-println!("{name} is {} bytes long", name.len())
-println!("pi is about {pi}")
+println("{name} is {} bytes long", name.len())
+println("pi is about {pi}")
 `,
   },
   {
@@ -52,25 +52,25 @@ println!("pi is about {pi}")
     // \`for\` walks a range or a collection - no \`.iter()\`, no \`as usize\`.
     let mut total = 0
     for n in 1..=5 { total += n }
-    println!("1..=5 sums to {total}")
+    println("1..=5 sums to {total}")
 
     for (i, name) in #["ada", "grace", "alan"].iter().enumerate() {
-        println!("{i}: {name}")
+        println("{i}: {name}")
     }
 
     // \`while\` for a condition, \`while let\` to drain an Option-yielding call.
     let mut countdown = 3
     while countdown > 0 {
-        print!("{countdown}.. ")
+        print("{countdown}.. ")
         countdown -= 1
     }
-    println!("liftoff")
+    println("liftoff")
 
     let mut stack = #[1, 2, 3]
     while let Some(top) = stack.pop() {
-        print!("{top} ")
+        print("{top} ")
     }
-    println!("")
+    println("")
 
     // \`loop\` is an expression: \`break value\` is what it evaluates to.
     let mut n = 1
@@ -78,11 +78,11 @@ println!("pi is about {pi}")
         n *= 2
         if n > 100 { break n }
     }
-    println!("first power of two past 100 = {doubled_past_100}")
+    println("first power of two past 100 = {doubled_past_100}")
 
     // \`if\` and \`match\` are expressions too - bind their result.
     let size = if doubled_past_100 > 64 { "big" } else { "small" }
-    println!("that is {size}")
+    println("that is {size}")
 
     // A labeled loop breaks the outer level from inside the inner one.
     let mut found = (0, 0)
@@ -94,7 +94,7 @@ println!("pi is about {pi}")
             }
         }
     }
-    println!("first pair with product 6 = {:?}", found)
+    println("first pair with product 6 = {:?}", found)
 
     // \`continue\` skips the rest of one iteration.
     let mut odds = #[]
@@ -102,7 +102,7 @@ println!("pi is about {pi}")
         if n % 2 == 0 { continue }
         odds.push(n)
     }
-    println!("odds = {:?}", odds)
+    println("odds = {:?}", odds)
 }
 `,
   },
@@ -124,8 +124,8 @@ println!("pi is about {pi}")
     Line,
 }
 
-// \\\`match\\\` is exhaustive and yields a value - every variant is handled.
-fn area(shape: &Shape) -> f64 {
+// \`match\` is exhaustive and yields a value - every variant is handled.
+fn area(shape: Shape) -> f64 {
     match shape {
         Shape::Circle(r) => 3.14159 * *r * *r,
         Shape::Rect { w, h } => *w * *h,
@@ -135,7 +135,7 @@ fn area(shape: &Shape) -> f64 {
 
 let shapes = [Shape::Circle(2.0), Shape::Rect { w: 3.0, h: 4.0 }, Shape::Line]
 for s in shapes {
-    println!("area = {}", area(s))
+    println("area = {}", area(s))
 }
 `,
   },
@@ -153,19 +153,19 @@ for s in shapes {
       sequence combinators - <code>filter</code>, <code>map</code>,
       <code>sum</code> - are higher-order all the way down, taking a
       closure per step.</p>`,
-    code: `// \\\`Fn(i64) -> i64\\\` accepts both capturing closures and bare functions.
+    code: `// \`Fn(i64) -> i64\` accepts both capturing closures and bare functions.
 fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
 fn inc(y: i64) -> i64 { y + 1 }
 
 let scale = 10
-let scaled = |y: i64| scale * y       // captures \\\`scale\\\`
-println!("scaled(5) = {}", apply(scaled, 5))
-println!("inc(41)   = {}", apply(inc, 41))   // bare fn coerces
+let scaled = |y: i64| scale * y       // captures \`scale\`
+println("scaled(5) = {}", apply(scaled, 5))
+println("inc(41)   = {}", apply(inc, 41))   // bare fn coerces
 
 // Closures power the sequence combinators, one per step.
 let total = (1..=6).filter(|n| n % 2 == 0).map(|n| n * n).sum()
-println!("sum of squares of evens in 1..=6 = {total}")
+println("sum of squares of evens in 1..=6 = {total}")
 `,
   },
   {
@@ -177,8 +177,8 @@ println!("sum of squares of evens in 1..=6 = {total}")
       gets that value. Only a literal may be a default, so what a call
       means never depends on when it runs.</p>
       <p>An argument may also <strong>name</strong> the parameter it
-      fills, binding with <code>=</code>:
-      <code>greet("world", excited = true)</code> skips over a
+      fills, binding with <code>:</code>:
+      <code>greet("world", excited: true)</code> skips over a
       defaulted parameter in the middle without repeating it.
       Positional arguments come first; after that, names may appear in
       any order.</p>
@@ -189,7 +189,7 @@ println!("sum of squares of evens in 1..=6 = {total}")
       nothing at run time.</p>`,
     code: `// A parameter may declare a constant default; a call may omit it.
 fn greet(name: String, greeting: String = "hello", excited: bool = false) -> String {
-    let line = greeting + ", " + &name
+    let line = greeting + ", " + name
     if excited { line + "!" } else { line }
 }
 
@@ -198,21 +198,21 @@ struct Box { w: i64, h: i64 }
 
 impl Box {
     fn new(w: i64, h: i64 = 1) -> Box { Box { w: w, h: h } }
-    fn area(&self, scale: i64 = 1) -> i64 { self.w * self.h * scale }
+    fn area(self, scale: i64 = 1) -> i64 { self.w * self.h * scale }
 }
 
-println!("{}", greet("world"))
-println!("{}", greet("world", "hi"))
+println("{}", greet("world"))
+println("{}", greet("world", "hi"))
 
-// Name an argument with \\\`=\\\` to skip over a default in between.
-println!("{}", greet("world", excited = true))
+// Name an argument with \`:\` to skip over a default in between.
+println("{}", greet("world", excited: true))
 
 // Names may come in any order once positional arguments are done.
-println!("{}", greet(greeting = "hey", name = "Gossamer", excited = true))
+println("{}", greet(greeting: "hey", name: "Gossamer", excited: true))
 
 let b = Box::new(3)
-println!("area = {}", b.area())
-println!("scaled = {}", b.area(scale = 10))
+println("area = {}", b.area())
+println("scaled = {}", b.area(scale: 10))
 `,
   },
   {
@@ -232,24 +232,24 @@ println!("scaled = {}", b.area(scale = 10))
     code: `fn double(x: i64) -> i64 { x * 2 }
 fn add(a: i64, b: i64) -> i64 { a + b }
 
-// \\\`x |> f\\\` is \\\`f(x)\\\`; a closure step names the slot: \\\`f(a, x)\\\`.
+// \`x |> f\` is \`f(x)\`; a closure step names the slot: \`f(a, x)\`.
 let n = 3 |> double |> |v| add(10, v)
-println!("3 |> double |> |v| add(10, v) = {n}")
+println("3 |> double |> |v| add(10, v) = {n}")
 
 // A method already chains, and the chain can feed a pipe.
 let shout = "  hi there  ".trim().to_uppercase()
-println!("shout = {shout}")
+println("shout = {shout}")
 
 // Ranges are values and combinators are methods - chain them directly.
 let total = (1..=5).filter(|n| n % 2 == 1).sum()
-println!("sum of odds in 1..=5 = {total}")
+println("sum of odds in 1..=5 = {total}")
 `,
   },
   {
     slug: "sequences",
     title: "Vec, arrays, slices, tuples",
     prose: `
-      <p>The literal spellings are distinct: <code>#[..]</code> builds a growable <code>Vec&lt;T&gt;</code>, <code>[..]</code> builds a fixed <code>[T; N]</code> array. A slice <code>&amp;[T]</code> borrows either without copying.</p>
+      <p>The literal spellings are distinct: <code>#[..]</code> builds a growable <code>Vec&lt;T&gt;</code>, <code>[..]</code> builds a fixed <code>[T; N]</code> array. A parameter typed <code>[T]</code> is a view that takes either, and passing one copies nothing.</p>
       <p>Only <code>Vec</code> carries the resizing surface - <code>push</code>, <code>insert</code>, <code>remove</code>, <code>truncate</code>. Arrays and slices keep the fixed-size operations, so a length change is a type error rather than a surprise.</p>
       <p>A <strong>tuple</strong> groups a fixed number of values whose types may differ. Read it positionally with <code>t.0</code>, destructure it in a <code>let</code>, and compare tuples structurally.</p>`,
     code: `fn main() {
@@ -258,29 +258,29 @@ println!("sum of odds in 1..=5 = {total}")
     queue.push(16)
     let fixed = [1, 2, 3]
 
-    println!("vec   = {:?} (len {})", queue, queue.len())
-    println!("array = {:?} (len {})", fixed, fixed.len())
+    println("vec   = {:?} (len {})", queue, queue.len())
+    println("array = {:?} (len {})", fixed, fixed.len())
 
     // Indices are plain i64 - no casts. Reads and writes are bounds-checked.
-    println!("queue[0] = {}, last = {:?}", queue[0], queue.last())
+    println("queue[0] = {}, last = {:?}", queue[0], queue.last())
 
-    // A slice borrows a sequence without copying it.
-    println!("sum of a borrowed slice = {}", total(&queue))
+    // A \`[T]\` parameter takes an array, a Vec, or another view.
+    println("sum through a slice view = {}", total(queue))
 
     // Vec owns the resizing surface: insert, remove, truncate.
     let _ = queue.insert(0, 1)
     let _ = queue.remove(1)
-    println!("after insert/remove = {:?}", queue)
+    println("after insert/remove = {:?}", queue)
 
     // Tuples group values of different types; read them positionally or
     // destructure them.
     let entry = ("gossamer", 2026, true)
     let name, year, _ = entry
-    println!("{name} ({year}), tuple len = {}", entry.len())
-    println!("field access: {}", entry.0)
+    println("{name} ({year}), tuple len = {}", entry.len())
+    println("field access: {}", entry.0)
 }
 
-fn total(xs: &[i64]) -> i64 {
+fn total(xs: [i64]) -> i64 {
     let mut acc = 0
     for x in xs { acc += x }
     acc
@@ -302,29 +302,29 @@ stock.insert("figs", 7)
 
 // \`inc\` is the counter idiom, \`get_or\` the fallback read.
 stock.inc("apples", 5)
-println!("apples = {}", stock.get_or("apples", 0))
-println!("kiwis  = {}", stock.get_or("kiwis", 0))
-println!("has figs = {}", stock.contains_key("figs"))
+println("apples = {}", stock.get_or("apples", 0))
+println("kiwis  = {}", stock.get_or("kiwis", 0))
+println("has figs = {}", stock.contains_key("figs"))
 
 for (name, count) in stock.iter() {
-    if count > 6 { println!("plenty of {name}: {count}") }
+    if count > 6 { println("plenty of {name}: {count}") }
 }
 
 // Sets carry the algebra, not just membership.
 let planted = #{"apples", "pears", "plums"}
 let sold = #{"pears", "figs"}
-println!("both      = {:?}", planted.intersection(&sold).to_vec())
-println!("unsold    = {:?}", planted.difference(&sold).to_vec())
-println!("every one = {:?}", planted.union(&sold).to_vec())
+println("both      = {:?}", planted.intersection(sold).to_vec())
+println("unsold    = {:?}", planted.difference(sold).to_vec())
+println("every one = {:?}", planted.union(sold).to_vec())
 
 // The BTree pair keeps keys in sorted order.
 let mut ordered: BTreeMap<String, i64> = BTreeMap::new()
 ordered.insert("zebra", 1)
 ordered.insert("ant", 2)
-println!("sorted keys = {:?}", ordered.keys())
+println("sorted keys = {:?}", ordered.keys())
 
 let tags: BTreeSet<String> = #{"gamma", "alpha", "beta"}
-println!("sorted tags = {:?}", tags.to_vec())
+println("sorted tags = {:?}", tags.to_vec())
 `,
   },
   {
@@ -338,23 +338,23 @@ println!("sorted tags = {:?}", tags.to_vec())
 
 let mut q = Queue::from([1, 2, 3])
 q.push(4)
-println!("queue front = {:?}, len = {}", q.pop(), q.len())
+println("queue front = {:?}, len = {}", q.pop(), q.len())
 
 let mut st = Stack::from([1, 2, 3])
 st.push(4)
-println!("stack top = {:?}", st.pop())
+println("stack top = {:?}", st.pop())
 
 let mut dq = Deque::from([2, 3])
 dq.push_front(1)
 dq.push_back(4)
-println!("deque ends = {:?} {:?}", dq.pop_front(), dq.pop_back())
+println("deque ends = {:?} {:?}", dq.pop_front(), dq.pop_back())
 
 let mut hi = MaxHeap::from([3, 9, 4])
 hi.push(11)
-println!("max = {:?}", hi.pop())
+println("max = {:?}", hi.pop())
 
 let mut lo = MinHeap::from([3, 9, 4])
-println!("min = {:?}", lo.pop())
+println("min = {:?}", lo.pop())
 `,
   },
   {
@@ -368,31 +368,31 @@ println!("min = {:?}", lo.pop())
     let readings = #[12, 7, 30, 4, 18, 25]
 
     // Transform, select, and reduce - each combinator is a method.
-    println!("doubled  = {:?}", readings.map(|n| n * 2))
-    println!("over ten = {:?}", readings.filter(|n| n > 10))
-    println!("sum      = {}", readings.sum())
-    println!("count    = {}", readings.count(|n| n % 2 == 0))
-    println!("fold     = {}", readings.fold(0, |acc, n| acc + n * n))
+    println("doubled  = {:?}", readings.map(|n| n * 2))
+    println("over ten = {:?}", readings.filter(|n| n > 10))
+    println("sum      = {}", readings.sum())
+    println("count    = {}", readings.count(|n| n % 2 == 0))
+    println("fold     = {}", readings.fold(0, |acc, n| acc + n * n))
 
     // Questions about a sequence answer directly.
-    println!("any over 25 = {}", readings.any(|n| n > 25))
-    println!("all positive = {}", readings.all(|n| n > 0))
-    println!("first over 15 = {:?}", readings.find(|n| n > 15))
-    println!("its index = {:?}", readings.position(|n| n > 15))
-    println!("largest = {:?}", readings.max())
-    println!("closest to 20 = {:?}", readings.min_by_key(|n| if n > 20 { n - 20 } else { 20 - n }))
+    println("any over 25 = {}", readings.any(|n| n > 25))
+    println("all positive = {}", readings.all(|n| n > 0))
+    println("first over 15 = {:?}", readings.find(|n| n > 15))
+    println("its index = {:?}", readings.position(|n| n > 15))
+    println("largest = {:?}", readings.max())
+    println("closest to 20 = {:?}", readings.min_by_key(|n| if n > 20 { n - 20 } else { 20 - n }))
 
     // Ranges carry the same surface, and the pipeline reads left to right.
     let squares = (1..=6).filter(|n| n % 2 == 1).map(|n| n * n).collect()
-    println!("odd squares = {:?}", squares)
-    println!("reversed    = {:?}", (1..=5).rev().collect())
-    println!("every other = {:?}", (0..10).step_by(3).collect())
-    println!("first three = {:?}", readings.iter().take(3).collect())
+    println("odd squares = {:?}", squares)
+    println("reversed    = {:?}", (1..=5).rev().collect())
+    println("every other = {:?}", (0..10).step_by(3).collect())
+    println("first three = {:?}", readings.iter().take(3).collect())
 
     // Sorting takes the key you care about; \`join\` renders the result.
     let mut names = #["Ada", "Grace", "Alan", "Barbara"]
     names.sort_by_key(|n| n.len())
-    println!("by length = {}", names.join(", "))
+    println("by length = {}", names.join(", "))
 }
 `,
   },
@@ -409,9 +409,9 @@ let mut scores = #[42, 7, 19, 7, 88, 3]
 
 // \`sort\` orders in place; \`sort_by_key\` takes the key you care about.
 scores.sort()
-println!("sorted     = {:?}", scores)
-println!("descending = {:?}", scores.rev())
-println!("no repeats = {:?}", scores.dedup())
+println("sorted     = {:?}", scores)
+println("descending = {:?}", scores.rev())
+println("no repeats = {:?}", scores.dedup())
 
 // Structs and tuples compare structurally, field by field, with no
 // derive - so a sequence of them sorts as it reads.
@@ -422,18 +422,18 @@ let mut board = #[
 ]
 board.sort_by_key(|p| 0 - p.score)
 for p in board {
-    println!("  {:>6} {:>3}", p.name, p.score)
+    println("  {:>6} {:>3}", p.name, p.score)
 }
 
 // Binary search over the sorted sequence: halve the window each step.
-println!("19 lives at index {:?}", index_of_sorted(&scores, 19))
-println!("20 is absent: {:?}", index_of_sorted(&scores, 20))
+println("19 lives at index {:?}", index_of_sorted(scores, 19))
+println("20 is absent: {:?}", index_of_sorted(scores, 20))
 
 // The linear searches read the same either way.
-println!("first over 40 = {:?}", scores.find(|n| n > 40))
-println!("its position  = {:?}", scores.position(|n| n > 40))
+println("first over 40 = {:?}", scores.find(|n| n > 40))
+println("its position  = {:?}", scores.position(|n| n > 40))
 
-fn index_of_sorted(xs: &[i64], needle: i64) -> Option<i64> {
+fn index_of_sorted(xs: [i64], needle: i64) -> Option<i64> {
     let mut lo = 0
     let mut hi = xs.len() - 1
     while lo <= hi {
@@ -447,7 +447,7 @@ fn index_of_sorted(xs: &[i64], needle: i64) -> Option<i64> {
   },
   {
     slug: "strings",
-    title: "Strings + format! specs",
+    title: "Strings + format specs",
     prose: `
       <p>Strings are values, not references you juggle. Concatenate with
       <code>+</code>, append with <code>+=</code>, and reach a string's own
@@ -461,20 +461,20 @@ fn index_of_sorted(xs: &[i64], needle: i64) -> Option<i64> {
 
     // Methods chain directly; strings are plain values.
     let clean = title.trim().to_title()
-    println!("[{clean}]")
+    println("[{clean}]")
 
-    // \\\`+=\\\` appends; \\\`+\\\` concatenates with no separator.
+    // \`+=\` appends; \`+\` concatenates with no separator.
     let mut line = "items:"
     for part in ["alpha", "beta", "gamma"] {
-        line += " " + &part
+        line += " " + part
     }
-    println!("{line}")
+    println("{line}")
 
     // Format specs follow Rust's {:spec} grammar.
-    println!("[{:>8}]", 42)
-    println!("[{:08x}]", 255)
-    println!("[{:^7}]", "hi")
-    println!("[{:.2}]", 3.14159)
+    println("[{:>8}]", 42)
+    println("[{:08x}]", 255)
+    println("[{:^7}]", "hi")
+    println("[{:.2}]", 3.14159)
 }
 `,
   },
@@ -492,28 +492,28 @@ fn index_of_sorted(xs: &[i64], needle: i64) -> Option<i64> {
       <p>Generic functions take trait bounds -
       <code>fn farther&lt;T: Distance&gt;(...)</code> - and each call site
       monomorphises to a direct call, with no dynamic dispatch.</p>`,
-    code: `// Structs compare by value and \\\`.clone()\\\` with no derive; derive Debug for {:?}.
+    code: `// Structs compare by value and \`.clone()\` with no derive; derive Debug for {:?}.
 #[derive(Debug)]
 struct Point { x: i64, y: i64 }
 
 trait Distance {
-    fn from_origin(&self) -> i64
+    fn from_origin(self) -> i64
 }
 
 impl Distance for Point {
-    fn from_origin(&self) -> i64 { self.x * self.x + self.y * self.y }
+    fn from_origin(self) -> i64 { self.x * self.x + self.y * self.y }
 }
 
-// Generic over any \\\`Distance\\\`, dispatched statically and monomorphised.
-fn farther<T: Distance>(a: &T, b: &T) -> bool {
+// Generic over any \`Distance\`, dispatched statically and monomorphised.
+fn farther<T: Distance>(a: T, b: T) -> bool {
     a.from_origin() > b.from_origin()
 }
 
 let a = Point { x: 3, y: 4 }
 let b = Point { x: 1, y: 2 }
-println!("a = {:?}", a)
-println!("a == a.clone(): {}", a == a.clone())
-println!("a farther than b: {}", farther(&a, &b))
+println("a = {:?}", a)
+println("a == a.clone(): {}", a == a.clone())
+println("a farther than b: {}", farther(a, b))
 `,
   },
   {
@@ -528,7 +528,7 @@ println!("a farther than b: {}", farther(&a, &b))
       synthesizes <code>==</code>, ordering, and <code>.clone()</code>
       for you - a custom <code>+</code> is the part that is genuinely
       yours to define.</p>`,
-    code: `// Operator overloading: \\\`impl Add for T\\\` makes \\\`+\\\` work on your type.
+    code: `// Operator overloading: \`impl Add for T\` makes \`+\` work on your type.
 struct Vec2 { x: f64, y: f64 }
 
 impl Add for Vec2 {
@@ -540,7 +540,7 @@ impl Add for Vec2 {
 let a = Vec2 { x: 1.0, y: 2.0 }
 let b = Vec2 { x: 3.0, y: 4.0 }
 let c = a + b
-println!("sum = ({}, {})", c.x, c.y)
+println("sum = ({}, {})", c.x, c.y)
 `,
   },
   {
@@ -564,7 +564,7 @@ enum Expr {
     Mul(Expr, Expr),
 }
 
-fn eval(e: &Expr) -> i64 {
+fn eval(e: Expr) -> i64 {
     match e {
         Expr::Num(n) => *n,
         Expr::Add(a, b) => eval(a) + eval(b),
@@ -574,7 +574,7 @@ fn eval(e: &Expr) -> i64 {
 
 // (2 + 3) * 4
 let tree = Expr::Mul(Expr::Add(Expr::Num(2), Expr::Num(3)), Expr::Num(4))
-println!("(2 + 3) * 4 = {}", eval(&tree))
+println("(2 + 3) * 4 = {}", eval(tree))
 `,
   },
   {
@@ -589,27 +589,27 @@ println!("(2 + 3) * 4 = {}", eval(&tree))
       <p>It is the same <code>?</code> that propagates <code>Err</code>
       in a <code>Result</code> function: the present path stays flat
       while the absent path needs no nesting at all.</p>`,
-    code: `// \\\`?\\\` propagates \\\`None\\\` inside an Option-returning function.
-fn first_even(xs: &[i64]) -> Option<i64> {
+    code: `// \`?\` propagates \`None\` inside an Option-returning function.
+fn first_even(xs: [i64]) -> Option<i64> {
     for x in xs {
         if *x % 2 == 0 { return Some(*x) }
     }
     None
 }
 
-// \\\`?\\\` chains Option-returning calls: if \\\`first_even\\\` yields \\\`None\\\`,
-// this returns \\\`None\\\` immediately - no nesting on the absent path.
-fn half_of_first_even(xs: &[i64]) -> Option<i64> {
+// \`?\` chains Option-returning calls: if \`first_even\` yields \`None\`,
+// this returns \`None\` immediately - no nesting on the absent path.
+fn half_of_first_even(xs: [i64]) -> Option<i64> {
     let n = first_even(xs)?
     Some(n / 2)
 }
 
-if let Some(n) = first_even(&[3, 5, 8, 9]) {
-    println!("first even = {n}")
+if let Some(n) = first_even([3, 5, 8, 9]) {
+    println("first even = {n}")
 }
 
-println!("half = {:?}", half_of_first_even(&[3, 5, 8, 9]))
-println!("half = {:?}", half_of_first_even(&[1, 3, 5]))
+println("half = {:?}", half_of_first_even([3, 5, 8, 9]))
+println("half = {:?}", half_of_first_even([1, 3, 5]))
 `,
   },
   {
@@ -628,34 +628,35 @@ println!("half = {:?}", half_of_first_even(&[1, 3, 5]))
       inside a pipeline.</p>`,
     code: `use std::errors
 
-// Fallible work returns \\\`Result<T, E>\\\`; \\\`?\\\` propagates the \\\`Err\\\`.
-fn parse_port(text: &String) -> Result<i64, errors::Error> {
+// Fallible work returns \`Result<T, E>\`; \`?\` propagates the \`Err\`.
+fn parse_port(text: String) -> Result<i64, errors::Error> {
     let n: i64 = match text.to_i64() {
         Some(n) => n,
-        None => return Err(errors::new(format!("not a number: {text}"))),
+        None => return Err(errors::new(format("not a number: {text}"))),
     }
-    if n <= 0 { return Err(errors::new(format!("must be positive: {n}"))) }
+    if n <= 0 { return Err(errors::new(format("must be positive: {n}"))) }
     Ok(n)
 }
 
 // Match the Ok value; handle the Err in-line.
-match parse_port(&"8080") {
-    Ok(n) => println!("port = {n}"),
-    Err(e) => eprintln!("error: {}", e.message()),
+match parse_port("8080") {
+    Ok(n) => println("port = {n}"),
+    Err(e) => eprintln("error: {}", e.message()),
 }
 
-// \\\`wrap\\\` adds context; printing shows the colon-joined cause chain.
-let bad = parse_port(&"oops").map_err(|e| errors::wrap(e, "loading config"))
-if let Err(e) = bad { println!("{e}") }
+// \`wrap\` adds context; printing shows the colon-joined cause chain.
+let bad = parse_port("oops").map_err(|e| errors::wrap(e, "loading config"))
+if let Err(e) = bad { println("{e}") }
 `,
   },
   {
     slug: "goroutines",
     title: "Goroutines + channels",
     prose: `
-      <p>Concurrency is Go-shaped: <code>go expr</code> spawns a goroutine and
-      <code>channel()</code> returns a typed <code>(Sender, Receiver)</code>
-      pair. The producer sends every value and <code>close()</code>s the
+      <p>Concurrency is Go-shaped: <code>spawn(f)</code> starts a goroutine
+      under the enclosing <code>cohort</code> - <code>main</code> is an
+      implicit one - and <code>channel()</code> returns a typed
+      <code>(Sender, Receiver)</code> pair. The producer sends every value and <code>close()</code>s the
       channel; the consumer drains it with the canonical
       <code>while let Some(v) = rx.recv()</code>.</p>
       <p>Here the producer runs to completion before the drain finishes,
@@ -672,12 +673,12 @@ fn produce(tx: sync::Sender<i64>) {
 }
 
 let tx, rx = sync::channel(5)
-go produce(tx)
+spawn(|| produce(tx))
 
-// \\\`recv\\\` yields \\\`Some\\\` until the channel is closed and drained.
+// \`recv\` yields \`Some\` until the channel is closed and drained.
 let mut total = 0
 while let Some(v) = rx.recv() { total += v }
-println!("sum of squares 1..=5 = {total}")
+println("sum of squares 1..=5 = {total}")
 `,
   },
   {
@@ -701,8 +702,8 @@ fn produce(tx: sync::Sender<i64>, xs: Vec<i64>) {
 let tx_hi, rx_hi = sync::channel(3)
 let tx_lo, rx_lo = sync::channel(2)
 
-go produce(tx_hi, #[1, 2, 3])
-go produce(tx_lo, #[10, 20])
+spawn(|| produce(tx_hi, #[1, 2, 3]))
+spawn(|| produce(tx_lo, #[10, 20]))
 
 // Five values arrive across two channels; \`select\` takes whichever
 // arm is ready, polling them in source order.
@@ -713,7 +714,7 @@ for _ in 0..5 {
         v = rx_lo.recv() => total += v,
     }
 }
-println!("merged total = {total}")
+println("merged total = {total}")
 `,
   },
   {
@@ -744,11 +745,11 @@ let wg = sync::WaitGroup::new()
 
 for i in 1..=4 {
     wg.add(1)
-    go worker(total, wg, i)
+    spawn(|| worker(total, wg, i))
 }
-wg.wait()      // block until every worker has called \\\`done\\\`
+wg.wait()      // block until every worker has called \`done\`
 
-println!("sum of squares 1..=4 = {}", sync::AtomicI64::load(total))
+println("sum of squares 1..=4 = {}", sync::AtomicI64::load(total))
 `,
   },
   {
@@ -764,21 +765,21 @@ println!("sum of squares 1..=4 = {}", sync::AtomicI64::load(total))
       <p>In a loop body it runs once per iteration. It is the same
       pattern Go uses: open, <code>defer</code> the close, then use - and
       the close is guaranteed to happen.</p>`,
-    code: `fn use_resource(name: &String) {
-    println!("  open {name}")
-    defer println!("  close {name}")     // runs on every exit path
-    println!("  use {name}")
+    code: `fn use_resource(name: String) {
+    println("  open {name}")
+    defer println("  close {name}")     // runs on every exit path
+    println("  use {name}")
 }
 
-// \\\`defer\\\` runs when control leaves the block, in LIFO order.
+// \`defer\` runs when control leaves the block, in LIFO order.
 {
-    defer println!("third")
-    defer println!("second")
-    defer println!("first")
-    println!("body runs")
+    defer println("third")
+    defer println("second")
+    defer println("first")
+    println("body runs")
 }
-println!("---")
-use_resource(&"file")
+println("---")
+use_resource("file")
 `,
   },
   {
@@ -808,7 +809,7 @@ use_resource(&"file")
             grand_total += sum      // a scalar survives; the Vec does not
         }
     }
-    println!("grand total = {grand_total}")
+    println("grand total = {grand_total}")
 }
 `,
   },
@@ -824,8 +825,8 @@ use_resource(&"file")
       computed at build time than on every run.
       <code>const FACT_10: i64 = comptime { factorial(10) }</code> ships
       the answer, not the loop that produced it.</p>`,
-    code: `// A \\\`comptime fn\\\` runs at compile time; calling it inside a
-// \\\`comptime { }\\\` block folds the result into a literal, so the runtime
+    code: `// A \`comptime fn\` runs at compile time; calling it inside a
+// \`comptime { }\` block folds the result into a literal, so the runtime
 // never repeats the work - every tier compiles the same constant.
 comptime fn factorial(n: i64) -> i64 {
     let mut acc = 1
@@ -835,15 +836,15 @@ comptime fn factorial(n: i64) -> i64 {
 
 const FACT_10: i64 = comptime { factorial(10) }
 
-println!("10! folded at compile time = {FACT_10}")
+println("10! folded at compile time = {FACT_10}")
 
-// A \\\`comptime\\\` block can fold an inline computation to a literal too.
+// A \`comptime\` block can fold an inline computation to a literal too.
 let triangular = comptime {
     let mut acc = 0
     for i in 1..=100 { acc += i }
     acc
 }
-println!("sum 1..=100 = {triangular}")
+println("sum 1..=100 = {triangular}")
 `,
   },
   {
@@ -858,20 +859,20 @@ println!("sum 1..=100 = {triangular}")
 // RFC 3339 text in, milliseconds since the epoch out.
 let launch = time::parse_rfc3339("2026-08-06T09:30:00Z").unwrap_or(0)
 let landing = time::parse_rfc3339("2026-08-07T11:00:00Z").unwrap_or(0)
-println!("launch ms = {launch}")
+println("launch ms = {launch}")
 
 // Durations are values: build them, add them, read them back.
 let day = time::Duration::from_secs(86400)
 let hold = time::Duration::from_secs(5400)
 let expected = launch + day.as_millis() + hold.as_millis()
-println!("expected  = {}", time::format_rfc3339(expected).unwrap_or("?"))
+println("expected  = {}", time::format_rfc3339(expected).unwrap_or("?"))
 
 // A span between two instants is a duration over the difference.
 let flight = time::Duration::from_millis(landing - launch)
-println!("flight    = {} h {} m", flight.as_secs() / 3600, (flight.as_secs() % 3600) / 60)
+println("flight    = {} h {} m", flight.as_secs() / 3600, (flight.as_secs() % 3600) / 60)
 
 // Comparison and ordering are plain integer work.
-println!("on time   = {}", landing <= expected)
+println("on time   = {}", landing <= expected)
 
 // A schedule is just a sequence of instants - sort and render it.
 let mut stops = #[
@@ -881,13 +882,13 @@ let mut stops = #[
 ]
 stops.sort()
 for at in stops {
-    println!("  {}", time::format_rfc3339(at).unwrap_or("?"))
+    println("  {}", time::format_rfc3339(at).unwrap_or("?"))
 }
 
 // Bad input is a \`Result\`, never a silent zero.
 match time::parse_rfc3339("not a timestamp") {
-    Ok(ms) => println!("parsed {ms}"),
-    Err(e) => println!("rejected: {e}"),
+    Ok(ms) => println("parsed {ms}"),
+    Err(e) => println("rejected: {e}"),
 }
 `,
   },
@@ -904,22 +905,22 @@ match time::parse_rfc3339("not a timestamp") {
       every tier. Here a <code>Server</code> config makes the full round
       trip; for unknown-shape documents the dynamic
       <code>json::parse</code> API stays available.</p>`,
-    code: `// Every user struct gets \\\`to_json::<T>\\\` / \\\`from_json::<T>\\\` for free.
-// \\\`?\\\` makes this entry file's implicit \\\`main\\\` return a Result.
+    code: `// Every user struct gets \`to_json::<T>\` / \`from_json::<T>\` for free.
+// \`?\` makes this entry file's implicit \`main\` return a Result.
 #[derive(Debug)]
 struct Server { host: String, port: i64, tls: bool }
 
 let cfg = Server { host: "localhost", port: 8080, tls: true }
 
 // Encode the struct to JSON text...
-let text = to_json::<Server>(&cfg)?
-println!("encoded = {text}")
+let text = to_json::<Server>(cfg)?
+println("encoded = {text}")
 
 // ...then decode it straight back into a typed struct, validating
 // each field against its declared type.
-let back: Server = from_json::<Server>(&text)?
-println!("decoded = {:?}", back)
-println!("address = {}:{}", back.host, back.port)
+let back: Server = from_json::<Server>(text)?
+println("decoded = {:?}", back)
+println("address = {}:{}", back.host, back.port)
 `,
   },
   {
@@ -934,23 +935,23 @@ use std::errors
 
 // Base64 and hex round-trip bytes through text.
 let secret = "gossamer".as_bytes()
-let encoded = base64::encode(&secret)
-println!("base64 = {encoded}")
-let raw = base64::decode(&encoded)?
-println!("back   = {} bytes, first = {}", raw.len(), raw[0] as char)
-println!("hex    = {}", hex::encode(&secret))
+let encoded = base64::encode(secret)
+println("base64 = {encoded}")
+let raw = base64::decode(encoded)?
+println("back   = {} bytes, first = {}", raw.len(), raw[0] as char)
+println("hex    = {}", hex::encode(secret))
 
 // A delimited record splits with the string surface.
 let sheet = "name,role\\nada,analyst\\ngrace,admiral\\n"
 for line in sheet.lines() {
     if let Some((name, role)) = line.split_once(",") {
-        println!("  {name} | {role}")
+        println("  {name} | {role}")
     }
 }
 
 // Hex decodes back to the same bytes it encoded.
-let round = hex::decode(&hex::encode(&secret))?
-println!("hex round-trips = {}", round.len() == secret.len())
+let round = hex::decode(hex::encode(secret))?
+println("hex round-trips = {}", round.len() == secret.len())
 `,
   },
   {
@@ -973,18 +974,18 @@ println!("hex round-trips = {}", round.len() == secret.len())
 // Compile once; the pattern carries its source for diagnostics.
 let re = match regex::compile("([0-9]{4}-[0-9]{2}-[0-9]{2}) ([A-Z]+) (.+)") {
     Ok(r) => r,
-    Err(e) => { eprintln!("bad pattern: {e}"); return }
+    Err(e) => { eprintln("bad pattern: {e}"); return }
 }
 
 let lines = ["2026-06-29 ERROR disk full", "2026-06-30 INFO restarted"]
 for line in lines {
-    // \\\`captures\\\` yields [full, group1, group2, ...]; a let-chain
+    // \`captures\` yields [full, group1, group2, ...]; a let-chain
     // binds all three groups and tests them in one condition.
-    if let Some(c) = regex::captures(&re, &line)
+    if let Some(c) = regex::captures(re, line)
         && let Some(date) = c[1]
         && let Some(level) = c[2]
         && let Some(msg) = c[3] {
-        println!("{date}  [{level}]  {msg}")
+        println("{date}  [{level}]  {msg}")
     }
 }
 `,
@@ -1021,24 +1022,24 @@ let routes = router::Router::new()
     .get("/health", health)
     .get("/notes/{id}", get_note)
     .post("/notes", get_note)
-println!("router ready")
+println("router ready")
 
 // On a host this is the whole program:
 //     http::serve("127.0.0.1:8080", routes)?
 // The browser sandbox has no sockets, so the responses below are built
 // exactly as the handlers build them.
 let ok = http::Response::text(200, "ok")
-println!("GET /health   -> {} {}", ok.status, ok.body)
+println("GET /health   -> {} {}", ok.status, ok.body)
 
 let note = http::Response::json(200, note_json(42)?)
-println!("GET /notes/42 -> {} {}", note.status, note.body)
+println("GET /notes/42 -> {} {}", note.status, note.body)
 
 let created = http::Response::json(201, note_json(43)?)
     .with_header("location", "/notes/43")
-println!("POST /notes   -> {} ({} header)", created.status, created.headers.len())
+println("POST /notes   -> {} ({} header)", created.status, created.headers.len())
 
 let missing = http::Response::text(404, "no such note")
-println!("miss          -> {} {}", missing.status, missing.body)
+println("miss          -> {} {}", missing.status, missing.body)
 `,
   },
   {
@@ -1061,17 +1062,17 @@ struct Repo { name: String, stars: i64 }
 let body = "{\\"name\\":\\"gossamer\\",\\"stars\\":420}"
 
 // Typed decode: fields land in a struct, unknown keys are ignored.
-let repo = from_json::<Repo>(&body)?
-println!("{} has {} stars", repo.name, repo.stars)
+let repo = from_json::<Repo>(body)?
+println("{} has {} stars", repo.name, repo.stars)
 
 // Dynamic decode for a shape you only partly know: query the document
 // itself rather than describing it with a struct.
-let doc = json::parse(&body)?
-println!("keys       = {:?}", doc.keys())
+let doc = json::parse(body)?
+println("keys       = {:?}", doc.keys())
 if let Some(name) = doc.get("name") {
-    println!("name field = {:?}", name.as_str())
+    println("name field = {:?}", name.as_str())
 }
-println!("re-encoded = {}", to_json::<Repo>(repo)?)
+println("re-encoded = {}", to_json::<Repo>(repo)?)
 
 // Streaming: a server-sent-event feed arrives as lines, not as one
 // document, so each chunk is handled as it lands.
@@ -1080,19 +1081,19 @@ let mut ticks = 0
 for line in feed.lines() {
     if let Some(payload) = line.strip_prefix("data: ") {
         if payload == "bye" {
-            println!("stream closed")
+            println("stream closed")
         } else {
             ticks += 1
-            println!("chunk {ticks}: {payload}")
+            println("chunk {ticks}: {payload}")
         }
     }
 }
 
 // A failed request is a \`Result\`, so the error path is written once.
-let bad = from_json::<Repo>(&"{\\"name\\":42}")
+let bad = from_json::<Repo>("{\\"name\\":42}")
 match bad {
-    Ok(r) => println!("decoded {}", r.name),
-    Err(e) => println!("decode failed: {e}"),
+    Ok(r) => println("decoded {}", r.name),
+    Err(e) => println("decode failed: {e}"),
 }
 `,
   },
@@ -1112,7 +1113,7 @@ match bad {
 // \`assert\` and \`assert_eq\` are prelude builtins - no import, no harness.
 assert(median(#[3, 1, 2]) == 2, "odd count takes the middle")
 assert_eq(median(#[4, 1, 3, 2]), 2, "even count averages the pair")
-println!("median checks passed")
+println("median checks passed")
 
 // A failing assertion panics with the message you wrote.
 let empty: Vec<i64> = Vec::from([])
@@ -1120,7 +1121,7 @@ assert(empty.is_empty(), "an empty vec has no elements")
 
 // \`#[test]\` functions run under \`gos test\`, and the fenced code in a
 // doc comment above an item runs there too, so examples cannot rot.
-println!("2 of 2 checks passed")
+println("2 of 2 checks passed")
 
 #[cfg(test)]
 mod tour_testing_tests {
@@ -1128,12 +1129,12 @@ mod tour_testing_tests {
 
     #[test]
     fn median_of_odd_count() {
-        let _ = testing::check_eq(&super::median(#[5, 1, 3]), &3, "middle value")
+        let _ = testing::check_eq(super::median(#[5, 1, 3]), 3, "middle value")
     }
 
     #[test]
     fn median_of_even_count() {
-        let _ = testing::check_eq(&super::median(#[1, 2, 3, 4]), &2, "averaged pair")
+        let _ = testing::check_eq(super::median(#[1, 2, 3, 4]), 2, "averaged pair")
     }
 }
 `,
@@ -1169,7 +1170,7 @@ for (word, count) in counts.iter() {
 rows.sort_by_key(|r| Reverse(r.count))
 
 for r in rows {
-    println!("{:>9} x {}", r.word, r.count)
+    println("{:>9} x {}", r.word, r.count)
 }
 `,
   },

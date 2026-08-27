@@ -173,7 +173,7 @@ or bring them in with `use`.
 use widget::greet
 
 fn main() {
-    println("{}", greet(&"world"))
+    println("{}", greet("world"))
     println("{}", sub::ping())
 }
 ```
@@ -185,7 +185,7 @@ a `Config` without the two colliding.
 
 ```gossamer
 // src/widget.gos
-pub fn greet(name: &String) -> String {
+pub fn greet(name: String) -> String {
     // Reach another module from the package root with `crate::`,
     // or one level up with `super::`.
     crate::sub::banner() + ", " + name
@@ -223,7 +223,7 @@ runs them on the register-based bytecode VM.
 ```gossamer
 // Pixel width of `text` at this font's current size,
 // including kerning.
-pub fn measure_text(&self, text: &str) -> u32 { ... }
+pub fn measure_text(&self, text: String) -> u32 { ... }
 ```
 
 Gossamer uses one comment form: `//` for line comments and

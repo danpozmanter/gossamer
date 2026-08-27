@@ -2602,7 +2602,7 @@
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Handler</code></a></td>
 <td><code>trait Handler</code></td>
-<td>Anything callable as <code>Fn(&amp;Request, &amp;Params) -&gt; Response</code>.</td>
+<td>Anything callable as <code>Fn(Request, Params) -&gt; Response</code>.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>Params</code></a></td>
@@ -2696,28 +2696,28 @@
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>encode_comment</code></a></td>
-<td><code>fn encode_comment(comment: String) -&gt; Vec&lt;u8&gt;</code></td>
+<td><code>fn encode_comment(comment: String) -&gt; String</code></td>
 <td>Render a <code>:</code>-prefixed keepalive line. Available in interp + compiled.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>encode_event</code></a></td>
-<td><code>fn encode_event(event: String, data: String, id: String) -&gt; Vec&lt;u8&gt;</code></td>
+<td><code>fn encode_event(event: String, data: String, id: String) -&gt; String</code></td>
 <td>Render one event block as a string: <code>(event, data, id) -&gt; String</code>. Available in interp + compiled.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>encode_retry</code></a></td>
-<td><code>fn encode_retry(ms: i64) -&gt; Vec&lt;u8&gt;</code></td>
+<td><code>fn encode_retry(ms: i64) -&gt; String</code></td>
 <td>Render a <code>retry:</code> reconnect-hint directive in milliseconds. Available in interp + compiled.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>AppState</code></a></td>
 <td><code>type AppState</code></td>
-<td>TypeMap of Arc<T> values shared across handlers.</td>
+<td>TypeMap of T values shared across handlers.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>State</code></a></td>
 <td><code>type State</code></td>
-<td>Newtype wrapper Arc<T> for ergonomic handler arguments.</td>
+<td>Newtype wrapper T for ergonomic handler arguments.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>FileServer</code></a></td>
@@ -2797,7 +2797,7 @@
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/http.rs"><code>serve</code></a></td>
 <td><code>fn serve(addr: String, handler: Fn(http::websocket::Conn) -&gt; ()) -&gt; Result&lt;(), errors::Error&gt;</code></td>
-<td>serve(addr, handler) -&gt; Result&lt;(), Error&gt;: bind, upgrade each connection, dispatch the handler's handle(&amp;self, ws) per connection.</td>
+<td>serve(addr, handler) -&gt; Result&lt;(), Error&gt;: bind, upgrade each connection, dispatch the handler's handle(self, ws) per connection.</td>
 </tr>
 </tbody>
 </table>
@@ -2850,9 +2850,9 @@
 </tbody>
 </table>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>fn serve(&amp;self, r: http::Request) -&gt; http::Response {
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    let who = header_of(&amp;r.headers, &quot;x-user&quot;)     // names arrive lowercased
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    let who = header_of(r.headers, &quot;x-user&quot;)     // names arrive lowercased
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    let upload: [u8] = r.raw_body                 // byte-exact body
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    http::Response::text(200, format!(&quot;{} {} q={}&quot;, r.method, r.path, r.query))
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    http::Response::text(200, format(&quot;{} {} q={}&quot;, r.method, r.path, r.query))
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>}
 </code></pre></div>
 <h2 id="response"><code>Response</code><a class="headerlink" href="#response" title="Permanent link">&para;</a></h2>
@@ -2940,9 +2940,9 @@ stream return <code>None</code>, and a stream serves exactly one response - hand
 the same stream to a second <code>Response::stream</code> produces an empty body.</p>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>fn forward_stream(method: String, target: String, body: String,
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>                  headers: [(String, String)]) -&gt; http::Response {
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    match http::stream(&amp;method, &amp;target, &amp;body, headers) {
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    match http::stream(method, target, body, headers) {
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>        Ok(up) =&gt; http::Response::stream(up.status, up.content_type, up),
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        Err(e) =&gt; http::Response::text(502, format!(&quot;upstream error: {}&quot;, e)),
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        Err(e) =&gt; http::Response::text(502, format(&quot;upstream error: {}&quot;, e)),
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    }
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>}
 </code></pre></div>
@@ -2957,7 +2957,7 @@ Use <code>Request.raw_body</code> for bounded uploads and keep handlers within t
 configured body cap until the public streaming handler ABI lands.</p>
 <h2 id="handlers-and-serve">Handlers and <code>serve</code><a class="headerlink" href="#handlers-and-serve" title="Permanent link">&para;</a></h2>
 <p>A handler is a struct implementing <code>http::Handler</code> with a
-<code>serve(&amp;self, Request)</code> method. Both return shapes work, on every tier:</p>
+<code>serve(self, Request)</code> method. Both return shapes work, on every tier:</p>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>impl http::Handler for App {
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    fn serve(&amp;self, r: http::Request) -&gt; http::Response { ... }          // bare
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>}
@@ -2972,7 +2972,7 @@ configured body cap until the public streaming handler ABI lands.</p>
 use, bad address) is an <code>Err</code> value for the caller's match - not a panic -
 and <code>Ok(())</code> is returned on graceful shutdown:</p>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>if let Err(e) = http::serve(&quot;127.0.0.1:8080&quot;, app) {
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    eprintln!(&quot;{}&quot;, e)
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    eprintln(&quot;{}&quot;, e)
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>}
 </code></pre></div>
 <h2 id="server-behavior">Server behavior<a class="headerlink" href="#server-behavior" title="Permanent link">&para;</a></h2>

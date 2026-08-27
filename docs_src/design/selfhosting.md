@@ -5,7 +5,7 @@
 > since shipped on all three tiers - growable `Vec`, `Map` /
 > `Set` / `BTreeMap`, generic functions and types with full
 > monomorphisation, traits with static dispatch, byte literals, and
-> the `matches!` / `format!` desugar macros - and the `examples/selfhost/`
+> the `matches` / `format` desugar calls - and the `examples/selfhost/`
 > ports it references are no longer in the tree. Read it as a record of
 > where self-hosting stood then, not as the current surface.
 

@@ -377,13 +377,16 @@ Write clear, low-complexity, concise code.
   (`q.select(1)`, `let defer = 5`, `s.comptime`). `spawn` is not among
   them: it is the one way to start a goroutine, so declaring anything
   under that name reports GR0020.
-- **Fixed macro set** - everything else `name!(..)` is a parse error
-  (no user macros): `println!` `print!` `eprintln!` `eprint!`
-  `format!` `panic!` (Rust `{}` / `{name}` / `{:spec}` formatting:
+- **Fixed set of compiler-known calls, each written as an ordinary
+  call** - the set is closed and recognised at the `(`, so a `!` after
+  one of these names reports GP0049 and any other `name!(..)` is a parse
+  error (no user macros): `println` `print` `eprintln` `eprint`
+  `format` `panic` (Rust `{}` / `{name}` / `{:spec}` formatting:
   width/align/fill `{:*>8}`, zero-pad `{:08}`, radix `{:x}` `{:b}`
-  `{:o}`, precision `{:.2}`); `matches!`, `todo!`, `unimplemented!`,
-  `unreachable!`, `dbg!`; build-time `regex!` / `sql!` (validate the
-  literal) and `codegen!` (splice a `comptime fn`'s String).
+  `{:o}`, precision `{:.2}`); `matches`, `todo`, `unimplemented`,
+  `unreachable`, `dbg`; build-time `regex::compile` / `sql::statement`
+  (validate the literal, and the older `regex!` / `sql!` spellings
+  report GP0051) and `codegen` (splice a `comptime fn`'s String).
 
 ## 5. The `|>` forward-pipe
 
@@ -544,7 +547,7 @@ compilation and fold to literals, so every tier compiles the same
 constant. `typeInfo::<T>()` reflects fields; a plain `for (name, ty)
 in typeInfo::<T>()` loop unrolls per field at compile time
 (`field_of(v, name)` projects) - the basis for reflection-driven
-serializers specialized per turbofish call site. `codegen!` splices
+serializers specialized per turbofish call site. `codegen` splices
 a `comptime fn`-built `String` as source.
 
 ## 8. Error handling

@@ -356,7 +356,7 @@ statement whose value is discarded, and the implicit `main` returns
 - `bool` (1 byte).
 - `char` - a 32-bit Unicode scalar value (not a surrogate).
 - `()` - the unit type, inhabited by the value `()`.
-- `!` - the never type (uninhabited; result type of `panic!`, `return`,
+- `!` - the never type (uninhabited; result type of `panic`, `return`,
   infinite loops).
 
 **The i64 runtime model.** Every integer type of 64 bits or less
@@ -2418,9 +2418,9 @@ pub trait Error: Display + Debug {
 }
 ```
 
-Use `Result<T, E>` to signal failure; `?` to propagate. `panic!` is for
+Use `Result<T, E>` to signal failure; `?` to propagate. `panic` is for
 unrecoverable conditions only (array out-of-bounds, unwrap on `None`,
-divide by zero on integers, explicit `panic!` in code).
+divide by zero on integers, explicit `panic` in code).
 
 No exceptions, no `throw`, no `try/catch` in user code (the `?`
 operator handles control flow).
@@ -2947,15 +2947,21 @@ error for forward-compatibility).
 
 ---
 
-## 14. Macros
+## 14. Compiler-known calls
 
-Gossamer has a small fixed macro set, expanded at parse time; there is
-no runtime macro engine and no user-defined macros. Six are
-format-shaped (below); plus the desugar macros `matches(e, pat)`,
-`todo!` / `unimplemented!` / `unreachable!`, and `dbg(e)`, and the
-build-time `regex!` / `sql!` / `codegen!`.
+Gossamer has a small fixed set of compiler-known calls, expanded at parse
+time; there is no runtime macro engine and no user-defined macros. Six are
+format-shaped (below); plus the desugar calls `matches(e, pat)`,
+`todo(...)` / `unimplemented(...)` / `unreachable(...)`, and `dbg(e)`, and
+the build-time `regex::compile(...)` / `sql::statement(...)` /
+`codegen(...)`.
 
-| Macro | Returns | Destination |
+Every one is written as an ordinary call. The set is closed and
+recognised at the `(`, so nothing a sigil would disambiguate remains: a
+`!` after one of these names is `GP0049`, and `regex!` / `sql!` - which
+now live in their modules - are `GP0051`.
+
+| Call | Returns | Destination |
 |---|---|---|
 | `format("…", …)` | `String` | - |
 | `println("…", …)` | `()` | stdout + newline |
@@ -2964,12 +2970,12 @@ build-time `regex!` / `sql!` / `codegen!`.
 | `eprint("…", …)` | `()` | stderr, no newline |
 | `panic("…", …)` | `!` | unwinds with the rendered message |
 
-Beyond the six format macros and the desugar / build-time macros
-listed above, **every other `name!(...)` is a parse error** (`GP0001`),
-with a diagnostic steering the user to the plain-function form. This
-includes the Rust macros a newcomer reaches for: there is no `vec!`,
-`map!`, `set!`, `write!`, `writeln!`, `assert!`, `assert_eq!`,
-`debug_assert!`, `include_str!`, `include_bytes!`, or `env!`.
+Beyond the six format calls and the desugar / build-time calls listed
+above, **every `name!(...)` is a parse error** (`GP0001`), with a
+diagnostic steering the user to the plain-function form. This includes
+the Rust macros a newcomer reaches for: there is no `vec!`, `map!`,
+`set!`, `write!`, `writeln!`, `assert!`, `assert_eq!`, `debug_assert!`,
+`include_str!`, `include_bytes!`, or `env!`.
 
 - Collection literals use `#[a, b]` for `Vec` values. Use `[a, b]` /
   `[v; N]` for fixed arrays, `{}` or `{k: v}` for `Map`, and `#{a, b}` for set
@@ -3001,7 +3007,7 @@ at compile time as `[(String, String)]` - a named struct's fields, a tuple
 struct's positions, or an enum's variants and payloads, with the arguments
 substituted in for a generic instantiation - so a `comptime fn` can
 generate per-type code. A type with nothing to reflect is `GR0012`. The
-`regex!` / `sql!` macros validate their
+`regex::compile` / `sql::statement` calls validate their
 argument at build time, failing the build on malformed input. See the
 [`comptime` language page](docs_src/language/comptime.md).
 
@@ -3009,14 +3015,15 @@ Gossamer does not provide runtime reflection. Programs that require dynamic
 type inspection must use an explicit generated schema, tagged representation,
 or a `comptime`-generated adapter.
 
-The toolchain implements the six format-shaped macros (`println!`,
-`print!`, `eprintln!`, `eprint!`, `format!`, `panic!`), the desugar
-macros (`matches!`, `todo!`, `unimplemented!`, `unreachable!`, `dbg!`),
-and the build-time `regex!` / `sql!` / `codegen!`. Every other
+The toolchain implements the six format-shaped calls (`println`,
+`print`, `eprintln`, `eprint`, `format`, `panic`), the desugar calls
+(`matches`, `todo`, `unimplemented`, `unreachable`, `dbg`), and the
+build-time `regex::compile` / `sql::statement` / `codegen`. Every
 `name!(...)` form - including `vec!`, `write!`, `writeln!`, `map!`,
 `set!`, `assert!`, `assert_eq!`, `debug_assert!`, `include_str!`,
-`include_bytes!`, and `env!` - is rejected at parse time (`GP0001`).
-User-defined macros are out of scope.
+`include_bytes!`, and `env!` - is rejected at parse time (`GP0001`), and
+a `!` after a compiler-known name is `GP0049`. User-defined macros are
+out of scope.
 
 ---
 
@@ -3307,7 +3314,7 @@ idiom, a new type-system theory, or machinery the reader cannot see.
 
 **Metaprogramming**
 
-- **User macros, procedural or declarative.** `comptime` plus `codegen!`
+- **User macros, procedural or declarative.** `comptime` plus `codegen`
   (§7 of the skill card, `lang::comptime`) is the metaprogramming bet: no
   hygiene problem, no separate codegen language. The macro set is fixed
   (§14).

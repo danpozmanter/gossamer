@@ -121,16 +121,24 @@ static MIMALLOC_OPTION_DEFAULTS: std::sync::OnceLock<(i64, i64, i64)> = std::syn
 fn mimalloc_option_defaults() -> (i64, i64, i64) {
     *MIMALLOC_OPTION_DEFAULTS.get_or_init(|| {
         // SAFETY: option get is thread-safe; the global allocator is mimalloc
-        // in this build, initialised before any code reaches here. `c_long`
-        // widens losslessly to `i64` (it is `i32` on LLP64 Windows).
+        // in this build, initialised before any code reaches here.
         unsafe {
             (
-                libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) as i64,
-                libmimalloc_sys::mi_option_get(MI_OPTION_MAX_SEGMENT_RECLAIM) as i64,
-                libmimalloc_sys::mi_option_get(MI_OPTION_ALLOW_THP) as i64,
+                widen(libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY)),
+                widen(libmimalloc_sys::mi_option_get(
+                    MI_OPTION_MAX_SEGMENT_RECLAIM,
+                )),
+                widen(libmimalloc_sys::mi_option_get(MI_OPTION_ALLOW_THP)),
             )
         }
     })
+}
+
+/// Widens a mimalloc option value to `i64`, whatever width `c_long`
+/// carries on the target (32 bits on LLP64 Windows, 64 elsewhere).
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+fn widen(value: impl Into<i64>) -> i64 {
+    value.into()
 }
 
 /// Default mimalloc purge delay for release programs, in milliseconds.
