@@ -1865,6 +1865,27 @@ impl<'a> TypeChecker<'a> {
                     self.tcx.intern(TyKind::JoinHandle(new))
                 }
             }
+            // A callable parameter's own signature holds the function's
+            // rigid `Param`s (`f: Fn() -> T`), so substitute into it too:
+            // left rigid, the instantiated signature would ask a call site
+            // for `Fn() -> T` and reject the concrete callable it passed.
+            TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+                let new_sig = FnSig {
+                    inputs: sig
+                        .inputs
+                        .iter()
+                        .map(|t| self.subst_generics_in_ty(*t, substs, const_substs))
+                        .collect(),
+                    output: self.subst_generics_in_ty(sig.output, substs, const_substs),
+                };
+                if new_sig == sig {
+                    ty
+                } else if matches!(self.tcx.kind_of(ty), TyKind::FnTrait(_)) {
+                    self.tcx.intern(TyKind::FnTrait(new_sig))
+                } else {
+                    self.tcx.intern(TyKind::FnPtr(new_sig))
+                }
+            }
             // Adt / Alias carry their own generic-argument lists; a
             // function signature naming a generic struct (`w: Wrapper<T>`)
             // holds the function's rigid `Param` inside those args, so
@@ -7943,6 +7964,31 @@ impl<'a> TypeChecker<'a> {
     /// `Result<?, e>`, `None` → `Option<?>`. Pinning `__concat` /
     /// `__fmt_prec` to `String` is safe: they're synthetic names the
     /// parser injects and no user code can shadow them.
+    /// `spawn(f, reason: "..")`: the label is text a report prints, so
+    /// anything else would reach the runtime as a word it would read as a
+    /// pointer.
+    fn check_spawn_reason(&mut self, reason: Option<Ty>, span: Span) {
+        let Some(reason) = reason else {
+            return;
+        };
+        if matches!(
+            self.tcx.kind_of(reason),
+            TyKind::String | TyKind::Var(_) | TyKind::Error
+        ) {
+            return;
+        }
+        self.emit(
+            TypeError::ArgumentTypeMismatch {
+                callee: "spawn".to_string(),
+                parameter: "reason".to_string(),
+                expected: "String".to_string(),
+                found: crate::render_ty(self.tcx, reason),
+                actual: "the `reason:` label".to_string(),
+            },
+            span,
+        );
+    }
+
     fn check_bare_intrinsic_call(&mut self, name: &str, arg_tys: &[Ty], span: Span) -> Option<Ty> {
         let constructor_arity = match name {
             "Some" | "Ok" | "Err" => Some(1),
@@ -8013,7 +8059,8 @@ impl<'a> TypeChecker<'a> {
             // type. Typing the call itself is what lets `spawn(f).join()`
             // resolve without binding the handle first: the method arm
             // that lowers `join` keys on the receiver's static type.
-            "spawn" if arg_tys.len() == 1 => {
+            "spawn" if matches!(arg_tys.len(), 1 | 2) => {
+                self.check_spawn_reason(arg_tys.get(1).copied(), span);
                 let elem = match self.tcx.kind_of(arg_tys[0]).clone() {
                     TyKind::FnTrait(sig) | TyKind::FnPtr(sig) => sig.output,
                     TyKind::Var(_) => self.fresh(),

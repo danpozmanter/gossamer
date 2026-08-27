@@ -1304,10 +1304,15 @@ fn native_spawn(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeRes
     let Some(callable) = args.first().cloned() else {
         return Ok(Value::Unit);
     };
-    let rest = args.iter().skip(1).cloned().collect();
+    // `spawn(f, reason: "..")` carries a label the cohort reports name the
+    // child by; the callable itself takes no arguments.
+    let reason = match args.get(1) {
+        Some(Value::String(text)) => text.to_string(),
+        _ => String::new(),
+    };
     // `spawn(f)` returns a join handle (a one-shot channel) whose
     // `.join()` blocks for the goroutine's `Result<T, String>`.
-    dispatch.spawn_join(callable, rest)
+    dispatch.spawn_join_labelled(callable, Vec::new(), reason)
 }
 
 /// `handle.join() -> Result<T, String>` - blocks on the one-shot

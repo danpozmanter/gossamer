@@ -13777,6 +13777,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-runtime-root",
+      "name": "std::runtime::root",
+      "kind": "function",
+      "signature": "fn root() -> String",
+      "description": "The root cohort's descriptor line, in the shape `cohorts()` answers, or an empty String when no cohort is open. The root is the one cohort every program has - `main` runs inside it - and the one whose drain bounds process exit.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdruntime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-runtime-scheduler-stats-json",
       "name": "std::runtime::scheduler_stats_json",
       "kind": "function",
@@ -15734,6 +15753,44 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-sync-shield",
+      "name": "std::sync::shield",
+      "kind": "function",
+      "signature": "fn shield<T>(f: Fn() -> T) -> T",
+      "description": "Runs a callable in a cohort exempt from cancellation and answers its value: a cancel landing on an enclosing cohort does not reach the work inside. The shielded region is still counted and still drained.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdsync",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-sync-with-timeout",
+      "name": "std::sync::with_timeout",
+      "kind": "function",
+      "signature": "fn with_timeout<T>(f: Fn() -> T, ms: i64) -> Result<T, errors::Error>",
+      "description": "Runs a callable on a child of a cohort bounded by a millisecond deadline, answering `Ok(value)` when it finished inside the bound and `Err` naming the bound when it did not. Cancellation is cooperative: a child that reaches no cancellation point runs on and is named in the cohort's drain report.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdsync",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-testing-Runner",
       "name": "std::testing::Runner",
       "kind": "type",
@@ -16005,6 +16062,25 @@
       "kind": "function",
       "signature": "fn advance(ms: i64) -> i64",
       "description": "`advance(ms) -> i64` - move a frozen wall clock forward and answer the new reading. Freezes at the current reading first when it is not already frozen.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-time-after",
+      "name": "std::time::after",
+      "kind": "function",
+      "signature": "fn after(d: time::Duration) -> Receiver<i64>",
+      "description": "A `Receiver` that yields once after `Duration`, so a deadline composes with `select` and `while let` the way any other channel does.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

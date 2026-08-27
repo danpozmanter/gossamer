@@ -1,3 +1,61 @@
+/// Bare names a `use std::<module>::<item>` brought into scope that reach an
+/// injected wrapper, mapped to that wrapper's mangled name. An item the file
+/// declares itself keeps its own meaning, so a program with its own `shield`
+/// is untouched.
+fn imported_wrapper_names(sf: &SourceFile) -> std::collections::HashMap<String, &'static str> {
+    use gossamer_ast::{ItemKind, UseTarget};
+
+    let declared: std::collections::HashSet<&str> = sf
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Fn(decl) => Some(decl.name.name.as_str()),
+            ItemKind::Struct(decl) => Some(decl.name.name.as_str()),
+            ItemKind::Enum(decl) => Some(decl.name.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut out: std::collections::HashMap<String, &'static str> = std::collections::HashMap::new();
+    for decl in &sf.uses {
+        let UseTarget::Module(path) = &decl.target else {
+            continue;
+        };
+        let base: Vec<String> = path.segments.iter().map(|s| s.name.clone()).collect();
+        let mut candidates: Vec<(Vec<String>, String)> = Vec::new();
+        if let Some(entries) = &decl.list {
+            for entry in entries {
+                let mut segments = base.clone();
+                segments.extend(entry.prefix.iter().map(|s| s.name.clone()));
+                segments.push(entry.name.name.clone());
+                let bound = entry
+                    .alias
+                    .as_ref()
+                    .map_or_else(|| entry.name.name.clone(), |a| a.name.clone());
+                candidates.push((segments, bound));
+            }
+        } else {
+            let bound = decl.alias.as_ref().map_or_else(
+                || base.last().cloned().unwrap_or_default(),
+                |a| a.name.clone(),
+            );
+            candidates.push((base.clone(), bound));
+        }
+        for (segments, bound) in candidates {
+            let n = segments.len();
+            if n < 2 || declared.contains(bound.as_str()) {
+                continue;
+            }
+            if let Some(mangled) = mangled_stdlib_name(
+                segments[n - 2].as_str(),
+                segments[n - 1].as_str(),
+            ) {
+                out.insert(bound, mangled);
+            }
+        }
+    }
+    out
+}
+
 /// Redirects the user-facing stdlib struct surface
 /// (`encoding::pem::decode(..)`, the `pem::Block { .. }` literal,
 /// `pem::Block` type annotations) onto the injected real-struct
@@ -117,6 +175,40 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
         }
     }
 
+    /// Rewrites a bare name a `use std::<module>::<item>` bound, which
+    /// reaches the same injected wrapper the qualified path does. Without
+    /// it the imported spelling type-checks and then finds no such name at
+    /// run time.
+    struct BareImportRewriter {
+        imported: std::collections::HashMap<String, &'static str>,
+    }
+
+    impl VisitorMut for BareImportRewriter {
+        fn visit_expr(&mut self, expr: &mut Expr) {
+            walk_expr_mut(self, expr);
+            if let ExprKind::Path(path) = &mut expr.kind
+                && path.segments.len() == 1
+                && let Some(mangled) = self.imported.get(path.segments[0].name.name.as_str())
+            {
+                let mut seg = gossamer_ast::PathSegment::new(*mangled);
+                seg.generics = std::mem::take(&mut path.segments[0].generics);
+                path.segments = vec![seg];
+            }
+        }
+
+        fn visit_type(&mut self, ty: &mut Type) {
+            walk_type_mut(self, ty);
+            if let TypeKind::Path(path) = &mut ty.kind
+                && path.segments.len() == 1
+                && let Some(mangled) = self.imported.get(path.segments[0].name.name.as_str())
+            {
+                let mut seg = gossamer_ast::ty::TypePathSegment::new(*mangled);
+                seg.generics = std::mem::take(&mut path.segments[0].generics);
+                path.segments = vec![seg];
+            }
+        }
+    }
+
     struct Rewriter;
     impl VisitorMut for Rewriter {
         fn visit_expr(&mut self, expr: &mut Expr) {
@@ -150,7 +242,11 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
             }
         }
     }
+    let imported = imported_wrapper_names(sf);
     Rewriter.visit_source_file(sf);
+    if !imported.is_empty() {
+        BareImportRewriter { imported }.visit_source_file(sf);
+    }
 }
 
 /// Desugars `xs.sort_by_key(f)` / `xs.sort_by_key_desc(f)` method calls into

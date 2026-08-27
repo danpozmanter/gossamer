@@ -1371,9 +1371,12 @@ a cohort may one day inherit; the retired `context:` spelling reports
 `runtime::cohorts()` answers one descriptor line per live cohort, oldest id
 first, naming its id, parent, completion policy, error disposition, how many
 children are outstanding, whether it is cancelled, and the spawn indices that
-have not left. A cohort is enumerable so a program can say what it is still
-waiting on without joining it. A drain that gives up names those same indices
-rather than only counting them.
+have not left. A child spawned with a `reason:` label is named by that label
+beside its index. A cohort is enumerable so a program can say what it is still
+waiting on without joining it. A drain that gives up names those same children
+rather than only counting them. `runtime::root()` answers the root cohort's
+line in that same shape - the one cohort every program has, and the one whose
+drain bounds process exit.
 
 `main` runs inside an implicit root cohort, so every `spawn` belongs to
 one: no goroutine outlives the program, and a child failure that nothing
@@ -1446,6 +1449,11 @@ joined is still reported. There is no detached form.
 Ownership is fixed at the spawn and there is no re-parenting: nothing
 moves a running goroutine from one cohort to another, so the block a
 child belongs to is decided once, where it was written.
+
+`spawn(f, reason: "..")` labels the goroutine. The label is text a report
+prints: the cohort's enumeration and drain reports name a labelled child by
+it in place of the bare spawn index, so what is still running reads as the
+task the program meant rather than the slot it took.
 
 A closure body runs on the child, so an operand that must be read where
 the spawn is written is bound first:
@@ -2371,6 +2379,15 @@ A construct is considered only after both of these fail:
    which case that is what gets added. A header setting is a value and costs
    no grammar.
 
+`sync::shield(f)` and `sync::with_timeout(f, ms)` are what the first answer
+looks like: both are ordinary functions written with `cohort` + `spawn` over
+the `cancellable:` and `timeout:` settings, and neither adds a word to the
+grammar. `shield` answers `f`'s own value from a region cancellation does not
+reach; `with_timeout` answers `Ok(value)` when `f` finished inside the bound
+and an `Err` naming the bound when it did not. The shielded and bounded
+regions are still counted, still drained, and still named if they never
+finish.
+
 Ownership is fixed at the spawn: a goroutine belongs to the cohort that was
 current when `spawn` ran, and nothing moves a running goroutine between
 cohorts. Detachment, if it ever exists, is a header setting rather than a
@@ -2969,6 +2986,13 @@ now live in their modules - are `GP0051`.
 | `eprintln("…", …)` | `()` | stderr + newline |
 | `eprint("…", …)` | `()` | stderr, no newline |
 | `panic("…", …)` | `!` | unwinds with the rendered message |
+
+Stdout is buffered so that the several writes a formatted line arrives as cost
+one syscall, and the buffer drains on the newline that ends a write - the same
+guarantee on a terminal, a pipe, and a file, and identical on every tier. A
+`print` with no terminator stays buffered until a later newline, an explicit
+`io::stdout().flush()`, or exit. The stderr calls are unbuffered and flush
+stdout first, so interleaved output keeps its order.
 
 Beyond the six format calls and the desugar / build-time calls listed
 above, **every `name!(...)` is a parse error** (`GP0001`), with a

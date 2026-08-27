@@ -124,6 +124,11 @@ pub const RUNTIME: StdModule = StdModule {
             doc: "One descriptor line per live cohort, oldest id first: id, parent, completion policy, error disposition, outstanding count, and the spawn indices still running. A cohort is enumerable so a program can say what it is waiting on without joining it.",
         },
         StdItem {
+            name: "root",
+            kind: StdItemKind::Function,
+            doc: "The root cohort's descriptor line, in the shape `cohorts()` answers, or an empty String when no cohort is open. The root is the one cohort every program has - `main` runs inside it - and the one whose drain bounds process exit.",
+        },
+        StdItem {
             name: "cohort_cancelled",
             kind: StdItemKind::Function,
             doc: "Whether the running goroutine's cohort has been cancelled. A CPU-bound child polls this to cooperate at a point of its own choosing.",
@@ -406,6 +411,11 @@ pub const TIME: StdModule = StdModule {
             name: "sleep",
             kind: StdItemKind::Function,
             doc: "Suspends the current goroutine for `Duration`.",
+        },
+        StdItem {
+            name: "after",
+            kind: StdItemKind::Function,
+            doc: "A `Receiver` that yields once after `Duration`, so a deadline composes with `select` and `while let` the way any other channel does.",
         },
         StdItem {
             name: "sleep_ctx",

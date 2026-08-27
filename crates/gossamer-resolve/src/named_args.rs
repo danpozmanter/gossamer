@@ -172,6 +172,20 @@ impl SignatureTable {
     }
 }
 
+/// Parameters of a compiler-known call, so a label on one binds the way a
+/// label on a declared function does. `spawn` is the only one: it is a
+/// primitive rather than a declaration, so nothing else would give
+/// `spawn(f, reason: "..")` a parameter to bind against.
+fn builtin_signature(path: &PathExpr) -> Option<Signature> {
+    if path.segments.len() != 1 || path.segments[0].name.name != "spawn" {
+        return None;
+    }
+    Some(Signature {
+        names: vec!["f".to_string(), "reason".to_string()],
+        defaults: vec![None, None],
+    })
+}
+
 /// Reads a declaration's parameter names and defaults, dropping any
 /// receiver - a method call's receiver is not one of its arguments.
 fn signature_of(decl: &FnDecl) -> Signature {
@@ -245,6 +259,9 @@ impl Rewrite<'_> {
                     if let Some(sig) = self.signatures.associated.get(&(owner, name)) {
                         return Some(sig.clone());
                     }
+                }
+                if let Some(sig) = builtin_signature(path) {
+                    return Some(sig);
                 }
                 self.unsupported_target(written, &describe_path(path), span)
             }

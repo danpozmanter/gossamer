@@ -30,7 +30,6 @@ fn write_source() -> PathBuf {
     let src = r#"
 use std::http
 use std::http::router
-use std::io
 
 struct Health { }
 impl Health {
@@ -55,9 +54,6 @@ fn main() {
         Ok(_) => println("{}", s.addr())
         Err(e) => eprintln("listen: {}", e)
     }
-    // Standard output is buffered, and this program does not end:
-    // the address has to leave the buffer before the serve loop.
-    io::stdout().flush()
     let _ = s.serve(r)
 }
 "#;
@@ -70,7 +66,6 @@ fn write_source_bare_fn() -> PathBuf {
     let src = r#"
 use std::http
 use std::http::router
-use std::io
 
 fn health(_r: http::Request) -> Result<http::Response, http::Error> {
     Ok(http::Response::text(200, "ok"))
@@ -89,9 +84,6 @@ fn main() {
         Ok(_) => println("{}", s.addr())
         Err(e) => eprintln("listen: {}", e)
     }
-    // Standard output is buffered, and this program does not end:
-    // the address has to leave the buffer before the serve loop.
-    io::stdout().flush()
     let _ = s.serve(r)
 }
 "#;

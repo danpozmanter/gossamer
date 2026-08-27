@@ -1,0 +1,67 @@
+// The two concurrency primitives are `cohort` and `spawn`; everything
+// built on them is a library. `sync::shield` runs work a cancel cannot
+// reach, `sync::with_timeout` bounds work by a deadline the caller
+// computes, and `runtime::root()` names the one cohort every program has.
+use std::{errors, runtime, sync, time}
+
+fn quick() -> i64 {
+    7
+}
+
+fn slow() -> String {
+    time::sleep(5_000)
+    "late"
+}
+
+fn labelled() -> Result<i64, errors::Error> {
+    Ok(1)
+}
+
+fn main() {
+    // The shielded call answers its own value, not a cohort outcome.
+    println("shield: {}", sync::shield(|| quick()))
+    println("shield text: {}", sync::shield(|| "held"))
+
+    println("inside bound: {:?}", sync::with_timeout(|| quick(), 5_000))
+    let elapsed = sync::with_timeout(|| slow(), 50)
+    println("bound elapsed: {}", elapsed.is_err())
+
+    // Cancellation does not reach a shielded region, so the work inside
+    // one runs to its own end while an unshielded sibling stops early.
+    let mut plain: Vec<i64> = #[]
+    let mut held: Vec<i64> = #[]
+    let cancelled = cohort(on_error: OnError::Ignore) {
+        let _a = spawn(|| {
+            let start = time::now_ms()
+            time::sleep(400)
+            plain.push(time::now_ms() - start)
+            0
+        }, reason: "unshielded")
+        let _b = spawn(|| {
+            let start = time::now_ms()
+            let _ = sync::shield(|| time::sleep(400))
+            held.push(time::now_ms() - start)
+            0
+        }, reason: "shielded")
+        time::sleep(40)
+        runtime::cohort_cancel()
+    }
+    println("cancelled: {:?}", cancelled)
+    println("unshielded ran on: {}", plain.first().unwrap_or(0) >= 380)
+    println("shielded ran on: {}", held.first().unwrap_or(0) >= 380)
+
+    // A spawn's `reason:` label names the child in the cohort's own
+    // enumeration, in place of the bare spawn index.
+    let named = cohort {
+        let _c = spawn(|| labelled(), reason: "audit rollup")
+        let lines = runtime::cohorts()
+        println("named live: {}", lines.len() >= 2)
+    }
+    println("named: {:?}", named)
+
+    // The root is the cohort `main` runs inside, and the one whose drain
+    // bounds process exit.
+    let root = runtime::root()
+    println("root is a cohort line: {}", root.starts_with("id="))
+    println("root has no parent: {}", root.contains("parent=0"))
+}

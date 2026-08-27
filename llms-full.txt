@@ -393,6 +393,11 @@ Write clear, low-complexity, concise code.
   `unreachable`, `dbg`; build-time `regex::compile` / `sql::statement`
   (validate the literal, and the older `regex!` / `sql!` spellings
   report GP0051) and `codegen` (splice a `comptime fn`'s String).
+- **Output that ends in a newline leaves the process on that write**, on a
+  terminal, a pipe, and a file alike, so a program that announces a line and
+  then blocks is visible while it runs. A `print` with no terminator
+  accumulates until a later newline or an explicit `io::stdout().flush()`;
+  `eprint` / `eprintln` are never buffered and flush stdout first.
 
 ## 5. The `|>` forward-pipe
 
@@ -600,7 +605,9 @@ is reported on stderr at exit instead of vanishing.
 
 `spawn(f)` returns a `JoinHandle<T>` (`handle.join()` ->
 `Result<T, String>`) and attaches to the enclosing cohort. There is no
-detached form. Typed channels: `recv()` blocks until a value or every
+detached form. `spawn(f, reason: "fetch users")` labels the goroutine, and
+the cohort's reports name a labelled child by that label instead of by its
+spawn index. Typed channels: `recv()` blocks until a value or every
 sender is gone; producers `close()`.
 
 ```gossamer
@@ -665,7 +672,13 @@ the expression - so a method or binding may still be named `select`.
 One-shot timer: `time::after(Duration::from_millis(n)) -> Receiver`,
 whose `.recv()` is a select timeout arm.
 `std::sync` also has `Mutex`, `RwLock`, atomics, `Once`, `WaitGroup`,
-`Barrier`, and `Map` (concurrent string->string). `std::thread`
+`Barrier`, and `Map` (concurrent string->string). Two combinators are
+ordinary functions over the two primitives, not new syntax:
+`sync::shield(f)` runs `f` where cancellation does not reach and answers its
+value, and `sync::with_timeout(f, ms)` runs `f` under a deadline the caller
+computes - which a `timeout:` header, a compile-time constant, cannot take -
+answering `Ok(value)` inside the bound and an `Err` naming the bound outside
+it. `std::thread`
 provides scheduling hints and CPU introspection only: user code has no
 OS-thread spawn API. Use `cohort { }` with `spawn(f)`.
 
@@ -856,7 +869,8 @@ Full path spelling is validated (GR0005); discover signatures with
   `compress::{gzip, flate, zlib, zstd, bzip2}`, `archive::{zip,
   tar}`, `metrics`, `trace`, `slog`, `lifecycle`, `validate`,
   `testing`, `runtime` (`collect_cycles`, `set_panic_hook`, `cohorts()` -
-  one descriptor line per live cohort),
+  one descriptor line per live cohort - and `root()`, that line for the
+  root),
   `pprof` (`goroutine_profile` / `mutex_profile` / `block_profile` in
   `go tool pprof` text form, `execution_trace(millis)` as Chrome trace
   JSON, `route(path, query)` for `/debug/pprof/...`).

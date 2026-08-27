@@ -2703,6 +2703,19 @@ pub trait NativeDispatch {
     /// `.join()` blocks on for the outcome (`Ok(value)`, or
     /// `Err(message)` if the callable panicked). Backs `spawn(f)`.
     fn spawn_join(&mut self, callable: Value, args: Vec<Value>) -> RuntimeResult<Value>;
+    /// [`Self::spawn_join`] carrying the spawn's `reason:` label, which the
+    /// cohort names the child by in its enumeration and drain reports.
+    /// Defaults to the unlabelled form, so an implementor that does not
+    /// track cohorts needs no change.
+    fn spawn_join_labelled(
+        &mut self,
+        callable: Value,
+        args: Vec<Value>,
+        reason: String,
+    ) -> RuntimeResult<Value> {
+        let _ = reason;
+        self.spawn_join(callable, args)
+    }
     /// Spawns `target(args)` on a goroutine and hands the outcome to
     /// `sink` on that goroutine. A native server answers each request on
     /// its own goroutine, so its accept loop stays free while a handler

@@ -570,6 +570,11 @@ fn mangled_stdlib_name(parent: &str, item: &str) -> Option<&'static str> {
         // Channel-returning timer: `time::after(d)` fires on a goroutine that
         // sleeps then sends, so the result is usable in `select` / `while let`.
         ("time", "after") => Some("__gos_time_after"),
+        // Cancellation-shielded and time-bounded work, written with
+        // `cohort` + `spawn` because that is what the two primitives
+        // already express (SPEC 8.6's addition test).
+        ("sync", "shield") => Some("__gos_sync_shield"),
+        ("sync", "with_timeout") => Some("__gos_sync_with_timeout"),
         // std::http::csrf request/response-integrated surface.
         ("csrf", "Config") => Some("__gos_http_csrf_Config"),
         ("csrf", "config") => Some("__gos_http_csrf_config"),

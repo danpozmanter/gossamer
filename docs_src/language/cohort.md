@@ -196,6 +196,53 @@ cohort(drain: 2000) { ... }
   unchanged. The retired `context:` spelling reports `GP0056` with the
   rewrite, and `--fix` applies it.
 
+## Naming what is running
+
+`spawn(f, reason: "..")` labels a goroutine. The label is text a report
+prints: the cohort's enumeration and its drain report name a labelled child
+by it in place of the bare spawn index.
+
+```gossamer
+let bounded = cohort(drain: 2000) {
+    let _a = spawn(|| flush_logs(), reason: "log flush")
+    let _b = spawn(|| rebuild_index())
+}
+```
+
+If that drain gives up it says which children it left running:
+
+```text
+gossamer: cohort drain bound of 2000ms elapsed with 2 goroutine(s) still running (spawn index 0 "log flush", 1)
+```
+
+`runtime::cohorts()` renders the same phrase in each live cohort's
+`live=[..]` field, and `runtime::root()` answers that line for the root -
+the cohort `main` runs inside, and the one whose drain bounds process exit.
+
+## Library combinators
+
+The two concurrency primitives are `cohort` and `spawn`; everything built on
+them is an ordinary function. Two ship in `std::sync`:
+
+```gossamer
+use std::sync
+
+// Runs the callable in a region cancellation does not reach, and answers
+// its value. The region is still counted and still drained.
+let saved = sync::shield(|| write_checkpoint(state))
+
+// Runs the callable under a deadline the caller computes, which a
+// `timeout:` header - a compile-time constant - cannot take.
+match sync::with_timeout(|| fetch(url), budget_ms) {
+    Ok(body) => serve(body)
+    Err(e) => fall_back(e)
+}
+```
+
+Cancellation stays cooperative in both: `with_timeout` cancels the work when
+its bound elapses, and a child that reaches no cancellation point runs on and
+is named in the cohort's drain report.
+
 ## Nesting
 
 Cohorts nest, and a nested one is joined before the block containing it

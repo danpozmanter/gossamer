@@ -206,7 +206,15 @@ fn child_error_message(payload: i64, err_kind: i64) -> String {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_spawn(code: usize, env: usize) -> *mut super::chan::GosChan {
     // The one-word form: a callable whose return fits a single slot.
-    unsafe { gos_rt_spawn_ex(code, env, SPAWN_RET_ONE_WORD, SPAWN_ERR_KIND_NONE) }
+    unsafe {
+        gos_rt_spawn_ex(
+            code,
+            env,
+            SPAWN_RET_ONE_WORD,
+            SPAWN_ERR_KIND_NONE,
+            std::ptr::null(),
+        )
+    }
 }
 
 /// `spawn(f) -> handle`, told how wide the callable's return is.
@@ -215,7 +223,9 @@ pub unsafe extern "C" fn gos_rt_spawn(code: usize, env: usize) -> *mut super::ch
 /// or `Option`, which comes back in two registers and is copied into an
 /// RC cell here so the handle carries it the way every other slot does.
 /// `err_kind` names the `Err` payload's shape so a cohort can render a
-/// failed child's message.
+/// failed child's message. `reason` is the spawn's own `reason:` label, or
+/// null when it carried none; the cohort's reports name a labelled child by
+/// it rather than only by its spawn index.
 ///
 /// A panic is NOT caught here: catching across the runtime-call
 /// boundary trips the nounwind contract on the `gos_rt_panic` frame
@@ -229,6 +239,7 @@ pub unsafe extern "C" fn gos_rt_spawn_ex(
     env: usize,
     ret_words: i64,
     err_kind: i64,
+    reason: *const std::os::raw::c_char,
 ) -> *mut super::chan::GosChan {
     ffi_entry!(std::ptr::null_mut(), {
         if code == 0 {
@@ -255,7 +266,14 @@ pub unsafe extern "C" fn gos_rt_spawn_ex(
         let index = if cohort == 0 {
             -1
         } else {
-            super::cohort::register_child(cohort)
+            // The label is read on the spawning goroutine: the caller's
+            // string is live here, and the child never reaches it.
+            let label = if reason.is_null() {
+                String::new()
+            } else {
+                unsafe { super::gos_str_arg_string(reason) }
+            };
+            super::cohort::register_child(cohort, label)
         };
         super::cohort::note_child_handle(ch as usize, cohort, index);
         let body = move || {

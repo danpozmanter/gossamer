@@ -4964,6 +4964,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::cohort::gos_rt_cohorts as *const u8,
         ),
         (
+            "gos_rt_cohort_root",
+            crate::c_abi::cohort::gos_rt_cohort_root as *const u8,
+        ),
+        (
             "gos_rt_cohort_cancelled",
             crate::c_abi::cohort::gos_rt_cohort_cancelled as *const u8,
         ),

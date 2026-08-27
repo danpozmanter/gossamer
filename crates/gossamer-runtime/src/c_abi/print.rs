@@ -50,13 +50,13 @@ use std::os::raw::c_char;
 /// extern there) and with the inline `icmp ... 8192` checks
 /// emitted by `lower::Lowerer`.
 ///
-/// Sized for the line-buffered shape of `println!` / `print!`:
-/// 8 KiB holds ~100 lines of typical output between flushes.
-/// Programs that emit one giant block per flush (rare in practice)
-/// take additional spills through `gos_rt_flush_stdout` - still
-/// correct, just more syscalls. The previous 64 KiB cost 56 KiB
-/// of BSS in every Gossamer binary for what is almost always wasted
-/// slack.
+/// Sized for the coalescing job it actually does: a formatted line
+/// arrives as several writes (literal segments, an integer, the
+/// newline) and leaves as one syscall, since `write_stdout_locked`
+/// drains on the newline. What accumulates across many writes is the
+/// byte-at-a-time and byte-range output the codegen inlines against
+/// this same buffer. The previous 64 KiB cost 56 KiB of BSS in every
+/// Gossamer binary for what is almost always wasted slack.
 pub const STDOUT_BUF_SIZE: usize = 8 * 1024;
 
 /// Process-global mutex protecting [`GOS_RT_STDOUT_BYTES`] and
@@ -279,6 +279,13 @@ pub fn raw_write_stdout(bytes: &[u8]) {
 /// acquisition from the buffer manipulation lets us avoid
 /// re-entering the (non-recursive) `RawMutex` from helpers that
 /// already entered through the safe guard.
+///
+/// A write whose last byte is a newline leaves the buffer before
+/// returning, so a program that announces a line and then blocks is
+/// visible to whatever is reading its stdout - a pipe, a file, or a
+/// terminal alike. The check is on the final byte only: the
+/// byte-at-a-time and byte-range writers are the throughput path and
+/// never reach here, so no hot loop grows a scan.
 pub unsafe fn write_stdout_locked(bytes: &[u8]) {
     if bytes.is_empty() {
         return;
@@ -313,6 +320,15 @@ pub unsafe fn write_stdout_locked(bytes: &[u8]) {
                 bytes.len(),
             );
             *len_ptr = len + bytes.len();
+        }
+    }
+    if bytes.last() == Some(&b'\n') {
+        let pending = unsafe { *len_ptr };
+        if pending > 0 {
+            unsafe {
+                raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), pending));
+                *len_ptr = 0;
+            }
         }
     }
 }

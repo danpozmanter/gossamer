@@ -36,6 +36,13 @@ println("hello, {who}")
 println("{} + {} = {}", 1, 2, 1 + 2)
 ```
 
+Output that ends in a newline leaves the process on the write that ends it,
+whether stdout is a terminal, a pipe, or a file, so a program that announces a
+line and then blocks is visible to whatever is reading it. `print` with no
+terminator accumulates: a prompt written that way needs
+`io::stdout().flush()` before the read. `eprint` / `eprintln` are never
+buffered and flush stdout first, so the two streams keep their order.
+
 ## Fixed compiler-known calls
 
 | Name | Signature | Description |

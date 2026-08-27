@@ -229,7 +229,12 @@ impl<'a> Builder<'a> {
     /// passed as the implicit first argument. The runtime helper runs
     /// it on a goroutine and threads the outcome back through the
     /// handle's `gos_rt_join`.
-    pub(crate) fn lower_spawn(&mut self, f_expr: &HirExpr, span: Span) -> Option<Local> {
+    pub(crate) fn lower_spawn(
+        &mut self,
+        f_expr: &HirExpr,
+        reason: Option<&HirExpr>,
+        span: Span,
+    ) -> Option<Local> {
         use gossamer_types::TyKind;
         // The spawned closure's captures escape to the new goroutine:
         // switch any RC-managed capture to atomic reference counting
@@ -292,6 +297,16 @@ impl<'a> Builder<'a> {
             Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(err_kind)))),
             span,
         );
+        // The `reason:` label, or the empty string when the spawn carried
+        // none. The cohort reads it on this goroutine, before the child is
+        // queued, and names the child by it in its reports.
+        let reason_operand = match reason {
+            Some(expr) => match self.lower_expr(expr) {
+                Some(local) => Operand::Copy(Place::local(local)),
+                None => Operand::Const(ConstValue::Str(String::new())),
+            },
+            None => Operand::Const(ConstValue::Str(String::new())),
+        };
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str("gos_rt_spawn_ex".to_string())),
             args: vec![
@@ -299,6 +314,7 @@ impl<'a> Builder<'a> {
                 Operand::Copy(Place::local(env_local)),
                 Operand::Copy(Place::local(ret_words_local)),
                 Operand::Copy(Place::local(err_kind_local)),
+                reason_operand,
             ],
             destination: Place::local(dest),
             target: Some(next),

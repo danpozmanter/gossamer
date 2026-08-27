@@ -2940,6 +2940,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     },
     StdFunctionSignature {
         module_path: "std::runtime",
+        name: "root",
+        signature: "fn root() -> String",
+    },
+    StdFunctionSignature {
+        module_path: "std::runtime",
         name: "cohort_cancelled",
         signature: "fn cohort_cancelled() -> bool",
     },
@@ -3319,6 +3324,16 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         signature: "fn channel_unbounded<T>() -> sync::Channel<T>",
     },
     StdFunctionSignature {
+        module_path: "std::sync",
+        name: "shield",
+        signature: "fn shield<T>(f: Fn() -> T) -> T",
+    },
+    StdFunctionSignature {
+        module_path: "std::sync",
+        name: "with_timeout",
+        signature: "fn with_timeout<T>(f: Fn() -> T, ms: i64) -> Result<T, errors::Error>",
+    },
+    StdFunctionSignature {
         module_path: "std::testing",
         name: "check",
         signature: "fn check(cond: bool, message: String) -> Result<(), errors::Error>",
@@ -3432,6 +3447,11 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
         module_path: "std::time",
         name: "sleep",
         signature: "fn sleep(ms: i64) -> ()",
+    },
+    StdFunctionSignature {
+        module_path: "std::time",
+        name: "after",
+        signature: "fn after(d: time::Duration) -> Receiver<i64>",
     },
     StdFunctionSignature {
         module_path: "std::time",

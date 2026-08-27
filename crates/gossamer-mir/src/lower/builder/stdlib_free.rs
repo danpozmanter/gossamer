@@ -957,8 +957,8 @@ impl<'a> Builder<'a> {
         // the callable's code/env must be extracted before the
         // runtime call. A user-defined `fn spawn` (non-None `def`)
         // shadows the prelude builtin.
-        if !callee_def_some && seg_len == 1 && joined == "spawn" && args.len() == 1 {
-            return ControlFlow::Break(self.lower_spawn(&args[0], span));
+        if !callee_def_some && seg_len == 1 && joined == "spawn" && matches!(args.len(), 1 | 2) {
+            return ControlFlow::Break(self.lower_spawn(&args[0], args.get(1), span));
         }
         // `assert(cond[, msg])` / `assert_eq(a, b[, msg])` prelude
         // assertions: lower to a conditional `panic(msg)` so the same
@@ -3811,6 +3811,7 @@ impl<'a> Builder<'a> {
                     self.tcx.intern(gossamer_types::TyKind::Vec(string_ty)),
                 )
             }
+            "runtime::root" => ("gos_rt_cohort_root", self.tcx.string_ty()),
             "runtime::cohort_join" => ("gos_rt_cohort_join", self.result_unit_error_adt_ty()),
             "runtime::cohort_pop" => ("gos_rt_cohort_pop", self.tcx.unit()),
             "lifecycle::ready" => ("gos_rt_lifecycle_ready", self.tcx.unit()),

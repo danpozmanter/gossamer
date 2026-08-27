@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.56.1 - Line-flushed stdout, one HTTP watcher per process, labelled spawns, cancellation-shielded and time-bounded work
+
+- Output that ends in a newline leaves the process on the write that ends
+  it, whether stdout is a terminal, a pipe, or a file. A program that
+  announced a line and then blocked - a server printing the address the
+  kernel assigned it, a worker reporting readiness - sat unread in the 8 KiB
+  buffer until it filled or the program ended. The buffer still coalesces
+  the several writes a formatted line arrives as into one syscall, and the
+  byte-at-a-time and byte-range writers still accumulate, so the throughput
+  path is unchanged. A `print` with no terminator still needs an explicit
+  `io::stdout().flush()`.
+- A compiled HTTP server no longer spawns an OS thread per request. The
+  peer-disconnect watch took a thread of its own for every request and joined
+  it before the response went out; the stack mappings that costs serialise on
+  the address space, so throughput was flat across concurrency and below the
+  bytecode VM's. One process-wide watcher now probes every in-flight request,
+  and a request pays a push onto its list. On this machine the release server
+  went from 13,263 to 282,578 requests a second at 256 connections, and from
+  425 to 58,780 on a single one. Disconnect still cancels the request's
+  context within the probe interval.
+- `spawn(f, reason: "..")` labels a goroutine, and the cohort's enumeration
+  and drain reports name it by that label instead of by its spawn index.
+- `sync::shield(f)` runs a callable in a region cancellation cannot reach
+  and answers its value; the region is still counted and still drained.
+- `sync::with_timeout(f, ms)` runs a callable under a deadline the caller
+  computes, answering `Ok(value)` inside the bound and an `Err` naming the
+  bound outside it. Data first, so the free call reads as the method it
+  stands for.
+- `runtime::root()` answers the root cohort's descriptor line, in the shape
+  `runtime::cohorts()` answers - the one cohort every program has, and the
+  one whose drain bounds process exit.
+- A generic parameter inside a callable parameter's type is instantiated at
+  the call site. `fn apply<T>(f: Fn() -> T) -> T` rejected every argument it
+  was given, because the signature kept its rigid `T` where the call site
+  had a concrete callable, which is why the corpus carried hand-written
+  `map_i64` / `map_f64` pairs.
+- `gos doc`, `hover`, and `%info` answer for `time::after`, which shipped
+  without a manifest entry and so could not be discovered from the
+  toolchain.
+
 ## 0.56.0 - Major syntax/keyword & concurrency refinement, packed enums, efficiency & correctness
 
 - A served HTTP request no longer pays the peer-disconnect watch's probe

@@ -26,6 +26,21 @@ fn main() {
     }
     println("deep err={}", deep.is_err())
 
+    // A `reason:` label names the child in place of its spawn index, so a
+    // report says what the goroutine is rather than which slot it took.
+    let tx, rx = channel(1)
+    let labelled = cohort {
+        let _held = spawn(|| rx.recv(), reason: "audit rollup")
+        for line in runtime::cohorts() {
+            if line.contains("audit rollup") {
+                println("labelled live={}", line.contains("live=[0 \"audit rollup\"]"))
+            }
+        }
+        tx.send(1)
+        tx.close()
+    }
+    println("labelled err={}", labelled.is_err())
+
     // Back at the root, the blocks above have retired.
     println("after {}", describe("after"))
 }

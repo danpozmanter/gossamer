@@ -1110,14 +1110,46 @@ pub fn peer_is_gone(_socket: RawPeerSocket) -> bool {
     false
 }
 
+/// One in-flight request's socket and the context to cancel when its peer
+/// goes away.
+#[cfg(any(unix, windows))]
+struct PeerWatchEntry {
+    id: u64,
+    socket: RawPeerSocket,
+    ctx: usize,
+}
+
+/// Every request currently being watched, and the id the next one takes.
+#[cfg(any(unix, windows))]
+#[derive(Default)]
+struct PeerWatchState {
+    entries: Vec<PeerWatchEntry>,
+    next_id: u64,
+    watcher_running: bool,
+}
+
+#[cfg(any(unix, windows))]
+static PEER_WATCH: std::sync::LazyLock<parking_lot::Mutex<PeerWatchState>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(PeerWatchState::default()));
+
+/// Signalled when the first entry of an idle round is registered, so the
+/// watcher parks instead of waking on an empty set.
+#[cfg(any(unix, windows))]
+static PEER_WATCH_WAKE: parking_lot::Condvar = parking_lot::Condvar::new();
+
 /// Watches an accepted socket for the peer going away while a request is
 /// in flight, and cancels that request's context when it does.
 ///
-/// The connection thread is inside the handler and cannot also read, so
-/// the watch is a zero-length peek from its own thread: it never consumes
-/// a byte, so a pipelined successor still arrives intact. A client that
-/// aborts therefore stops the work it asked for instead of paying for it
-/// to finish.
+/// The connection thread is inside the handler and cannot also read, so the
+/// probe is a zero-length peek from elsewhere: it never consumes a byte, so
+/// a pipelined successor still arrives intact. A client that aborts
+/// therefore stops the work it asked for instead of paying for it to finish.
+///
+/// One process-wide thread does the probing for every in-flight request.
+/// Registration is a push under a mutex, which is what a request pays; a
+/// thread of its own would cost that request a stack mapping, a clone, and
+/// a join, and those mappings serialise on the address space across every
+/// connection the server is serving.
 #[cfg(any(unix, windows))]
 fn watch_for_disconnect(stream: &TcpStream, ctx: usize) -> Option<DisconnectWatch> {
     if ctx == 0 {
@@ -1133,59 +1165,74 @@ fn watch_for_disconnect(stream: &TcpStream, ctx: usize) -> Option<DisconnectWatc
         use std::os::windows::io::AsRawSocket;
         stream.as_raw_socket()
     };
-    // The waits between probes are interruptible: the request ends far more
-    // often than a peer disappears, and a plain sleep would make every
-    // request pay the remainder of one before the watch could be joined.
-    let done = std::sync::Arc::new((parking_lot::Mutex::new(false), parking_lot::Condvar::new()));
-    let stop = std::sync::Arc::clone(&done);
-    let handle = std::thread::Builder::new()
-        .name("gos-http-peer-watch".to_string())
-        .spawn(move || {
-            let (flag, wake) = &*stop;
-            let mut ended = flag.lock();
-            while !*ended {
-                // MSG_PEEK leaves the byte queued; MSG_DONTWAIT keeps the
-                // probe from blocking on a peer that is merely quiet.
-                // Zero means the peer closed its side.
-                if peer_is_gone(socket) {
-                    crate::c_abi::context::close_request_context(ctx);
-                    return;
-                }
-                wake.wait_for(
-                    &mut ended,
-                    std::time::Duration::from_millis(PEER_WATCH_INTERVAL_MS),
-                );
-            }
-        })
-        .ok()?;
-    Some(DisconnectWatch {
-        done,
-        handle: Some(handle),
-    })
+    let mut state = PEER_WATCH.lock();
+    if !state.watcher_running {
+        // Started on the first watched request, so a program that serves
+        // nothing never carries the thread.
+        if std::thread::Builder::new()
+            .name("gos-http-peer-watch".to_string())
+            .spawn(peer_watch_loop)
+            .is_err()
+        {
+            return None;
+        }
+        state.watcher_running = true;
+    }
+    let id = state.next_id;
+    state.next_id = state.next_id.wrapping_add(1);
+    let was_idle = state.entries.is_empty();
+    state.entries.push(PeerWatchEntry { id, socket, ctx });
+    drop(state);
+    if was_idle {
+        PEER_WATCH_WAKE.notify_one();
+    }
+    Some(DisconnectWatch { id })
 }
 
-/// How long the peer watch waits between probes. It only bounds how late a
-/// disconnect is noticed; the request's own end wakes the watch at once.
+/// Probes every watched request once per interval, cancelling the context
+/// of any whose peer has left.
+///
+/// Probing happens under the registry lock, and a request deregisters under
+/// that same lock while it still owns its socket. A descriptor is therefore
+/// never probed after the request that registered it has ended, so a
+/// recycled one is never mistaken for the socket it replaced.
+#[cfg(any(unix, windows))]
+fn peer_watch_loop() {
+    loop {
+        {
+            let mut state = PEER_WATCH.lock();
+            while state.entries.is_empty() {
+                PEER_WATCH_WAKE.wait(&mut state);
+            }
+            state.entries.retain(|entry| {
+                if peer_is_gone(entry.socket) {
+                    crate::c_abi::context::close_request_context(entry.ctx);
+                    return false;
+                }
+                true
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(PEER_WATCH_INTERVAL_MS));
+    }
+}
+
+/// How long the watcher waits between rounds of probes. It only bounds how
+/// late a disconnect is noticed; a request that ends first deregisters and
+/// is never probed again.
 const PEER_WATCH_INTERVAL_MS: u64 = 20;
 
-/// Stops the peer watch when the request ends.
+/// Deregisters the request from the peer watch when it ends.
 #[cfg(any(unix, windows))]
 struct DisconnectWatch {
-    done: std::sync::Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>,
-    handle: Option<std::thread::JoinHandle<()>>,
+    id: u64,
 }
 
 #[cfg(any(unix, windows))]
 impl Drop for DisconnectWatch {
     fn drop(&mut self) {
-        let (flag, wake) = &*self.done;
-        *flag.lock() = true;
-        // Waking before the join is what keeps the request off the watch's
-        // probe interval: the thread is waiting on this condvar, not
-        // sleeping through it, so it observes the flag and leaves at once.
-        wake.notify_all();
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+        let mut state = PEER_WATCH.lock();
+        if let Some(at) = state.entries.iter().position(|entry| entry.id == self.id) {
+            state.entries.swap_remove(at);
         }
     }
 }

@@ -170,5 +170,15 @@ pub const SYNC: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Creates an explicit unbounded typed channel, returning (Sender, Receiver).",
         },
+        StdItem {
+            name: "shield",
+            kind: StdItemKind::Function,
+            doc: "Runs a callable in a cohort exempt from cancellation and answers its value: a cancel landing on an enclosing cohort does not reach the work inside. The shielded region is still counted and still drained.",
+        },
+        StdItem {
+            name: "with_timeout",
+            kind: StdItemKind::Function,
+            doc: "Runs a callable on a child of a cohort bounded by a millisecond deadline, answering `Ok(value)` when it finished inside the bound and `Err` naming the bound when it did not. Cancellation is cooperative: a child that reaches no cancellation point runs on and is named in the cohort's drain report.",
+        },
     ],
 };

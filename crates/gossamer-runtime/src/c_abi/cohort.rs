@@ -82,6 +82,30 @@ struct ChildFailure {
     observed: bool,
 }
 
+/// A child that registered and has not left. The reason is the label the
+/// spawn carried, empty when it carried none: a report names the task a
+/// caller wrote rather than only the slot it took.
+#[derive(Clone)]
+struct LiveChild {
+    index: i64,
+    reason: String,
+}
+
+/// Renders live children as a report reads them: the spawn index, and the
+/// spawn's own label in quotes when it carried one.
+fn render_live(live: &[LiveChild]) -> String {
+    live.iter()
+        .map(|child| {
+            if child.reason.is_empty() {
+                child.index.to_string()
+            } else {
+                format!("{} {:?}", child.index, child.reason)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 struct CohortState {
     next_index: i64,
     outstanding: i64,
@@ -89,10 +113,11 @@ struct CohortState {
     failures: Vec<ChildFailure>,
     /// Children that completed without failing.
     successes: i64,
-    /// Spawn indices of the children that registered and have not left.
-    /// A drain that gives up names these, so an unfinished child is
-    /// identified rather than only counted.
-    live: Vec<i64>,
+    /// The children that registered and have not left. A drain that gives
+    /// up names these, so an unfinished child is identified - by its spawn
+    /// index, and by the spawn's own `reason:` label when it carried one -
+    /// rather than only counted.
+    live: Vec<LiveChild>,
     joined: bool,
     /// Set when the cohort's own deadline fired.
     timed_out: bool,
@@ -346,7 +371,7 @@ fn push(
 
 /// Reserves a positional slot for a child about to be spawned into
 /// `id`, and counts it as outstanding. Returns the child's index.
-pub fn register_child(id: i64) -> i64 {
+pub fn register_child(id: i64, reason: String) -> i64 {
     let Some(node) = cohort_at(id) else {
         return -1;
     };
@@ -354,7 +379,7 @@ pub fn register_child(id: i64) -> i64 {
     let index = state.next_index;
     state.next_index += 1;
     state.outstanding += 1;
-    state.live.push(index);
+    state.live.push(LiveChild { index, reason });
     index
 }
 
@@ -377,7 +402,7 @@ pub fn leave_child(id: i64, index: i64, failure: Option<String>) {
     {
         let mut state = node.state.lock();
         state.outstanding -= 1;
-        state.live.retain(|live| *live != index);
+        state.live.retain(|live| live.index != index);
         if let Some(message) = failure {
             // `Log` names every failure where it happens; the block still
             // answers `Ok`, so this is the only place the program sees it.
@@ -776,8 +801,7 @@ fn unfinished_children(node: &Arc<Cohort>) -> String {
     if live.is_empty() {
         return String::new();
     }
-    let names: Vec<String> = live.iter().map(ToString::to_string).collect();
-    format!(" (spawn index {})", names.join(", "))
+    format!(" (spawn index {})", render_live(&live))
 }
 
 /// One descriptor line per live cohort, oldest id first: the id, its
@@ -796,20 +820,40 @@ pub fn cohort_report_lines() -> Vec<String> {
     nodes.sort_by_key(|(id, _)| *id);
     nodes
         .into_iter()
-        .map(|(id, node)| {
-            let state = node.state.lock();
-            let live: Vec<String> = state.live.iter().map(ToString::to_string).collect();
-            format!(
-                "id={id} parent={} policy={} on_error={} outstanding={} cancelled={} live=[{}]",
-                node.parent,
-                policy_name(node.policy),
-                on_error_name(node.on_error),
-                state.outstanding,
-                node.cancelled.load(Ordering::Acquire),
-                live.join(", ")
-            )
-        })
+        .map(|(id, node)| describe_cohort(id, &node))
         .collect()
+}
+
+/// One cohort's descriptor line, the shape both [`cohort_report_lines`] and
+/// [`root_report_line`] answer in.
+fn describe_cohort(id: i64, node: &Arc<Cohort>) -> String {
+    let state = node.state.lock();
+    format!(
+        "id={id} parent={} policy={} on_error={} outstanding={} cancelled={} live=[{}]",
+        node.parent,
+        policy_name(node.policy),
+        on_error_name(node.on_error),
+        state.outstanding,
+        node.cancelled.load(Ordering::Acquire),
+        render_live(&state.live)
+    )
+}
+
+/// The root cohort's descriptor line, or an empty string when no cohort is
+/// open. The root is the one cohort every program has - `main` runs inside
+/// it - and the one whose drain bounds process exit, so it is the cohort a
+/// program asks about at shutdown.
+pub fn root_report_line() -> String {
+    let root = COHORTS
+        .lock()
+        .iter()
+        .filter(|(_, node)| node.parent == 0)
+        .map(|(id, node)| (*id, Arc::clone(node)))
+        .min_by_key(|(id, _)| *id);
+    match root {
+        Some((id, node)) => describe_cohort(id, &node),
+        None => String::new(),
+    }
 }
 
 /// Name of a completion policy, for [`cohort_report_lines`].
@@ -845,6 +889,14 @@ pub unsafe extern "C" fn gos_rt_cohorts() -> *mut crate::c_abi::vec::GosVec {
             unsafe { crate::c_abi::vec::gos_rt_vec_push(vec, std::ptr::addr_of!(cs).cast::<u8>()) };
         }
         vec
+    })
+}
+
+/// `runtime::root()` - the root cohort's descriptor line as a String.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_cohort_root() -> *mut std::os::raw::c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        crate::c_abi::string::alloc_cstring(root_report_line().as_bytes())
     })
 }
 

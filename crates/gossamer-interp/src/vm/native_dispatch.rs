@@ -49,7 +49,16 @@ impl NativeDispatch for VmDispatch<'_> {
     }
 
     fn spawn_join(&mut self, callable: Value, args: Vec<Value>) -> RuntimeResult<Value> {
-        self.vm.spawn_join_native(callable, args)
+        self.vm.spawn_join_native(callable, args, String::new())
+    }
+
+    fn spawn_join_labelled(
+        &mut self,
+        callable: Value,
+        args: Vec<Value>,
+        reason: String,
+    ) -> RuntimeResult<Value> {
+        self.vm.spawn_join_native(callable, args, reason)
     }
 
     fn spawn_with_outcome(

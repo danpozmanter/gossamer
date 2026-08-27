@@ -558,6 +558,7 @@ impl Vm {
         &self,
         callee: Value,
         args: Vec<Value>,
+        reason: String,
     ) -> RuntimeResult<Value> {
         let channel = crate::value::Channel::unbounded();
         let worker_channel = channel.clone();
@@ -569,7 +570,7 @@ impl Vm {
         let index = if cohort == 0 {
             -1
         } else {
-            crate::stdlib_builtins::cohort::register_child(cohort)
+            crate::stdlib_builtins::cohort::register_child(cohort, reason)
         };
         crate::stdlib_builtins::cohort::note_child_handle(channel.identity(), cohort, index);
         self.spawn_on_pool(move |vm| {

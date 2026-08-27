@@ -22,6 +22,14 @@ fn mentions_path(source: &str, marker: &str) -> bool {
     false
 }
 
+/// `true` when `source` names `module::item`, in either spelling that binds
+/// it: the qualified path, or a braced import (`use std::sync::{shield}`)
+/// whose entry brings the bare name into scope.
+fn mentions_module_item(source: &str, module: &str, item: &str) -> bool {
+    mentions_path(source, &format!("{module}::{item}"))
+        || (mentions_path(source, &format!("{module}::{{")) && source.contains(item))
+}
+
 /// Gossamer source the stdlib-wrapper pass would inject for `source`.
 /// Exposed so a gate can pin the constants these wrappers spell out
 /// against the Rust values they mirror.
@@ -59,8 +67,14 @@ fn synthesize_stdlib_wrappers(source: &str) -> String {
     if HTTP_SECURITY_MARKERS.iter().any(|m| source.contains(m)) {
         stdlib_wrappers.push_str(HTTP_SECURITY_WRAPPERS);
     }
-    if source.contains("time::after") {
+    if mentions_module_item(source, "time", "after") {
         stdlib_wrappers.push_str(TIME_TIMER_WRAPPERS);
+    }
+    if mentions_module_item(source, "sync", "shield") {
+        stdlib_wrappers.push_str(SYNC_SHIELD_WRAPPERS);
+    }
+    if mentions_module_item(source, "sync", "with_timeout") {
+        stdlib_wrappers.push_str(SYNC_TIMEOUT_WRAPPERS);
     }
     if ["time::Location", "time::CivilTime", "time::CivilResolution", "time::format_in", "time::add_date"]
         .iter().any(|marker| source.contains(marker))
@@ -134,6 +148,43 @@ fn __gos_time_after(d: time::Duration) -> Receiver<i64> {
     rx
 }
 ";
+
+/// `sync::shield(f)` - runs `f` in a cohort exempt from cancellation, so a
+/// cancel landing on an enclosing cohort does not reach the work inside.
+/// Written as the `cohort { }` desugar rather than the block so the
+/// callable's own value is the wrapper's, which a block expression - whose
+/// value is the cohort's outcome - has no room for. `on_error` is `Log`
+/// (`1`) for the same reason: `f`'s value is the answer, so a child `f`
+/// spawned is named on stderr where it fails rather than silently dropped.
+const SYNC_SHIELD_WRAPPERS: &str = r"
+fn __gos_sync_shield<T>(f: Fn() -> T) -> T {
+    runtime::cohort_push(0, 0, 0, 1, 1, 0)
+    defer runtime::cohort_pop()
+    let value = f()
+    let _ = runtime::cohort_join()
+    value
+}
+";
+
+/// `sync::with_timeout(f, ms)` - runs `f` on a child of a cohort bounded by
+/// `ms`. The bound is a runtime value, which a `cohort(timeout: ..)` header
+/// cannot take, so this is written as the desugar the header compiles to.
+/// The child's value comes back through a captured `Vec`, which a closure
+/// reaches by managed reference; an empty one after the join means the
+/// bound elapsed first.
+const SYNC_TIMEOUT_WRAPPERS: &str = r#"
+fn __gos_sync_with_timeout<T>(f: Fn() -> T, ms: i64) -> Result<T, errors::Error> {
+    let mut out: Vec<T> = #[]
+    runtime::cohort_push(0, ms, 0, 0, 0, 0)
+    defer runtime::cohort_pop()
+    spawn(|| out.push(f()), reason: "sync::with_timeout")
+    runtime::cohort_join().map_err(|e| errors::wrap(e, format("sync::with_timeout: bound of {} ms", ms)))?
+    match out.pop() {
+        Some(value) => Ok(value)
+        None => Err(errors::new("sync::with_timeout: the work did not finish inside its bound"))
+    }
+}
+"#;
 
 const TIME_CIVIL_WRAPPERS: &str = r#"
 struct __gos_time_CivilTime { year: i64, month: i64, day: i64, hour: i64, minute: i64, second: i64, nanosecond: i64, offset_seconds: i64, weekday: i64 }

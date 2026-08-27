@@ -207,6 +207,14 @@ const MANIFEST_IMPL_VIA_REWRITE: &[&str] = &[
     // source representation into the registered raw runtime leaves.
     "time::add_date",
     "time::format_in",
+    // `TIME_TIMER_WRAPPERS`: a goroutine that sleeps then sends, so the
+    // deadline composes with `select` and `while let` like any channel.
+    "time::after",
+    // `SYNC_SHIELD_WRAPPERS` / `SYNC_TIMEOUT_WRAPPERS`: the two library
+    // combinators over `cohort` + `spawn`, written as the desugar the block
+    // compiles to so the callable's own value is the wrapper's.
+    "sync::shield",
+    "sync::with_timeout",
 ];
 
 #[test]

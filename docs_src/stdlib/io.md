@@ -6,6 +6,34 @@ Stream-oriented I/O abstractions and process standard streams.
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+## Buffering
+
+Standard output is buffered so that the several writes a formatted line
+arrives as - the literal segments, a rendered value, the newline - cost one
+`write(2)`. The buffer drains on the newline that ends a write, so a line is
+on its way out as soon as it is complete, whether standard output is a
+terminal, a pipe, or a file. A program that announces a line and then blocks
+is therefore visible to whatever is reading it:
+
+```gossamer
+println("{}", server.addr())
+server.serve(routes)?
+```
+
+Text with no terminator accumulates: a prompt written with `print` needs an
+explicit flush before the read.
+
+```gossamer
+use std::io
+print("name: ")
+io::stdout().flush()
+```
+
+Byte-at-a-time and byte-range writes accumulate too - that is the
+high-throughput path, and it drains when the buffer fills, on an explicit
+`flush`, and at exit. Standard error is never buffered, and writing to it
+flushes standard output first, so the two streams keep their order.
+
 ## API details and source
 
 The [implementation source](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/io.rs) contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.

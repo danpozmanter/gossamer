@@ -977,6 +977,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/closure_env_ownership.gos"),
     spec("feature-testing-examples/cohort_drain_deadline.gos"),
     spec("feature-testing-examples/cohort_enumeration.gos"),
+    spec("feature-testing-examples/cohort_library_combinators.gos"),
     spec("feature-testing-examples/cohort_header_settings.gos"),
     spec("feature-testing-examples/slot_container_value_semantics.gos"),
     spec("feature-testing-examples/defer_exit_edges.gos"),
