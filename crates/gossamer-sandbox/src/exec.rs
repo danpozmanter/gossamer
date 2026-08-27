@@ -519,12 +519,18 @@ pub(crate) mod signals {
         interrupts: u64,
         /// The most recent interrupt's number.
         signal: i32,
+        /// Whether a dispatcher is still carrying signals here. A
+        /// waiter blocks without a deadline only while this holds:
+        /// once nothing can wake it, the wait has to be bounded or the
+        /// supervisor would never look at its child again.
+        dispatching: bool,
     }
 
     static ARRIVALS: Mutex<Arrivals> = Mutex::new(Arrivals {
         seen: 0,
         interrupts: 0,
         signal: 0,
+        dispatching: false,
     });
     static ARRIVED: Condvar = Condvar::new();
 
@@ -616,14 +622,26 @@ pub(crate) mod signals {
 
     /// Carries what the handler reported to every waiter.
     fn dispatch(read: libc::c_int) {
+        {
+            let mut arrivals = ARRIVALS.lock().unwrap_or_else(PoisonError::into_inner);
+            arrivals.dispatching = true;
+        }
         let mut buffer = [0_u8; 64];
         loop {
             let count = unsafe { libc::read(read, buffer.as_mut_ptr().cast(), buffer.len()) };
+            if count < 0 {
+                // A signal delivered to this thread ends the read
+                // without ending the stream. Any thread may be the one
+                // a signal is delivered to, and a handler installed
+                // elsewhere in the process need not restart the calls
+                // it interrupts, so the report is still open and the
+                // next read is the one that carries it.
+                if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+            }
             if count <= 0 {
-                // Nothing can arrive on a pipe that cannot be read, so
-                // waiters fall back to re-reading their own children.
-                REPORT.store(-1, Ordering::SeqCst);
-                ARRIVED.notify_all();
+                stop_dispatching();
                 return;
             }
             let mut arrivals = ARRIVALS.lock().unwrap_or_else(PoisonError::into_inner);
@@ -638,6 +656,38 @@ pub(crate) mod signals {
             drop(arrivals);
             ARRIVED.notify_all();
         }
+    }
+
+    /// The report descriptor as it stands, for a caller that will put
+    /// it back.
+    #[cfg(test)]
+    pub(crate) fn report_descriptor() -> libc::c_int {
+        REPORT.load(Ordering::SeqCst)
+    }
+
+    /// Puts a stopped dispatcher's report back, so stopping it in a
+    /// test leaves the process as it was found.
+    #[cfg(test)]
+    pub(crate) fn resume_dispatching(report: libc::c_int) {
+        REPORT.store(report, Ordering::SeqCst);
+        let mut arrivals = ARRIVALS.lock().unwrap_or_else(PoisonError::into_inner);
+        arrivals.dispatching = true;
+    }
+
+    /// Records that nothing will carry a signal to a waiter any more.
+    ///
+    /// The stop counts as an arrival. A waiter already blocked with no
+    /// deadline is waiting for `seen` to move, and nothing else would
+    /// ever move it: releasing every waiter here is what turns a
+    /// stopped dispatcher into a slower wait rather than a wait that
+    /// never ends.
+    pub(crate) fn stop_dispatching() {
+        REPORT.store(-1, Ordering::SeqCst);
+        let mut arrivals = ARRIVALS.lock().unwrap_or_else(PoisonError::into_inner);
+        arrivals.dispatching = false;
+        arrivals.seen += 1;
+        drop(arrivals);
+        ARRIVED.notify_all();
     }
 
     /// A supervisor's place in the process's signal stream.
@@ -660,14 +710,15 @@ pub(crate) mod signals {
 
         /// Blocks until a signal arrives or `timeout` runs out.
         pub(crate) fn wait(&mut self, timeout: Option<Duration>) -> Wake {
-            let dispatched = REPORT.load(Ordering::SeqCst) >= 0;
-            let limit = match (timeout, dispatched) {
+            let arrivals = ARRIVALS.lock().unwrap_or_else(PoisonError::into_inner);
+            // Read under the lock that changes it, so a dispatcher
+            // stopping cannot land between the choice and the wait.
+            let limit = match (timeout, arrivals.dispatching) {
                 (Some(limit), true) => Some(limit),
                 (Some(limit), false) => Some(limit.min(UNDISPATCHED_SLICE)),
                 (None, true) => None,
                 (None, false) => Some(UNDISPATCHED_SLICE),
             };
-            let arrivals = ARRIVALS.lock().unwrap_or_else(PoisonError::into_inner);
             let (arrivals, ran_out) = match limit {
                 Some(limit) => {
                     let (arrivals, outcome) = ARRIVED
@@ -741,6 +792,35 @@ pub(crate) mod signals {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod signal_tests {
+    use super::signals::{Waiter, Wake};
+
+    /// A supervisor with no deadline waits for the dispatcher to tell
+    /// it a signal arrived, so the dispatcher stopping has to release
+    /// it. Nothing else ever would: it is waiting for a count that
+    /// only the dispatcher moves, and the wait it chose has no
+    /// deadline to fall back on.
+    #[cfg(unix)]
+    #[test]
+    fn a_waiter_with_no_deadline_is_released_when_the_dispatcher_stops() {
+        let (blocking, blocked) = std::sync::mpsc::channel();
+        let waiting = std::thread::spawn(move || {
+            let mut waiter = Waiter::new();
+            blocking.send(()).expect("announce the wait");
+            waiter.wait(None)
+        });
+        blocked.recv().expect("the waiter reached its wait");
+
+        let report = super::signals::report_descriptor();
+        super::signals::stop_dispatching();
+        let woken = waiting.join().expect("join the waiter");
+        super::signals::resume_dispatching(report);
+
+        assert_eq!(woken, Wake::ChildChanged);
     }
 }
 

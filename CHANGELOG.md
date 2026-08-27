@@ -96,6 +96,13 @@
   policy reported back carried the same spelling. A drive or UNC path is now
   recorded in its plain form; a volume GUID path keeps the prefix that is
   what reaches it.
+- A supervisor waiting on a signal is never left with nothing to wake it. The
+  dispatcher that carries signals to waiting supervisors ended its read on any
+  signal delivered to its own thread, which a handler installed elsewhere in
+  the process need not restart; a supervisor already waiting with no deadline
+  was then waiting for a count that nothing would move again. An interrupted
+  read resumes, and a dispatcher that does stop releases every waiter on its
+  way out, so what remains is a slower wait rather than one that never ends.
 - A process may supervise as many sandboxed runs at once as its caller
   starts. A supervisor waits for its child by blocking on a signal, and the
   wake-ups went to a fixed table of eight: a ninth concurrent run was left
