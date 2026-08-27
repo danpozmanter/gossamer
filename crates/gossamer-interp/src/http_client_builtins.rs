@@ -1341,25 +1341,18 @@ mod tests {
 
     #[test]
     fn client_request_timeout_ms_aborts_a_stalled_response() {
-        use std::io::Read;
-        // A listener that accepts the connection, reads the request,
-        // and never responds: the configured 100 ms global timeout
-        // must abort the request with a timeout transport error.
+        // A listener that accepts the connection and never responds:
+        // the configured 100 ms global timeout must abort the request
+        // with a timeout transport error.
+        //
+        // The listener thread answers the accepted socket rather than
+        // reading it, so this test owns when it closes. Reading to EOF
+        // instead would make the wait for that thread depend on when
+        // the client's connection pool drops its end, which is not
+        // something this test states or controls.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().expect("addr");
-        let server = std::thread::spawn(move || {
-            let Ok((mut stream, _)) = listener.accept() else {
-                return;
-            };
-            // Hold the socket open until the client gives up: read
-            // until EOF (the client closing on timeout ends this).
-            let mut buf = [0u8; 1024];
-            while let Ok(n) = stream.read(&mut buf) {
-                if n == 0 {
-                    break;
-                }
-            }
-        });
+        let server = std::thread::spawn(move || listener.accept().map(|(stream, _)| stream).ok());
         let client = configured_client(10, 100);
         let sent = builtin_http_client_request(&[
             client,
@@ -1374,7 +1367,10 @@ mod tests {
             msg.starts_with("http: transport:") && msg.contains("timeout"),
             "unexpected timeout error shape: {msg}"
         );
-        server.join().unwrap();
+        // The listener thread answers the accepted socket and ends
+        // there, so the stalled connection outlives the request - the
+        // point of the case - and closes here, after the verdict.
+        drop(server.join().expect("join the listener"));
     }
 
     #[test]
