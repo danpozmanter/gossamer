@@ -36,11 +36,11 @@ fn assign_nested(v: &mut Vec<Vec<i64>>) {
 }
 
 fn assign_map(m: &mut Map<String, i64>) {
-    *m = {"a": 1, "b": 2}
+    *m = { "a": 1, "b": 2 }
 }
 
 fn assign_map_from_local(m: &mut Map<String, i64>) -> i64 {
-    let fresh = {"c": 3}
+    let fresh = { "c": 3 }
     *m = fresh
     fresh.len()
 }
@@ -48,13 +48,13 @@ fn assign_map_from_local(m: &mut Map<String, i64>) -> i64 {
 fn assign_map_in_loop(m: &mut Map<i64, i64>, rounds: i64) {
     let mut i = 0
     while i < rounds {
-        *m = {i: i * 10}
+        *m = { i: i * 10 }
         i += 1
     }
 }
 
 fn assign_set(s: &mut Set<i64>) {
-    *s = #{7, 8, 9}
+    *s = #{ 7, 8, 9 }
 }
 
 fn assign_deque(d: &mut Deque<i64>) {
@@ -95,18 +95,18 @@ fn main() {
     assign_nested(&mut nested)
     println("nested: {:?}", nested)
 
-    let mut m = {"z": 0}
+    let mut m = { "z": 0 }
     assign_map(&mut m)
     println("map literal: {:?}", m)
     let n = assign_map_from_local(&mut m)
     println("map from local: {:?} (source len {})", m, n)
     m.insert("d", 4)
     println("map inserted after assign: {:?}", m)
-    let mut counts = {0: 0}
+    let mut counts = { 0: 0 }
     assign_map_in_loop(&mut counts, 2000)
     println("map after loop: {:?}", counts)
 
-    let mut s = #{1}
+    let mut s = #{ 1 }
     assign_set(&mut s)
     println("set: {:?}", s)
 
