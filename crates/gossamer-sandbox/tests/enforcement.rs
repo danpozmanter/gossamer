@@ -712,10 +712,14 @@ mod windows_backend {
         use std::os::windows::io::AsRawHandle as _;
         use windows_sys::Win32::System::Console::{GetStdHandle, STD_INPUT_HANDLE, SetStdHandle};
 
+        // The data address, not `from_ref`: `content` is a `str`, so
+        // `from_ref` answers a wide pointer, and `{:p}` renders one as
+        // `Pointer { addr: .., metadata: N }` - a name Windows rejects for
+        // the colon and the braces.
         let path = std::env::temp_dir().join(format!(
             "gos-sandbox-stdin-{}-{:p}.txt",
             std::process::id(),
-            std::ptr::from_ref(content),
+            content.as_ptr(),
         ));
         {
             let mut file = std::fs::File::create(&path).expect("create the stdin file");

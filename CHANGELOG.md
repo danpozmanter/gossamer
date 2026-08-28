@@ -170,6 +170,12 @@
   naming a path an enclosing grant already reaches with at least the same
   access is redundant, and an inheritable ACE costs a full walk of the subtree
   when it is written and again when it is removed.
+- A Windows `strict` run's stdin fixture and its traverse-grant gate answer for
+  what they meant to. The gate masked a traverse grant against
+  `FILE_GENERIC_WRITE`, which folds in `READ_CONTROL` and `SYNCHRONIZE` - two
+  rights that confer no change and that the grant carries on purpose - and the
+  fixture built a filename from a wide pointer, which renders as
+  `Pointer { addr: .., metadata: N }` and names a file Windows will not create.
 - A bare `fn` or non-capturing closure passed to a generic callable parameter
   reaches its body with the arguments it was given. The thunk that adapts such
   a value to the environment-taking calling convention is named for its

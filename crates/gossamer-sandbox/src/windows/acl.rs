@@ -953,6 +953,12 @@ mod acl_tests {
     /// directory's entries, and gives it no way to change anything.
     #[test]
     fn a_traverse_grant_adds_no_write_right() {
+        // `FILE_GENERIC_WRITE` folds in `READ_CONTROL` and `SYNCHRONIZE`,
+        // which say nothing about changing the object and which any read or
+        // traverse grant carries; the bits that confer modification are what
+        // this asserts against.
+        const WRITE_ONLY: u32 = FILE_GENERIC_WRITE & !(READ_CONTROL | SYNCHRONIZE);
+
         let root = std::env::temp_dir().join("gos-sandbox-acl-traverse");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("create root");
@@ -962,7 +968,7 @@ mod acl_tests {
 
         grant_traverse(&root, sid.raw()).expect("grant traverse");
         assert!(already_traversable(&root, sid.raw()));
-        assert_eq!(rights_of(&root, sid.raw()) & FILE_GENERIC_WRITE, 0);
+        assert_eq!(rights_of(&root, sid.raw()) & WRITE_ONLY, 0);
 
         // `NO_INHERITANCE`: what the directory holds gains nothing.
         let child = root.join("child");
