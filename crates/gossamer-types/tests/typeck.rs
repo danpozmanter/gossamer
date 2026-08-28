@@ -4086,6 +4086,34 @@ fn builtin_receiver_methods_reject_wrong_argument_count() {
     }
 }
 
+#[test]
+fn vec_eager_combinator_methods_accept_documented_arguments() {
+    let source = "fn main() {\n\
+        let xs: Vec<i64> = #[1, 2, 3, 4]\n\
+        let evens, odds = xs.partition(|value: i64| value % 2 == 0)\n\
+        let _ = evens.len() + odds.len()\n\
+        let _ = xs.filter_map(|value: i64| if value > 1 { Some(value) } else { None })\n\
+        let _ = xs.find_map(|value: i64| if value > 2 { Some(value) } else { None })\n\
+        let _ = xs.flat_map(|value: i64| #[value, value])\n\
+        let _ = xs.chunk_by(|value: i64| value)\n\
+        let _ = xs.count_by(|value: i64| value)\n\
+        let _ = xs.min_by(|left: i64, right: i64| left - right)\n\
+        let _ = xs.max_by(|left: i64, right: i64| left - right)\n\
+        let _ = xs.product_by(|value: i64| value)\n\
+        let _ = xs.reduce(|left: i64, right: i64| left + right)\n\
+        let _ = xs.sum_by(|value: i64| value)\n\
+        let _ = xs.scan(0, |acc: i64, value: i64| acc + value)\n\
+        let _ = xs.count() + xs.count(|value: i64| value > 1)\n\
+        let pairs: Vec<(i64, i64)> = #[(1, 2), (3, 4)]\n\
+        let _ = pairs.unzip()\n\
+    }\n";
+    let d = diagnostics_for(source);
+    assert!(
+        d.is_empty(),
+        "Vec combinator method calls must type clean: {d:?}"
+    );
+}
+
 /// A built-in handle receiver dispatches by name to a runtime shim that
 /// reads a fixed number of slots, so a call supplying another count is
 /// rejected rather than silently dropping or zero-filling a slot.

@@ -3249,12 +3249,38 @@ unsafe fn retain_blob_value(word: i64) {
 }
 
 unsafe fn release_owned_value(m: &GosMap, word: i64) {
+    unsafe { release_owned_value_tag(map_value_owner(m), word) };
+}
+
+/// Same as [`release_owned_value`], keyed directly by a `value_owner` tag -
+/// for storage that no longer sits under the `GosMap` whose tag it was
+/// built with.
+unsafe fn release_owned_value_tag(owner: u8, word: i64) {
     if word == 0 {
         return;
     }
-    match map_value_owner(m) {
+    match owner {
         MAP_VALUE_RC => unsafe { release_blob_value(word) },
         MAP_VALUE_VEC => unsafe { gos_rt_vec_free(word as usize as *mut GosVec) },
+        _ => {}
+    }
+}
+
+/// Releases every share `storage` holds: each value under `owner`, and the
+/// key node of every enum-keyed entry, which the map owns whether or not
+/// its values are owned.
+unsafe fn release_storage_entries(owner: u8, storage: &MapStorage) {
+    let release = |word: i64| unsafe { release_owned_value_tag(owner, word) };
+    match storage {
+        MapStorage::I64I64(inner) => inner.values().for_each(|&v| release(v)),
+        MapStorage::StrI64(inner) => inner.values().for_each(|&v| release(v)),
+        MapStorage::SkeyVal { entries, .. } => entries.values().for_each(|&v| release(v)),
+        MapStorage::EkeyVal { entries } => {
+            for entry in entries.values() {
+                release(entry.value);
+                unsafe { crate::c_abi::rc::gos_rt_rc_release(entry.key_node) };
+            }
+        }
         _ => {}
     }
 }
@@ -3373,6 +3399,33 @@ pub unsafe extern "C" fn gos_rt_map_clone(src: *const GosMap) -> *mut GosMap {
     })
 }
 
+/// `*dst = src` through a `&mut Map`: the table every holder of the
+/// reference names keeps its identity and takes a copy of `src`'s entries,
+/// releasing the ones it held.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_assign(dst: *mut GosMap, src: *const GosMap) {
+    ffi_entry!((), {
+        if dst.is_null() || src.is_null() || std::ptr::addr_eq(dst.cast_const(), src) {
+            return;
+        }
+        let source = unsafe { &*src };
+        let owner = map_value_owner(source);
+        let cloned = {
+            let guard = source.storage.lock();
+            clone_map_storage(&guard, owner)
+        };
+        let target = unsafe { &mut *dst };
+        let old_owner = map_value_owner(target);
+        let old = {
+            let mut guard = target.storage.lock();
+            std::mem::replace(&mut *guard, cloned)
+        };
+        target.value_owner.store(owner, Ordering::Release);
+        target.len_cache = source.len_cache;
+        unsafe { release_storage_entries(old_owner, &old) };
+    });
+}
+
 /// Marks `m` shared across goroutines so every subsequent operation
 /// takes the real lock instead of the goroutine-local fast path.
 /// Codegen emits this at goroutine-spawn / channel-send escape points
@@ -3451,42 +3504,9 @@ pub unsafe extern "C" fn gos_rt_map_free(m: *mut GosMap) {
         }
         crate::c_abi::ledger::map_dec();
         let boxed = unsafe { Box::from_raw(m) };
-        if map_has_owned_values(&boxed) {
-            let storage = boxed.storage.lock();
-            match &*storage {
-                MapStorage::I64I64(inner) => {
-                    for &v in inner.values() {
-                        unsafe { release_owned_value(&boxed, v) };
-                    }
-                }
-                MapStorage::StrI64(inner) => {
-                    for &v in inner.values() {
-                        unsafe { release_owned_value(&boxed, v) };
-                    }
-                }
-                MapStorage::SkeyVal { entries, .. } => {
-                    for &v in entries.values() {
-                        unsafe { release_owned_value(&boxed, v) };
-                    }
-                }
-                MapStorage::EkeyVal { entries } => {
-                    for entry in entries.values() {
-                        unsafe { release_owned_value(&boxed, entry.value) };
-                    }
-                }
-                _ => {}
-            }
-            drop(storage);
-        }
-        // An enum-keyed map owns a share of every key node it stored,
-        // independently of whether its values are owned.
         {
             let storage = boxed.storage.lock();
-            if let MapStorage::EkeyVal { entries } = &*storage {
-                for entry in entries.values() {
-                    unsafe { crate::c_abi::rc::gos_rt_rc_release(entry.key_node) };
-                }
-            }
+            unsafe { release_storage_entries(map_value_owner(&boxed), &storage) };
         }
         drop(boxed);
     });

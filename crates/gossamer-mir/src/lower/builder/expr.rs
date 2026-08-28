@@ -1955,6 +1955,28 @@ impl<'a> Builder<'a> {
         {
             return;
         }
+        // A container parameter crosses the call as its own handle, so the
+        // pointee `*p` names is the container the caller's binding holds:
+        // the assignment replaces that container's contents in place.
+        if let Some((holder, symbol)) = self.deref_container_assign_target(place) {
+            let Some(value_local) = self.lower_expr(value) else {
+                return;
+            };
+            let unit_ty = self.tcx.unit();
+            let dest = self.fresh(unit_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(symbol.to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(holder)),
+                    Operand::Copy(Place::local(value_local)),
+                ],
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return;
+        }
         let Some(mut value_local) = self.lower_expr(value) else {
             return;
         };
@@ -2820,6 +2842,46 @@ impl<'a> Builder<'a> {
             }
             _ => None,
         }
+    }
+
+    /// The `&mut` parameter a `*p` place reads through, with the runtime
+    /// helper that replaces its container's contents, when the pointee is a
+    /// type that crosses a call as its own handle (`Vec`, a slice view,
+    /// `Map`, `Set`, `Deque`, a queue, a stack, or a heap). A `&mut` binding
+    /// made inside the body aliases its source local instead and is not a
+    /// `Ref`-typed local, so it never answers here.
+    fn deref_container_assign_target(&self, expr: &HirExpr) -> Option<(Local, &'static str)> {
+        use gossamer_types::TyKind;
+        let HirExprKind::Unary {
+            op: HirUnaryOp::Deref,
+            operand,
+        } = &expr.kind
+        else {
+            return None;
+        };
+        let HirExprKind::Path { segments, .. } = &operand.kind else {
+            return None;
+        };
+        let [seg] = segments.as_slice() else {
+            return None;
+        };
+        let local = self.lookup_local(&seg.name)?;
+        if !self.param_locals.contains(&local) {
+            return None;
+        }
+        let TyKind::Ref { inner, .. } = self.tcx.kind_of(self.locals[local.0 as usize].ty) else {
+            return None;
+        };
+        let symbol = match self.tcx.kind_of(*inner) {
+            TyKind::Vec(_) | TyKind::Slice(_) => "gos_rt_vec_assign",
+            TyKind::HashMap { .. } => "gos_rt_map_assign",
+            _ => match self.map_or_set_clone_symbol(*inner)? {
+                "gos_rt_set_clone" => "gos_rt_set_assign",
+                "gos_rt_vec_clone" => "gos_rt_vec_assign",
+                _ => "gos_rt_deque_assign",
+            },
+        };
+        Some((local, symbol))
     }
 
     /// Lowers `*s += piece` (deref `&mut String` accumulator) to one

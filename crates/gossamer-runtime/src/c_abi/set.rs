@@ -144,6 +144,21 @@ pub unsafe extern "C" fn gos_rt_set_clone(src: *const GosSet) -> *mut GosSet {
     })
 }
 
+/// `*dst = src` through a `&mut Set`: the table every holder of the
+/// reference names keeps its identity and takes a copy of `src`'s elements.
+///
+/// # Safety
+/// `dst` and `src` are live `GosSet`s or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_assign(dst: *mut GosSet, src: *const GosSet) {
+    ffi_entry!((), {
+        if dst.is_null() || src.is_null() || std::ptr::addr_eq(dst.cast_const(), src) {
+            return;
+        }
+        unsafe { *dst = (*src).clone() };
+    });
+}
+
 /// Builds a set from a `GosVec` of scalar slots. `Set::from(values)` where
 /// `values` is a runtime sequence rather than a literal list; the literal
 /// form is unrolled into individual inserts at lowering time.

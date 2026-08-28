@@ -500,6 +500,37 @@ pub unsafe extern "C" fn gos_rt_deque_clone(d: *mut GosDeque) -> *mut GosDeque {
     })
 }
 
+/// `*dst = src` through a `&mut Deque` (or a queue or stack, which share
+/// the header): the header every holder of the reference names keeps its
+/// identity and takes a copy of `src`'s live range, releasing its own.
+///
+/// # Safety
+/// `dst` and `src` are live `GosDeque`s or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_assign(dst: *mut GosDeque, src: *mut GosDeque) {
+    ffi_entry!((), {
+        if dst.is_null() || src.is_null() || std::ptr::addr_eq(dst, src) {
+            return;
+        }
+        unsafe { deque_compact(src) };
+        let source = unsafe { &*src }.vec;
+        let vec = if source.is_null() {
+            unsafe { crate::c_abi::vec::gos_rt_vec_new_typed(8u32, vec_elem_kind::PRIMITIVE) }
+        } else {
+            unsafe { crate::c_abi::string::gos_rt_vec_clone(source) }
+        };
+        // Compacting first leaves the old store holding exactly its live
+        // range, so its deep-free releases nothing that was popped out.
+        unsafe { deque_compact(dst) };
+        let target = unsafe { &mut *dst };
+        let old = std::mem::replace(&mut target.vec, vec);
+        target.head = 0;
+        if !old.is_null() {
+            unsafe { crate::c_abi::map::gos_rt_vec_free(old) };
+        }
+    });
+}
+
 /// `Queue::clone` - the same header a deque has.
 ///
 /// # Safety

@@ -1041,25 +1041,7 @@ pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
         if bytes > 0 && !s.ptr.is_null() && !data.is_null() {
             unsafe { std::ptr::copy_nonoverlapping(s.ptr.as_ptr(), data, bytes) };
         }
-        // A clone of a guarded-aggregate vec shares every element's
-        // copy-blob children with the source; register the same meta and
-        // give the clone its own shares.
-        if s.elem_kind == crate::c_abi::vec::vec_elem_kind::AGGR_GUARDED {
-            let meta = crate::c_abi::vec::vec_elem_meta(src);
-            if !meta.is_null() {
-                unsafe { crate::c_abi::vec::gos_rt_vec_set_elem_meta(out, meta) };
-                let stride = s.elem_bytes as usize;
-                for i in 0..s.len.max(0) as usize {
-                    unsafe {
-                        crate::c_abi::rc::gos_rt_aggr_retain_children(data.add(i * stride), meta);
-                    }
-                }
-            }
-        }
-        // STRING / VEC / AGGR_OWNED elements: the raw byte copy above
-        // shares every element's heap children with the source; give
-        // the clone its own shares so both deep-frees are balanced.
-        unsafe { crate::c_abi::vec::vec_share_owned_elements(src, out) };
+        unsafe { crate::c_abi::vec::vec_adopt_element_shares(src, out) };
         out
     })
 }

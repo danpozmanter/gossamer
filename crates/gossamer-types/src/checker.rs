@@ -11007,39 +11007,23 @@ impl<'a> TypeChecker<'a> {
     /// Whether the `Vec` surface accepts `name` at `arity` arguments. Used to
     /// name the count a method takes when a call supplies a different one.
     fn vec_method_arity_exists(name: &str, arity: usize) -> bool {
-        matches!(
-            (name, arity),
-            (
-                "join"
-                    | "take"
-                    | "skip"
-                    | "step_by"
-                    | "chunks"
-                    | "windows"
-                    | "get"
-                    | "contains"
-                    | "index_of"
-                    | "count_of"
-                    | "insert"
-                    | "remove",
-                1
-            ) | ("slice" | "swap", 2)
-                | (
-                    "len"
-                        | "is_empty"
-                        | "first"
-                        | "last"
-                        | "to_vec"
-                        | "iter"
-                        | "sort"
-                        | "reverse"
-                        | "pop"
-                        | "clear"
-                        | "capacity"
-                        | "shrink_to_fit",
-                    0
-                )
-        )
+        match name {
+            "len" | "is_empty" | "first" | "last" | "to_vec" | "iter" | "sort" | "reverse"
+            | "enumerate" | "rev" | "dedup" | "flatten" | "pairwise" | "sum" | "product"
+            | "min" | "max" | "unzip" | "pop" | "clear" | "capacity" | "shrink_to_fit" => {
+                arity == 0
+            }
+            "join" | "take" | "skip" | "step_by" | "chunks" | "windows" | "map" | "filter"
+            | "filter_map" | "find_map" | "flat_map" | "take_while" | "skip_while" | "for_each"
+            | "any" | "all" | "find" | "position" | "max_by_key" | "min_by_key" | "chunk_by"
+            | "count_by" | "max_by" | "min_by" | "partition" | "product_by" | "reduce"
+            | "sum_by" | "get" | "contains" | "index_of" | "count_of" | "insert" | "remove" => {
+                arity == 1
+            }
+            "count" => arity <= 1,
+            "slice" | "swap" | "fold" | "scan" => arity == 2,
+            _ => false,
+        }
     }
 
     /// Reports the argument count `name` takes when the receiver declares it
@@ -11047,6 +11031,10 @@ impl<'a> TypeChecker<'a> {
     /// ordinary unresolved-method path.
     fn sequence_arity_mismatch(&mut self, name: &str, found: usize, span: Span) -> Option<Ty> {
         if !is_slice_sequence_method(name) && !is_vec_only_sequence_method(name) {
+            return None;
+        }
+        // A count the surface accepts is typed by the combinator path.
+        if Self::vec_method_arity_exists(name, found) {
             return None;
         }
         let expected =

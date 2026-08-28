@@ -1,0 +1,128 @@
+// `*p = value` through a `&mut` container parameter. A container crosses
+// the call as its own handle, so the assignment replaces the contents of
+// the container the caller's binding names: a fresh literal, an existing
+// local that stays usable afterwards, a by-value parameter, and a repeated
+// overwrite in a loop all reach the caller and free what they displace.
+
+fn assign_vec(v: &mut Vec<i64>) {
+    *v = #[10, 20, 30]
+}
+
+fn assign_vec_from_local(v: &mut Vec<i64>) -> i64 {
+    let fresh = #[7, 8]
+    *v = fresh
+    fresh.len()
+}
+
+fn assign_vec_from_param(v: &mut Vec<i64>, source: Vec<i64>) -> i64 {
+    *v = source
+    source.len()
+}
+
+fn assign_vec_in_loop(v: &mut Vec<i64>, rounds: i64) {
+    let mut i = 0
+    while i < rounds {
+        *v = #[i, i * 2, i * 3]
+        i += 1
+    }
+}
+
+fn assign_strings(v: &mut Vec<String>) {
+    *v = #["alpha", "beta"]
+}
+
+fn assign_nested(v: &mut Vec<Vec<i64>>) {
+    *v = #[#[1], #[2, 3]]
+}
+
+fn assign_map(m: &mut Map<String, i64>) {
+    *m = {"a": 1, "b": 2}
+}
+
+fn assign_map_from_local(m: &mut Map<String, i64>) -> i64 {
+    let fresh = {"c": 3}
+    *m = fresh
+    fresh.len()
+}
+
+fn assign_map_in_loop(m: &mut Map<i64, i64>, rounds: i64) {
+    let mut i = 0
+    while i < rounds {
+        *m = {i: i * 10}
+        i += 1
+    }
+}
+
+fn assign_set(s: &mut Set<i64>) {
+    *s = #{7, 8, 9}
+}
+
+fn assign_deque(d: &mut Deque<i64>) {
+    *d = Deque::from([5, 6])
+}
+
+fn assign_queue(q: &mut Queue<i64>) {
+    *q = Queue::from([4, 5])
+}
+
+fn assign_stack(s: &mut Stack<i64>) {
+    *s = Stack::from([1, 2])
+}
+
+fn assign_heap(h: &mut MaxHeap<i64>) {
+    *h = MaxHeap::from([3, 9, 6])
+}
+
+fn main() {
+    let mut v = #[1, 2, 3]
+    assign_vec(&mut v)
+    println("vec literal: {:?}", v)
+    let n = assign_vec_from_local(&mut v)
+    println("vec from local: {:?} (source len {})", v, n)
+    let source = #[4, 5, 6, 7]
+    let n = assign_vec_from_param(&mut v, source)
+    println("vec from param: {:?} (source len {}, still {:?})", v, n, source)
+    assign_vec_in_loop(&mut v, 2000)
+    println("vec after loop: {:?}", v)
+    v.push(99)
+    println("vec pushed after assign: {:?}", v)
+
+    let mut names = #["zeta"]
+    assign_strings(&mut names)
+    println("strings: {:?}", names)
+
+    let mut nested = #[#[0]]
+    assign_nested(&mut nested)
+    println("nested: {:?}", nested)
+
+    let mut m = {"z": 0}
+    assign_map(&mut m)
+    println("map literal: {:?}", m)
+    let n = assign_map_from_local(&mut m)
+    println("map from local: {:?} (source len {})", m, n)
+    m.insert("d", 4)
+    println("map inserted after assign: {:?}", m)
+    let mut counts = {0: 0}
+    assign_map_in_loop(&mut counts, 2000)
+    println("map after loop: {:?}", counts)
+
+    let mut s = #{1}
+    assign_set(&mut s)
+    println("set: {:?}", s)
+
+    let mut d = Deque::from([1])
+    assign_deque(&mut d)
+    println("deque: {:?}", d)
+
+    let mut q = Queue::from([1])
+    assign_queue(&mut q)
+    println("queue: {:?}", q)
+
+    let mut st = Stack::from([9])
+    assign_stack(&mut st)
+    println("stack: {:?}", st)
+
+    let mut h = MaxHeap::from([1])
+    assign_heap(&mut h)
+    println("heap top: {:?}", h.peek())
+}

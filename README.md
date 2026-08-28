@@ -2,15 +2,23 @@
 
 [![CI](https://github.com/gossamer-lang/gossamer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gossamer-lang/gossamer/actions/workflows/ci.yml)
 
-[Homepage and Docs](https://gossamer-lang.org/)
+[Homepage and docs](https://gossamer-lang.org/)
+  
+[Try it out](https://gossamer-lang.org/playground/)
+  
+[Take the tour](https://gossamer-lang.org/tour/)
 
 ## North Star Goals
 
-* Trustworthy (Stability, Security, Correctness)
+* Trustworthy (Stable, Secure, Correct)
 
-* Ergonomic (Concise, Expressive)
+* Ergonomic (Concise, Expressive, Understandable)
 
-* Performant (Fast Execution Speed, Efficient Resource Usage)
+* Performant (Fast, Efficient, Scalable)
+
+### Central Thread
+
+Tier parity: Interpreted or compiled logic behaves the same.
 
 ## Current Status
 
@@ -27,21 +35,24 @@ PRs, and the LLM policy.
 
 Why build Gossamer? Why use it?
 
-I enjoy building web services and command line tools. 
-I always have another idea I want to explore, another service I want to deploy, 
-or another manual task I want to automate with a script.
+My inspirations tell the story:
 
 I love the confidence that comes from Rust and F#: the feeling that if it
  compiles, it probably works. Algebraic data types, pattern matching, and 
  explicit error handling feel like a natural way to build correct and 
  maintainable software.
 
-I also love having a REPL open or being able to iterate quickly on a script 
+From Python, having a REPL open or being able to iterate quickly on a script 
 without waiting for a compile step.
 
 Go, meanwhile, is an incredible tool for building and shipping software. 
-It feels fast, minimal, and frictionless: a garbage-collected language with
- built-in concurrency and an extensive standard library.
+It feels fast, minimal, and frictionless. The extensive standard library
+let's you be productive quickly.
+ 
+Zig's approach to metaprogramming via comptime, C#'s top level statements,
+Java's experimental approach to structured colorless concurrency all appeal.
+
+Swift's approach to garbage collection with ARC strikes a powerful balance.
  
 ### A Single Language?
 

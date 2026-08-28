@@ -1050,6 +1050,31 @@ pub(crate) unsafe fn vec_retain_header(v: *mut GosVec) {
 /// `AGGR_OWNED` element kinds; `AGGR_GUARDED` keeps its dedicated
 /// copy-blob path at the existing call sites. No-op for primitive /
 /// region / null vecs.
+/// Gives `out`, whose first `src.len` slots are a raw copy of `src`'s, its own
+/// share of every element: guarded aggregates retain their copy-blob children
+/// under the source's element metadata, and owned pointer slots retain or
+/// clone through [`vec_share_owned_elements`].
+pub(crate) unsafe fn vec_adopt_element_shares(src: *const GosVec, out: *mut GosVec) {
+    if src.is_null() || out.is_null() {
+        return;
+    }
+    let s = unsafe { &*src };
+    if s.elem_kind == vec_elem_kind::AGGR_GUARDED {
+        let meta = vec_elem_meta(src);
+        if !meta.is_null() {
+            unsafe { gos_rt_vec_set_elem_meta(out, meta) };
+            let data = unsafe { (*out).ptr.as_ptr() };
+            let stride = s.elem_bytes as usize;
+            for i in 0..s.len.max(0) as usize {
+                unsafe {
+                    crate::c_abi::rc::gos_rt_aggr_retain_children(data.add(i * stride), meta);
+                }
+            }
+        }
+    }
+    unsafe { vec_share_owned_elements(src, out) };
+}
+
 pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosVec) {
     if src.is_null() || out.is_null() {
         return;
@@ -2101,6 +2126,46 @@ pub unsafe extern "C" fn gos_rt_vec_truncate(v: *mut GosVec, len: i64) {
         unsafe {
             (*v).len = new_len;
         }
+    });
+}
+
+/// `*dst = src` through a `&mut Vec<T>`: the header every holder of the
+/// reference names keeps its identity and takes a copy of `src`'s elements,
+/// sharing each the way `gos_rt_vec_clone` does, after releasing the
+/// elements it held.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_assign(dst: *mut GosVec, src: *const GosVec) {
+    ffi_entry!((), {
+        if dst.is_null() || src.is_null() || std::ptr::addr_eq(dst.cast_const(), src) {
+            return;
+        }
+        unsafe { gos_rt_vec_clear(dst) };
+        let s = unsafe { &*src };
+        let len = s.len.max(0);
+        let stride = s.elem_bytes as usize;
+        {
+            let d = unsafe { &mut *dst };
+            // The emptied buffer holds bytes, so a new slot width recounts
+            // its capacity rather than reallocating it.
+            if d.elem_bytes != s.elem_bytes {
+                let bytes = d.cap.max(0) as usize * d.elem_bytes as usize;
+                d.elem_bytes = s.elem_bytes;
+                d.cap = bytes.checked_div(stride).unwrap_or(0) as i64;
+            }
+            d.elem_kind = s.elem_kind;
+            unsafe { vec_reserve_to(d, len, true) };
+        }
+        if len > 0 && stride > 0 && !s.ptr.is_null() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    s.ptr.as_ptr(),
+                    (*dst).ptr.as_ptr(),
+                    len as usize * stride,
+                );
+            }
+        }
+        unsafe { (*dst).len = len };
+        unsafe { vec_adopt_element_shares(src, dst) };
     });
 }
 

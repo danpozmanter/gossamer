@@ -813,7 +813,7 @@ fn repl_info_and_explain_details_always_follow_descriptions_with_examples() {
     assert!(explained.success, "stderr: {}", explained.stderr);
     assert!(
         explained.stdout.contains(
-            "Returns whether the string starts with a prefix.\n    Builtin\n    Example: text.starts_with(needle)"
+            "Returns whether the string starts with a prefix.\n    Builtin\n    Example: text.starts_with(\"te\")"
         ),
         "binding method example did not use the binding: {}",
         explained.stdout
@@ -923,7 +923,7 @@ fn repl_info_string_from_has_display_bound_contract() {
     );
     assert!(
         out.stdout.contains(
-            "Converts a Display value into a string.\n    Builtin\n    Example: String::from(value)"
+            "Converts a Display value into a string.\n    Builtin\n    Example: String::from(1)"
         ),
         "String::from details are incomplete: {}",
         out.stdout
@@ -2982,7 +2982,15 @@ fn repl_meta_info_covers_payload_and_sequence_method_gaps() {
          %i Result::unwrap_or -d\n\
          %i Option::ok_or -d\n\
          %i Vec::take_while -d\n\
-         %i Vec::iter -d\n",
+         %i Vec::iter -d\n\
+         %i Vec::partition -d\n\
+         %i Vec::unzip -d\n\
+         %i Vec::scan -d\n\
+         %i Vec::chunk_by -d\n\
+         %i Vec::filter_map -d\n\
+         %i Map::partition -d\n\
+         %i Map::count_by -d\n\
+         %i BTreeMap::filter_map -d\n",
     );
     assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
     for expected in [
@@ -2992,6 +3000,16 @@ fn repl_meta_info_covers_payload_and_sequence_method_gaps() {
         "Option::ok_or<T, E>(self: Option<T>, err: E) -> Result<T, E> [method]",
         "Vec::take_while<T>(self: Vec<T>, f: fn(T) -> bool) -> Vec<T> [method]",
         "Vec::iter<T>(self: Vec<T>) -> Iterator<T> [method]",
+        "Vec::partition<T>(self: Vec<T>, predicate: Fn(T) -> bool) -> (Vec<T>, Vec<T>) [method]",
+        "Vec::unzip<A, B>(self: Vec<(A, B)>) -> (Vec<A>, Vec<B>) [method]",
+        "Vec::scan<T, S>(self: Vec<T>, init: S, f: Fn(S, T) -> S) -> Vec<S> [method]",
+        "Vec::chunk_by<T, K: Eq>(self: Vec<T>, key: Fn(T) -> K) -> Map<K, Vec<T>> [method]",
+        "Vec::filter_map<T, U>(self: Vec<T>, f: Fn(T) -> Option<U>) -> Vec<U> [method]",
+        "Map::partition<K, V>(self: Map<K, V>, predicate: Fn((K, V)) -> bool) -> (Vec<(K, V)>, Vec<(K, V)>) [method]",
+        "Map::count_by<K, V, B: Eq>(self: Map<K, V>, key: Fn((K, V)) -> B) -> Map<B, i64> [method]",
+        "BTreeMap::filter_map<K, V, U>(self: BTreeMap<K, V>, f: Fn((K, V)) -> Option<U>) -> Vec<U> [method]",
+        "Example: values.partition(|value| value > 0)",
+        "Example: map.partition(|(key, value)| value > 0)",
     ] {
         assert!(
             out.stdout.contains(expected),
@@ -3001,7 +3019,11 @@ fn repl_meta_info_covers_payload_and_sequence_method_gaps() {
     }
     assert!(
         !out.stdout.contains("Result::unwrap_or [method]")
-            && !out.stdout.contains("Vec::take_while [method]"),
+            && !out.stdout.contains("Vec::take_while [method]")
+            && !out.stdout.contains("Vec::partition [method]")
+            && !out.stdout.contains("Vec::chunk_by [method]")
+            && !out.stdout.contains("Map::partition [method]")
+            && !out.stdout.contains("BTreeMap::filter_map [method]"),
         "method metadata must not fall back to bare names: {}",
         out.stdout
     );

@@ -159,9 +159,10 @@ pub(crate) fn is_mut_ref_writeback(tcx: &TyCtxt, ty: Ty) -> bool {
 /// write-back protocol. This is the pointee half of
 /// [`is_mut_ref_writeback`]: a call site wraps an argument in a cell only
 /// for these types, because only for these does the callee's parameter
-/// register unwrap one. A type with its own runtime handle (`Map`, a
-/// channel endpoint, a lazy iterator) mutates through the handle itself,
-/// so it crosses the call boundary as the bare handle.
+/// register unwrap one. A container reaches its storage through a handle,
+/// but `*p = v` replaces the binding the handle came from, so every
+/// container rides the protocol; a channel endpoint or a lazy iterator has
+/// no rebinding form and crosses the call boundary as the bare handle.
 pub(crate) fn is_writeback_pointee(tcx: &TyCtxt, ty: Ty) -> bool {
     matches!(
         tcx.kind(ty),
@@ -176,6 +177,7 @@ pub(crate) fn is_writeback_pointee(tcx: &TyCtxt, ty: Ty) -> bool {
                 | TyKind::Duration
                 | TyKind::Instant
                 | TyKind::Array { .. }
+                | TyKind::HashMap { .. }
                 | TyKind::Adt { .. }
                 | TyKind::Param { .. }
         )

@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.57.1 - Deref assignment ownership, Vec method discovery
+
+- `*v = value` through a `&mut Vec`, `&mut Map`, `&mut Set`, `&mut Deque` /
+  `Queue` / `Stack`, or `&mut MaxHeap` / `MinHeap` parameter replaces the
+  caller's container on the compiled tiers. Under `gos build` the store wrote
+  the new container's pointer into the old container's header, so the caller
+  hung on its next read of a `Vec` and saw no change to a `Map` or `Set`
+  (#232).
+- `*m = value` through a `&mut Map` parameter reaches the caller on the
+  bytecode VM and the JIT, where it rebound only the callee's own register.
+- `%info` and `%explain` show the full signature of every closure-taking `Vec`
+  method - `partition`, `unzip`, `scan`, `reduce`, `sum_by`, `product_by`,
+  `min_by`, `max_by`, `flat_map`, `find_map`, `filter_map`, `count_by`, and
+  `chunk_by` - and of the same surface on `Map` and `BTreeMap`, where each
+  showed as a bare name with no parameters.
+- The example under a method is a call a reader can paste:
+  `values.partition(|value| value > 0)`, `values.scan(0, |acc, value| acc +
+  value)`, `map.partition(|(key, value)| value > 0)`, in place of the
+  parameter names. `Queue::from`, `Stack::from`, `MaxHeap::from`, and
+  `MinHeap::from` are shown through their constructors rather than the literal
+  spellings the parser no longer accepts.
+- A signature heading in `%info` output is never wrapped at the terminal
+  width, so a long `Map` method no longer splits inside its type list.
+- `xs.count()` and `xs.count(|x| x > 1)` on a `Vec` type-check again. Each was
+  rejected for having the other's argument count.
+- `xs.partition(f)` and the other closure-taking `Vec` methods called with the
+  wrong number of arguments report the count the method takes, rather than an
+  unresolved method.
+
 ## 0.57.0 - Generic callable ABI, dead-item elimination, LLVM boost, a fifth tier column, Windows sandbox enforcement
 
 - Every `iter::` combinator now answers the same on `gos build` as it does on

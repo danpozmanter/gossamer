@@ -224,7 +224,7 @@ impl<'a> Builder<'a> {
     /// binding or by-value argument either double-frees the table once both
     /// bindings' drop points run, or leaves both bindings mutating the same
     /// live table - the same hazard `is_vec_like_ty` closes for `Vec`.
-    fn map_or_set_clone_symbol(&self, ty: gossamer_types::Ty) -> Option<&'static str> {
+    pub(crate) fn map_or_set_clone_symbol(&self, ty: gossamer_types::Ty) -> Option<&'static str> {
         const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
         const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
         const VEC_DEQUE_DEF_LOCAL: u32 = u32::MAX - 19;

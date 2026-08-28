@@ -55,10 +55,19 @@ fn repl_output_width() -> usize {
     crate::style::terminal_width(REPL_FALLBACK_COLUMNS, 24)
 }
 
+// A heading line is a symbol's signature: code the reader copies, which a
+// reflow at whitespace would split inside a type list. Only the indented
+// detail lines are prose.
 fn wrap_repl_output(text: &str) -> String {
     let width = repl_output_width();
     text.lines()
-        .flat_map(|line| wrap_repl_line(line, width))
+        .flat_map(|line| {
+            if line.starts_with(char::is_whitespace) {
+                wrap_repl_line(line, width)
+            } else {
+                vec![line.to_string()]
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -2968,7 +2977,7 @@ fn repl_binding_info_for(
                 method.doc,
                 var.name,
                 method.name,
-                signature_argument_names(signature).join(", ")
+                signature_example_arguments(signature)
             ));
         }
         if !found {
@@ -3746,16 +3755,16 @@ fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
             return "let deque = Deque::from([1, 2, 3])".to_string();
         }
         "Queue::from" | "VecQueue::from" => {
-            return "let queue = <[1, 2, 3]".to_string();
+            return "let queue = Queue::from([1, 2, 3])".to_string();
         }
         "Stack::from" | "VecStack::from" => {
-            return "let stack = [1, 2, 3]>".to_string();
+            return "let stack = Stack::from([1, 2, 3])".to_string();
         }
         "BinaryHeap::from" | "MaxBinaryHeap::from" | "MaxHeap::from" => {
-            return "let heap: MaxHeap<i64> = ^[1, 2, 3]".to_string();
+            return "let heap: MaxHeap<i64> = MaxHeap::from([1, 2, 3])".to_string();
         }
         "MinBinaryHeap::from" | "MinHeap::from" => {
-            return "let heap: MinHeap<i64> = _[1, 2, 3]".to_string();
+            return "let heap: MinHeap<i64> = MinHeap::from([1, 2, 3])".to_string();
         }
         _ => {}
     }
@@ -3768,7 +3777,7 @@ fn catalog_example(path: &str, kind: &str, signature: &str) -> String {
         _ => {}
     }
 
-    let args = signature_argument_names(signature).join(", ");
+    let args = signature_example_arguments(signature);
     if kind == "method" {
         let (owner, name) = path.rsplit_once("::").unwrap_or(("", path));
         return format!("{}.{}({args})", example_receiver(owner), name);
@@ -3875,7 +3884,8 @@ fn core_namespace_description(owner: &str) -> &'static str {
     }
 }
 
-fn signature_argument_names(signature: &str) -> Vec<&str> {
+/// The `(name, type)` pairs a signature declares, its receiver excluded.
+fn signature_parameters(signature: &str) -> Vec<(&str, &str)> {
     let Some(open) = signature.find('(') else {
         return Vec::new();
     };
@@ -3899,13 +3909,117 @@ fn signature_argument_names(signature: &str) -> Vec<&str> {
         .into_iter()
         .filter_map(|parameter| {
             let parameter = parameter.trim();
-            let name = parameter
+            let (name, ty) = parameter
                 .split_once(':')
-                .map_or(parameter, |(name, _)| name);
+                .map_or((parameter, ""), |(name, ty)| (name, ty.trim()));
             let name = name.trim().trim_end_matches('?');
-            (!matches!(name, "self" | "&self" | "&mut self") && !name.is_empty()).then_some(name)
+            (!matches!(name, "self" | "&self" | "&mut self") && !name.is_empty())
+                .then_some((name, ty))
         })
         .collect()
+}
+
+/// The argument list of a call a reader could paste: one literal or closure
+/// per parameter, shaped by the parameter's type and name.
+fn signature_example_arguments(signature: &str) -> String {
+    signature_parameters(signature)
+        .into_iter()
+        .map(|(name, ty)| example_argument(name, ty))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A closure whose shape follows a callback type: its arity, and what it
+/// answers.
+fn example_closure(ty: &str) -> String {
+    let open = ty.find('(').map_or(0, |i| i + 1);
+    let mut depth = 0usize;
+    let mut close = ty.len();
+    for (offset, ch) in ty[open..].char_indices() {
+        match ch {
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' if depth == 0 => {
+                close = open + offset;
+                break;
+            }
+            ')' | ']' | '}' | '>' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    let params: Vec<&str> = split_top_level_parameters(&ty[open..close])
+        .into_iter()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+    let ret = ty[close..]
+        .split_once("->")
+        .map_or("", |(_, ret)| ret.trim());
+    match params.as_slice() {
+        [] => "|| 0".to_string(),
+        [single] => {
+            let (binder, value) = if single.starts_with('(') {
+                ("(key, value)", "value")
+            } else {
+                ("value", "value")
+            };
+            let body = if ret == "bool" {
+                format!("{value} > 0")
+            } else if ret == "()" {
+                format!("println(\"{{{value}}}\")")
+            } else if ret.starts_with("Option<") {
+                format!("Some({value})")
+            } else if ret.starts_with("Vec<") {
+                format!("#[{value}, {value}]")
+            } else if ret == "String" {
+                format!("format(\"{{{value}}}\")")
+            } else {
+                value.to_string()
+            };
+            format!("|{binder}| {body}")
+        }
+        [_, _] if ret == "bool" => "|left, right| left < right".to_string(),
+        [_, _] if ret == "i64" => "|left, right| left - right".to_string(),
+        _ => "|acc, value| acc + value".to_string(),
+    }
+}
+
+/// A sample value for one parameter, chosen from its type and then its name.
+fn example_argument(name: &str, ty: &str) -> String {
+    let ty = ty.split(" | ").next().unwrap_or(ty).trim();
+    if ty.starts_with("Fn(") || ty.starts_with("fn(") {
+        return example_closure(ty);
+    }
+    let is_generic = ty.len() == 1 && ty.starts_with(|c: char| c.is_ascii_uppercase());
+    match ty {
+        "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "isize" | "usize" => {
+            match name {
+                "n" | "count" | "size" | "step" | "width" | "len" | "capacity" | "by" => "2",
+                "index" | "i" | "at" | "position" | "start" | "from" => "0",
+                _ => "1",
+            }
+            .to_string()
+        }
+        "f32" | "f64" => "1.5".to_string(),
+        "bool" => "true".to_string(),
+        "char" => "'a'".to_string(),
+        "String" => match name {
+            "sep" | "separator" | "delimiter" => "\", \"",
+            "needle" | "prefix" | "suffix" | "pattern" | "pat" => "\"te\"",
+            _ => "\"text\"",
+        }
+        .to_string(),
+        _ if ty.starts_with("Vec<") || ty.starts_with('[') => "#[1, 2, 3]".to_string(),
+        _ if ty.starts_with("Map<") => "{\"one\": 1}".to_string(),
+        _ if ty.starts_with("Set<") => "#{1, 2, 3}".to_string(),
+        _ if ty.starts_with("Option<") => "Some(1)".to_string(),
+        _ if ty.starts_with('(') => "(1, 2)".to_string(),
+        _ if is_generic => match name {
+            "init" | "initial" | "default" | "acc" => "0",
+            _ => "1",
+        }
+        .to_string(),
+        _ => name.to_string(),
+    }
 }
 
 fn split_top_level_parameters(parameters: &str) -> Vec<&str> {
@@ -4078,6 +4192,7 @@ fn build_core_method_entries() -> Vec<CoreMethodEntry> {
     }
     add_data_last_std_methods(&mut entries, "Option", "std::option");
     add_data_last_std_methods(&mut entries, "Result", "std::result");
+    add_data_last_std_methods(&mut entries, "Vec", "std::iter");
     add_data_last_std_methods(&mut entries, "Iterator", "std::iter");
     // A range answers exactly the iterator surface, so `%info Range` lists
     // the same methods rather than reporting an empty namespace.
@@ -4394,6 +4509,12 @@ fn add_data_last_std_methods(
         {
             continue;
         }
+        // Discovery follows what the checker resolves on the owner.
+        if !matches!(owner, "Iterator" | "Range")
+            && !gossamer_types::core_type_accepts_method(owner, item.name)
+        {
+            continue;
+        }
         let Some(signature) = data_first_method_signature(owner, module_path, item.name) else {
             continue;
         };
@@ -4425,6 +4546,7 @@ fn data_first_method_signature(owner: &str, module_path: &str, name: &str) -> Op
     let receiver_matches = match owner {
         "Option" => receiver.ty.starts_with("Option<"),
         "Result" => receiver.ty.starts_with("Result<"),
+        "Vec" => receiver.ty.starts_with("Vec<"),
         "Iterator" | "Range" => receiver.ty.starts_with("Vec<"),
         _ => false,
     };
