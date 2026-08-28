@@ -158,6 +158,15 @@ pub(crate) struct Lowerer<'a> {
     /// redirected to a `<16 x i8>` C-ABI return thunk (`name$cabi`).
     /// Maps the handler name to its parameter arity. Empty off Windows.
     pub(crate) cabi_handlers: std::collections::BTreeMap<String, usize>,
+    /// `alloca` lines for the call-scoped temporaries the body needs, spliced
+    /// into the entry block once the blocks are lowered.
+    ///
+    /// LLVM promotes an `alloca` only in the entry block, and one emitted in
+    /// the block that holds a call allocates again on every iteration of a
+    /// loop around it - stack that is not reclaimed until the function
+    /// returns. One instruction per call site, executed once, is what these
+    /// temporaries actually need.
+    pub(crate) entry_allocas: Vec<String>,
 }
 
 /// Module-scoped string intern pool.

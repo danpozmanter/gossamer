@@ -1,0 +1,11 @@
+// The control `many_unused.gos` is measured against: the same entry and the
+// same one reachable function, with none of the dead weight. Comparing the
+// two isolates what the unreached code costs, where comparing against a
+// program that prints something else would also measure the difference
+// between their two formatting paths.
+
+fn used(a: i64) -> i64 { a * 2 }
+
+fn main() {
+    println("{}", used(21))
+}

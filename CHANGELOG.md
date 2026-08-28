@@ -170,6 +170,19 @@
   naming a path an enclosing grant already reaches with at least the same
   access is redundant, and an inheritable ACE costs a full walk of the subtree
   when it is written and again when it is removed.
+- A call whose arguments need a stack temporary no longer grows the frame on
+  every trip through a loop around it. The temporaries a call site spills into
+  - a Win64 `i128` carrier argument, a channel send's element slot, a wide
+  container push, an inline repeat's counter - were emitted in the block
+  holding the call, so a loop allocated a fresh one per iteration and nothing
+  reclaimed it until the function returned. `carrier_at_odd_slot_offset.gos`
+  exhausted a 1 MiB Windows stack after 200000 iterations; the slots now live
+  in the entry block, one per call site, where LLVM can also promote them.
+- `gos build` emits its functions in the same order every run. The
+  specialisations a generic instantiation produces were appended in a hash
+  map's iteration order, which Rust randomises per process, so two builds of
+  one unchanged source produced different IR and a per-body object cache keyed
+  on it missed.
 - `benchmarks/comptime/` and `benchmarks/combinators/` record what a comptime
   fold and what the runtime-call boundary cost, with checked-in baselines and
   a runner that fails on a regression. The fold runs once on the build path,

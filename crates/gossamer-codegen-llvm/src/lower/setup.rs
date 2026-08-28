@@ -91,6 +91,7 @@ impl<'a> Lowerer<'a> {
             preempt_seq: 0,
             capture_summary: gossamer_mir::CaptureSummary::default(),
             cabi_handlers: std::collections::BTreeMap::new(),
+            entry_allocas: Vec::new(),
         }
     }
 
@@ -140,12 +141,20 @@ impl<'a> Lowerer<'a> {
         // `sigquit::render_to`). A push/pop pair on every function
         // entry blocks leaf-function inlining and serialises on a
         // global lock, which is unacceptable in hot numeric loops.
+        // Where the call-scoped temporaries the blocks ask for are spliced
+        // back in: they belong to the entry block, and the blocks that need
+        // them have not been lowered yet.
+        let entry_end = self.out.len();
         // Unconditional jump into the MIR entry block.
         writeln!(self.out, "  br label %bb0").unwrap();
         for block in &self.body.blocks {
             self.lower_block(block)?;
         }
         writeln!(self.out, "}}").unwrap();
+        if !self.entry_allocas.is_empty() {
+            let hoisted = std::mem::take(&mut self.entry_allocas).concat();
+            self.out.insert_str(entry_end, &hoisted);
+        }
         Ok(std::mem::take(&mut self.out))
     }
 
@@ -262,6 +271,22 @@ impl<'a> Lowerer<'a> {
         self.last_frame_line = Some(line);
         declare_rt(&mut self.runtime_refs, "gos_rt_stack_set_line");
         writeln!(self.out, "  call void @gos_rt_stack_set_line(i32 {line})").unwrap();
+    }
+
+    /// A fresh stack slot for a call-scoped temporary, declared in the entry
+    /// block.
+    ///
+    /// `spec` is the `alloca` operand text (`"i64"`, `"i128, align 16"`).
+    /// The slot is allocated once per call site rather than once per
+    /// execution of it: an `alloca` inside a loop body allocates again on
+    /// every iteration, and nothing reclaims it until the function returns,
+    /// so a long-running loop exhausts the stack on a target whose default
+    /// is small.
+    pub(crate) fn entry_alloca(&mut self, spec: &str) -> String {
+        let slot = self.fresh();
+        self.entry_allocas
+            .push(format!("  {slot} = alloca {spec}\n"));
+        slot
     }
 
     pub(crate) fn emit_allocas(&mut self) {

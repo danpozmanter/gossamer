@@ -719,6 +719,10 @@ impl<'a> Lowerer<'a> {
             // directly would overflow the alloca and clobber
             // adjacent stack memory. Mirrors the Cranelift
             // backend's `create_sized_stack_slot(16, 3)` shape.
+            // Block-scoped rather than hoisted to the entry block: the
+            // buffer's lifetime is the destination local's, not the call's,
+            // so each execution of this call must hand back a distinct
+            // address for a `.0` / `.1` read that outlives the iteration.
             let pair_buf = self.fresh();
             writeln!(self.out, "  {pair_buf} = alloca [2 x i64]").unwrap();
             let slot0 = self.fresh();
@@ -804,8 +808,7 @@ impl<'a> Lowerer<'a> {
             } else {
                 None
             };
-            let out_slot = self.fresh();
-            writeln!(self.out, "  {out_slot} = alloca i64").unwrap();
+            let out_slot = self.entry_alloca("i64");
             writeln!(self.out, "  store i64 0, ptr {out_slot}").unwrap();
             let status_fn = match name.as_str() {
                 "gos_rt_chan_recv_option" => "gos_rt_chan_recv",

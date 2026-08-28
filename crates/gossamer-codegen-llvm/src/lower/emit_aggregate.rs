@@ -369,8 +369,7 @@ impl<'a> Lowerer<'a> {
                 let head = self.fresh_label("repeat_head");
                 let body = self.fresh_label("repeat_body");
                 let done = self.fresh_label("repeat_done");
-                let counter = self.fresh();
-                writeln!(self.out, "  {counter} = alloca i64").unwrap();
+                let counter = self.entry_alloca("i64");
                 writeln!(self.out, "  store i64 0, ptr {counter}").unwrap();
                 writeln!(self.out, "  br label %{head}").unwrap();
                 writeln!(self.out, "{head}:").unwrap();
@@ -447,8 +446,7 @@ impl<'a> Lowerer<'a> {
                 let head = self.fresh_label("repeat_byte_head");
                 let body = self.fresh_label("repeat_byte_body");
                 let done = self.fresh_label("repeat_byte_done");
-                let counter = self.fresh();
-                writeln!(self.out, "  {counter} = alloca i64").unwrap();
+                let counter = self.entry_alloca("i64");
                 writeln!(self.out, "  store i64 0, ptr {counter}").unwrap();
                 writeln!(self.out, "  br label %{head}").unwrap();
                 writeln!(self.out, "{head}:").unwrap();
@@ -489,8 +487,7 @@ impl<'a> Lowerer<'a> {
             let head = self.fresh_label("repeat_head");
             let body = self.fresh_label("repeat_body");
             let done = self.fresh_label("repeat_done");
-            let counter = self.fresh();
-            writeln!(self.out, "  {counter} = alloca i64").unwrap();
+            let counter = self.entry_alloca("i64");
             writeln!(self.out, "  store i64 0, ptr {counter}").unwrap();
             writeln!(self.out, "  br label %{head}").unwrap();
             writeln!(self.out, "{head}:").unwrap();

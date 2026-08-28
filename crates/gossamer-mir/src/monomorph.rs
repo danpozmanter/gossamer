@@ -192,8 +192,15 @@ fn specialise_functions_step(
             collect_from_terminator(&block.terminator, &mut needs);
         }
     }
+    // Sorted rather than in the map's own order: the specialisations are
+    // appended to the body list, so an iteration order that varies per
+    // process varies the order bodies reach the backend, and with it the
+    // emitted IR and the per-body object cache keyed on it. `local` is
+    // unique within a crate and is the key `sources` is already keyed on.
+    let mut needed: Vec<(&DefId, &Vec<Substs>)> = needs.iter().collect();
+    needed.sort_by_key(|(def, _)| def.local);
     let mut specialised = Vec::new();
-    for (def, subst_list) in &needs {
+    for (def, subst_list) in needed {
         let Some(src_idx) = sources.get(&def.local) else {
             continue;
         };

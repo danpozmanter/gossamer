@@ -1373,8 +1373,7 @@ impl<'a> Lowerer<'a> {
     /// this so the call instruction matches the declaration on Windows.
     pub(crate) fn fat_i128_call_arg(&mut self, val: &str) -> String {
         if crate::emit::target_is_windows() {
-            let slot = self.fresh();
-            writeln!(self.out, "  {slot} = alloca i128, align 16").unwrap();
+            let slot = self.entry_alloca("i128, align 16");
             writeln!(self.out, "  store i128 {val}, ptr {slot}, align 16").unwrap();
             format!("ptr {slot}")
         } else {
@@ -1700,8 +1699,7 @@ impl<'a> Lowerer<'a> {
         }
         let val_v = self.lower_operand(arg)?;
         let val_ty = self.operand_llvm_ty(arg);
-        let slot = self.fresh();
-        writeln!(self.out, "  {slot} = alloca i128, align 16").unwrap();
+        let slot = self.entry_alloca("i128, align 16");
         let stored = if val_ty == "i128" {
             val_v
         } else {

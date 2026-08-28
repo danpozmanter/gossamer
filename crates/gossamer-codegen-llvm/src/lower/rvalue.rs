@@ -537,8 +537,7 @@ impl<'a> Lowerer<'a> {
                 // channel carries a stable pointer the receiver owns,
                 // matching the `gos_rt_result_new` Ok-payload path.
                 if let Some(heap_v) = self.maybe_heap_copy_aggregate(arg) {
-                    let slot = self.fresh();
-                    writeln!(self.out, "  {slot} = alloca i64").unwrap();
+                    let slot = self.entry_alloca("i64");
                     writeln!(self.out, "  store i64 {heap_v}, ptr {slot}").unwrap();
                     let _ = write!(arg_text, "ptr {slot}");
                     continue;
@@ -549,8 +548,7 @@ impl<'a> Lowerer<'a> {
                 // slot address. The `a_ty` could be ptr / i64 /
                 // double / i32 / i1; widen scalars to i64 so the
                 // slot's 8 bytes are fully initialised.
-                let slot = self.fresh();
-                writeln!(self.out, "  {slot} = alloca i64").unwrap();
+                let slot = self.entry_alloca("i64");
                 let stored_ty;
                 let stored_val;
                 if a_ty == "ptr" {

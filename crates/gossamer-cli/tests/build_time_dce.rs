@@ -79,7 +79,10 @@ fn build_with_pass(fixture: &str, tag: &str, pass: bool) -> BuildMeasurement {
         .file_stem()
         .and_then(|s| s.to_str())
         .expect("fixture stem");
-    let binary = dir.join("target").join("release").join(stem);
+    let binary = dir
+        .join("target")
+        .join("release")
+        .join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
     let binary_bytes = std::fs::metadata(&binary)
         .unwrap_or_else(|e| panic!("stat {}: {e}", binary.display()))
         .len();
@@ -128,21 +131,27 @@ fn unused_functions_are_not_lowered_to_native_code() {
     );
 }
 
-/// A binary carrying two thousand functions nothing calls is larger than
-/// one that does not. The comparison is against hello world built by the
-/// same toolchain, so it states the fixture's own cost rather than a
-/// byte count that changes with every runtime change.
+/// A binary carrying two thousand functions nothing calls is no larger than
+/// one that does not.
+///
+/// The control is the same program with the dead functions removed - same
+/// entry, same reachable function, same formatting path - so the difference
+/// between the two is the unreached code and nothing else. Measuring against
+/// a program that prints something else would also measure the difference
+/// between their two runtime paths, which is a real difference on some
+/// targets and none of this gate's business.
 #[test]
 fn unused_functions_do_not_reach_the_binary() {
-    let hello = build("hello.gos", "hello-size");
+    let control = build("one_used.gos", "one-used-size");
     let many = build("many_unused.gos", "many-size");
-    let allowed = hello.binary_bytes + hello.binary_bytes / 100;
+    let allowed = control.binary_bytes + control.binary_bytes / 100;
     assert!(
         many.binary_bytes <= allowed,
-        "the binary with 2000 unused functions is {} bytes against hello world's {} \
-         (more than 1% larger), so unreached code is still being emitted",
+        "the binary with 2000 unused functions is {} bytes against the same program \
+         without them at {} (more than 1% larger), so unreached code is still being \
+         emitted",
         many.binary_bytes,
-        hello.binary_bytes,
+        control.binary_bytes,
     );
 }
 
