@@ -488,14 +488,25 @@ fn echo_command() -> Vec<String> {
 /// A policy that grants the workspace and whatever the host needs for a
 /// command to start at all.
 fn portable_policy(root: &Path, level: Level) -> SandboxPolicy {
-    let mut policy = SandboxPolicy::command_default(root).level(level);
-    if cfg!(windows) {
-        // `command_default` grants the `PATH` directories, which is
-        // where `cmd.exe` lives; the system root is what it loads from.
-        for system in ["C:\\Windows", "C:\\Windows\\System32"] {
-            if std::path::Path::new(system).exists() {
-                policy = policy.read_only(system);
-            }
+    if !cfg!(windows) {
+        return SandboxPolicy::command_default(root).level(level);
+    }
+    // Not `command_default` here: it grants every `PATH` directory, and
+    // a strict grant on Windows is an inheritable ACE written across the
+    // whole tree and walked again to revoke. A runner's `PATH` holds its
+    // toolchain caches, so that is minutes per sandbox, for directories
+    // no case below reads. `cmd.exe` lives in the system root, which
+    // every app container reaches already.
+    let mut policy = SandboxPolicy::new()
+        .read_write(root)
+        .working_directory(root)
+        .temp(gossamer_sandbox::Temp::Private)
+        .network(gossamer_sandbox::Network::None)
+        .env_allow(gossamer_sandbox::base_environment())
+        .level(level);
+    for system in ["C:\\Windows", "C:\\Windows\\System32"] {
+        if std::path::Path::new(system).exists() {
+            policy = policy.read_only(system);
         }
     }
     policy

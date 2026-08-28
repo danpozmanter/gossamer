@@ -101,7 +101,7 @@ jobs:
         # runner that executes `gos run FILE`, the Cranelift JIT, and
         # `gos build` on real ARM Linux - the Raspberry Pi target.
         os: [ubuntu-latest, macos-latest, windows-latest, ubuntu-24.04-arm]
-        suite: [general-0, general-1, parity-0-1, parity-2-3, parity-4-5]
+        suite: [general-0, general-1, general-2, parity-0-1, parity-2-3, parity-4-5]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-test-setup
@@ -340,9 +340,10 @@ jobs:
               local crate="$1" name="$2" assigned
               case "$crate:$name" in
                 gossamer-cli:cli)
-                  # On Linux, pair the two dominant targets on opposite
-                  # shards. Off Linux codegen_correct is covered by the tier
-                  # parity lanes, so put cli on the otherwise lighter shard.
+                  # The two dominant targets are pinned to shards of their
+                  # own so the round-robin below cannot land them together.
+                  # Off Linux codegen_correct is covered by the tier parity
+                  # lanes, so put cli on the otherwise lighter shard.
                   case "${RUNNER_OS:-Linux}" in
                     Linux) assigned=0 ;;
                     *) assigned=1 ;;
@@ -355,7 +356,7 @@ jobs:
                   assigned=0
                   ;;
                 *)
-                  assigned=$((general_index % 2))
+                  assigned=$((general_index % 3))
                   ;;
               esac
               general_index=$((general_index + 1))
@@ -563,13 +564,20 @@ jobs:
             -p gossamer-http3 -p gossamer-ws -- --nocapture
 
   sandbox:
-    name: Sandbox enforcement (${{ matrix.os }})
+    name: Sandbox enforcement (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # A case that builds a container is minutes of real setup, so the two
+    # suites are split to keep either inside this bound rather than to
+    # make the whole job faster.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest, ubuntu-24.04-arm]
+        # `model` is every case the policy model answers without building
+        # a container; `container` is the rest - each one stands up a
+        # sandbox at the host's maximum level, which dominates the run.
+        suite: [model, container]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-test-setup
@@ -578,19 +586,35 @@ jobs:
       # The adversarial suites: each case tries an escape and passes
       # when the attempt is denied. A backend that stops enforcing
       # fails here rather than in a user's build.
-      - name: Policy model and enforcement
+      - name: Policy model
+        if: matrix.suite == 'model'
         shell: bash
         env:
           RUST_BACKTRACE: "full"
         run: |
           "$CARGO_BIN" test --no-fail-fast --lib --tests \
-            -p gossamer-sandbox -- --nocapture
+            -p gossamer-sandbox -- --nocapture \
+            --skip windows_backend --skip maximum_level
+      - name: Enforcement against a real container
+        if: matrix.suite == 'container'
+        shell: bash
+        env:
+          RUST_BACKTRACE: "full"
+        run: |
+          # The two names the `model` suite skips, run here and nowhere
+          # else. Disjoint filters, so neither case runs twice.
+          "$CARGO_BIN" test --no-fail-fast --tests \
+            -p gossamer-sandbox -- --nocapture maximum_level
+          "$CARGO_BIN" test --no-fail-fast --tests \
+            -p gossamer-sandbox -- --nocapture windows_backend
       - name: The compile-time capability policy
+        if: matrix.suite == 'model'
         shell: bash
         run: |
           "$CARGO_BIN" test --no-fail-fast -p gossamer-cli \
             --test comptime_capability_policy -- --nocapture
       - name: The build sandbox policy
+        if: matrix.suite == 'model'
         shell: bash
         run: |
           "$CARGO_BIN" test --no-fail-fast -p gossamer-driver \
