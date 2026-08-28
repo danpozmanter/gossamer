@@ -1072,6 +1072,15 @@ impl<'a> Builder<'a> {
             let local = if arg_is_fn_item {
                 if let Some(params) = callee_param_tys.as_ref() {
                     if let Some(expected) = params.get(idx).copied() {
+                        // Instantiated, because the thunk that adapts a bare
+                        // fn item to the env-taking callable shape is named
+                        // for its signature's register classes. A generic
+                        // `Fn(T) -> U` parameter names the all-integer thunk,
+                        // which hands an `f64` argument over in the integer
+                        // file and reads the result back out of it; the call
+                        // through the environment uses the instantiated
+                        // signature, so the thunk has to as well.
+                        let expected = self.instantiate_param_ty(callee.ty, expected);
                         self.coerce_to_fn_trait_if_needed(local, expected, span)
                     } else {
                         local

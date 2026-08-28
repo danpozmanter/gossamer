@@ -1061,6 +1061,38 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_zip_i64(
     })
 }
 
+/// A share of a closure environment, held for as long as the lazy adapter
+/// that calls it.
+///
+/// A lazy adapter stores its callback's environment and invokes it when the
+/// pipeline is finally consumed, which is after the frame that built the
+/// adapter has dropped its own share. The share taken here is released when
+/// the adapter is.
+struct EnvShare(*const u8);
+
+impl EnvShare {
+    /// Takes a share of `env`, which must be a reference-counted payload.
+    unsafe fn new(env: *const u8) -> Self {
+        unsafe { crate::c_abi::gos_rt_rc_retain(env.cast_mut()) };
+        Self(env)
+    }
+
+    fn ptr(&self) -> *const u8 {
+        self.0
+    }
+}
+
+impl Drop for EnvShare {
+    fn drop(&mut self) {
+        unsafe { crate::c_abi::gos_rt_rc_release(self.0.cast_mut()) };
+    }
+}
+
+// SAFETY: the environment is a reference-counted blob of code addresses and
+// captured values, and the adapter holding this share may be consumed on a
+// different worker thread than the one that built it.
+unsafe impl Send for EnvShare {}
+
 /// Lazy `map(f)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_lazy_iter_map_i64(
@@ -1078,7 +1110,8 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_map_i64(
             return lazy_i64(std::iter::empty());
         }
         let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
-        lazy_i64(upstream.map(move |x| unsafe { f(env, x) }))
+        let share = unsafe { EnvShare::new(env) };
+        lazy_i64(upstream.map(move |x| unsafe { f(share.ptr(), x) }))
     })
 }
 
@@ -1099,7 +1132,8 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_filter_i64(
             return lazy_i64(std::iter::empty());
         }
         let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
-        lazy_tagged(tag, upstream.filter(move |x| unsafe { p(env, *x) }))
+        let share = unsafe { EnvShare::new(env) };
+        lazy_tagged(tag, upstream.filter(move |x| unsafe { p(share.ptr(), *x) }))
     })
 }
 
@@ -1342,7 +1376,8 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_map_f64(
         let Some(f) = (unsafe { lazy_callback::<CallF64F64>(env) }) else {
             return lazy_f64(std::iter::empty());
         };
-        lazy_f64(upstream.map(move |x| unsafe { f(env, x) }))
+        let share = unsafe { EnvShare::new(env) };
+        lazy_f64(upstream.map(move |x| unsafe { f(share.ptr(), x) }))
     })
 }
 
@@ -1357,7 +1392,8 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_map_f64_word(
         let Some(f) = (unsafe { lazy_callback::<CallF64Word>(env) }) else {
             return lazy_i64(std::iter::empty());
         };
-        lazy_i64(upstream.map(move |x| unsafe { f(env, x) }))
+        let share = unsafe { EnvShare::new(env) };
+        lazy_i64(upstream.map(move |x| unsafe { f(share.ptr(), x) }))
     })
 }
 
@@ -1372,7 +1408,8 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_map_word_f64(
         let Some(f) = (unsafe { lazy_callback::<CallWordF64>(env) }) else {
             return lazy_f64(std::iter::empty());
         };
-        lazy_f64(upstream.map(move |x| unsafe { f(env, x) }))
+        let share = unsafe { EnvShare::new(env) };
+        lazy_f64(upstream.map(move |x| unsafe { f(share.ptr(), x) }))
     })
 }
 
@@ -1387,7 +1424,8 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_filter_f64(
         let Some(p) = (unsafe { lazy_callback::<PredF64>(env) }) else {
             return lazy_f64(std::iter::empty());
         };
-        lazy_f64(upstream.filter(move |x| unsafe { p(env, *x) }))
+        let share = unsafe { EnvShare::new(env) };
+        lazy_f64(upstream.filter(move |x| unsafe { p(share.ptr(), *x) }))
     })
 }
 

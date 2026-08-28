@@ -60,9 +60,24 @@ runs:
         # clang-tidy / lld / llvm-ar - but NOT `opt.exe` or `llc.exe`, the
         # two binaries our codegen pipeline drives. Pull the full toolchain
         # from MSYS2's `mingw-w64-x86_64-llvm`, preinstalled at `C:\msys64\`.
+        # `rustc` compiles the runtime archive, so its bitcode carries that
+        # LLVM's format and the tools we shell out to have to read it. Linux
+        # and macOS install the matching major outright; MSYS2's LLVM rolls,
+        # so record the major actually selected here - an unreported one is
+        # the difference between a pipeline whose optimiser can be named
+        # after the fact and one whose cannot.
+        $preferred = '22'
+        function Get-LlvmMajor($path) {
+          try {
+            $text = & $path --version 2>$null | Out-String
+            if ($text -match 'LLVM version (\d+)') { return [int]$Matches[1] }
+          } catch { }
+          return $null
+        }
         function Find-LlvmTool($name) {
+          $cands = @()
           $cmd = Get-Command $name -ErrorAction SilentlyContinue
-          if ($cmd) { return $cmd.Source }
+          if ($cmd) { $cands += $cmd.Source }
           foreach ($dir in @(
             'C:\msys64\mingw64\bin',
             'C:\msys64\clang64\bin',
@@ -70,9 +85,14 @@ runs:
             'C:\Program Files (x86)\LLVM\bin'
           )) {
             $cand = Join-Path $dir $name
-            if (Test-Path $cand) { return $cand }
+            if (Test-Path $cand) { $cands += $cand }
           }
-          return $null
+          if (-not $cands) { return $null }
+          foreach ($c in $cands) {
+            $maj = Get-LlvmMajor $c
+            Write-Host "  candidate $c -> LLVM major $(if ($null -eq $maj) { 'unknown' } else { $maj })"
+          }
+          return $cands[0]
         }
         $opt = Find-LlvmTool 'opt.exe'
         $llc = Find-LlvmTool 'llc.exe'
@@ -104,8 +124,12 @@ runs:
           if (-not $opt) { throw "opt.exe not found after MSYS2 install" }
           if (-not $llc) { throw "llc.exe not found after MSYS2 install" }
         }
-        Write-Host "GOS_LLVM_OPT=$opt"
-        Write-Host "GOS_LLC=$llc"
+        $optMajor = Get-LlvmMajor $opt
+        Write-Host "GOS_LLVM_OPT=$opt (LLVM major $optMajor)"
+        Write-Host "GOS_LLC=$llc (LLVM major $(Get-LlvmMajor $llc))"
+        if ($optMajor -ne [int]$preferred) {
+          Write-Host "::warning::opt is LLVM $optMajor but rustc bundles LLVM $preferred; the runtime archive's bitcode is written by rustc's LLVM"
+        }
         "GOS_LLVM_OPT=$opt" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
         "GOS_LLC=$llc"      | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
     - uses: dtolnay/rust-toolchain@1.95.0

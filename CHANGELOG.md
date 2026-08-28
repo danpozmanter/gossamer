@@ -170,6 +170,23 @@
   naming a path an enclosing grant already reaches with at least the same
   access is redundant, and an inheritable ACE costs a full walk of the subtree
   when it is written and again when it is removed.
+- A bare `fn` or non-capturing closure passed to a generic callable parameter
+  reaches its body with the arguments it was given. The thunk that adapts such
+  a value to the environment-taking calling convention is named for its
+  signature's register classes, and the name was built from the callee's
+  declared `Fn(T) -> U` rather than the types the call site instantiates, so
+  every generic callable named the all-integer thunk. An `f64` then crossed in
+  the integer file: `gmap(#[1.0, 4.0], halve)` answered `#[0.0, 0.0]` and
+  `combine(1.5, 2.0, |a, b| a + b)` answered `1.5`. SysV hid it, because an
+  environment pointer occupies an integer register there and leaves the float
+  in the one the body reads; under the Win64 convention the two files share
+  one index, so the environment displaces the float by a register.
+- A lazy iterator's callback outlives the call that built it. `map` and
+  `filter` store the callback's environment and invoke it when the pipeline is
+  consumed, but the environment's only share was dropped as the constructor
+  returned, so `(0..n).map(f).filter(p).collect()` read the body address out of
+  freed memory and called whatever it found there. Each adapter now holds a
+  share for as long as it can call.
 - A call whose arguments need a stack temporary no longer grows the frame on
   every trip through a loop around it. The temporaries a call site spills into
   - a Win64 `i128` carrier argument, a channel send's element slot, a wide

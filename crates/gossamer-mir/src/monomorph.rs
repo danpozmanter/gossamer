@@ -367,7 +367,7 @@ fn substs_are_const_only(substs: &Substs) -> bool {
         .all(|arg| matches!(arg, GenericArg::Const(_)))
 }
 
-fn subst_type_arguments(substs: &Substs) -> Vec<Option<Ty>> {
+pub(crate) fn subst_type_arguments(substs: &Substs) -> Vec<Option<Ty>> {
     substs
         .as_slice()
         .iter()
@@ -993,7 +993,7 @@ fn substs_need_concrete_copy(substs: &Substs, tcx: &TyCtxt) -> bool {
 /// Substitutes a specialisation's concrete types for the template's type
 /// parameters within `ty`, recursing through composite types. A `Param` whose
 /// position holds a const argument (`subst_tys[i] == None`) is left unchanged.
-fn subst_param_ty(tcx: &mut TyCtxt, ty: Ty, subst_tys: &[Option<Ty>]) -> Ty {
+pub(crate) fn subst_param_ty(tcx: &mut TyCtxt, ty: Ty, subst_tys: &[Option<Ty>]) -> Ty {
     let kind = tcx.kind_of(ty).clone();
     match kind {
         TyKind::Param { idx, .. } => subst_tys

@@ -80,6 +80,25 @@ impl<'a> Builder<'a> {
         dest
     }
 
+    /// `param` with the generic arguments the call site instantiated
+    /// `callee_ty` with substituted into it.
+    ///
+    /// A callee's declared parameter types name its own type parameters, so
+    /// a `Fn(T) -> U` parameter reaches the argument lowering as the
+    /// template wrote it. Anything that reads register classes off that
+    /// signature needs the types the call site actually passes.
+    pub(crate) fn instantiate_param_ty(&mut self, callee_ty: Ty, param: Ty) -> Ty {
+        let gossamer_types::TyKind::FnDef { substs, .. } = self.tcx.kind_of(callee_ty).clone()
+        else {
+            return param;
+        };
+        if substs.as_slice().is_empty() {
+            return param;
+        }
+        let subst_tys = crate::monomorph::subst_type_arguments(&substs);
+        crate::monomorph::subst_param_ty(self.tcx, param, &subst_tys)
+    }
+
     pub(crate) fn coerce_to_fn_trait_if_needed(
         &mut self,
         source_local: Local,
