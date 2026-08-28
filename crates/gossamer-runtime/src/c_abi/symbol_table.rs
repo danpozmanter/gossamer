@@ -492,6 +492,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_bool_to_str as *const u8,
         ),
         (
+            "gos_rt_deque_assign",
+            crate::c_abi::deque::gos_rt_deque_assign as *const u8,
+        ),
+        (
             "gos_rt_deque_clear",
             crate::c_abi::deque::gos_rt_deque_clear as *const u8,
         ),
@@ -2945,6 +2949,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_main_exit_code_err as *const u8,
         ),
         (
+            "gos_rt_map_assign",
+            crate::c_abi::gos_rt_map_assign as *const u8,
+        ),
+        (
             "gos_rt_map_clear",
             crate::c_abi::gos_rt_map_clear as *const u8,
         ),
@@ -4633,6 +4641,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_set_args",
             crate::c_abi::gos_rt_set_args as *const u8,
+        ),
+        (
+            "gos_rt_set_assign",
+            crate::c_abi::gos_rt_set_assign as *const u8,
         ),
         (
             "gos_rt_set_clear",
@@ -6828,6 +6840,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_insert_at",
             crate::c_abi::gos_rt_vec_insert_at as *const u8,
+        ),
+        (
+            "gos_rt_vec_assign",
+            crate::c_abi::gos_rt_vec_assign as *const u8,
         ),
         (
             "gos_rt_vec_clear",

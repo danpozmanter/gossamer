@@ -228,6 +228,7 @@ feature-testing-examples/module_impl_ordering.gos	no hot body
 feature-testing-examples/module_same_fn_names.gos	no hot body
 feature-testing-examples/module_scoped_type_names.gos	entry shape
 feature-testing-examples/mut_param_is_a_copy.gos	no hot body
+feature-testing-examples/mut_ref_container_assign.gos	&mut aggregate param
 feature-testing-examples/mut_ref_container_params.gos	&mut aggregate param
 feature-testing-examples/mut_ref_params.gos	callable local
 feature-testing-examples/mut_ref_scalar_writeback.gos	no hot body
