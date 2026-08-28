@@ -1566,6 +1566,29 @@ pub(super) fn lower_terminator(
             // this bucket). `noreturn` intrinsics (panic) are
             // responsible for terminating the block themselves; the
             // fall-through `jump target` is skipped.
+            // Before the general intrinsic lowering, which answers for every
+            // symbol the ABI registry names and would take these two with it:
+            // a word-stride Vec/Slice element get/set inlines to a load/store
+            // off the `GosVec` header, mirroring the LLVM backend so a
+            // JIT-compiled hot index loop keeps the data pointer and the
+            // length in registers instead of calling out per element.
+            if let Operand::Const(ConstValue::Str(name)) = callee {
+                if try_lower_vec_index_inline(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    &*blocks,
+                    name,
+                    args,
+                    destination,
+                    target.as_ref(),
+                    intrinsics,
+                )? {
+                    return Ok(());
+                }
+            }
             if let Some(name) = callee_prelude_name(callee) {
                 let outcome = lower_intrinsic_outcome(
                     &name,
@@ -1590,27 +1613,6 @@ pub(super) fn lower_terminator(
                             }
                         }
                     }
-                    return Ok(());
-                }
-            }
-            // Word-stride Vec/Slice element get/set: inline the load/store off
-            // the GosVec header instead of an opaque per-element runtime call,
-            // mirroring the LLVM backend so a JIT-compiled hot index loop keeps
-            // the data-pointer / length in registers.
-            if let Operand::Const(ConstValue::Str(name)) = callee {
-                if try_lower_vec_index_inline(
-                    module,
-                    builder,
-                    locals,
-                    body,
-                    tcx,
-                    &*blocks,
-                    name,
-                    args,
-                    destination,
-                    target.as_ref(),
-                    intrinsics,
-                )? {
                     return Ok(());
                 }
             }

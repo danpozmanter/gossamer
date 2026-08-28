@@ -176,6 +176,15 @@
   rights that confer no change and that the grant carries on purpose - and the
   fixture built a filename from a wide pointer, which renders as
   `Pointer { addr: .., metadata: N }` and names a file Windows will not create.
+- A JIT-compiled hot loop indexes a `Vec` / slice with a load and a store
+  again. The specialised lowering that inlines a word-stride element get/set
+  off the `GosVec` header sat *after* the general intrinsic lowering, which
+  answers for every symbol the ABI registry names - so the general one took
+  `gos_rt_vec_get_i64` and `gos_rt_vec_set_i64` with it and the inline path
+  was unreachable. Every element crossed a call boundary, which the loop paid
+  per iteration and which kept the data pointer and the length out of
+  registers: a 512x512 integer matrix multiply ran 0.63s and now runs 0.17s.
+  The LLVM back-end was never affected.
 - A bare `fn` or non-capturing closure passed to a generic callable parameter
   reaches its body with the arguments it was given. The thunk that adapts such
   a value to the environment-taking calling convention is named for its

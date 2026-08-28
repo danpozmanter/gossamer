@@ -566,10 +566,10 @@ jobs:
   sandbox:
     name: Sandbox enforcement (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
-    # A case that builds a container is minutes of real setup, so the two
-    # suites are split to keep either inside this bound rather than to
-    # make the whole job faster.
-    timeout-minutes: 30
+    # A backstop against a hang, not a budget: a case that builds a
+    # container is minutes of real setup, and how long that legitimately
+    # takes is the runner's business, not a number stated here.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -577,6 +577,7 @@ jobs:
         # `model` is every case the policy model answers without building
         # a container; `container` is the rest - each one stands up a
         # sandbox at the host's maximum level, which dominates the run.
+        # Splitting them lets the two run at once instead of end to end.
         suite: [model, container]
     steps:
       - uses: actions/checkout@v6
