@@ -1,0 +1,41 @@
+// An array's length is part of its type, so a `const` naming one is a length:
+// the same compile-time constant a literal is, in every spelling the length
+// can be written and through every pass that asks how long the array is.
+
+const N: i64 = 4
+const WIDTH: usize = 3
+
+fn total<const K: usize>(xs: [i64; K]) -> i64 {
+    let mut sum = 0
+    for x in xs {
+        sum += x
+    }
+    sum
+}
+
+fn main() {
+    let inferred = [7; N]
+    println("{:?}", inferred)
+
+    let annotated: [i64; N] = [9; N]
+    println("{:?}", annotated)
+
+    let widened = Vec::from([0; N])
+    println("{:?}", widened)
+
+    let grown = #[5; N]
+    println("{:?}", grown)
+
+    let row = [1; WIDTH]
+    println("{:?} {} {}", row, row.len(), total(row))
+
+    // The length reaches a const-generic parameter from a binding, not only
+    // from an array written at the call site.
+    println("{}", total(annotated))
+
+    let mut walked = 0
+    for x in [6; WIDTH] {
+        walked += x
+    }
+    println("{}", walked)
+}

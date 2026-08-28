@@ -705,3 +705,117 @@ fn main() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Gates reclamation of a capturing closure's environment on the compiled
+/// tiers.
+///
+/// Every iteration coerces a fresh closure to a callback type, which allocates
+/// an environment holding the capture. That allocation carries a
+/// reference-counting header, so the ordinary drop passes own it and peak
+/// memory is a property of the program rather than of how long it runs.
+///
+/// The bound is scale-invariance: the same program is run at two iteration
+/// counts sixteen times apart, and an environment leaked per iteration grows
+/// peak memory with that count. Comparing a run against itself is what keeps
+/// the gate honest - a non-capturing closure allocates an environment too, so
+/// it would leak alongside the capturing one and never register as a control.
+#[test]
+fn compiled_capturing_closure_env_does_not_grow_with_iterations() {
+    if !gnu_time_available() {
+        return;
+    }
+    let dir = env::temp_dir().join(format!("gos-closure-env-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let write = |stem: &str, iterations: u64| {
+        let source = dir.join(format!("{stem}.gos"));
+        std::fs::write(
+            &source,
+            format!(
+                "
+fn apply(x: i64, f: Fn(i64) -> i64) -> i64 {{ f(x) }}
+
+fn main() {{
+    let mut total = 0
+    for i in 0..{iterations} {{
+        let k = i
+        total += apply(i, |v| v + k)
+    }}
+    println(\"{{}}\", total)
+}}
+"
+            ),
+        )
+        .unwrap();
+        source
+    };
+    let short = write("short", 250_000);
+    let long = write("long", 4_000_000);
+
+    for release in [false, true] {
+        let rss = |source: &std::path::Path, stem: &str| -> u64 {
+            let mut cmd = Command::new(gos_bin());
+            cmd.arg("build");
+            if release {
+                cmd.arg("--release");
+            }
+            cmd.arg(source);
+            let build = cmd.output().expect("spawn gos build");
+            assert!(
+                build.status.success(),
+                "build failed (release={release}): {}",
+                String::from_utf8_lossy(&build.stderr)
+            );
+            let profile = if release { "release" } else { "debug" };
+            let bin = dir
+                .join("target")
+                .join(profile)
+                .join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
+            let out = Command::new("/usr/bin/time")
+                .arg("-v")
+                .arg(&bin)
+                .output()
+                .expect("spawn /usr/bin/time");
+            assert!(
+                out.status.success(),
+                "{stem} failed (release={release}): {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            parse_max_rss_kb(&stderr)
+                .unwrap_or_else(|| panic!("could not parse Maximum resident set size:\n{stderr}"))
+        };
+
+        let short_kb = rss(&short, "short");
+        let long_kb = rss(&long, "long");
+        // Sixteen times the iterations. A leak tracks that factor; a reclaimed
+        // environment leaves the two runs within allocator noise of each
+        // other, so a generous doubling still separates the two outcomes.
+        let cap_kb = short_kb.max(2048) * 2;
+        assert!(
+            long_kb < cap_kb,
+            "peak RSS grew from {short_kb} KiB at 250k iterations to {long_kb} KiB \
+             at 4M (release={release}): the environment each iteration \
+             allocates is not being reclaimed"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Whether this host has GNU `/usr/bin/time -v`, which the RSS gates read the
+/// peak resident set from.
+fn gnu_time_available() -> bool {
+    if !std::path::Path::new("/usr/bin/time").exists() {
+        eprintln!("skipping: /usr/bin/time not available on this host");
+        return false;
+    }
+    let probe = Command::new("/usr/bin/time").arg("-v").arg("true").output();
+    let is_gnu = probe
+        .as_ref()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stderr).contains("Maximum resident set size"));
+    if !is_gnu {
+        eprintln!("skipping: /usr/bin/time does not support GNU -v on this host");
+    }
+    is_gnu
+}

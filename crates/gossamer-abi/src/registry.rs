@@ -1,6 +1,7 @@
 use crate::types::AbiType::{F64, I8, I32, I64, I128, Ptr, Void};
+use crate::types::ElemClass::{Float, Ptr as PtrElem, Word};
 use crate::types::Tier::{Both, Cranelift, Llvm};
-use crate::types::{AbiSig, RuntimeEntry};
+use crate::types::{AbiSig, CombinatorAbi, ElemClass, RuntimeEntry};
 
 /// Build a [`RuntimeEntry`] from name, typed params, return type, tier, and docs.
 macro_rules! rt {
@@ -15,6 +16,7 @@ macro_rules! rt {
             docs: $docs,
             noreturn: false,
             unwinds: false,
+            combinator: None,
         }
     };
 }
@@ -34,6 +36,7 @@ macro_rules! rt_nr {
             docs: $docs,
             noreturn: true,
             unwinds: false,
+            combinator: None,
         }
     };
 }
@@ -55,6 +58,7 @@ macro_rules! rt_unwind {
             docs: $docs,
             noreturn: false,
             unwinds: true,
+            combinator: None,
         }
     };
 }
@@ -74,6 +78,34 @@ macro_rules! rt_nr_unwind {
             docs: $docs,
             noreturn: true,
             unwinds: true,
+            combinator: None,
+        }
+    };
+}
+
+/// Like [`rt!`] but declares the element crossing of a sequence-combinator
+/// shim: the combinator it implements, the class it reads its input buffer
+/// as, and the class of the element it produces where the symbol
+/// distinguishes one. The MIR lowering derives the symbol from that triple
+/// instead of spelling it, so a crossing with no shim behind it is a missing
+/// registry row rather than a wrong call or an undefined symbol at link time.
+macro_rules! rt_iter {
+    ($name:literal, ($($p:expr),*) -> $ret:expr, $tier:expr, $comb:literal, $elem:expr, $result:expr, $docs:literal) => {
+        RuntimeEntry {
+            name: $name,
+            sig: AbiSig {
+                params: &[$($p),*],
+                ret: $ret,
+            },
+            tier: $tier,
+            docs: $docs,
+            noreturn: false,
+            unwinds: false,
+            combinator: Some(CombinatorAbi {
+                combinator: $comb,
+                elem: $elem,
+                result: $result,
+            }),
         }
     };
 }
@@ -625,6 +657,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_http_request_path_value", (Ptr, Ptr) -> Ptr, Cranelift, "Return a router-captured path parameter by name, or empty string."),
     rt!("gos_rt_http_request_peer_addr", (Ptr) -> Ptr, Cranelift, "Return the peer `host:port` of an HTTP request."),
     rt!("gos_rt_http_request_query", (Ptr) -> Ptr, Cranelift, "Return the query string of an HTTP request."),
+    rt!("gos_rt_http_request_query_pairs", (Ptr) -> Ptr, Cranelift, "Return an inbound HTTP request's query string parsed into decoded (name, value) pairs."),
     rt!("gos_rt_http_request_raw_body", (Ptr) -> Ptr, Cranelift, "Return the raw body bytes of an HTTP request as a Vec<u8>."),
     rt!("gos_rt_http_request_send", (Ptr) -> I128, Cranelift, "Execute an HTTP request and return Result<Response, errors::Error>."),
     rt!("gos_rt_http_request_set_header", (Ptr, Ptr, Ptr) -> Void, Cranelift, "Set a header on an HTTP request."),
@@ -702,87 +735,125 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_io_string_reader", (Ptr) -> I64, Both, "io::string_reader(text) -> Reader handle over an in-memory buffer."),
     rt!("gos_rt_io_tee_reader", (I64, I64) -> I64, Both, "io::tee_reader(src, sink) -> Reader handle mirroring every byte read into `sink`."),
     rt!("gos_rt_io_write_str", (I64, Ptr) -> I64, Both, "io::write(w, text) -> i64; bytes accepted by a writer handle."),
-    rt!("gos_rt_iter_all_f64", (Ptr, Ptr) -> I64, Both, "iter::all over Vec<f64>: the predicate receives each element in the float ABI."),
-    rt!("gos_rt_iter_all_i64", (Ptr, Ptr) -> I64, Both, "iter::all over Vec<i64>: returns 1 if every element satisfies the closure predicate."),
-    rt!("gos_rt_iter_all_ptr", (Ptr, Ptr) -> I64, Both, "iter::all over Vec elements passed by slot pointer, such as user structs."),
-    rt!("gos_rt_iter_any_f64", (Ptr, Ptr) -> I64, Both, "iter::any over Vec<f64>: slot bits reach the predicate as a float value."),
-    rt!("gos_rt_iter_any_i64", (Ptr, Ptr) -> I64, Both, "iter::any over Vec<i64>: returns 1 if some element satisfies the closure predicate."),
-    rt!("gos_rt_iter_any_ptr", (Ptr, Ptr) -> I64, Both, "iter::any over Vec elements passed by slot pointer, such as user structs."),
-    rt!("gos_rt_iter_chain_i64", (Ptr, Ptr) -> Ptr, Both, "iter::chain over Vec<i64>: returns a fresh Vec<i64> concatenating both inputs."),
-    rt!("gos_rt_iter_chunk_by_size_i64", (I64, Ptr) -> Ptr, Both, "iter::chunks(xs, n) -> Vec<Vec<i64>> of consecutive width-n chunks (final may be short)."),
+    rt_iter!("gos_rt_iter_all_f64", (Ptr, Ptr) -> I64, Both, "all", Float, None, "iter::all over Vec<f64>: the predicate receives each element in the float ABI."),
+    rt_iter!("gos_rt_iter_all_i64", (Ptr, Ptr) -> I64, Both, "all", Word, None, "iter::all over Vec<i64>: returns 1 if every element satisfies the closure predicate."),
+    rt_iter!("gos_rt_iter_all_ptr", (Ptr, Ptr) -> I64, Both, "all", PtrElem, None, "iter::all over Vec elements passed by slot pointer, such as user structs."),
+    rt_iter!("gos_rt_iter_any_f64", (Ptr, Ptr) -> I64, Both, "any", Float, None, "iter::any over Vec<f64>: slot bits reach the predicate as a float value."),
+    rt_iter!("gos_rt_iter_any_i64", (Ptr, Ptr) -> I64, Both, "any", Word, None, "iter::any over Vec<i64>: returns 1 if some element satisfies the closure predicate."),
+    rt_iter!("gos_rt_iter_any_ptr", (Ptr, Ptr) -> I64, Both, "any", PtrElem, None, "iter::any over Vec elements passed by slot pointer, such as user structs."),
+    rt_iter!("gos_rt_iter_chain_i64", (Ptr, Ptr) -> Ptr, Both, "chain", Word, None, "iter::chain over Vec<i64>: returns a fresh Vec<i64> concatenating both inputs."),
+    rt_iter!("gos_rt_iter_chunk_by_size_i64", (I64, Ptr) -> Ptr, Both, "chunks", Word, None, "iter::chunks(xs, n) -> Vec<Vec<i64>> of consecutive width-n chunks (final may be short)."),
     rt!("gos_rt_iter_count", (Ptr) -> I64, Both, "iter::count: return the element length of the input Vec."),
-    rt!("gos_rt_iter_count_by_i64", (Ptr, Ptr) -> Ptr, Both, "iter::count_by over Vec<i64> -> HashMap<i64, i64> of occurrence counts."),
-    rt!("gos_rt_iter_dedup_i64", (Ptr) -> Ptr, Both, "iter::dedup over Vec<i64>: returns a fresh Vec dropping consecutive duplicates."),
-    rt!("gos_rt_iter_enumerate_i64", (Ptr) -> Ptr, Both, "iter::enumerate over Vec<i64> -> Vec<(i64, i64)> of (index, value)."),
-    rt!("gos_rt_iter_filter_f64", (Ptr, Ptr) -> Ptr, Both, "iter::filter over Vec<f64>: keeps elements for which the float-ABI predicate returns true."),
-    rt!("gos_rt_iter_filter_i64", (Ptr, Ptr) -> Ptr, Both, "iter::filter over Vec<i64>: keep elements for which the closure returns nonzero."),
-    rt!("gos_rt_iter_filter_map_i64", (Ptr, Ptr) -> Ptr, Both, "iter::filter_map over Vec<i64>: keep the Some payloads of f(x)."),
-    rt!("gos_rt_iter_filter_ptr", (Ptr, Ptr) -> Ptr, Both, "iter::filter over multi-slot aggregate elements: the predicate receives each element storage address and kept elements are copied whole."),
-    rt!("gos_rt_iter_find_i64", (Ptr, Ptr) -> I64, Both, "iter::find over Vec<i64>: returns the first matching element (0 when none - pair with gos_rt_iter_find_i64_flag)."),
-    rt!("gos_rt_iter_find_i64_flag", (Ptr, Ptr) -> I64, Both, "Companion flag for gos_rt_iter_find_i64: returns 1 when some element matched, 0 otherwise."),
-    rt!("gos_rt_iter_find_map_i64", (Ptr, Ptr) -> I128, Both, "iter::find_map over Vec<i64> -> Option<i64>: first Some payload of f(x)."),
-    rt!("gos_rt_iter_flat_map_arr_i64", (Ptr, Ptr, I64) -> Ptr, Both, "iter::flat_map over Vec<i64> for fixed-array-returning callbacks: each result is a raw buffer of arr_len i64 slots."),
-    rt!("gos_rt_iter_flat_map_i64", (Ptr, Ptr) -> Ptr, Both, "iter::flat_map over Vec<i64>: concatenate the Vec results of f(x)."),
-    rt!("gos_rt_iter_flatten_i64", (Ptr) -> Ptr, Both, "iter::flatten over Vec<Vec<i64>> -> Vec<i64>: concatenate every inner vec."),
-    rt!("gos_rt_iter_fold_f64", (F64, Ptr, Ptr) -> F64, Both, "iter::fold over Vec<f64> with an f64 accumulator."),
-    rt!("gos_rt_iter_fold_f64_ptr", (F64, Ptr, Ptr) -> F64, Both, "iter::fold over aggregate elements with an f64 accumulator."),
-    rt!("gos_rt_iter_fold_f64_word", (F64, Ptr, Ptr) -> F64, Both, "iter::fold over Vec<i64> with an f64 accumulator."),
-    rt!("gos_rt_iter_fold_i64", (I64, Ptr, Ptr) -> I64, Both, "iter::fold over Vec<i64> with i64 accumulator and a (acc, x) -> acc closure."),
-    rt!("gos_rt_iter_fold_ptr", (I64, Ptr, Ptr) -> I64, Both, "iter::fold over aggregate elements with an i64 accumulator."),
-    rt!("gos_rt_iter_fold_word_f64", (I64, Ptr, Ptr) -> I64, Both, "iter::fold over Vec<f64> with an i64 accumulator."),
-    rt!("gos_rt_iter_for_each_f64", (Ptr, Ptr) -> Void, Both, "iter::for_each over Vec<f64>: invokes the float-ABI closure once per element."),
-    rt!("gos_rt_iter_for_each_i64", (Ptr, Ptr) -> Void, Both, "iter::for_each over Vec<i64>: invokes the closure once per element."),
-    rt!("gos_rt_iter_for_each_ptr", (Ptr, Ptr) -> Void, Both, "iter::for_each over Vec<*ptr> (Strings / aggregates): invokes the closure once per element."),
-    rt!("gos_rt_iter_group_by_i64", (Ptr, Ptr) -> Ptr, Both, "iter::chunk_by over Vec<i64> -> HashMap<i64, [i64]>."),
-    rt!("gos_rt_iter_map_f64", (Ptr, Ptr) -> Ptr, Both, "iter::map over Vec<f64> -> Vec<f64>: reinterprets each element's bits as f64, calls the float-ABI closure, and stores f(x)'s bits."),
-    rt!("gos_rt_iter_map_f64_word", (Ptr, Ptr, I64, I64) -> Ptr, Both, "iter::map over Vec<f64> -> Vec<i64/ptr>: f64 element, integer-register result. The trailing arguments are the declared width of the mapped element and whether the callback answers its storage address."),
-    rt!("gos_rt_iter_map_i64", (Ptr, Ptr, I64, I64) -> Ptr, Both, "iter::map over Vec<i64>: returns a fresh Vec<i64> of f(x). The trailing arguments are the declared width of the mapped element and whether the callback answers its storage address."),
-    rt!("gos_rt_iter_map_ptr_f64", (Ptr, Ptr) -> Ptr, Both, "iter::map over aggregate elements producing f64."),
-    rt!("gos_rt_iter_map_ptr_i64", (Ptr, Ptr, I64, I64) -> Ptr, Both, "iter::map over aggregate elements: callbacks receive each element's storage address. The trailing arguments are the declared width of the mapped element and whether the callback answers its storage address."),
-    rt!("gos_rt_iter_map_word_f64", (Ptr, Ptr) -> Ptr, Both, "iter::map over Vec<i64/ptr> -> Vec<f64>: integer-register element, f64 result."),
-    rt!("gos_rt_iter_max_by_i64", (Ptr, Ptr) -> I128, Both, "iter::max_by over Vec<i64> -> Option<i64>."),
-    rt!("gos_rt_iter_max_by_key_f64", (Ptr, Ptr, I64) -> I128, Both, "iter::max_by_key over Vec<f64> -> Option<f64>. The trailing argument is whether the key callback answers an f64."),
-    rt!("gos_rt_iter_max_by_key_i64", (Ptr, Ptr, I64) -> I128, Both, "iter::max_by_key over Vec<i64> -> Option<i64>. The trailing argument is whether the key callback answers an f64."),
-    rt!("gos_rt_iter_max_by_key_ptr", (Ptr, Ptr, I64) -> I128, Both, "iter::max_by_key over aggregate elements; callbacks receive the element storage address. The trailing argument is whether the key callback answers an f64."),
-    rt!("gos_rt_iter_max_f64", (Ptr) -> I128, Both, "iter::max over Vec<f64> -> Option<f64> (None for empty input)."),
-    rt!("gos_rt_iter_max_i64", (Ptr) -> I128, Both, "iter::max over Vec<i64> -> Option<i64> (None for empty input)."),
-    rt!("gos_rt_iter_min_by_i64", (Ptr, Ptr) -> I128, Both, "iter::min_by over Vec<i64> -> Option<i64>."),
-    rt!("gos_rt_iter_min_by_key_f64", (Ptr, Ptr, I64) -> I128, Both, "iter::min_by_key over Vec<f64> -> Option<f64>. The trailing argument is whether the key callback answers an f64."),
-    rt!("gos_rt_iter_min_by_key_i64", (Ptr, Ptr, I64) -> I128, Both, "iter::min_by_key over Vec<i64> -> Option<i64>. The trailing argument is whether the key callback answers an f64."),
-    rt!("gos_rt_iter_min_by_key_ptr", (Ptr, Ptr, I64) -> I128, Both, "iter::min_by_key over aggregate elements; callbacks receive the element storage address. The trailing argument is whether the key callback answers an f64."),
-    rt!("gos_rt_iter_min_f64", (Ptr) -> I128, Both, "iter::min over Vec<f64> -> Option<f64> (None for empty input)."),
-    rt!("gos_rt_iter_min_i64", (Ptr) -> I128, Both, "iter::min over Vec<i64> -> Option<i64> (None for empty input)."),
-    rt!("gos_rt_iter_pairwise_i64", (Ptr) -> Ptr, Both, "iter::pairwise over Vec<i64> -> Vec<(i64, i64)> of successive overlapping pairs."),
-    rt!("gos_rt_iter_partition_i64", (Ptr, Ptr) -> Ptr, Both, "iter::partition over Vec<i64> -> ([i64], [i64]) by-value pair."),
-    rt!("gos_rt_iter_position_i64", (Ptr, Ptr) -> I128, Both, "iter::position over Vec<i64> -> Option<i64>: index of the first match."),
-    rt!("gos_rt_iter_position_ptr", (Ptr, Ptr) -> I128, Both, "iter::position over Vec elements passed by slot pointer, such as user structs."),
-    rt!("gos_rt_iter_product_by_i64", (Ptr, Ptr) -> I64, Both, "iter::product_by over Vec<i64>: product of f(x)."),
-    rt!("gos_rt_iter_product_f64", (Ptr) -> F64, Both, "iter::product over Vec<f64>."),
-    rt!("gos_rt_iter_product_i64", (Ptr) -> I64, Both, "iter::product over Vec<i64> with wrapping multiplication."),
+    rt_iter!("gos_rt_iter_count_by_f64", (Ptr, Ptr) -> Ptr, Both, "count_by", Float, None, "iter::count_by(f, xs) - a map from f(x) to the number of elements."),
+    rt_iter!("gos_rt_iter_count_by_i64", (Ptr, Ptr) -> Ptr, Both, "count_by", Word, None, "iter::count_by(f, xs) - a map from f(x) to the number of elements."),
+    rt_iter!("gos_rt_iter_count_by_ptr", (Ptr, Ptr) -> Ptr, Both, "count_by", PtrElem, None, "iter::count_by(f, xs) - a map from f(x) to the number of elements."),
+    rt_iter!("gos_rt_iter_dedup_i64", (Ptr, Ptr, I64) -> Ptr, Both, "dedup", Word, None, "iter::dedup: a fresh Vec dropping consecutive duplicates. The trailing arguments are the element ordering descriptor and whether one is present; without one the element bytes are compared."),
+    rt_iter!("gos_rt_iter_enumerate_i64", (Ptr) -> Ptr, Both, "enumerate", Word, None, "iter::enumerate over Vec<i64> -> Vec<(i64, i64)> of (index, value)."),
+    rt_iter!("gos_rt_iter_filter_f64", (Ptr, Ptr) -> Ptr, Both, "filter", Float, None, "iter::filter over Vec<f64>: keeps elements for which the float-ABI predicate returns true."),
+    rt_iter!("gos_rt_iter_filter_i64", (Ptr, Ptr) -> Ptr, Both, "filter", Word, None, "iter::filter over Vec<i64>: keep elements for which the closure returns nonzero."),
+    rt_iter!("gos_rt_iter_filter_map_f64", (Ptr, Ptr, I64, I64) -> Ptr, Both, "filter_map", Float, None, "iter::filter_map(f, xs) - the Some payloads of f(x). The trailing arguments are the declared width of the kept payload and whether the callback answers its storage address."),
+    rt_iter!("gos_rt_iter_filter_map_i64", (Ptr, Ptr, I64, I64) -> Ptr, Both, "filter_map", Word, None, "iter::filter_map(f, xs) - the Some payloads of f(x). The trailing arguments are the declared width of the kept payload and whether the callback answers its storage address."),
+    rt_iter!("gos_rt_iter_filter_map_ptr", (Ptr, Ptr, I64, I64) -> Ptr, Both, "filter_map", PtrElem, None, "iter::filter_map(f, xs) - the Some payloads of f(x). The trailing arguments are the declared width of the kept payload and whether the callback answers its storage address."),
+    rt_iter!("gos_rt_iter_filter_ptr", (Ptr, Ptr) -> Ptr, Both, "filter", PtrElem, None, "iter::filter over multi-slot aggregate elements: the predicate receives each element storage address and kept elements are copied whole."),
+    rt_iter!("gos_rt_iter_find_f64", (Ptr, Ptr) -> I64, Both, "find", Float, None, "iter::find(p, xs) - the first matching element (0 when none; pair with the flag shim)."),
+    rt_iter!("gos_rt_iter_find_f64_flag", (Ptr, Ptr) -> I64, Both, "find_flag", Float, None, "Companion flag for the iter::find shims: 1 when some element matched."),
+    rt_iter!("gos_rt_iter_find_i64", (Ptr, Ptr) -> I64, Both, "find", Word, None, "iter::find(p, xs) - the first matching element (0 when none; pair with the flag shim)."),
+    rt_iter!("gos_rt_iter_find_i64_flag", (Ptr, Ptr) -> I64, Both, "find_flag", Word, None, "Companion flag for the iter::find shims: 1 when some element matched."),
+    rt_iter!("gos_rt_iter_find_map_f64", (Ptr, Ptr) -> I128, Both, "find_map", Float, None, "iter::find_map(f, xs) -> Option<U> - the first Some payload of f(x)."),
+    rt_iter!("gos_rt_iter_find_map_i64", (Ptr, Ptr) -> I128, Both, "find_map", Word, None, "iter::find_map(f, xs) -> Option<U> - the first Some payload of f(x)."),
+    rt_iter!("gos_rt_iter_find_map_ptr", (Ptr, Ptr) -> I128, Both, "find_map", PtrElem, None, "iter::find_map(f, xs) -> Option<U> - the first Some payload of f(x)."),
+    rt_iter!("gos_rt_iter_find_ptr", (Ptr, Ptr) -> I64, Both, "find", PtrElem, None, "iter::find(p, xs) - the first matching element (0 when none; pair with the flag shim)."),
+    rt_iter!("gos_rt_iter_find_ptr_flag", (Ptr, Ptr) -> I64, Both, "find_flag", PtrElem, None, "Companion flag for the iter::find shims: 1 when some element matched."),
+    rt_iter!("gos_rt_iter_flat_map_arr_f64", (Ptr, Ptr, I64) -> Ptr, Both, "flat_map_arr", Float, None, "iter::flat_map(f, xs) where f answers a fixed array: its slots, concatenated. The trailing argument is that array's length."),
+    rt_iter!("gos_rt_iter_flat_map_arr_i64", (Ptr, Ptr, I64) -> Ptr, Both, "flat_map_arr", Word, None, "iter::flat_map(f, xs) where f answers a fixed array: its slots, concatenated. The trailing argument is that array's length."),
+    rt_iter!("gos_rt_iter_flat_map_arr_ptr", (Ptr, Ptr, I64) -> Ptr, Both, "flat_map_arr", PtrElem, None, "iter::flat_map(f, xs) where f answers a fixed array: its slots, concatenated. The trailing argument is that array's length."),
+    rt_iter!("gos_rt_iter_flat_map_f64", (Ptr, Ptr) -> Ptr, Both, "flat_map", Float, None, "iter::flat_map(f, xs) - the sequences f(x) answers, concatenated."),
+    rt_iter!("gos_rt_iter_flat_map_i64", (Ptr, Ptr) -> Ptr, Both, "flat_map", Word, None, "iter::flat_map(f, xs) - the sequences f(x) answers, concatenated."),
+    rt_iter!("gos_rt_iter_flat_map_ptr", (Ptr, Ptr) -> Ptr, Both, "flat_map", PtrElem, None, "iter::flat_map(f, xs) - the sequences f(x) answers, concatenated."),
+    rt_iter!("gos_rt_iter_flatten_i64", (Ptr) -> Ptr, Both, "flatten", Word, None, "iter::flatten over Vec<Vec<i64>> -> Vec<i64>: concatenate every inner vec."),
+    rt_iter!("gos_rt_iter_fold_f64", (F64, Ptr, Ptr) -> F64, Both, "fold", Float, Some(Float), "iter::fold over Vec<f64> with an f64 accumulator."),
+    rt_iter!("gos_rt_iter_fold_f64_ptr", (F64, Ptr, Ptr) -> F64, Both, "fold", PtrElem, Some(Float), "iter::fold over aggregate elements with an f64 accumulator."),
+    rt_iter!("gos_rt_iter_fold_f64_word", (F64, Ptr, Ptr) -> F64, Both, "fold", Word, Some(Float), "iter::fold over Vec<i64> with an f64 accumulator."),
+    rt_iter!("gos_rt_iter_fold_i64", (I64, Ptr, Ptr) -> I64, Both, "fold", Word, Some(Word), "iter::fold over Vec<i64> with i64 accumulator and a (acc, x) -> acc closure."),
+    rt_iter!("gos_rt_iter_fold_ptr", (I64, Ptr, Ptr) -> I64, Both, "fold", PtrElem, Some(Word), "iter::fold over aggregate elements with an i64 accumulator."),
+    rt_iter!("gos_rt_iter_fold_word_f64", (I64, Ptr, Ptr) -> I64, Both, "fold", Float, Some(Word), "iter::fold over Vec<f64> with an i64 accumulator."),
+    rt_iter!("gos_rt_iter_for_each_f64", (Ptr, Ptr) -> Void, Both, "for_each", Float, None, "iter::for_each over Vec<f64>: invokes the float-ABI closure once per element."),
+    rt_iter!("gos_rt_iter_for_each_i64", (Ptr, Ptr) -> Void, Both, "for_each", Word, None, "iter::for_each over Vec<i64>: invokes the closure once per element."),
+    rt_iter!("gos_rt_iter_for_each_ptr", (Ptr, Ptr) -> Void, Both, "for_each", PtrElem, None, "iter::for_each over Vec<*ptr> (Strings / aggregates): invokes the closure once per element."),
+    rt_iter!("gos_rt_iter_group_by_f64", (Ptr, Ptr) -> Ptr, Both, "chunk_by", Float, None, "iter::chunk_by(f, xs) - the elements grouped into a map keyed by f(x)."),
+    rt_iter!("gos_rt_iter_group_by_i64", (Ptr, Ptr) -> Ptr, Both, "chunk_by", Word, None, "iter::chunk_by(f, xs) - the elements grouped into a map keyed by f(x)."),
+    rt_iter!("gos_rt_iter_group_by_ptr", (Ptr, Ptr) -> Ptr, Both, "chunk_by", PtrElem, None, "iter::chunk_by(f, xs) - the elements grouped into a map keyed by f(x)."),
+    rt_iter!("gos_rt_iter_map_f64", (Ptr, Ptr) -> Ptr, Both, "map", Float, Some(Float), "iter::map over Vec<f64> -> Vec<f64>: reinterprets each element's bits as f64, calls the float-ABI closure, and stores f(x)'s bits."),
+    rt_iter!("gos_rt_iter_map_f64_word", (Ptr, Ptr, I64, I64) -> Ptr, Both, "map", Float, Some(Word), "iter::map over Vec<f64> -> Vec<i64/ptr>: f64 element, integer-register result. The trailing arguments are the declared width of the mapped element and whether the callback answers its storage address."),
+    rt_iter!("gos_rt_iter_map_i64", (Ptr, Ptr, I64, I64) -> Ptr, Both, "map", Word, Some(Word), "iter::map over Vec<i64>: returns a fresh Vec<i64> of f(x). The trailing arguments are the declared width of the mapped element and whether the callback answers its storage address."),
+    rt_iter!("gos_rt_iter_map_ptr_f64", (Ptr, Ptr) -> Ptr, Both, "map", PtrElem, Some(Float), "iter::map over aggregate elements producing f64."),
+    rt_iter!("gos_rt_iter_map_ptr_i64", (Ptr, Ptr, I64, I64) -> Ptr, Both, "map", PtrElem, Some(Word), "iter::map over aggregate elements: callbacks receive each element's storage address. The trailing arguments are the declared width of the mapped element and whether the callback answers its storage address."),
+    rt_iter!("gos_rt_iter_map_word_f64", (Ptr, Ptr) -> Ptr, Both, "map", Word, Some(Float), "iter::map over Vec<i64/ptr> -> Vec<f64>: integer-register element, f64 result."),
+    rt_iter!("gos_rt_iter_max_by_f64", (Ptr, Ptr) -> I128, Both, "max_by", Float, None, "iter::max_by(cmp, xs) -> Option<T> - the largest element by cmp."),
+    rt_iter!("gos_rt_iter_max_by_i64", (Ptr, Ptr) -> I128, Both, "max_by", Word, None, "iter::max_by(cmp, xs) -> Option<T> - the largest element by cmp."),
+    rt_iter!("gos_rt_iter_max_by_key_f64", (Ptr, Ptr, I64) -> I128, Both, "max_by_key", Float, None, "iter::max_by_key(f, xs) -> Option<T> - the element with the largest key. The trailing argument is whether the key callback answers an f64."),
+    rt_iter!("gos_rt_iter_max_by_key_i64", (Ptr, Ptr, I64) -> I128, Both, "max_by_key", Word, None, "iter::max_by_key(f, xs) -> Option<T> - the element with the largest key. The trailing argument is whether the key callback answers an f64."),
+    rt_iter!("gos_rt_iter_max_by_key_ptr", (Ptr, Ptr, I64) -> I128, Both, "max_by_key", PtrElem, None, "iter::max_by_key(f, xs) -> Option<T> - the element with the largest key. The trailing argument is whether the key callback answers an f64."),
+    rt_iter!("gos_rt_iter_max_by_ptr", (Ptr, Ptr) -> I128, Both, "max_by", PtrElem, None, "iter::max_by(cmp, xs) -> Option<T> - the largest element by cmp."),
+    rt_iter!("gos_rt_iter_max_f64", (Ptr) -> I128, Both, "max", Float, None, "iter::max over Vec<f64> -> Option<f64> (None for empty input)."),
+    rt_iter!("gos_rt_iter_max_i64", (Ptr) -> I128, Both, "max", Word, None, "iter::max over Vec<i64> -> Option<i64> (None for empty input)."),
+    rt_iter!("gos_rt_iter_min_by_f64", (Ptr, Ptr) -> I128, Both, "min_by", Float, None, "iter::min_by(cmp, xs) -> Option<T> - the smallest element by cmp."),
+    rt_iter!("gos_rt_iter_min_by_i64", (Ptr, Ptr) -> I128, Both, "min_by", Word, None, "iter::min_by(cmp, xs) -> Option<T> - the smallest element by cmp."),
+    rt_iter!("gos_rt_iter_min_by_key_f64", (Ptr, Ptr, I64) -> I128, Both, "min_by_key", Float, None, "iter::min_by_key(f, xs) -> Option<T> - the element with the smallest key. The trailing argument is whether the key callback answers an f64."),
+    rt_iter!("gos_rt_iter_min_by_key_i64", (Ptr, Ptr, I64) -> I128, Both, "min_by_key", Word, None, "iter::min_by_key(f, xs) -> Option<T> - the element with the smallest key. The trailing argument is whether the key callback answers an f64."),
+    rt_iter!("gos_rt_iter_min_by_key_ptr", (Ptr, Ptr, I64) -> I128, Both, "min_by_key", PtrElem, None, "iter::min_by_key(f, xs) -> Option<T> - the element with the smallest key. The trailing argument is whether the key callback answers an f64."),
+    rt_iter!("gos_rt_iter_min_by_ptr", (Ptr, Ptr) -> I128, Both, "min_by", PtrElem, None, "iter::min_by(cmp, xs) -> Option<T> - the smallest element by cmp."),
+    rt_iter!("gos_rt_iter_min_f64", (Ptr) -> I128, Both, "min", Float, None, "iter::min over Vec<f64> -> Option<f64> (None for empty input)."),
+    rt_iter!("gos_rt_iter_min_i64", (Ptr) -> I128, Both, "min", Word, None, "iter::min over Vec<i64> -> Option<i64> (None for empty input)."),
+    rt_iter!("gos_rt_iter_partition_f64", (Ptr, Ptr) -> Ptr, Both, "partition", Float, None, "iter::partition(p, xs) -> ([T], [T]) - matching elements first."),
+    rt_iter!("gos_rt_iter_partition_i64", (Ptr, Ptr) -> Ptr, Both, "partition", Word, None, "iter::partition(p, xs) -> ([T], [T]) - matching elements first."),
+    rt_iter!("gos_rt_iter_partition_ptr", (Ptr, Ptr) -> Ptr, Both, "partition", PtrElem, None, "iter::partition(p, xs) -> ([T], [T]) - matching elements first."),
+    rt_iter!("gos_rt_iter_position_f64", (Ptr, Ptr) -> I128, Both, "position", Float, None, "iter::position(p, xs) -> Option<i64> - index of the first match."),
+    rt_iter!("gos_rt_iter_position_i64", (Ptr, Ptr) -> I128, Both, "position", Word, None, "iter::position(p, xs) -> Option<i64> - index of the first match."),
+    rt_iter!("gos_rt_iter_position_ptr", (Ptr, Ptr) -> I128, Both, "position", PtrElem, None, "iter::position(p, xs) -> Option<i64> - index of the first match."),
+    rt_iter!("gos_rt_iter_product_by_f64", (Ptr, Ptr) -> I64, Both, "product_by", Float, None, "iter::product_by(f, xs) - the product of f(x) over the sequence."),
+    rt_iter!("gos_rt_iter_product_by_i64", (Ptr, Ptr) -> I64, Both, "product_by", Word, None, "iter::product_by(f, xs) - the product of f(x) over the sequence."),
+    rt_iter!("gos_rt_iter_product_by_ptr", (Ptr, Ptr) -> I64, Both, "product_by", PtrElem, None, "iter::product_by(f, xs) - the product of f(x) over the sequence."),
+    rt_iter!("gos_rt_iter_product_f64", (Ptr) -> F64, Both, "product", Float, None, "iter::product over Vec<f64>."),
+    rt_iter!("gos_rt_iter_product_i64", (Ptr) -> I64, Both, "product", Word, None, "iter::product over Vec<i64> with wrapping multiplication."),
     rt!("gos_rt_iter_range", (I64, I64) -> Ptr, Both, "iter::range(start, end) -> Vec<i64> over [start, end)."),
     rt!("gos_rt_iter_range_inclusive", (I64, I64) -> Ptr, Both, "iter::range_inclusive(start, end) -> Vec<i64> over [start, end]."),
-    rt!("gos_rt_iter_reduce_i64", (Ptr, Ptr) -> I128, Both, "iter::reduce over Vec<i64> -> Option<i64>: fold seeded by the first element."),
+    rt_iter!("gos_rt_iter_reduce_f64", (Ptr, Ptr) -> I128, Both, "reduce", Float, None, "iter::reduce(f, xs) -> Option<T> - a fold seeded by the first element."),
+    rt_iter!("gos_rt_iter_reduce_i64", (Ptr, Ptr) -> I128, Both, "reduce", Word, None, "iter::reduce(f, xs) -> Option<T> - a fold seeded by the first element."),
+    rt_iter!("gos_rt_iter_reduce_ptr", (Ptr, Ptr) -> I128, Both, "reduce", PtrElem, None, "iter::reduce(f, xs) -> Option<T> - a fold seeded by the first element."),
     rt!("gos_rt_iter_repeat_i64", (I64, I64) -> Ptr, Both, "iter::repeat(value, n) -> Vec<i64> filled with value."),
-    rt!("gos_rt_iter_reversed_i64", (Ptr) -> Ptr, Both, "iter::rev over Vec<i64>: returns a fresh rev Vec."),
-    rt!("gos_rt_iter_scan_i64", (I64, Ptr, Ptr) -> Ptr, Both, "iter::scan over Vec<i64>: running fold, one output per element."),
-    rt!("gos_rt_iter_skip_i64", (I64, Ptr) -> Ptr, Both, "iter::skip(xs, n) -> Vec<i64> dropping the first n elements."),
-    rt!("gos_rt_iter_skip_while_i64", (Ptr, Ptr) -> Ptr, Both, "iter::skip_while over Vec<i64>: everything after the matching prefix."),
-    rt!("gos_rt_iter_sorted_by_i64", (Ptr, Ptr) -> Ptr, Both, "iter::sort_by over Vec<i64>: fresh comparator-sorted Vec."),
-    rt!("gos_rt_iter_sorted_by_key_f64", (Ptr, Ptr, I64) -> Ptr, Both, "iter::sort_by_key over Vec<f64>: fresh Vec sorted by key(x). The trailing argument is whether the key callback answers an f64."),
-    rt!("gos_rt_iter_sorted_by_key_i64", (Ptr, Ptr, I64) -> Ptr, Both, "iter::sort_by_key over Vec<i64>: fresh Vec sorted by key(x). The trailing argument is whether the key callback answers an f64."),
-    rt!("gos_rt_iter_sum_by_f64", (Ptr, Ptr) -> F64, Both, "iter::sum_by over Vec<f64> summing f64 projections."),
-    rt!("gos_rt_iter_sum_by_f64_word", (Ptr, Ptr) -> I64, Both, "iter::sum_by over Vec<f64> summing i64 projections."),
-    rt!("gos_rt_iter_sum_by_i64", (Ptr, Ptr) -> I64, Both, "iter::sum_by over Vec<i64>: sums the closure's returns across all elements."),
-    rt!("gos_rt_iter_sum_by_ptr", (Ptr, Ptr) -> I64, Both, "iter::sum_by over aggregate elements summing i64 projections."),
-    rt!("gos_rt_iter_sum_by_ptr_f64", (Ptr, Ptr) -> F64, Both, "iter::sum_by over aggregate elements summing f64 projections."),
-    rt!("gos_rt_iter_sum_by_word_f64", (Ptr, Ptr) -> F64, Both, "iter::sum_by over Vec<i64> summing f64 projections."),
-    rt!("gos_rt_iter_sum_f64", (Ptr) -> F64, Both, "iter::sum over Vec<f64>."),
-    rt!("gos_rt_iter_sum_i64", (Ptr) -> I64, Both, "iter::sum over Vec<i64>."),
-    rt!("gos_rt_iter_take_i64", (I64, Ptr) -> Ptr, Both, "iter::take(xs, n) -> Vec<i64> with the first n elements."),
-    rt!("gos_rt_iter_take_while_i64", (Ptr, Ptr) -> Ptr, Both, "iter::take_while over Vec<i64>: longest matching prefix."),
-    rt!("gos_rt_iter_unzip_i64", (Ptr) -> Ptr, Both, "iter::unzip over Vec<(i64, i64)> -> ([i64], [i64]) by-value pair."),
-    rt!("gos_rt_iter_windowed_i64", (I64, Ptr) -> Ptr, Both, "iter::windows(xs, n) -> Vec<Vec<i64>> of every contiguous width-n window."),
-    rt!("gos_rt_iter_zip_i64", (Ptr, Ptr) -> Ptr, Both, "iter::zip over two Vec<i64> -> Vec<(i64, i64)>, stopping at the shorter input."),
+    rt_iter!("gos_rt_iter_reversed_i64", (Ptr) -> Ptr, Both, "rev", Word, None, "iter::rev over Vec<i64>: returns a fresh rev Vec."),
+    rt_iter!("gos_rt_iter_scan_f64", (I64, Ptr, Ptr) -> Ptr, Both, "scan", Float, Some(Float), "iter::scan(init, f, xs) - a running fold, one output per element."),
+    rt_iter!("gos_rt_iter_scan_f64_word", (I64, Ptr, Ptr) -> Ptr, Both, "scan", Float, Some(Word), "iter::scan(init, f, xs) - a running fold, one output per element."),
+    rt_iter!("gos_rt_iter_scan_i64", (I64, Ptr, Ptr) -> Ptr, Both, "scan", Word, Some(Word), "iter::scan(init, f, xs) - a running fold, one output per element."),
+    rt_iter!("gos_rt_iter_scan_ptr", (I64, Ptr, Ptr) -> Ptr, Both, "scan", PtrElem, Some(Word), "iter::scan(init, f, xs) - a running fold, one output per element."),
+    rt_iter!("gos_rt_iter_scan_ptr_f64", (I64, Ptr, Ptr) -> Ptr, Both, "scan", PtrElem, Some(Float), "iter::scan(init, f, xs) - a running fold, one output per element."),
+    rt_iter!("gos_rt_iter_scan_word_f64", (I64, Ptr, Ptr) -> Ptr, Both, "scan", Word, Some(Float), "iter::scan(init, f, xs) - a running fold, one output per element."),
+    rt_iter!("gos_rt_iter_skip_i64", (I64, Ptr) -> Ptr, Both, "skip", Word, None, "iter::skip(xs, n) -> Vec<i64> dropping the first n elements."),
+    rt_iter!("gos_rt_iter_skip_while_f64", (Ptr, Ptr) -> Ptr, Both, "skip_while", Float, None, "iter::skip_while(p, xs) - the elements after the leading run satisfying p."),
+    rt_iter!("gos_rt_iter_skip_while_i64", (Ptr, Ptr) -> Ptr, Both, "skip_while", Word, None, "iter::skip_while(p, xs) - the elements after the leading run satisfying p."),
+    rt_iter!("gos_rt_iter_skip_while_ptr", (Ptr, Ptr) -> Ptr, Both, "skip_while", PtrElem, None, "iter::skip_while(p, xs) - the elements after the leading run satisfying p."),
+    rt_iter!("gos_rt_iter_sorted_by_f64", (Ptr, Ptr) -> Ptr, Both, "sort_by", Float, None, "iter::sort_by(cmp, xs) - a copy ordered by the comparison closure."),
+    rt_iter!("gos_rt_iter_sorted_by_i64", (Ptr, Ptr) -> Ptr, Both, "sort_by", Word, None, "iter::sort_by(cmp, xs) - a copy ordered by the comparison closure."),
+    rt_iter!("gos_rt_iter_sorted_by_key_f64", (Ptr, Ptr, I64) -> Ptr, Both, "sort_by_key", Float, None, "iter::sort_by_key(f, xs) - a copy ordered by the derived key. The trailing argument is whether the key callback answers an f64."),
+    rt_iter!("gos_rt_iter_sorted_by_key_i64", (Ptr, Ptr, I64) -> Ptr, Both, "sort_by_key", Word, None, "iter::sort_by_key(f, xs) - a copy ordered by the derived key. The trailing argument is whether the key callback answers an f64."),
+    rt_iter!("gos_rt_iter_sorted_by_key_ptr", (Ptr, Ptr, I64) -> Ptr, Both, "sort_by_key", PtrElem, None, "iter::sort_by_key(f, xs) - a copy ordered by the derived key. The trailing argument is whether the key callback answers an f64."),
+    rt_iter!("gos_rt_iter_sorted_by_ptr", (Ptr, Ptr) -> Ptr, Both, "sort_by", PtrElem, None, "iter::sort_by(cmp, xs) - a copy ordered by the comparison closure."),
+    rt_iter!("gos_rt_iter_sum_by_f64", (Ptr, Ptr) -> F64, Both, "sum_by", Float, Some(Float), "iter::sum_by over Vec<f64> summing f64 projections."),
+    rt_iter!("gos_rt_iter_sum_by_f64_word", (Ptr, Ptr) -> I64, Both, "sum_by", Float, Some(Word), "iter::sum_by over Vec<f64> summing i64 projections."),
+    rt_iter!("gos_rt_iter_sum_by_i64", (Ptr, Ptr) -> I64, Both, "sum_by", Word, Some(Word), "iter::sum_by over Vec<i64>: sums the closure's returns across all elements."),
+    rt_iter!("gos_rt_iter_sum_by_ptr", (Ptr, Ptr) -> I64, Both, "sum_by", PtrElem, Some(Word), "iter::sum_by over aggregate elements summing i64 projections."),
+    rt_iter!("gos_rt_iter_sum_by_ptr_f64", (Ptr, Ptr) -> F64, Both, "sum_by", PtrElem, Some(Float), "iter::sum_by over aggregate elements summing f64 projections."),
+    rt_iter!("gos_rt_iter_sum_by_word_f64", (Ptr, Ptr) -> F64, Both, "sum_by", Word, Some(Float), "iter::sum_by over Vec<i64> summing f64 projections."),
+    rt_iter!("gos_rt_iter_sum_f64", (Ptr) -> F64, Both, "sum", Float, None, "iter::sum over Vec<f64>."),
+    rt_iter!("gos_rt_iter_sum_i64", (Ptr) -> I64, Both, "sum", Word, None, "iter::sum over Vec<i64>."),
+    rt_iter!("gos_rt_iter_take_i64", (I64, Ptr) -> Ptr, Both, "take", Word, None, "iter::take(xs, n) -> Vec<i64> with the first n elements."),
+    rt_iter!("gos_rt_iter_take_while_f64", (Ptr, Ptr) -> Ptr, Both, "take_while", Float, None, "iter::take_while(p, xs) - the longest prefix of elements satisfying p."),
+    rt_iter!("gos_rt_iter_take_while_i64", (Ptr, Ptr) -> Ptr, Both, "take_while", Word, None, "iter::take_while(p, xs) - the longest prefix of elements satisfying p."),
+    rt_iter!("gos_rt_iter_take_while_ptr", (Ptr, Ptr) -> Ptr, Both, "take_while", PtrElem, None, "iter::take_while(p, xs) - the longest prefix of elements satisfying p."),
+    rt_iter!("gos_rt_iter_unzip_i64", (Ptr) -> Ptr, Both, "unzip", Word, None, "iter::unzip over Vec<(i64, i64)> -> ([i64], [i64]) by-value pair."),
+    rt_iter!("gos_rt_iter_windowed_i64", (I64, Ptr) -> Ptr, Both, "windows", Word, None, "iter::windows(xs, n) -> Vec<Vec<i64>> of every contiguous width-n window."),
+    rt_iter!("gos_rt_iter_zip_i64", (Ptr, Ptr) -> Ptr, Both, "zip", Word, None, "iter::zip over two Vec<i64> -> Vec<(i64, i64)>, stopping at the shorter input."),
     rt!("gos_rt_join", (Ptr) -> I128, Cranelift, "Block until a spawned goroutine completes; returns its outcome as Result<i64, String> (Ok value, or Err panic message)."),
     rt!("gos_rt_json_array_from_scalar_vec", (Ptr, I64) -> Ptr, Cranelift, "Build a JSON array Value from a typed scalar Vec (kind 0=i64 1=f64 2=String 3=bool)."),
     rt!("gos_rt_json_as_array_opt", (Ptr) -> I128, Cranelift, "Return the JSON value as an array, or null if it is not an array."),
@@ -1541,6 +1612,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_str_char_at", (Ptr, I64) -> I64, Both, "Return the Unicode scalar value at the given character index in a String."),
     rt!("gos_rt_str_chars", (Ptr) -> Ptr, Cranelift, "Return the string's Unicode scalar values as a GosVec of i64 codepoints (one per char)."),
     rt!("gos_rt_str_clear", () -> Ptr, Cranelift, "Return a fresh empty String for String::clear writeback."),
+    rt!("gos_rt_str_clone", (Ptr) -> Ptr, Both, "Take a second share of a String and answer it, which is what `s.clone()` means."),
     rt!("gos_rt_str_compare", (Ptr, Ptr) -> I32, Both, "Compare two strings lexicographically; returns negative, 0, or positive."),
     rt!("gos_rt_str_concat", (Ptr, Ptr) -> Ptr, Both, "Concatenate two strings and return the result."),
     rt!("gos_rt_str_concat_drop_a", (Ptr, Ptr) -> Ptr, Both, "Concatenate two strings, free the first argument, and return the result."),
@@ -1909,9 +1981,170 @@ pub fn lookup(name: &str) -> Option<&'static RuntimeEntry> {
     REGISTRY.iter().find(|e| e.name == name)
 }
 
+/// The shim implementing `combinator` for the given element crossing, or
+/// `None` when the registry declares no such crossing.
+///
+/// This is the derivation the MIR lowering uses in place of a hand-written
+/// symbol name. A `None` answer means a real gap in the shim family, and the
+/// caller reports it rather than emitting a call that reads its buffer at the
+/// wrong stride.
+#[must_use]
+pub fn combinator_symbol(
+    combinator: &str,
+    elem: ElemClass,
+    result: Option<ElemClass>,
+) -> Option<&'static str> {
+    REGISTRY
+        .iter()
+        .find(|e| {
+            e.combinator
+                .is_some_and(|c| c.combinator == combinator && c.elem == elem && c.result == result)
+        })
+        .map(|e| e.name)
+}
+
+/// The element crossing a shim declares, for checking a chosen symbol against
+/// the class actually present at a call site.
+#[must_use]
+pub fn combinator_abi_of(name: &str) -> Option<CombinatorAbi> {
+    lookup(name).and_then(|e| e.combinator)
+}
+
+/// Every element crossing the registry declares, as
+/// `(combinator, elem, result)`. Used by the coverage test that holds the
+/// shim family total against the crossings the lowering can demand.
+#[must_use]
+pub fn combinator_crossings() -> Vec<(&'static str, ElemClass, Option<ElemClass>)> {
+    REGISTRY
+        .iter()
+        .filter_map(|e| e.combinator)
+        .map(|c| (c.combinator, c.elem, c.result))
+        .collect()
+}
+
 /// Produce all LLVM `declare` strings from the registry.
 /// Replaces the raw `RUNTIME_DECLARATIONS` constant in `emit.rs`.
 #[must_use]
 pub fn all_llvm_declarations() -> Vec<String> {
     REGISTRY.iter().map(RuntimeEntry::llvm_declare).collect()
+}
+
+#[cfg(test)]
+mod combinator_tests {
+    use super::*;
+    use crate::types::ElemClass;
+
+    /// Every crossing the registry declares resolves back to exactly the shim
+    /// that declared it, so the derivation the MIR lowering performs is a
+    /// function rather than a first match.
+    #[test]
+    fn every_declared_crossing_resolves_to_its_own_shim() {
+        for entry in REGISTRY {
+            let Some(c) = entry.combinator else {
+                continue;
+            };
+            assert_eq!(
+                combinator_symbol(c.combinator, c.elem, c.result),
+                Some(entry.name),
+                "{} declares ({}, {:?}, {:?}) but that crossing resolves elsewhere",
+                entry.name,
+                c.combinator,
+                c.elem,
+                c.result
+            );
+        }
+    }
+
+    /// No two shims claim one crossing: a duplicate would make the symbol the
+    /// lowering picks depend on registry order rather than on the element.
+    #[test]
+    fn no_two_shims_claim_one_crossing() {
+        let mut seen: Vec<(&str, ElemClass, Option<ElemClass>)> = Vec::new();
+        for (comb, elem, result) in combinator_crossings() {
+            assert!(
+                !seen.contains(&(comb, elem, result)),
+                "two shims declare iter::{comb} over {elem:?} producing {result:?}"
+            );
+            seen.push((comb, elem, result));
+        }
+    }
+
+    /// A crossing no shim implements answers `None` rather than a shim for a
+    /// different element class, which is what makes a gap in the shim family
+    /// a reported gap instead of a call that reads its buffer at the wrong
+    /// stride. `iter::position` has no float-keyed result, so asking for one
+    /// must not fall back to its word or by-address twin.
+    #[test]
+    fn an_undeclared_crossing_has_no_shim() {
+        assert!(combinator_symbol("position", ElemClass::Word, None).is_some());
+        assert_eq!(
+            combinator_symbol("position", ElemClass::Word, Some(ElemClass::Float)),
+            None
+        );
+        assert_eq!(
+            combinator_symbol("take_while", ElemClass::Word, Some(ElemClass::Word)),
+            None
+        );
+        assert_eq!(
+            combinator_symbol("no_such_combinator", ElemClass::Ptr, None),
+            None
+        );
+    }
+
+    /// The element class is not in a shim's C-ABI signature, which is the
+    /// reason it is declared separately: `take_while`'s three crossings are
+    /// one signature and three different readings of the buffer.
+    #[test]
+    fn one_signature_covers_several_crossings() {
+        let names = [
+            combinator_symbol("take_while", ElemClass::Word, None).unwrap(),
+            combinator_symbol("take_while", ElemClass::Float, None).unwrap(),
+            combinator_symbol("take_while", ElemClass::Ptr, None).unwrap(),
+        ];
+        let sigs: Vec<_> = names.iter().map(|n| &lookup(n).unwrap().sig).collect();
+        assert_eq!(sigs[0], sigs[1]);
+        assert_eq!(sigs[1], sigs[2]);
+        assert_ne!(names[0], names[1]);
+        assert_ne!(names[1], names[2]);
+    }
+
+    /// Each of the classes a sequence element can cross in has a shim for the
+    /// combinators whose callback receives one, so no element type reaches a
+    /// call site the registry cannot answer.
+    #[test]
+    fn callback_combinators_cover_every_element_class() {
+        const CALLBACK_COMBINATORS: &[&str] = &[
+            "take_while",
+            "skip_while",
+            "filter",
+            "filter_map",
+            "find",
+            "find_flag",
+            "find_map",
+            "position",
+            "reduce",
+            "product_by",
+            "partition",
+            "sort_by",
+            "min_by",
+            "max_by",
+            "sort_by_key",
+            "min_by_key",
+            "max_by_key",
+            "chunk_by",
+            "count_by",
+            "flat_map",
+            "for_each",
+            "any",
+            "all",
+        ];
+        for comb in CALLBACK_COMBINATORS {
+            for class in [ElemClass::Word, ElemClass::Float, ElemClass::Ptr] {
+                assert!(
+                    combinator_symbol(comb, class, None).is_some(),
+                    "no shim implements iter::{comb} over {class:?} elements"
+                );
+            }
+        }
+    }
 }

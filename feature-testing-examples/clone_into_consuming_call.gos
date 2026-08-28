@@ -1,0 +1,61 @@
+// `m.insert(k.clone(), v)` where `k` reached the frame by value.
+//
+// A clone is a second value: the caller keeps what it had. Lowering a
+// `String` clone to nothing at all made the clone and its source one
+// value with one share between them, so the consuming insert took the
+// caller's - and the caller's binding read back as whatever the next
+// allocation of that size wrote. The loop and the interleaved
+// allocations are what make that visible rather than merely latent.
+
+use std::collections::Map
+
+struct Prepared { name: String, columns: Vec<String> }
+
+struct Cache { by_key: Map<String, Prepared>, order: Vec<String> }
+
+impl Cache {
+    fn remember(&mut self, key: String, value: Prepared) {
+        let _ = self.by_key.insert(key.clone(), value.clone())
+        self.order.push(key.clone())
+    }
+}
+
+fn name_for(round: i64) -> String {
+    format("stmt_{}", round)
+}
+
+/// Called once per round so the Cranelift column has a body to compile:
+/// every other body here holds a struct or a `&mut` receiver the
+/// trampoline keeps on bytecode.
+fn checksum(round: i64) -> i64 {
+    let mut acc = round
+    let mut i = 0
+    while i < 8 {
+        acc = acc * 31 + i
+        i += 1
+    }
+    acc % 1000
+}
+
+fn main() {
+    let mut cache = Cache { by_key: Map::new(), order: #[] }
+    let mut round = 0
+    let mut intact = 0
+    let mut sum = 0
+    while round < 64 {
+        sum += checksum(round)
+        let key = format("SELECT {}::numeric AS n", round)
+        let before = key.len()
+        let prepared = Prepared { name: name_for(round), columns: #["n"] }
+        cache.remember(key, prepared)
+        // A fresh allocation of a similar size, which is what reused the
+        // freed block and turned the over-release into a wrong answer.
+        let filler = format("gos_probe_p{}", round)
+        if key.len() == before && filler.len() > 0 { intact += 1 }
+        round += 1
+    }
+    println("intact={} entries={} order={} sum={}", intact, cache.by_key.len(), cache.order.len(), sum)
+    let sample = format("SELECT {}::numeric AS n", 7)
+    println("sample=[{}]", sample)
+    println("stored=[{}]", cache.by_key.get_or(sample, Prepared { name: "", columns: #[] }).name)
+}

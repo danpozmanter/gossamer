@@ -139,8 +139,11 @@ pub const I128_HANDLER_REGISTRATIONS: &[(&str, usize)] = &[
     ("gos_rt_router_put_fn", 2),
 ];
 
-pub use registry::{REGISTRY, all_llvm_declarations, lookup};
-pub use types::{AbiSig, AbiType, RuntimeEntry, Tier};
+pub use registry::{
+    REGISTRY, all_llvm_declarations, combinator_abi_of, combinator_crossings, combinator_symbol,
+    lookup,
+};
+pub use types::{AbiSig, AbiType, CombinatorAbi, ElemClass, RuntimeEntry, Tier};
 
 #[cfg(test)]
 mod tests {

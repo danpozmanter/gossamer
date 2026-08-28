@@ -1,0 +1,16 @@
+// Numeric loop over a 500k-element `Vec<bool>`: indexed reads and
+// writes with no allocation after the first.
+comptime fn sieve_count(n: i64) -> i64 {
+    let mut flags = #[true; 500001]
+    let mut i = 2
+    let mut count = 0
+    while i < n {
+        if flags[i] { count += 1; let mut j = i * i; while j < n { flags[j] = false; j += i } }
+        i += 1
+    }
+    count
+}
+
+const PRIMES: i64 = sieve_count(500000)
+
+fn main() { println("{}", PRIMES) }

@@ -235,6 +235,7 @@ pub mod http_bridges;
 pub mod http_client;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_middleware;
+pub mod http_query;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_request_values;
 #[cfg(not(target_arch = "wasm32"))]
@@ -252,6 +253,7 @@ pub mod http_ws_accept;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod image;
 pub mod io_handles;
+pub mod iter_cross;
 pub mod json;
 pub mod lcg;
 pub mod ledger;
@@ -381,6 +383,7 @@ pub use http3::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use image::*;
 pub use io_handles::*;
+pub use iter_cross::*;
 pub use json::*;
 pub use lcg::*;
 pub use len::*;

@@ -5,7 +5,7 @@
 fn main() {
     let a = "hello"
     let b = "world"
-    let c = a + ", " + &b
+    let c = a + ", " + b
     println("plus chain: {}", c)
 
     let mut acc = ""
@@ -52,7 +52,7 @@ mod tests {
     fn plus_concat() {
         let a = "hello"
         let b = "world"
-        let c = a + ", " + &b
+        let c = a + ", " + b
         let _ = testing::check_eq(c, "hello, world", "plus concat")
     }
 

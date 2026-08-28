@@ -28,7 +28,9 @@ use windows_sys::Win32::Foundation::{
     WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::{SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES};
-use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_GENERIC_WRITE, OPEN_EXISTING};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_GENERIC_READ, FILE_GENERIC_WRITE, OPEN_EXISTING,
+};
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
     CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW,
@@ -170,11 +172,24 @@ pub(crate) fn spawn(
         .as_deref()
         .map(|path| wide(&path.to_string_lossy()));
 
-    let (stdout_read, stdout_write) = stream_pair(stdio)?;
-    let (stderr_read, stderr_write) = stream_pair(stdio)?;
-    let stdin_handle = null_device()?;
+    let (stdout_read, stdout_write) = stream_pair(stdio, StandardStream::Output)?;
+    let (stderr_read, stderr_write) = stream_pair(stdio, StandardStream::Error)?;
+    // Standard input follows `Stdio`'s own contract: capturing what a
+    // command says does not silence what it is told, so only `Null`
+    // gives the child the null device.
+    let stdin_handle = match stdio {
+        Stdio::Inherit | Stdio::Capture => inherited_standard_handle(StandardStream::Input),
+        Stdio::Null => Some(null_device(FILE_GENERIC_READ)?),
+    };
 
-    let mut inherited = [stdin_handle, stdout_write, stderr_write];
+    // A standard handle the caller does not have - a service, a
+    // detached process - duplicates to nothing, and a null entry in the
+    // handle list fails process creation outright. Such a stream is left
+    // out of both the list and `STARTF_USESTDHANDLES`.
+    let mut inherited: Vec<HANDLE> = [stdin_handle, stdout_write, stderr_write]
+        .into_iter()
+        .flatten()
+        .collect();
     let mut attributes = AttributeList::new(if capabilities.is_some() { 3 } else { 2 })?;
     attributes.set_handle_list(&mut inherited)?;
     attributes.set_mitigations(MITIGATIONS)?;
@@ -185,9 +200,9 @@ pub(crate) fn spawn(
     let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
     startup.StartupInfo.cb = u32::try_from(std::mem::size_of::<STARTUPINFOEXW>()).unwrap_or(0);
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-    startup.StartupInfo.hStdInput = stdin_handle;
-    startup.StartupInfo.hStdOutput = stdout_write;
-    startup.StartupInfo.hStdError = stderr_write;
+    startup.StartupInfo.hStdInput = stdin_handle.unwrap_or(std::ptr::null_mut());
+    startup.StartupInfo.hStdOutput = stdout_write.unwrap_or(std::ptr::null_mut());
+    startup.StartupInfo.hStdError = stderr_write.unwrap_or(std::ptr::null_mut());
     startup.lpAttributeList = attributes.raw();
 
     let mut information: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
@@ -208,12 +223,15 @@ pub(crate) fn spawn(
             &raw mut information,
         )
     };
-    // The child owns the write ends now; keeping them open here would
-    // stop the reads from ever seeing end-of-file.
-    unsafe {
-        CloseHandle(stdout_write);
-        CloseHandle(stderr_write);
-        CloseHandle(stdin_handle);
+    // The child owns its copies now; keeping the write ends open here
+    // would stop the reads from ever seeing end-of-file. Each of these
+    // was created or duplicated by this function, so each is this
+    // function's to close.
+    for handle in [stdin_handle, stdout_write, stderr_write]
+        .into_iter()
+        .flatten()
+    {
+        unsafe { CloseHandle(handle) };
     }
     if created == 0 {
         return Err(format!(
@@ -231,9 +249,39 @@ pub(crate) fn spawn(
     })
 }
 
+/// Which of the caller's three standard handles a stream corresponds
+/// to, so an inherited stream duplicates the right one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum StandardStream {
+    Input,
+    Output,
+    Error,
+}
+
+impl StandardStream {
+    /// The `STD_*_HANDLE` selector `GetStdHandle` takes.
+    fn selector(self) -> u32 {
+        use windows_sys::Win32::System::Console::{
+            STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        };
+        match self {
+            Self::Input => STD_INPUT_HANDLE,
+            Self::Output => STD_OUTPUT_HANDLE,
+            Self::Error => STD_ERROR_HANDLE,
+        }
+    }
+}
+
 /// The read and write ends of a captured stream, or a handle to the
-/// null device when the stream is not captured.
-fn stream_pair(stdio: Stdio) -> Result<(Option<OwnedHandle>, HANDLE), String> {
+/// caller's own `stream` when it is inherited and the null device when
+/// it is discarded.
+///
+/// The write end is `None` only when the caller holds no such standard
+/// handle to duplicate, which is a stream the child simply does not get.
+fn stream_pair(
+    stdio: Stdio,
+    stream: StandardStream,
+) -> Result<(Option<OwnedHandle>, Option<HANDLE>), String> {
     match stdio {
         Stdio::Capture => {
             let mut read: HANDLE = std::ptr::null_mut();
@@ -253,20 +301,29 @@ fn stream_pair(stdio: Stdio) -> Result<(Option<OwnedHandle>, HANDLE), String> {
             // in the handle list, which is the whole point of the list:
             // the child gets what it is given and nothing else.
             let read = unsafe { OwnedHandle::from_raw_handle(read.cast()) };
-            Ok((Some(read), write))
+            Ok((Some(read), Some(write)))
         }
-        Stdio::Inherit => Ok((None, inherited_standard_handle())),
-        Stdio::Null => Ok((None, null_device()?)),
+        Stdio::Inherit => Ok((None, inherited_standard_handle(stream))),
+        Stdio::Null => Ok((None, Some(null_device(FILE_GENERIC_WRITE)?))),
     }
 }
 
-/// The caller's own standard output handle, duplicated so the child's
-/// list owns an inheritable copy.
-fn inherited_standard_handle() -> HANDLE {
-    use windows_sys::Win32::System::Console::{GetStdHandle, STD_OUTPUT_HANDLE};
-    let source = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+/// The caller's own handle for `stream`, duplicated so the child's list
+/// owns an inheritable copy.
+///
+/// `None` when the caller holds no such handle: a service or a detached
+/// process has no console, and `GetStdHandle` answers null or
+/// `INVALID_HANDLE_VALUE` there. Naming one of those in the inherit list
+/// fails `CreateProcessAsUser` for every stream at once, so the stream
+/// is dropped instead.
+fn inherited_standard_handle(stream: StandardStream) -> Option<HANDLE> {
+    use windows_sys::Win32::System::Console::GetStdHandle;
+    let source = unsafe { GetStdHandle(stream.selector()) };
+    if source.is_null() || source == INVALID_HANDLE_VALUE {
+        return None;
+    }
     let mut duplicate: HANDLE = std::ptr::null_mut();
-    unsafe {
+    let duplicated = unsafe {
         DuplicateHandle(
             GetCurrentProcess(),
             source,
@@ -275,13 +332,18 @@ fn inherited_standard_handle() -> HANDLE {
             0,
             TRUE,
             DUPLICATE_SAME_ACCESS,
-        );
+        )
+    };
+    if duplicated == 0 || duplicate.is_null() {
+        return None;
     }
-    duplicate
+    Some(duplicate)
 }
 
-/// An inheritable handle to `NUL`.
-fn null_device() -> Result<HANDLE, String> {
+/// An inheritable handle to `NUL` with `access`, which is the access the
+/// stream it stands in for needs: a child reads its standard input and
+/// writes the other two.
+fn null_device(access: u32) -> Result<HANDLE, String> {
     let name = wide("NUL");
     let mut security = SECURITY_ATTRIBUTES {
         nLength: u32::try_from(std::mem::size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(0),
@@ -291,7 +353,7 @@ fn null_device() -> Result<HANDLE, String> {
     let handle = unsafe {
         CreateFileW(
             name.as_ptr(),
-            FILE_GENERIC_WRITE,
+            access,
             0,
             &raw mut security,
             OPEN_EXISTING,

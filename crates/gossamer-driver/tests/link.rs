@@ -67,7 +67,7 @@ fn compact_symbols_are_shorter_than_verbose() {
 #[test]
 fn linker_merges_symbols_from_a_single_unit() {
     let artifact = compile_source(
-        "fn main() -> i64 { 0i64 }\nfn helper() -> i64 { 1i64 }\n",
+        "fn main() -> i64 { helper() }\nfn helper() -> i64 { 1i64 }\n",
         "mainmod",
         &LinkerOptions::default(),
     );
@@ -75,6 +75,22 @@ fn linker_merges_symbols_from_a_single_unit() {
     let names: Vec<_> = artifact.symbols.iter().map(|s| s.name.as_str()).collect();
     assert!(names.contains(&"main"));
     assert!(names.contains(&"helper"));
+}
+
+/// A function the entry does not reach is not lowered, so it never
+/// becomes a symbol for the linker to merge. `helper` here is the same
+/// declaration as the one above, differing only in that nothing calls
+/// it.
+#[test]
+fn a_function_the_entry_never_reaches_becomes_no_symbol() {
+    let artifact = compile_source(
+        "fn main() -> i64 { 0i64 }\nfn helper() -> i64 { 1i64 }\n",
+        "unreachedmod",
+        &LinkerOptions::default(),
+    );
+    let names: Vec<_> = artifact.symbols.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"main"), "{names:?}");
+    assert!(!names.contains(&"helper"), "{names:?}");
 }
 
 #[test]

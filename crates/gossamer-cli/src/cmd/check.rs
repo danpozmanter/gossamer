@@ -5,6 +5,7 @@
 //! diagnostics through the shared renderer, surfaces a non-zero exit
 //! when any stage produces error-severity output.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -121,6 +122,10 @@ pub(crate) fn run(
         emit_diag(diag, &map, render_opts, message_format);
     }
     if fix {
+        // A unit is many files, and a rewrite lands in whichever ones
+        // carried the diagnostics. Naming only the entry leaves a reader
+        // with no reason to look at the others.
+        let mut edited: BTreeMap<PathBuf, usize> = BTreeMap::new();
         let applied = apply_suggestions(
             file,
             file_id,
@@ -128,8 +133,18 @@ pub(crate) fn run(
             &user_source,
             &source,
             &outcome.diagnostics,
+            &mut edited,
         )?;
-        println!("fix: {applied} edit(s) applied to {}", file.display());
+        if edited.is_empty() {
+            println!("fix: 0 edit(s) applied");
+        } else {
+            for (path, count) in &edited {
+                println!("fix: {count} edit(s) applied to {}", display_path(path));
+            }
+            if edited.len() > 1 {
+                println!("fix: {applied} edit(s) across {} file(s)", edited.len());
+            }
+        }
     }
     // The editor and `gos lint` both run the default lint registry, so
     // `check` runs it too and stays the superset gate. Lints are advisory
@@ -238,9 +253,8 @@ fn apply_suggestions(
     user_source: &str,
     checked_source: &str,
     diagnostics: &[gossamer_diagnostics::Diagnostic],
+    edited: &mut BTreeMap<PathBuf, usize>,
 ) -> Result<usize> {
-    use std::collections::BTreeMap;
-
     let safe_len = common_prefix_len(user_source, checked_source).min(user_source.len());
     let mut applied = 0usize;
 
@@ -286,9 +300,25 @@ fn apply_suggestions(
             candidates.push((path.clone(), candidate));
         }
         if edits > 0 {
+            let before = recheck_codes(file);
             write_all(&candidates)?;
-            if recheck(file) < diagnostics.len() {
+            let after = recheck_codes(file);
+            let better = match (&before, &after) {
+                (Some(before), Some(after)) => is_an_improvement(before, after),
+                _ => false,
+            };
+            if better {
                 applied += edits;
+                for (path, original) in &originals {
+                    let fixes = by_file[path].len();
+                    if fixes > 0
+                        && candidates
+                            .iter()
+                            .any(|(candidate, text)| candidate == path && text != original)
+                    {
+                        *edited.entry(path.clone()).or_default() += fixes;
+                    }
+                }
             } else {
                 write_all(&originals)?;
             }
@@ -304,12 +334,32 @@ fn apply_suggestions(
             fs::write(file, &candidate).map_err(|e| friendly_io_error(e, file))?;
             if recheck(file) <= baseline {
                 applied += lint_fixes.len();
+                *edited.entry(file.to_path_buf()).or_default() += lint_fixes.len();
             } else {
                 fs::write(file, &current).map_err(|e| friendly_io_error(e, file))?;
             }
         }
     }
     Ok(applied)
+}
+
+/// `path` written the way the caller named the unit: relative to the
+/// current directory when it is under it, absolute otherwise. A report
+/// that mixed the two spellings for files of one unit reads as though
+/// they came from different places.
+fn display_path(path: &Path) -> String {
+    let Ok(cwd) = std::env::current_dir() else {
+        return path.display().to_string();
+    };
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    match absolute.strip_prefix(&cwd) {
+        Ok(relative) => Path::new(".").join(relative).display().to_string(),
+        Err(_) => absolute.display().to_string(),
+    }
 }
 
 /// Writes each `(path, text)` pair back to disk.
@@ -342,17 +392,43 @@ fn lint_fixes_for(file: &Path, source: &str) -> Vec<gossamer_lint::Fix> {
 /// in place, and an entry checked alone reports every sibling's name as
 /// unresolved.
 fn recheck(file: &Path) -> usize {
-    let Ok(unit) = crate::paths::read_entry_unit(file) else {
-        return usize::MAX;
-    };
+    recheck_codes(file).map_or(usize::MAX, |codes| codes.len())
+}
+
+/// Every diagnostic code the front-end gate reports for the unit `file`
+/// assembles from disk as it now stands, as a multiset.
+///
+/// `None` when the unit cannot be read or folded at all, which is a
+/// worse outcome than any diagnostic and is never an improvement.
+fn recheck_codes(file: &Path) -> Option<BTreeMap<String, usize>> {
+    let unit = crate::paths::read_entry_unit(file).ok()?;
     let augmented = gossamer_parse::autoderive::augment_source(&unit.source);
-    let Ok(folded) = crate::comptime_fold::fold_comptime(augmented, &file.to_string_lossy()) else {
-        return usize::MAX;
-    };
+    let folded = crate::comptime_fold::fold_comptime(augmented, &file.to_string_lossy()).ok()?;
     let mut map = gossamer_lex::SourceMap::new();
     let id = map.add_file(file.to_string_lossy().into_owned(), folded.clone());
     let outcome = gossamer_driver::check_frontend(&folded, id);
-    outcome.diagnostics.len()
+    let mut codes: BTreeMap<String, usize> = BTreeMap::new();
+    for diag in &outcome.diagnostics {
+        *codes.entry(diag.code.to_string()).or_default() += 1;
+    }
+    Some(codes)
+}
+
+/// Whether rewriting turned `before` into `after` without introducing a
+/// diagnostic the program did not already have.
+///
+/// A count alone is the wrong test: a batch that trades three style
+/// diagnostics for one type error reports a lower number and is a
+/// regression. What has to hold is that every code still reported was
+/// already reported, and that there are fewer of them.
+fn is_an_improvement(before: &BTreeMap<String, usize>, after: &BTreeMap<String, usize>) -> bool {
+    let total = |codes: &BTreeMap<String, usize>| codes.values().sum::<usize>();
+    if total(after) >= total(before) {
+        return false;
+    }
+    after
+        .iter()
+        .all(|(code, count)| before.get(code).is_some_and(|had| count <= had))
 }
 
 /// Byte length of the longest common prefix of `a` and `b`, rounded down

@@ -153,11 +153,18 @@ impl Parser<'_> {
                         lhs.span,
                     );
                 }
+                let rhs_amp = self.peek_span();
                 let rhs = if op == BinaryOp::PipeGt {
                     self.with_pipe_step(|p| p.parse_expr_with_prec(precedence, false))
                 } else {
                     self.parse_expr_with_prec(precedence, false)
                 };
+                // `a + &b` is the same operand as `a + b`: there is no
+                // shared-reference type for the operator to see, and an
+                // operand is read without copying either way. A migration
+                // that only rewrote argument position leaves these
+                // behind, and nothing else reports them.
+                let rhs = self.strip_shared_operand_reference(rhs, rhs_amp);
                 if op == BinaryOp::PipeGt {
                     lhs = self.validate_pipe_rhs(lhs, rhs);
                     continue;
@@ -356,7 +363,17 @@ impl Parser<'_> {
             return place;
         };
         self.bump();
+        let value_amp = self.peek_span();
         let value = self.parse_expr_with_prec(PREC_BELOW_ASSIGN, false);
+        // `acc += &frag` reads the same operand `acc += frag` does. A
+        // plain `=` is not the same question: its right side is a value,
+        // and a binding may hold a reference, so `reference = &b` rebinds
+        // one and keeps its sigil.
+        let value = if op == AssignOp::Assign {
+            value
+        } else {
+            self.strip_shared_operand_reference(value, value_amp)
+        };
         let span = self.join(place.span, value.span);
         let id = self.alloc_id();
         Expr::new(
@@ -903,6 +920,10 @@ impl Parser<'_> {
         self.with_struct_literals_allowed(|p| {
             let mut args = Vec::new();
             let mut labels = Vec::new();
+            // Whether each element was separated from the next by a
+            // newline rather than a comma, which is what decides whether
+            // dropping a `&` can change the parse.
+            let mut newline_separated: Vec<bool> = Vec::new();
             while !p.at_punct(Punct::RParen) && !p.at_eof() {
                 if p.at_punct(Punct::DotDotDot) {
                     p.bump();
@@ -939,11 +960,21 @@ impl Parser<'_> {
                     });
                 }
                 let amp = p.peek_span();
+                // Dropping this `&` joins the argument to the one before
+                // it when the two are separated by a newline and this one
+                // opens with `(`: `f(\n  &a\n  &(b)\n)` becomes
+                // `f(a(b))`, a different call with a different arity.
+                let joins_previous = !newline_separated.is_empty()
+                    && *newline_separated.last().unwrap_or(&false)
+                    && matches!(p.peek().kind, TokenKind::Punct(Punct::Amp))
+                    && matches!(p.peek_nth(1).kind, TokenKind::Punct(Punct::LParen));
                 let arg = p.parse_expr_no_assign();
-                args.push(p.strip_shared_argument_reference(arg, amp));
+                args.push(p.strip_shared_argument_reference(arg, amp, joins_previous));
+                let comma = p.at_punct(Punct::Comma);
                 if !p.eat_list_separator() {
                     break;
                 }
+                newline_separated.push(!comma);
             }
             if !p.expect_punct(Punct::RParen, "to close the argument list") {
                 p.recover_to_close(Punct::LParen, Punct::RParen);
@@ -957,7 +988,16 @@ impl Parser<'_> {
     /// choice: the argument is passed without copying either way and the
     /// callee cannot write through it. `amp` is the span of the `&`, so
     /// the fix deletes exactly that.
-    pub(crate) fn strip_shared_argument_reference(&mut self, arg: Expr, amp: Span) -> Expr {
+    /// `joins_previous` says that deleting the `&` would let this
+    /// argument bind as a call on the one before it, so the diagnostic
+    /// carries no automatic fix: `--fix` would otherwise rewrite the
+    /// program into a different one that still compiles.
+    pub(crate) fn strip_shared_argument_reference(
+        &mut self,
+        arg: Expr,
+        amp: Span,
+        joins_previous: bool,
+    ) -> Expr {
         let ExprKind::Unary {
             op: gossamer_ast::UnaryOp::RefShared,
             operand,
@@ -966,9 +1006,34 @@ impl Parser<'_> {
             return arg;
         };
         if !self.in_synthesized_item() {
-            self.record(ParseError::SharedReferenceArgument, amp);
+            self.record(
+                if joins_previous {
+                    ParseError::SharedReferenceArgumentJoins
+                } else {
+                    ParseError::SharedReferenceArgument
+                },
+                amp,
+            );
         }
         *operand
+    }
+
+    /// Drops the `&` of a shared reference written on a binary operand,
+    /// which names no choice for the same reason it names none on an
+    /// argument: an operand is read without copying whatever its type,
+    /// and no operator writes through one.
+    fn strip_shared_operand_reference(&mut self, operand: Expr, amp: Span) -> Expr {
+        let ExprKind::Unary {
+            op: gossamer_ast::UnaryOp::RefShared,
+            operand: inner,
+        } = operand.kind
+        else {
+            return operand;
+        };
+        if !self.in_synthesized_item() {
+            self.record(ParseError::SharedReferenceArgument, amp);
+        }
+        *inner
     }
 
     /// Consumes a `name =` argument label when one starts here. `==` is a

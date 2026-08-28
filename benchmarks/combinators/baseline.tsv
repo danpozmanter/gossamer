@@ -1,0 +1,13 @@
+# Median wall time in milliseconds per tier, 2,000,000 elements, three
+# runs. Recorded 2026-08-27 on x86_64 Linux for 0.57.0, before any
+# change to the runtime boundary.
+#
+# Each row includes building the input sequence, so the three rows are
+# comparable with each other rather than with a number from elsewhere.
+# `hand_loop` never crosses the boundary and is the floor the two
+# combinator rows are read against.
+#
+# fixture	bytecode	jit	native
+ifold.gos	254	24	12
+imap.gos	261	40	31
+hand_loop.gos	120	19	5

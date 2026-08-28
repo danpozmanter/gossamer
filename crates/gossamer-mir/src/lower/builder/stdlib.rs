@@ -112,8 +112,17 @@ impl<'a> Builder<'a> {
             return source_local;
         }
         let env_ty = expected;
-        // Allocate the env blob: 16 bytes (thunk ptr + real fn ptr).
-        let size_local = self.fresh(env_ty);
+        // Only the environment carries the callable type, so that type says an
+        // environment is owned here and the drop passes reclaim it. The sizes,
+        // offsets, thunk address, and store sinks around it are plain words.
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let unit_ty = self.tcx.unit();
+        // Allocate the env blob: 16 bytes (thunk ptr + real fn ptr). It is
+        // reference-counted like a capturing closure's, so every callable
+        // value reaches its owner in one shape and one predicate decides who
+        // reclaims it. The blob holds two code addresses and no managed
+        // child, hence the empty meta symbol.
+        let size_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(size_local),
             Rvalue::Use(Operand::Const(ConstValue::Int(16))),
@@ -123,8 +132,11 @@ impl<'a> Builder<'a> {
         self.emit_assign(
             Place::local(env_local),
             Rvalue::CallIntrinsic {
-                name: "gos_alloc",
-                args: vec![Operand::Copy(Place::local(size_local))],
+                name: "gos_rc_alloc",
+                args: vec![
+                    Operand::Copy(Place::local(size_local)),
+                    Operand::Const(ConstValue::Str(String::new())),
+                ],
             },
             span,
         );
@@ -132,7 +144,7 @@ impl<'a> Builder<'a> {
         // types so the backend can synthesize a thunk with the
         // correct calling convention regardless of arg / ret types.
         let thunk_name = mangle_callable_shape(self.tcx, &sig);
-        let tramp_addr_local = self.fresh(env_ty);
+        let tramp_addr_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(tramp_addr_local),
             Rvalue::CallIntrinsic {
@@ -141,13 +153,13 @@ impl<'a> Builder<'a> {
             },
             span,
         );
-        let zero_local = self.fresh(env_ty);
+        let zero_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(zero_local),
             Rvalue::Use(Operand::Const(ConstValue::Int(0))),
             span,
         );
-        let sink_a = self.fresh(env_ty);
+        let sink_a = self.fresh(unit_ty);
         self.emit_assign(
             Place::local(sink_a),
             Rvalue::CallIntrinsic {
@@ -160,7 +172,7 @@ impl<'a> Builder<'a> {
             },
             span,
         );
-        let eight_local = self.fresh(env_ty);
+        let eight_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(eight_local),
             Rvalue::Use(Operand::Const(ConstValue::Int(8))),
@@ -176,7 +188,7 @@ impl<'a> Builder<'a> {
         // already hold the right value.
         let real_fn_operand = if let Some(name) = self.local_fn_name.get(&source_local).cloned() {
             let name = self.callable_fn_value_symbol(&name, &sig);
-            let addr_local = self.fresh(env_ty);
+            let addr_local = self.fresh(i64_ty);
             self.emit_assign(
                 Place::local(addr_local),
                 Rvalue::CallIntrinsic {
@@ -189,7 +201,7 @@ impl<'a> Builder<'a> {
         } else {
             Operand::Copy(Place::local(source_local))
         };
-        let sink_b = self.fresh(env_ty);
+        let sink_b = self.fresh(unit_ty);
         self.emit_assign(
             Place::local(sink_b),
             Rvalue::CallIntrinsic {
@@ -265,6 +277,22 @@ impl<'a> Builder<'a> {
             output: elem,
         }));
         let env_local = self.coerce_to_fn_trait_if_needed(f_local, fn_trait_ty, span);
+        // The environment reaches a second goroutine, so its count becomes
+        // atomic and the child takes a share of its own. The child gives that
+        // share back however it leaves, which is what lets the spawning frame
+        // release its own share at the end of the scope that built it - a loop
+        // that spawns per iteration then holds one environment, not all of them.
+        self.emit_mark_shared_if_rc(env_local, span);
+        let unit_ty = self.tcx.unit();
+        let child_share = self.fresh(unit_ty);
+        self.emit_assign(
+            Place::local(child_share),
+            Rvalue::CallIntrinsic {
+                name: "gos_rt_rc_retain",
+                args: vec![Operand::Copy(Place::local(env_local))],
+            },
+            span,
+        );
         let code_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(code_local),

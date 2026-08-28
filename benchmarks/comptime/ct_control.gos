@@ -1,0 +1,25 @@
+// The same program with every const written as the literal it folds to
+// and the generated body written by hand: the floor a fold is measured
+// against, so a timing here is compilation with none of that work in it.
+//
+// The word the fold's fast path looks for does not appear anywhere in
+// this file, comments included: finding it anywhere in the text is what
+// makes the toolchain run the evaluation front end, so a control that
+// mentioned it would measure the thing it exists to exclude.
+struct Rec { id: i64, name: String, score: f64, active: bool }
+
+const TABLE_LEN: i64 = 1466183
+const TALLY: i64 = 500000
+const PRIMES: i64 = 41538
+
+fn rec_record(r: Rec) -> String {
+    "" + "id:int=" + format("{}", r.id) + ";" + "name:str=" + format("{}", r.name) + ";"
+        + "score:real=" + format("{}", r.score) + ";" + "active:bool=" + format("{}", r.active) + ";"
+}
+
+fn main() {
+    println("{}", TABLE_LEN)
+    println("{}", TALLY)
+    println("{}", PRIMES)
+    println("{}", rec_record(Rec { id: 7, name: "jane", score: 1.5, active: true }))
+}

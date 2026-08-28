@@ -356,7 +356,7 @@ mod tests {
         let source = concat!(
             "fn greet(name: String, greeting: String = \"hello\", excited: bool = false)",
             " -> String {\n",
-            "    let line = greeting + \", \" + &name\n",
+            "    let line = greeting + \", \" + name\n",
             "    if excited { line + \"!\" } else { line }\n",
             "}\n\n",
             "fn main() {\n",

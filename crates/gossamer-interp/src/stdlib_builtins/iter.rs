@@ -1854,22 +1854,14 @@ pub(crate) fn builtin_iter_dedup(args: &[Value]) -> RuntimeResult<Value> {
     let xs = collect_array(args.first().unwrap_or(&Value::Unit));
     let mut out: Vec<Value> = Vec::new();
     for x in xs {
-        if out.last().is_none_or(|last| !values_equal(last, &x)) {
+        if out
+            .last()
+            .is_none_or(|last| !crate::vm::values_equal(last, &x))
+        {
             out.push(x);
         }
     }
     Ok(Value::Array(Arc::new(out)))
-}
-
-pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::Int(x), Value::Int(y)) => x == y,
-        (Value::Float(x), Value::Float(y)) => x == y,
-        (Value::Bool(x), Value::Bool(y)) => x == y,
-        (Value::Char(x), Value::Char(y)) => x == y,
-        (Value::String(x), Value::String(y)) => x.as_str() == y.as_str(),
-        _ => false,
-    }
 }
 
 pub(crate) fn builtin_iter_sum(args: &[Value]) -> RuntimeResult<Value> {

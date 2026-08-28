@@ -390,6 +390,7 @@ struct BuildTimings {
     arena_escape: Duration,
     parse_cache_hit: bool,
     body_count: usize,
+    pruned_count: usize,
     llvm_object_count: usize,
     cranelift_companion: bool,
     codegen: Duration,
@@ -400,7 +401,7 @@ struct BuildTimings {
 impl BuildTimings {
     fn print(&self, cache_hit: bool) {
         println!(
-            "build-timings: {{\"bundle_us\":{},\"stamp_us\":{},\"autoderive_us\":{},\"comptime_us\":{},\"frontend_us\":{},\"parse_us\":{},\"resolve_us\":{},\"typecheck_us\":{},\"exhaustiveness_us\":{},\"arena_escape_us\":{},\"parse_cache_hit\":{},\"body_count\":{},\"llvm_object_count\":{},\"cranelift_companion\":{},\"codegen_us\":{},\"link_us\":{},\"total_us\":{},\"final_artifact_cache_hit\":{cache_hit}}}",
+            "build-timings: {{\"bundle_us\":{},\"stamp_us\":{},\"autoderive_us\":{},\"comptime_us\":{},\"frontend_us\":{},\"parse_us\":{},\"resolve_us\":{},\"typecheck_us\":{},\"exhaustiveness_us\":{},\"arena_escape_us\":{},\"parse_cache_hit\":{},\"body_count\":{},\"pruned_count\":{},\"llvm_object_count\":{},\"cranelift_companion\":{},\"codegen_us\":{},\"link_us\":{},\"total_us\":{},\"final_artifact_cache_hit\":{cache_hit}}}",
             self.bundle.as_micros(),
             self.stamp.as_micros(),
             self.autoderive.as_micros(),
@@ -413,6 +414,7 @@ impl BuildTimings {
             self.arena_escape.as_micros(),
             self.parse_cache_hit,
             self.body_count,
+            self.pruned_count,
             self.llvm_object_count,
             self.cranelift_companion,
             self.codegen.as_micros(),
@@ -1887,6 +1889,7 @@ fn emit_native_objects(
         gossamer_driver::compile_at_paths_from_frontend(checked, &llvm_obj_dir, &cl_path, release)
             .map_err(|err| NativeBuildError::BackendFailed(format!("{err:#}")))?;
     timings.body_count = build.body_count;
+    timings.pruned_count = build.pruned_count;
     timings.llvm_object_count = build.llvm_object_count;
     timings.cranelift_companion = build.has_cranelift_companion;
     let _ = cl_path;

@@ -544,6 +544,7 @@ pub(crate) fn resolve_output_path(
             let target_dir = root.join("target").join(profile);
             fs::create_dir_all(&target_dir)
                 .map_err(|e| anyhow!("creating {}: {e}", target_dir.display()))?;
+            stamp_build_dir(&root.join("target"));
             return Ok(target_dir.join(platform_exe_name(unit_name, target_is_windows)));
         }
     }
@@ -553,7 +554,28 @@ pub(crate) fn resolve_output_path(
     let target_dir = base.join("target").join(profile);
     fs::create_dir_all(&target_dir)
         .map_err(|e| anyhow!("creating {}: {e}", target_dir.display()))?;
+    stamp_build_dir(&base.join("target"));
     Ok(target_dir.join(platform_exe_name(unit_name, target_is_windows)))
+}
+
+/// Name of the stamp `gos build` leaves at the root of a `target/`
+/// directory it writes into.
+pub(crate) const BUILD_DIR_STAMP: &str = ".gos-build";
+
+/// Marks `dir` as a `target/` directory this toolchain writes binaries
+/// into, so `gos clean` can tell one it owns from one another build
+/// system created under the same conventional name. A stamp that cannot
+/// be written is not an error: the only consequence is that `gos clean`
+/// leaves the directory alone.
+pub(crate) fn stamp_build_dir(dir: &Path) {
+    let stamp = dir.join(BUILD_DIR_STAMP);
+    if stamp.exists() {
+        return;
+    }
+    let _ = fs::write(
+        &stamp,
+        b"This directory holds `gos build` output and is removed by `gos clean`.\n",
+    );
 }
 
 /// Binary name with the correct platform extension: `stem.exe` when the

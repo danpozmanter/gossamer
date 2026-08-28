@@ -641,3 +641,290 @@ fn a_level_the_host_cannot_honor_is_refused_with_the_blocking_primitive_named() 
     assert_eq!(error.exit_code(), gossamer_sandbox::EXIT_LEVEL_UNAVAILABLE);
     assert!(error.to_string().contains("the highest level"), "{error}");
 }
+
+// --- Windows backend ---------------------------------------------------
+//
+// The cases above that are not Linux-gated exercise the portable
+// contract at `Level::Basic`, which on Windows is an ordinary
+// `std::process::Command`. Everything the `strict` backend actually
+// does - the restricted token, the app container, the host ACL grants,
+// and the raw `CreateProcessAsUserW` that carries them - is reached
+// only above that level, and had no behavioural coverage at all.
+
+#[cfg(windows)]
+#[allow(
+    unsafe_code,
+    reason = "swapping this process's own standard input is a raw Win32 \
+              call; there is no safe spelling of it, and the previous \
+              handle is restored before the helper returns"
+)]
+mod windows_backend {
+    use super::{MAX_LEVEL_LOCK, portable_policy, workspace};
+    use gossamer_sandbox::{Level, Sandbox, SandboxPolicy, Stdio};
+
+    /// Whether this host can actually build the container the cases
+    /// below are about. A host that tops out lower skips rather than
+    /// fails: the backend is not broken there, it is absent.
+    fn skip_unless_strict() -> bool {
+        let host = gossamer_sandbox::capabilities();
+        if host.max_level < Level::Strict {
+            eprintln!(
+                "skipping: this host tops out at {} ({:?})",
+                host.max_level, host.notes
+            );
+            return true;
+        }
+        false
+    }
+
+    fn strict_sandbox(tag: &str) -> (std::path::PathBuf, Sandbox) {
+        let root = workspace(tag);
+        let policy: SandboxPolicy = portable_policy(&root, Level::Strict);
+        let sandbox = Sandbox::new(&policy).expect("a strict sandbox builds on this host");
+        (root, sandbox)
+    }
+
+    fn cmd(script: &str) -> Vec<String> {
+        vec!["cmd".to_string(), "/C".to_string(), script.to_string()]
+    }
+
+    /// The ACL of `path` as `icacls` renders it.
+    ///
+    /// An external reader on purpose: what the sandbox left behind has
+    /// to be visible to something other than the code that wrote it,
+    /// and a record file only says what a run intended.
+    fn acl_text(path: &std::path::Path) -> String {
+        let output = std::process::Command::new("icacls")
+            .arg(path)
+            .output()
+            .expect("icacls runs");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// Points this process's own standard input at `content` for the
+    /// duration of `body`, and puts the previous handle back.
+    ///
+    /// `Stdio::Capture` inherits standard input rather than replacing
+    /// it, so the only way to prove a child reads what the parent was
+    /// given is to give the parent something known first.
+    fn with_stdin_from<T>(content: &str, body: impl FnOnce() -> T) -> T {
+        use std::io::Write as _;
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::System::Console::{GetStdHandle, STD_INPUT_HANDLE, SetStdHandle};
+
+        let path = std::env::temp_dir().join(format!(
+            "gos-sandbox-stdin-{}-{:p}.txt",
+            std::process::id(),
+            std::ptr::from_ref(content),
+        ));
+        {
+            let mut file = std::fs::File::create(&path).expect("create the stdin file");
+            file.write_all(content.as_bytes()).expect("write it");
+        }
+        let file = std::fs::File::open(&path).expect("reopen the stdin file");
+        // SAFETY: both calls take a handle by value; the file outlives
+        // the swap, and the previous handle is restored below.
+        let previous = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+        unsafe { SetStdHandle(STD_INPUT_HANDLE, file.as_raw_handle().cast()) };
+        let result = body();
+        unsafe { SetStdHandle(STD_INPUT_HANDLE, previous) };
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        result
+    }
+
+    /// Standard input is the caller's, not a silently substituted empty
+    /// one: `Stdio`'s own contract says capturing what a command says
+    /// does not silence what it is told, and the raw-spawn path has to
+    /// keep that promise too.
+    #[test]
+    fn a_strict_child_reads_the_standard_input_it_was_given() {
+        let _one_at_a_time = MAX_LEVEL_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if skip_unless_strict() {
+            return;
+        }
+        let (_root, sandbox) = strict_sandbox("win-strict-stdin");
+        let output = with_stdin_from("hello-from-the-parent\r\n", || {
+            sandbox
+                .run_with(&cmd("more"), Stdio::Capture)
+                .expect("the child runs")
+        });
+        assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+        assert!(
+            output.stdout_text().contains("hello-from-the-parent"),
+            "stdout was {:?}",
+            output.stdout_text()
+        );
+    }
+
+    /// The one directory the policy grants read-write is writable. On
+    /// Windows that is two host edits rather than one: the package SID
+    /// needs an ACE, and the object's mandatory label has to come down
+    /// to low, because the container runs at low integrity and
+    /// integrity is checked before the DACL is.
+    #[test]
+    fn a_strict_child_writes_into_the_granted_working_directory() {
+        let _one_at_a_time = MAX_LEVEL_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if skip_unless_strict() {
+            return;
+        }
+        let (root, sandbox) = strict_sandbox("win-strict-write");
+        let output = sandbox
+            .run_with(&cmd("echo WROTE_INSIDE> inside.txt"), Stdio::Capture)
+            .expect("the child runs");
+        assert_eq!(
+            output.code,
+            0,
+            "stdout: {} stderr: {}",
+            output.stdout_text(),
+            output.stderr_text()
+        );
+        let written = std::fs::read_to_string(root.join("inside.txt"))
+            .expect("the file the child wrote is there afterwards");
+        assert!(written.contains("WROTE_INSIDE"), "{written:?}");
+    }
+
+    /// A path outside every grant stays unwritable, and the control is
+    /// what proves the probe ran at all rather than the shell failing
+    /// before it reached the write.
+    #[test]
+    fn a_strict_child_cannot_write_outside_every_grant() {
+        let _one_at_a_time = MAX_LEVEL_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if skip_unless_strict() {
+            return;
+        }
+        let outside = workspace("win-strict-outside");
+        let (_root, sandbox) = strict_sandbox("win-strict-denied");
+        let target = outside.join("denied.txt");
+        let control = sandbox
+            .run_with(&cmd("echo CONTROL_RAN"), Stdio::Capture)
+            .expect("the control runs");
+        assert_eq!(control.stdout_text().trim(), "CONTROL_RAN");
+
+        let output = sandbox
+            .run_with(
+                &cmd(&format!("echo NOPE> \"{}\"", target.display())),
+                Stdio::Capture,
+            )
+            .expect("the child runs");
+        assert_ne!(
+            output.code,
+            0,
+            "a write outside every grant must fail: {}",
+            output.stdout_text()
+        );
+        assert!(
+            !target.exists(),
+            "the file was created despite the policy denying it"
+        );
+    }
+
+    /// The two output streams are separate handles. An inheriting child
+    /// whose stderr is a duplicate of the caller's stdout puts both on
+    /// one stream, which a caller that redirects them separately never
+    /// sees again.
+    #[test]
+    fn a_strict_childs_streams_stay_apart() {
+        let _one_at_a_time = MAX_LEVEL_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if skip_unless_strict() {
+            return;
+        }
+        let (_root, sandbox) = strict_sandbox("win-strict-streams");
+        let output = sandbox
+            .run_with(&cmd("echo ON_STDOUT& echo ON_STDERR 1>&2"), Stdio::Capture)
+            .expect("the child runs");
+        assert!(
+            output.stdout_text().contains("ON_STDOUT"),
+            "stdout was {:?}",
+            output.stdout_text()
+        );
+        assert!(
+            !output.stdout_text().contains("ON_STDERR"),
+            "the error stream arrived on stdout: {:?}",
+            output.stdout_text()
+        );
+        assert!(
+            output.stderr_text().contains("ON_STDERR"),
+            "stderr was {:?}",
+            output.stderr_text()
+        );
+    }
+
+    /// Every host object the run touched is left as it was found: the
+    /// ACE on the granted directory, the traverse ACEs on the
+    /// directories leading to it, and the mandatory label the write
+    /// needed. Read back through `icacls`, so the assertion is about
+    /// the object rather than about the record the run kept.
+    #[test]
+    fn a_strict_run_leaves_no_ace_behind_on_the_grant_or_its_ancestors() {
+        let _one_at_a_time = MAX_LEVEL_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if skip_unless_strict() {
+            return;
+        }
+        let root = workspace("win-strict-residue");
+        let watched: Vec<std::path::PathBuf> = std::iter::once(root.clone())
+            .chain(root.ancestors().skip(1).map(std::path::Path::to_path_buf))
+            .collect();
+        let before: Vec<String> = watched.iter().map(|path| acl_text(path)).collect();
+
+        {
+            let sandbox = Sandbox::new(&portable_policy(&root, Level::Strict))
+                .expect("a strict sandbox builds on this host");
+            let output = sandbox
+                .run_with(&cmd("echo RAN> ran.txt"), Stdio::Capture)
+                .expect("the child runs");
+            assert_eq!(output.code, 0, "stderr: {}", output.stderr_text());
+        }
+
+        for (path, was) in watched.iter().zip(before) {
+            assert_eq!(
+                acl_text(path),
+                was,
+                "{} was left changed after the run",
+                path.display()
+            );
+        }
+    }
+
+    /// A directory every app container already reaches is left alone.
+    /// Windows ships an `ALL APPLICATION PACKAGES` ACE on the system
+    /// root, so a grant there would rewrite a system object's ACL to
+    /// say what it already says.
+    #[test]
+    fn a_strict_run_does_not_rewrite_a_system_directorys_acl() {
+        let _one_at_a_time = MAX_LEVEL_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if skip_unless_strict() {
+            return;
+        }
+        let system = std::path::PathBuf::from("C:\\Windows");
+        if !system.is_dir() {
+            return;
+        }
+        let before = acl_text(&system);
+        {
+            let (_root, sandbox) = strict_sandbox("win-strict-system");
+            let output = sandbox
+                .run_with(&cmd("echo SYSTEM_OK"), Stdio::Capture)
+                .expect("the child runs");
+            assert_eq!(output.stdout_text().trim(), "SYSTEM_OK");
+        }
+        assert_eq!(
+            acl_text(&system),
+            before,
+            "the run rewrote the ACL of {}",
+            system.display()
+        );
+    }
+}

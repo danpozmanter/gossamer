@@ -1,0 +1,79 @@
+// A generic type parameter that appears inside a callable parameter's
+// signature: `Fn(T) -> U` binds `T` and `U` from the call site the same
+// way a bare `T` parameter does, and the compiled tiers build the
+// indirect call from the instantiation rather than from the template.
+//
+// The `f64` cases are the ones with teeth: a float and a pointer-width
+// word take different registers, so a signature that kept the
+// template's parameter would pass the argument in the wrong class and
+// read the result out of the wrong one.
+
+fn apply<T>(x: T, f: Fn(T) -> T) -> T { f(x) }
+
+fn convert<U>(x: i64, f: Fn(i64) -> U) -> U { f(x) }
+
+fn reduce<T>(x: T, f: Fn(T) -> i64) -> i64 { f(x) }
+
+fn combine<T>(a: T, b: T, f: Fn(T, T) -> T) -> T { f(a, b) }
+
+fn gmap<T, U>(xs: Vec<T>, f: Fn(T) -> U) -> Vec<U> {
+    let mut out = #[]
+    for x in xs { out.push(f(x)) }
+    out
+}
+
+fn gfold<T, A>(xs: Vec<T>, init: A, f: Fn(A, T) -> A) -> A {
+    let mut acc = init
+    for x in xs { acc = f(acc, x) }
+    acc
+}
+
+trait Measured { fn size(&self) -> i64 }
+
+struct Crate { width: i64 }
+
+impl Measured for Crate {
+    fn size(&self) -> i64 { self.width }
+}
+
+fn largest<T>(xs: Vec<T>, f: Fn(T) -> i64) -> i64 where T: Measured {
+    let mut best = 0
+    for x in xs { best = max(best, f(x)) }
+    best
+}
+
+fn double(v: i64) -> i64 { v * 2 }
+
+fn label(v: i64) -> String { format("<{}>", v) }
+
+fn halve(v: f64) -> f64 { v / 2.0 }
+
+fn main() {
+    println("{}", apply(3, |v| v * 2))
+    println("{}", apply(2.5, |v| v * 2.0))
+    println("{}", apply("ab", |v| v + "c"))
+    println("{}", apply(3, double))
+    println("{}", apply(9.0, halve))
+
+    println("{}", convert(3, |v| v * 2))
+    println("{}", convert(4, label))
+    let rendered: String = convert(5, |v| format("{}!", v))
+    println("{}", rendered)
+
+    println("{}", reduce(7, |v| v + 1))
+    println("{}", reduce(2.5, |v| v as i64))
+
+    println("{}", combine(3, 4, |a, b| a + b))
+    println("{}", combine(1.5, 2.0, |a, b| a + b))
+
+    println("{}", gmap(#[1, 2, 3], |v| v * 2))
+    println("{}", gmap(#[1, 2, 3], label))
+    println("{}", gmap(#[1.0, 4.0], halve))
+    println("{}", gmap(gmap(#[1, 2], double), label))
+
+    println("{}", gfold(#[1, 2, 3], 0, |acc, v| acc + v))
+    println("{}", gfold(#[1, 2, 3], 0.5, |acc, v| acc + v as f64))
+    println("{}", gfold(#[1, 2], "", |acc, v| acc + format("{}", v)))
+
+    println("{}", largest(#[Crate { width: 3 }, Crate { width: 9 }], |c| c.size()))
+}

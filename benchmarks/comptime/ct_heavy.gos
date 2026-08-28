@@ -1,0 +1,60 @@
+// The three fold shapes in one file plus a `codegen` splice over
+// reflected fields: what a build pays when every kind of comptime work
+// runs at once.
+struct Rec { id: i64, name: String, score: f64, active: bool }
+
+comptime fn table_text(n: i64) -> String {
+    let mut s = ""
+    let mut i = 0
+    while i < n { s += format("{},", i * i % 9973); i += 1 }
+    s
+}
+
+comptime fn tally(n: i64) -> i64 {
+    let mut m = {}
+    let mut i = 0
+    while i < n { m.inc(i % 1000); i += 1 }
+    let mut total = 0
+    for k in m.keys() { total += m.get_or(k, 0) }
+    total
+}
+
+comptime fn sieve_count(n: i64) -> i64 {
+    let mut flags = #[true; 500001]
+    let mut i = 2
+    let mut count = 0
+    while i < n {
+        if flags[i] { count += 1; let mut j = i * i; while j < n { flags[j] = false; j += i } }
+        i += 1
+    }
+    count
+}
+
+comptime fn gen_record(fields: Vec<(String, String)>, v: String) -> String {
+    let mut out = "\"\""
+    for (name, ty) in fields {
+        let label = match ty {
+            "String" => "str"
+            "bool" => "bool"
+            "f64" => "real"
+            _ => "int"
+        }
+        out += " + \"" + name + ":" + label + "=\" + format(\"{}\", " + v + "." + name + ") + \";\""
+    }
+    out
+}
+
+const TABLE_LEN: i64 = table_text(300000).byte_len()
+const TALLY: i64 = tally(500000)
+const PRIMES: i64 = sieve_count(500000)
+
+fn rec_record(r: Rec) -> String {
+    codegen(gen_record(typeInfo::<Rec>(), "r"))
+}
+
+fn main() {
+    println("{}", TABLE_LEN)
+    println("{}", TALLY)
+    println("{}", PRIMES)
+    println("{}", rec_record(Rec { id: 7, name: "jane", score: 1.5, active: true }))
+}

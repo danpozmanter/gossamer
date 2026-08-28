@@ -39,7 +39,7 @@ pub(crate) enum CmpStorage {
 
 /// How many slots the descriptor at `cursor` spans where it is stored
 /// inline, leaving the cursor untouched.
-unsafe fn desc_slot_span(tags: *const u8, cursor: usize) -> usize {
+pub(crate) unsafe fn desc_slot_span(tags: *const u8, cursor: usize) -> usize {
     let mut c = cursor;
     unsafe { desc_span_walk(tags, &mut c) }
 }

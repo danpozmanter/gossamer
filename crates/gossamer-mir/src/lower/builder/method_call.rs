@@ -84,15 +84,11 @@ impl LazyElemFamily {
 }
 
 /// Register class a combinator's callback sees for one element or scalar.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ElemAbi {
-    /// An integer register: `i64`, `bool`, `char`, and managed pointer words.
-    Word,
-    /// An SSE register: `f64`.
-    Float,
-    /// The address of storage wider than one slot.
-    Ptr,
-}
+///
+/// The same class the ABI registry declares on a shim's row, so the class
+/// computed from a sequence's type and the class its shim was written against
+/// are one type and can be compared directly.
+pub(crate) use gossamer_abi::ElemClass as ElemAbi;
 
 /// Outcome of an early method-dispatch guard in `Builder::lower_method_call`.
 enum MethodLowering {
@@ -2291,6 +2287,11 @@ impl<'a> Builder<'a> {
             }
             "clone" => match &receiver_kind_flat {
                 TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_clone"),
+                // A `String` clone takes a share of its own. Lowering it
+                // to nothing left the clone and its source as one value
+                // with one share, so a consuming callee given the clone
+                // took the caller's.
+                TyKind::String => Some("gos_rt_str_clone"),
                 _ => Some(""),
             },
             "extend" | "extend_from_slice" if args.len() == 1 => match &receiver_kind_flat {

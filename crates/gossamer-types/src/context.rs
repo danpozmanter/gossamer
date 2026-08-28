@@ -739,6 +739,21 @@ impl TyCtxt {
         if matches!(self.kind(ty), Some(TyKind::String)) {
             return true;
         }
+        // A callable value carries its captures in an environment the closure
+        // lowering allocates with an RC header, and the body address lives at
+        // its first word. That allocation has an owner-shaped lifetime, so the
+        // ordinary drop passes reclaim it; a non-capturing callable coerced to
+        // the same type carries a null environment, which releases as a no-op.
+        // `FnPtr` and `FnDef` are the raw code-pointer shapes, which carry no
+        // environment: a bare item and a non-capturing closure both reach a
+        // call site as an address, and only the environment-carrying form
+        // owns an allocation.
+        if matches!(
+            self.kind(ty),
+            Some(TyKind::FnTrait(_) | TyKind::Closure { .. })
+        ) {
+            return true;
+        }
         if self.rc_managed_tys.contains(&ty) {
             return true;
         }

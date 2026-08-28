@@ -52,7 +52,20 @@ jobs:
       - run: rustup set profile minimal
       - name: Install LLVM (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y llvm-18 clang-18
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # `llvm.sh` is the LLVM project's own apt repository installer.
+          # Ubuntu's archive stops several majors short of the one this
+          # toolchain prefers, and the emitted IR's optimiser has to be
+          # the major `rustc` bundles for its bitcode to be readable at
+          # all - a mismatch there is a hard link error, not a slower
+          # build.
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
+
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         env:
@@ -60,8 +73,8 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: |
           set -euo pipefail
-          brew install llvm@18
-          prefix="$(brew --prefix llvm@18)"
+          brew install llvm@22
+          prefix="$(brew --prefix llvm@22)"
           echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
           echo "GOS_LLC=$prefix/bin/llc"      >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
@@ -103,7 +116,20 @@ jobs:
           components: rust-src
       - run: rustup set profile minimal
       - name: Install LLVM
-        run: sudo apt-get update && sudo apt-get install -y llvm-18 clang-18
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # `llvm.sh` is the LLVM project's own apt repository installer.
+          # Ubuntu's archive stops several majors short of the one this
+          # toolchain prefers, and the emitted IR's optimiser has to be
+          # the major `rustc` bundles for its bitcode to be readable at
+          # all - a mismatch there is a hard link error, not a slower
+          # build.
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v1-tsan

@@ -490,7 +490,7 @@ impl<'a> Builder<'a> {
                     if let HirExprKind::Array(gossamer_hir::HirArrayExpr::Repeat { value, count }) =
                         &init.kind
                         && (matches!(self.tcx.kind_of(init.ty), gossamer_types::TyKind::Vec(_))
-                            || literal_u64(count).is_none())
+                            || self.static_repeat_len(init.ty, count).is_none())
                         && self
                             .lower_array_repeat_into(value, count, init.ty, stmt.span, Some(local))
                             .is_some()

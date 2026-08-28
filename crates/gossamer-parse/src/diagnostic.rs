@@ -165,9 +165,17 @@ pub enum ParseError {
     /// A parameter was declared with a shared reference type.
     #[error("a parameter is `T` or `&mut T`; a shared `&` names no choice")]
     SharedReferenceParameter,
-    /// A call argument was written as a shared reference.
-    #[error("a shared `&` on an argument names no choice; drop it")]
+    /// A call argument or a binary operand was written as a shared
+    /// reference.
+    #[error("a shared `&` names no choice here; drop it")]
     SharedReferenceArgument,
+    /// A shared `&` on an argument whose removal would let it bind as a
+    /// call on the argument before it. Reported without a fix.
+    #[error(
+        "a shared `&` names no choice here; drop it, and separate this argument \
+         from the one before it"
+    )]
+    SharedReferenceArgumentJoins,
     /// `unsafe` was written. It grants nothing the language withholds.
     #[error("`unsafe` grants nothing; drop it")]
     UnsafeGrantsNothing,
@@ -775,14 +783,28 @@ impl ParseError {
                         .to_string(),
                 ),
             ),
+            ParseError::SharedReferenceArgumentJoins => (
+                "GP0055",
+                "a shared `&` names no choice here; drop it, and separate this \
+                 argument from the one before it"
+                    .to_string(),
+                Some(
+                    "this argument opens with `(` and a newline is all that separates \
+                     it from the one before, so deleting the `&` alone would let the \
+                     two bind as one call. Parenthesise the previous argument, or put \
+                     a comma between them, and then drop the sigil. `gos check --fix` \
+                     leaves this one alone for that reason"
+                        .to_string(),
+                ),
+            ),
             ParseError::SharedReferenceArgument => (
                 "GP0055",
-                "a shared `&` on an argument names no choice; drop it".to_string(),
+                "a shared `&` names no choice here; drop it".to_string(),
                 Some(
-                    "no parameter is a shared reference, so the sigil changes nothing: \
-                     an argument is passed without copying either way, and a callee \
-                     writes to the caller's variable only through a `&mut` parameter, \
-                     which is spelled `&mut` at the call too"
+                    "there is no shared-reference type left for the sigil to name. An \
+                     argument and an operand are both read without copying either way, \
+                     and a callee writes to the caller's variable only through a \
+                     `&mut` parameter, which is spelled `&mut` at the call too"
                         .to_string(),
                 ),
             ),

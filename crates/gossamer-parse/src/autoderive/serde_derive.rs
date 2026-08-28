@@ -285,7 +285,13 @@ fn emit_from_json(
         from_json_fn(&ty.symbol)
     ));
     out.push_str("    let v = json::parse(text)?\n");
-    for (fname, kind) in fields {
+    // The local a field decodes into is named by position, not by the
+    // field. A field is free to carry any name the language allows -
+    // including one a compiler-known call already has (`format`,
+    // `panic`, `matches`) - and a generated binding named after it would
+    // make the compiler emit code that fails its own check, reported
+    // against a line of the user's file that does not exist.
+    for (index, (fname, kind)) in fields.iter().enumerate() {
         let path = format!("field `{fname}`");
         let extract = kind.extract_strict("__child", &path);
         // A missing `Option` field decodes to `None` rather than erroring.
@@ -295,7 +301,7 @@ fn emit_from_json(
             format!("return Err(errors::new(\"missing field `{fname}`\"))")
         };
         out.push_str(&format!(
-            "    let {fname} = match json::get(v, \"{fname}\") {{\n        Some(__child) => {extract},\n        None => {missing},\n    }}\n"
+            "    let __f{index} = match json::get(v, \"{fname}\") {{\n        Some(__child) => {extract},\n        None => {missing},\n    }}\n"
         ));
     }
     // The extracted local carries the representation; an opaque alias
@@ -303,11 +309,12 @@ fn emit_from_json(
     // type is what fixes `.into()`'s target.
     let values: Vec<String> = fields
         .iter()
-        .map(|(field, _)| {
+        .enumerate()
+        .map(|(index, (field, _))| {
             if opaque.contains(field) {
-                format!("{field}.into()")
+                format!("__f{index}.into()")
             } else {
-                field.clone()
+                format!("__f{index}")
             }
         })
         .collect();

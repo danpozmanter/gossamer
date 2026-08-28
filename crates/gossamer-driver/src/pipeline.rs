@@ -141,6 +141,8 @@ pub struct ReleaseBuildPaths {
     pub has_cranelift_companion: bool,
     /// Number of MIR bodies presented to native code generation.
     pub body_count: usize,
+    /// Number of MIR bodies dropped as unreachable from the entry.
+    pub pruned_count: usize,
     /// Number of LLVM object files emitted or restored for this build.
     pub llvm_object_count: usize,
     /// Paths to the LLVM-emitted per-body object files.
@@ -171,7 +173,7 @@ pub fn compile_at_paths_from_frontend(
     } else {
         MirProfile::Debug
     };
-    let (bodies, tcx) = lower_to_mir_from_frontend(checked, profile);
+    let (bodies, tcx, prune) = lower_to_mir_reporting_prune(checked, profile);
     let body_count = bodies.len();
     enforce_mir_backend_invariants(&bodies, &tcx)?;
     enforce_generic_abi(&bodies, &tcx)?;
@@ -183,6 +185,7 @@ pub fn compile_at_paths_from_frontend(
         fallback_bodies: Vec::new(),
         has_cranelift_companion: false,
         body_count,
+        pruned_count: prune.pruned,
         llvm_object_count: llvm_objects.len(),
         llvm_objects,
     })
@@ -219,11 +222,27 @@ enum MirProfile {
     Release,
 }
 
+/// The body every native build starts from. `gos build` produces an
+/// executable whatever the project's shape, so nothing else is a root:
+/// a library's exported surface reaches this program only through the
+/// entry that calls it.
+const ENTRY_BODY: &str = "main";
+
 /// HIR + MIR lowering from pre-computed frontend artifacts.
 fn lower_to_mir_from_frontend(
     checked: CheckedFrontend,
     profile: MirProfile,
 ) -> (Vec<Body>, TyCtxt) {
+    let (bodies, tcx, _) = lower_to_mir_reporting_prune(checked, profile);
+    (bodies, tcx)
+}
+
+/// [`lower_to_mir_from_frontend`] plus how much the reachability pass
+/// dropped, which the CLI reports in its timings line.
+fn lower_to_mir_reporting_prune(
+    checked: CheckedFrontend,
+    profile: MirProfile,
+) -> (Vec<Body>, TyCtxt, gossamer_mir::PruneReport) {
     let CheckedFrontend {
         sf,
         resolutions,
@@ -233,7 +252,27 @@ fn lower_to_mir_from_frontend(
     let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let hir = lift_closures(hir, &mut tcx);
     let mut bodies = lower_program(&hir, &mut tcx);
+    // Twice, for two different reasons. The first pass keeps every
+    // method whatever the graph says, because specialisation is where a
+    // trait call through a type parameter becomes a call to a concrete
+    // impl method and that edge does not exist yet - but it does drop
+    // the free functions nothing reaches, so specialisation and every
+    // pass after it walk a program the size of what it actually
+    // compiles. The second pass runs on the finished graph, where every
+    // name is final. A native build produces an executable, so its one
+    // root is the entry.
+    let roots = [ENTRY_BODY.to_string()];
+    let early = gossamer_mir::prune_scoped(
+        &mut bodies,
+        &roots,
+        gossamer_mir::Scope::BeforeSpecialisation,
+    );
     gossamer_mir::monomorphise(&mut bodies, &mut tcx);
+    let late = gossamer_mir::prune_unreachable(&mut bodies, &roots);
+    let prune = gossamer_mir::PruneReport {
+        kept: late.kept,
+        pruned: early.pruned + late.pruned,
+    };
     match profile {
         // Debug deliberately keeps calls intact and runs only the inexpensive
         // canonicalisation needed by native codegen. This is both faster to
@@ -255,7 +294,7 @@ fn lower_to_mir_from_frontend(
             }
         }
     }
-    (bodies, tcx)
+    (bodies, tcx, prune)
 }
 
 /// Surfaces the Tier B6.3 generic-ABI check as an `anyhow::Error`

@@ -2002,20 +2002,44 @@ impl Resolver {
         if prefix.is_empty() || !starts_lowercase(last) {
             return false;
         }
-        // The head may be an alias (`use sqlite_gos as sqlite`), which names
-        // the same module the import points at.
-        let mut path = prefix.join("::");
-        if !self.local_module_paths.contains(&path)
-            && let Some(target) = self.imported_targets.get(prefix[0])
-        {
+        self.local_module_path_for(prefix).is_some()
+    }
+
+    /// The local module `prefix` names, as written from where it is
+    /// written.
+    ///
+    /// Three spellings reach one module: the path as written, an alias
+    /// the file imported it under (`use sqlite_gos as sqlite`), and - for
+    /// a path written INSIDE a module - a path relative to it. The last
+    /// is what a bundled dependency's own source uses: `helper::f` inside
+    /// `mod deppkg` names `deppkg::helper::f`, and a check that only
+    /// looked for `helper` found nothing and left the member unresolved
+    /// until run time.
+    fn local_module_path_for(&self, prefix: &[&str]) -> Option<String> {
+        let written = prefix.join("::");
+        if self.local_module_paths.contains(&written) {
+            return Some(written);
+        }
+        if let Some(target) = self.imported_targets.get(prefix[0]) {
             let mut rejoined = target.clone();
             for seg in &prefix[1..] {
                 rejoined.push_str("::");
                 rejoined.push_str(seg);
             }
-            path = rejoined;
+            if self.local_module_paths.contains(&rejoined) {
+                return Some(rejoined);
+            }
         }
-        self.local_module_paths.contains(&path)
+        // Innermost enclosing module first, since a nearer one shadows.
+        for depth in (1..=self.current_module.len()).rev() {
+            let mut anchored = self.current_module[..depth].join("::");
+            anchored.push_str("::");
+            anchored.push_str(&written);
+            if self.local_module_paths.contains(&anchored) {
+                return Some(anchored);
+            }
+        }
+        None
     }
 
     /// True when the path's head names a local module and its next segment
@@ -2026,15 +2050,9 @@ impl Resolver {
         let [head, next, ..] = segments else {
             return false;
         };
-        let head_path = self
-            .imported_targets
-            .get(*head)
-            .cloned()
-            .filter(|target| self.local_module_paths.contains(target))
-            .unwrap_or_else(|| (*head).to_string());
-        if !self.local_module_paths.contains(&head_path) {
+        let Some(head_path) = self.local_module_path_for(&[*head]) else {
             return false;
-        }
+        };
         let member = format!("{head_path}::{next}");
         if self.local_module_paths.contains(&member) {
             return false;

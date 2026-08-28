@@ -1,7 +1,7 @@
 //! `gos clean [--vendor] [--dry-run]` - drop build artifacts and caches:
-//! the project `target/` directory, the per-project `.gos-cache`
-//! incremental IR-object cache, the frontend cache, and optionally the
-//! vendor tree.
+//! the project `target/` directory this toolchain wrote, the per-project
+//! `.gos-cache` incremental IR-object cache, the frontend cache, and
+//! optionally the vendor tree.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,13 +24,32 @@ pub(crate) fn run(options: Options) -> Result<()> {
     let mut removed_bytes: u64 = 0;
     let mut removed_files: u32 = 0;
 
-    // Project-local build artifacts are always disposable.
-    // anchored at the current directory: `gos build` writes the binary
-    // under `target/{debug,release}` and caches per-body objects in
-    // `.gos-cache/ir-cache`.
+    // Project-local build artifacts are disposable, but only the ones
+    // this toolchain produced: `gos build` writes the binary under
+    // `target/{debug,release}` and stamps that directory, and a
+    // `project.toml` at the current directory anchors the same layout
+    // for a project built by an earlier toolchain. `target/` is a
+    // conventional name several build systems claim, so an unstamped one
+    // in a directory that is not a Gossamer project belongs to whichever
+    // of them made it and is left alone.
     let cwd = std::env::current_dir()?;
-    let (dir, label) = (cwd.join("target"), "build artifacts (target/)");
-    remove_dir(&dir, label, dry_run, &mut removed_bytes, &mut removed_files)?;
+    let dir = cwd.join("target");
+    if owns_build_dir(&cwd, &dir) {
+        remove_dir(
+            &dir,
+            "build artifacts (target/)",
+            dry_run,
+            &mut removed_bytes,
+            &mut removed_files,
+        )?;
+    } else if dir.is_dir() {
+        println!(
+            "kept {} - no {} stamp and no project.toml here, so `gos build` \
+             did not write it",
+            dir.display(),
+            crate::paths::BUILD_DIR_STAMP,
+        );
+    }
     if classes.is_empty() {
         classes.extend([
             gossamer_driver::cache_maintenance::CacheClass::Frontend,
@@ -69,6 +88,13 @@ pub(crate) fn run(options: Options) -> Result<()> {
     let verb = if dry_run { "would remove" } else { "removed" };
     println!("clean: {verb} {removed_files} target(s), {removed_bytes} bytes total");
     Ok(())
+}
+
+/// Whether `gos clean` may remove `target_dir`: it carries this
+/// toolchain's build stamp, or `cwd` is a Gossamer project root, whose
+/// `target/` this toolchain owns by layout.
+fn owns_build_dir(cwd: &Path, target_dir: &Path) -> bool {
+    target_dir.join(crate::paths::BUILD_DIR_STAMP).exists() || cwd.join("project.toml").is_file()
 }
 
 /// Removes `dir` (recursively) if present, accumulating the byte/entry
@@ -118,4 +144,46 @@ fn dir_size(root: &std::path::Path) -> u64 {
         }
     }
     total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::owns_build_dir;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let pid = std::process::id();
+        let dir = std::env::temp_dir().join(format!("gos-clean-{pid}-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    #[test]
+    fn unstamped_target_outside_a_project_is_not_owned() {
+        let cwd = scratch("foreign");
+        let target = cwd.join("target");
+        std::fs::create_dir_all(target.join("release")).unwrap();
+        assert!(!owns_build_dir(&cwd, &target));
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    #[test]
+    fn stamped_target_is_owned() {
+        let cwd = scratch("stamped");
+        let target = cwd.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        crate::paths::stamp_build_dir(&target);
+        assert!(owns_build_dir(&cwd, &target));
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    #[test]
+    fn project_root_target_is_owned_without_a_stamp() {
+        let cwd = scratch("project");
+        let target = cwd.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(cwd.join("project.toml"), b"[project]\nid = \"a.b/c\"\n").unwrap();
+        assert!(owns_build_dir(&cwd, &target));
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
 }

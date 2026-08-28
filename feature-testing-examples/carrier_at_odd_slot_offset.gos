@@ -1,0 +1,43 @@
+// A by-value `Option` / `Result` carrier sitting at an odd word offset
+// inside a struct, read back both as a field and through a match.
+//
+// The carrier is two words and the emitted module declares it 8-aligned
+// rather than the target's 16, because the runtime stores every value in
+// flat 8-byte slots and a carrier field can land at any of them. A tier
+// that assumed the target alignment would read the payload from the
+// wrong place, so what this pins is that all of them agree on where the
+// two words are.
+use std::errors
+
+struct Odd {
+    lead: i64
+    maybe: Option<i64>
+    trail: i64
+    outcome: Result<i64, errors::Error>
+    tail: i64
+}
+
+fn build(n: i64) -> Odd {
+    Odd {
+        lead: n
+        maybe: if n % 2 == 0 { Some(n * 2) } else { None }
+        trail: n + 1
+        outcome: if n % 3 == 0 { Ok(n * 3) } else { Err(errors::new("odd")) }
+        tail: n + 2
+    }
+}
+
+fn main() {
+    let mut sum = 0
+    let mut i = 0
+    while i < 200000 {
+        let o = build(i)
+        sum += o.lead + o.trail + o.tail
+        sum += o.maybe.unwrap_or(0)
+        sum += match o.outcome { Ok(v) => v, Err(_) => 0 }
+        i += 1
+    }
+    println("{}", sum)
+    let one = build(6)
+    println("{} {:?} {} {:?} {}", one.lead, one.maybe, one.trail, one.outcome, one.tail)
+}

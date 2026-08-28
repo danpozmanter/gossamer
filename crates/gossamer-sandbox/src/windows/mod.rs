@@ -47,7 +47,9 @@ pub(crate) fn capabilities() -> SandboxCapabilities {
     if app_container {
         notes.push(
             "AppContainer available: each granted path needs a package-SID ACE on the host \
-             object, granted before the run and revoked after"
+             object, every directory on the way to it needs one for traverse, and a \
+             read-write grant also needs the object's mandatory label lowered to low; \
+             all three are made before the run and undone after"
                 .to_string(),
         );
         notes.push(

@@ -1,0 +1,85 @@
+// A struct taken BY VALUE and written through a `&mut self` method.
+//
+// The frame's copy of a by-value aggregate is a shallow copy of its
+// slots, so it starts out sharing every heap field with the caller. The
+// rest of the compiler already treats such a copy as owning its fields -
+// a field store through a `&mut` receiver releases the old value and
+// retains the new one - so the copy has to take shares of its own at
+// entry and give them up at return, or the release frees a value the
+// caller is still holding and the caller frees it a second time.
+//
+// The goroutine is not decoration: the caller's own teardown is what
+// touched the freed buffer, and running each round on a child is what
+// made that a fault rather than a latent double free.
+
+use std::errors
+use std::collections::Map
+
+enum Sock { Tcp(String), None }
+
+struct Inner { sock: Sock, inbox: Vec<u8>, closed: bool }
+
+impl Inner {
+    fn close(&mut self) {
+        if self.closed { return }
+        self.inbox = #[]
+        self.closed = true
+    }
+}
+
+struct Outer { inner: Inner, cache: Map<String, String>, recency: Vec<String> }
+
+impl Outer {
+    fn close(&mut self) {
+        self.cache = Map::new()
+        self.recency = #[]
+        self.inner.close()
+    }
+}
+
+/// Called once per round so the Cranelift column has a body to compile:
+/// every other body here holds a struct or a `&mut` receiver the
+/// trampoline keeps on bytecode.
+fn checksum(round: i64) -> i64 {
+    let mut acc = round
+    let mut i = 0
+    while i < 8 {
+        acc = acc * 31 + i
+        i += 1
+    }
+    acc % 1000
+}
+
+fn open(tag: i64) -> Result<Outer, errors::Error> {
+    let mut m = Map::new()
+    m.insert("k", format("v{}", tag))
+    Ok(Outer {
+        inner: Inner { sock: Sock::Tcp(format("fd-{}", tag)), inbox: #[1, 2, 3], closed: false }
+        cache: m
+        recency: #["a", "b"]
+    })
+}
+
+fn shut(mut o: Outer) {
+    o.close()
+}
+
+fn work(tag: i64) -> i64 {
+    let Ok(opened) = open(tag) else { return 0 }
+    shut(opened)
+    checksum(tag)
+}
+
+fn main() -> Result<(), errors::Error> {
+    let mut total = 0
+    cohort {
+        let mut i = 0
+        while i < 300 {
+            let h = spawn(|| work(i), reason: "probe")
+            total += h.join()?
+            i += 1
+        }
+    }?
+    println("done total={}", total)
+    Ok(())
+}

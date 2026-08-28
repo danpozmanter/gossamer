@@ -988,6 +988,34 @@ pub unsafe extern "C" fn gos_rt_http_request_headers(
     })
 }
 
+/// The request's query string parsed into decoded `(name, value)`
+/// pairs, in the order they appear.
+///
+/// A field on the Gossamer side and a parse on this one: the query is
+/// carried in the URL, so the pairs are derived on each read rather than
+/// stored. `a=1&b`, and a repeated name, both answer what they say -
+/// a bare name pairs with the empty string, and a repeat is a second
+/// entry rather than a replacement.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_query_pairs(
+    req: *const GosHttpRequest,
+) -> *mut crate::c_abi::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if req.is_null() {
+            return header_pairs_to_gosvec(&[]);
+        }
+        let url = &unsafe { &*req }.url;
+        let query = url.find('?').map_or("", |pos| &url[pos + 1..]);
+        let pairs = parse_query_pairs(query);
+        header_pairs_to_gosvec(&pairs)
+    })
+}
+
+/// Query-string parsing, shared with every target: the module holding it is
+/// not gated on a native platform, so the bytecode VM, both compiled tiers,
+/// and a wasm build all read a query with the same parser.
+pub use super::http_query::{decode_query_component, parse_query_pairs};
+
 /// Sets `Header: Value` on a response, replacing any prior value
 /// with the same case-insensitive name. Used by the chained
 /// `r.headers.insert(name, value)` lowering.

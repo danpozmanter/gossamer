@@ -37,7 +37,7 @@ struct App { }
 impl http::Handler for App {
     fn serve(&self, r: http::Request) -> http::Response {
         let ct = header_of(r.headers, "content-type")
-        http::Response::text(200, "m=" + &r.method + " b=" + &r.body + " ct=" + &ct)
+        http::Response::text(200, "m=" + r.method + " b=" + r.body + " ct=" + ct)
     }
 }
 

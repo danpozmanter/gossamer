@@ -4401,6 +4401,34 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// The class of C-ABI return a Gossamer type is carried in, for the
+    /// three distinctions that decide how a caller reads the value: a
+    /// two-word carrier, a float register, and nothing at all. The
+    /// integer-versus-pointer distinction is not one of them - both are
+    /// one word and a Gossamer type does not choose between them.
+    fn abi_return_class(&self, ty: gossamer_types::Ty) -> &'static str {
+        use gossamer_types::TyKind;
+        if self.is_result_or_option_adt(ty) {
+            return "carrier";
+        }
+        match self.tcx.kind_of(ty) {
+            TyKind::Unit => "void",
+            TyKind::Float(_) => "float",
+            _ => "word",
+        }
+    }
+
+    /// The same class, read off the ABI registry's declared return type.
+    fn registry_return_class(rt_name: &str) -> Option<&'static str> {
+        use gossamer_abi::AbiType;
+        gossamer_abi::lookup(rt_name).map(|entry| match entry.sig.ret {
+            AbiType::Void => "void",
+            AbiType::F64 => "float",
+            AbiType::I128 => "carrier",
+            _ => "word",
+        })
+    }
+
     pub(crate) fn emit_stdlib_free_call(
         &mut self,
         rt_name: &str,
@@ -4408,6 +4436,22 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
         span: Span,
     ) -> Option<Local> {
+        // The type this lowering gives the call's destination and the
+        // signature the backends emit the call with come from two
+        // different places, and a disagreement between them is a
+        // wrong-ABI call with no diagnostic: a carrier read as one word
+        // loses its payload, a float read as an integer is nonsense.
+        // Both compiled tiers build their signature from the registry,
+        // so the registry is what the destination type is checked
+        // against.
+        debug_assert!(
+            Self::registry_return_class(rt_name)
+                .is_none_or(|declared| declared == self.abi_return_class(ret_ty)),
+            "{rt_name}: this lowering gives the call a {} result, but the ABI \
+             registry declares it returns a {} - one of the two is wrong",
+            self.abi_return_class(ret_ty),
+            Self::registry_return_class(rt_name).unwrap_or("?"),
+        );
         if rt_name == "gos_rt_fmt_pad"
             && args.len() == 4
             && let HirExprKind::Call {

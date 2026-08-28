@@ -44,6 +44,56 @@ pub enum Tier {
     Llvm,
 }
 
+/// The ABI class a shim interprets a sequence buffer's elements as.
+///
+/// The C ABI has no generics, so a combinator shim's element crossing is
+/// carried by the symbol it is called through. This names that crossing so
+/// the compiler can derive the symbol from the element type rather than
+/// having each lowering arm spell it, and so a mismatch is checkable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ElemClass {
+    /// One integer register per element: `i64`, `bool`, `char`, and the
+    /// managed pointer word a `String` or a boxed value is reached through.
+    Word,
+    /// One SSE register per element: `f64`.
+    Float,
+    /// The address of element storage wider than one slot, or of a slot whose
+    /// fields are read at an offset: a tuple, a struct, a fixed array.
+    Ptr,
+}
+
+impl ElemClass {
+    /// The suffix this class contributes to a shim's symbol name.
+    #[must_use]
+    pub fn suffix(self) -> &'static str {
+        match self {
+            ElemClass::Word => "i64",
+            ElemClass::Float => "f64",
+            ElemClass::Ptr => "ptr",
+        }
+    }
+}
+
+/// The element crossing a combinator shim implements.
+///
+/// A shim's C-ABI signature does not distinguish `gos_rt_iter_take_while_i64`
+/// from a `_ptr` twin - both are `(Ptr, Ptr) -> Ptr`. What differs is the
+/// class each interprets its sequence buffer as, which is why that class is
+/// declared here rather than left implicit in the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CombinatorAbi {
+    /// The `iter::` combinator this shim implements, without the module
+    /// prefix: `"take_while"`, `"windows"`, `"min_by_key"`.
+    pub combinator: &'static str,
+    /// The class the shim reads its input sequence buffer as.
+    pub elem: ElemClass,
+    /// The class of the element the shim produces, when the symbol
+    /// distinguishes it: `map`'s output, `fold`'s accumulator, `sum_by`'s
+    /// projection. `None` when the combinator's result shape is fixed by the
+    /// input, so the symbol carries one class only.
+    pub result: Option<ElemClass>,
+}
+
 /// One entry in the ABI registry describing a `gos_rt_*` symbol.
 #[derive(Debug, Clone)]
 pub struct RuntimeEntry {
@@ -63,6 +113,10 @@ pub struct RuntimeEntry {
     /// `gos_rt_panic`, which raises a Rust panic on the goroutine path
     /// that must propagate across its caller to the coroutine catch.
     pub unwinds: bool,
+    /// The element crossing, for a sequence-combinator shim. `None` for every
+    /// other symbol. This is the half of a combinator's contract its C-ABI
+    /// signature cannot express, and the compiler derives the symbol from it.
+    pub combinator: Option<CombinatorAbi>,
 }
 
 impl AbiType {

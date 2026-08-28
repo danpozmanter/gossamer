@@ -11,6 +11,7 @@
     reason = "AppContainer profiles and ACL entries are a raw Win32 API"
 )]
 
+use std::collections::BTreeSet;
 use std::process::Command;
 
 use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, LocalFree};
@@ -59,7 +60,7 @@ pub(crate) fn is_available() -> bool {
 pub(crate) struct Container {
     sid: Sid,
     record: acl::GrantRecord,
-    granted: Vec<std::path::PathBuf>,
+    granted: Vec<(acl::Edit, std::path::PathBuf)>,
     capabilities: Box<SECURITY_CAPABILITIES>,
     /// Backing storage for the pointer in `capabilities`. Never read:
     /// holding it is what keeps that pointer valid until the process
@@ -157,13 +158,21 @@ fn container_sid() -> Result<Sid, String> {
     Ok(sid)
 }
 
-/// Edits the host ACLs the policy calls for and answers the paths the
-/// container's `Drop` has to revoke, recorded before each edit.
+/// Edits the host security the policy calls for and answers the edits
+/// the container's `Drop` has to undo, recorded before each is made.
+///
+/// A grant is up to three edits on three different objects. The ACE on
+/// the granted path is what an app container needs to reach it at all.
+/// Every directory on the way to it needs one too, because the fast
+/// traverse check does not run for a restricted token. And a writable
+/// grant additionally needs the object's mandatory label lowered,
+/// because the container runs at low integrity and integrity is checked
+/// before the DACL is.
 fn apply_policy_acls(
     policy: &CompiledPolicy,
     sid: Sid,
     record: &mut acl::GrantRecord,
-) -> Result<Vec<std::path::PathBuf>, String> {
+) -> Result<Vec<(acl::Edit, std::path::PathBuf)>, String> {
     let mut granted = Vec::new();
     // A denial outside every grant needs no entry: an app container
     // reaches nothing it was not granted. One inside a granted tree
@@ -180,36 +189,125 @@ fn apply_policy_acls(
         if !acl::is_owned_by_current_user(&rule.path) {
             continue;
         }
-        record.add(&rule.path);
+        record.add(acl::Edit::Ace, &rule.path);
         acl::deny(&rule.path, sid)?;
-        granted.push(rule.path.clone());
+        granted.push((acl::Edit::Ace, rule.path.clone()));
     }
-    for rule in policy
-        .rules
+
+    // A grant on a directory is inheritable, and Windows materialises an
+    // inheritable ACE onto every object in the subtree when it is
+    // written and again when it is removed. A rule that names a path
+    // already covered by a wider grant therefore costs a second full
+    // walk of the same tree and changes nothing, so only the outermost
+    // rule of a nested family is written. A denial between the two is
+    // what makes the inner rule mean something again, so a family with
+    // one is left alone.
+    let all = &policy.rules;
+    let allowed: Vec<&crate::policy::PathRule> = all
         .iter()
         .filter(|rule| rule.access != Access::Deny)
-    {
+        .filter(|rule| !covered_by_a_wider_grant(rule, all))
+        .collect();
+
+    // The ancestors go first, and never touch a path that is itself
+    // granted below: `SET_ACCESS` replaces a trustee's rights on the
+    // object rather than adding to them, so a traverse-only entry
+    // written over a full grant would narrow it.
+    let granted_paths: BTreeSet<&std::path::Path> =
+        allowed.iter().map(|rule| rule.path.as_path()).collect();
+    let mut ancestors: BTreeSet<std::path::PathBuf> = BTreeSet::new();
+    for rule in &allowed {
+        for ancestor in acl::ancestors_of(&rule.path) {
+            if !granted_paths.contains(ancestor.as_path()) {
+                ancestors.insert(ancestor);
+            }
+        }
+    }
+    for ancestor in ancestors {
+        if acl::already_traversable(&ancestor, sid) {
+            continue;
+        }
+        if !acl::is_owned_by_current_user(&ancestor) {
+            return Err(format!(
+                "refusing to modify the ACL of {}, which this user does not own, \
+                 and which the sandboxed process has to walk through to reach a \
+                 path the policy grants",
+                ancestor.display()
+            ));
+        }
+        record.add(acl::Edit::Ace, &ancestor);
+        acl::grant_traverse(&ancestor, sid)?;
+        granted.push((acl::Edit::Ace, ancestor));
+    }
+
+    for rule in allowed {
         let writable = rule.access == Access::ReadWrite;
         // The system directories are reachable by every app
         // container already, so the grant is a no-op there and the
         // ACL is left alone.
-        if acl::already_reachable(&rule.path, sid, writable) {
+        if !acl::already_reachable(&rule.path, sid, writable) {
+            if !acl::is_owned_by_current_user(&rule.path) {
+                return Err(format!(
+                    "refusing to modify the ACL of {}, which this user does not own",
+                    rule.path.display()
+                ));
+            }
+            // Recorded before the grant, so a crash between the two
+            // leaves a revoke that finds nothing rather than a grant
+            // nothing knows about.
+            record.add(acl::Edit::Ace, &rule.path);
+            acl::grant(&rule.path, sid, writable)?;
+            granted.push((acl::Edit::Ace, rule.path.clone()));
+        }
+        if !writable {
             continue;
         }
-        if !acl::is_owned_by_current_user(&rule.path) {
+        let previous = acl::integrity_label(&rule.path);
+        if previous.contains(";LW)") {
+            // Already low: another run, or the user, put it there.
+            continue;
+        }
+        if !acl::label_is_writable_by_current_user(&rule.path) {
             return Err(format!(
-                "refusing to modify the ACL of {}, which this user does not own",
+                "refusing to lower the integrity label of {}, which this user \
+                 cannot relabel; a low-integrity app container cannot write there \
+                 without it",
                 rule.path.display()
             ));
         }
-        // Recorded before the grant, so a crash between the two
-        // leaves a revoke that finds nothing rather than a grant
-        // nothing knows about.
-        record.add(&rule.path);
-        acl::grant(&rule.path, sid, writable)?;
-        granted.push(rule.path.clone());
+        record.add(acl::Edit::Label(previous.clone()), &rule.path);
+        acl::set_low_integrity(&rule.path)?;
+        granted.push((acl::Edit::Label(previous), rule.path.clone()));
     }
     Ok(granted)
+}
+
+/// Whether `rule` names a path an enclosing grant already reaches with
+/// at least the same access, with no denial in between.
+fn covered_by_a_wider_grant(
+    rule: &crate::policy::PathRule,
+    rules: &[crate::policy::PathRule],
+) -> bool {
+    rules.iter().any(|wider| {
+        wider.path != rule.path
+            && wider.access != Access::Deny
+            && rule.path.starts_with(&wider.path)
+            && at_least(wider.access, rule.access)
+            && !rules.iter().any(|denial| {
+                denial.access == Access::Deny
+                    && denial.path != wider.path
+                    && rule.path.starts_with(&denial.path)
+                    && denial.path.starts_with(&wider.path)
+            })
+    })
+}
+
+/// Whether `held` permits everything `wanted` does.
+const fn at_least(held: Access, wanted: Access) -> bool {
+    matches!(
+        (held, wanted),
+        (Access::ReadWrite, _) | (Access::ReadOnly, Access::ReadOnly)
+    )
 }
 
 /// The capability SIDs the network policy calls for, paired with the
@@ -260,8 +358,17 @@ impl Drop for Container {
         // Revoking is the inverse of granting and must happen even on
         // an unwinding path, which is why it lives in `Drop` rather
         // than at the end of the run.
-        for path in &self.granted {
-            let _ = acl::revoke(path, self.sid);
+        // In reverse, so a label goes back before the ACE that made the
+        // object reachable at all is taken away.
+        for (edit, path) in self.granted.iter().rev() {
+            match edit {
+                acl::Edit::Ace => {
+                    let _ = acl::revoke(path, self.sid);
+                }
+                acl::Edit::Label(previous) => {
+                    let _ = acl::restore_integrity(path, previous);
+                }
+            }
         }
         self.record.close();
         // Each capability SID was allocated by `ConvertStringSidToSid`
@@ -300,9 +407,13 @@ pub(crate) fn clean_stale_grants() -> Result<usize, String> {
         ));
     }
     let mut revoked = 0usize;
-    for (record, paths) in acl::stale_grants() {
-        for path in paths {
-            if acl::revoke(&path, sid).is_ok() {
+    for (record, edits) in acl::stale_grants() {
+        for (edit, path) in edits.iter().rev() {
+            let undone = match edit {
+                acl::Edit::Ace => acl::revoke(path, sid).is_ok(),
+                acl::Edit::Label(previous) => acl::restore_integrity(path, previous).is_ok(),
+            };
+            if undone {
                 revoked += 1;
             }
         }

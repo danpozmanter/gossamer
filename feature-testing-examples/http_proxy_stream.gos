@@ -63,7 +63,7 @@ fn run_proxy() {
 }
 
 fn fetch(label: String, path: String) {
-    match http::get("http://127.0.0.1:23878" + &path, Vec::from([])) {
+    match http::get("http://127.0.0.1:23878" + path, Vec::from([])) {
         Ok(resp) => println(
             "{} status={} ct={} len={} body={}"
             label

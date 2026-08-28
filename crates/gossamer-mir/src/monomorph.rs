@@ -1030,6 +1030,23 @@ fn subst_param_ty(tcx: &mut TyCtxt, ty: Ty, subst_tys: &[Option<Ty>]) -> Ty {
                 ordered,
             })
         }
+        TyKind::Iterator(elem) => {
+            let elem = subst_param_ty(tcx, elem, subst_tys);
+            tcx.intern(TyKind::Iterator(elem))
+        }
+        // A callable parameter carries the template's parameters inside
+        // its signature, and the compiled tiers build the call from that
+        // signature: an unsubstituted `Fn(T) -> T` on an `f64`
+        // instantiation puts the argument in an integer register and
+        // reads the result out of one.
+        TyKind::FnPtr(sig) => {
+            let sig = subst_param_sig(tcx, &sig, subst_tys);
+            tcx.intern(TyKind::FnPtr(sig))
+        }
+        TyKind::FnTrait(sig) => {
+            let sig = subst_param_sig(tcx, &sig, subst_tys);
+            tcx.intern(TyKind::FnTrait(sig))
+        }
         TyKind::Adt { def, substs } => {
             let new_args = substs
                 .as_slice()
@@ -1045,6 +1062,22 @@ fn subst_param_ty(tcx: &mut TyCtxt, ty: Ty, subst_tys: &[Option<Ty>]) -> Ty {
             })
         }
         _ => ty,
+    }
+}
+
+/// [`subst_param_ty`] over every type a callable signature names.
+fn subst_param_sig(
+    tcx: &mut TyCtxt,
+    sig: &gossamer_types::FnSig,
+    subst_tys: &[Option<Ty>],
+) -> gossamer_types::FnSig {
+    gossamer_types::FnSig {
+        inputs: sig
+            .inputs
+            .iter()
+            .map(|input| subst_param_ty(tcx, *input, subst_tys))
+            .collect(),
+        output: subst_param_ty(tcx, sig.output, subst_tys),
     }
 }
 

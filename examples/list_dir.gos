@@ -22,10 +22,10 @@ fn comma_size(n: i64) -> String {
     let mut digits_since_comma = 0
     while value > 0 {
         if digits_since_comma == 3 {
-            out = "," + &out
+            out = "," + out
             digits_since_comma = 0
         }
-        out = format("{}", value % 10) + &out
+        out = format("{}", value % 10) + out
         value /= 10
         digits_since_comma += 1
     }

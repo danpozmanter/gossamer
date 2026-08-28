@@ -1,0 +1,37 @@
+// A request's query string, read as the decoded `(name, value)` pairs
+// the field promises rather than as text to parse again.
+//
+// The pairs are derived from the URL on each read rather than stored, so
+// every tier has to derive them the same way: a `+` is a space, a `%NN`
+// escape is its byte, a name with no `=` pairs with the empty string,
+// and a repeated name is a second entry rather than a replacement.
+
+use std::{errors, time}
+use std::http
+use std::http::router
+
+fn list(request: http::Request) -> http::Response {
+    let pairs = request.query_pairs
+    let mut out = format("path={} query={} n={}", request.path, request.query, pairs.len())
+    for (name, value) in pairs {
+        out += format(" [{}={}]", name, value)
+    }
+    http::Response::text(200, out)
+}
+
+fn main() -> Result<(), errors::Error> {
+    let routes = router::Router::new().get("/list", |r| Ok(list(r)))
+    let server = http::Server::new()
+    server.listen("127.0.0.1:0")?
+    let base = format("http://{}", server.addr())
+    spawn(|| server.serve(routes), reason: "query-pairs server")
+    time::sleep(time::Duration::from_millis(200))
+    let no_headers: Vec<(String, String)> = #[]
+    let url = base + "/list?a=1&b=hello+world&c&d=x%2Fy&a=2"
+    match http::get(url, no_headers) {
+        Ok(r) => println("status={} body={}", r.status, r.body)
+        Err(e) => println("failed: {}", e)
+    }
+    let _ = server.shutdown(2_000)
+    Ok(())
+}

@@ -48,6 +48,28 @@ use super::*;
 
 use super::Builder;
 
+/// The shim implementing `combinator` for one element crossing, from the ABI
+/// registry rather than from a name written at the call site.
+///
+/// The registry records the class each shim reads its sequence buffer as,
+/// which its C-ABI signature cannot express: a word-stride shim and its
+/// by-address twin are both `(Ptr, Ptr) -> Ptr`. Deriving the symbol from the
+/// class present makes a missing crossing a named gap in the shim family
+/// instead of a call that reads the buffer at the wrong stride, or an
+/// undefined symbol discovered at link time.
+fn iter_combinator_helper(
+    combinator: &str,
+    elem: ElemAbi,
+    result: Option<ElemAbi>,
+) -> &'static str {
+    gossamer_abi::combinator_symbol(combinator, elem, result).unwrap_or_else(|| {
+        panic!(
+            "the ABI registry declares no shim for iter::{combinator} over \
+             {elem:?} elements producing {result:?}"
+        )
+    })
+}
+
 impl<'a> Builder<'a> {
     /// True when a value of `ty` is stored inline in its container slot
     /// (the flat struct / tuple / array layout the compiled tiers use), so
@@ -1370,10 +1392,13 @@ impl<'a> Builder<'a> {
             // scalar forms (`min(a, b)`) are handled separately; only the
             // single Vec/array argument reaches here.
             ("iter::min" | "min" | "math::min", 1) => {
-                let (wide_elem, wide_abi) = self.iter_elem_abi(args[0].ty);
-                if wide_abi == ElemAbi::Ptr
-                    && let Some(local) =
-                        self.lower_minmax_wide_elem(&args[0], wide_elem, ty, false, span)
+                // An element the language orders structurally - a tuple, a
+                // struct, a payload enum - is ordered through its descriptor.
+                // The word path below is for elements whose slot spells their
+                // own order, which is what the descriptor builder declines.
+                let (wide_elem, _) = self.iter_elem_abi(args[0].ty);
+                if let Some(local) =
+                    self.lower_minmax_wide_elem(&args[0], wide_elem, ty, false, span)
                 {
                     return Some(local);
                 }
@@ -1389,25 +1414,18 @@ impl<'a> Builder<'a> {
                             span,
                         ));
                     }
-                    return self.lower_iter_vec_opt_local(
-                        iter,
-                        "gos_rt_iter_min_i64",
-                        "gos_rt_iter_min_f64",
-                        span,
-                    );
+                    return self.lower_iter_vec_opt_local(iter, "min", span);
                 }
-                self.lower_iter_simple_vec_opt(
-                    "gos_rt_iter_min_i64",
-                    "gos_rt_iter_min_f64",
-                    args,
-                    span,
-                )
+                self.lower_iter_simple_vec_opt("min", args, span)
             }
             ("iter::max" | "max" | "math::max", 1) => {
-                let (wide_elem, wide_abi) = self.iter_elem_abi(args[0].ty);
-                if wide_abi == ElemAbi::Ptr
-                    && let Some(local) =
-                        self.lower_minmax_wide_elem(&args[0], wide_elem, ty, true, span)
+                // An element the language orders structurally - a tuple, a
+                // struct, a payload enum - is ordered through its descriptor.
+                // The word path below is for elements whose slot spells their
+                // own order, which is what the descriptor builder declines.
+                let (wide_elem, _) = self.iter_elem_abi(args[0].ty);
+                if let Some(local) =
+                    self.lower_minmax_wide_elem(&args[0], wide_elem, ty, true, span)
                 {
                     return Some(local);
                 }
@@ -1423,19 +1441,9 @@ impl<'a> Builder<'a> {
                             span,
                         ));
                     }
-                    return self.lower_iter_vec_opt_local(
-                        iter,
-                        "gos_rt_iter_max_i64",
-                        "gos_rt_iter_max_f64",
-                        span,
-                    );
+                    return self.lower_iter_vec_opt_local(iter, "max", span);
                 }
-                self.lower_iter_simple_vec_opt(
-                    "gos_rt_iter_max_i64",
-                    "gos_rt_iter_max_f64",
-                    args,
-                    span,
-                )
+                self.lower_iter_simple_vec_opt("max", args, span)
             }
             ("iter::range", 2) => {
                 let a = self.lower_expr(&args[0])?;
@@ -1568,20 +1576,18 @@ impl<'a> Builder<'a> {
                     return Some(dest);
                 }
                 let v = self.lower_iter_vec_arg(&args[1])?;
-                let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
-                let dest = self.fresh(vec_i64);
-                let next = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_take_i64".to_string())),
-                    args: vec![
+                let dest_ty = self.iter_result_vec_ty(ty, v);
+                Some(self.emit_iter_combinator_call(
+                    "take",
+                    ElemAbi::Word,
+                    None,
+                    vec![
                         Operand::Copy(Place::local(n)),
                         Operand::Copy(Place::local(v)),
                     ],
-                    destination: Place::local(dest),
-                    target: Some(next),
-                });
-                self.set_current(next);
-                Some(dest)
+                    dest_ty,
+                    span,
+                ))
             }
             ("iter::step_by", 2) => {
                 let step = self.lower_expr(&args[0])?;
@@ -1644,20 +1650,18 @@ impl<'a> Builder<'a> {
                     return Some(dest);
                 }
                 let v = self.lower_iter_vec_arg(&args[1])?;
-                let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
-                let dest = self.fresh(vec_i64);
-                let next = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_skip_i64".to_string())),
-                    args: vec![
+                let dest_ty = self.iter_result_vec_ty(ty, v);
+                Some(self.emit_iter_combinator_call(
+                    "skip",
+                    ElemAbi::Word,
+                    None,
+                    vec![
                         Operand::Copy(Place::local(n)),
                         Operand::Copy(Place::local(v)),
                     ],
-                    destination: Place::local(dest),
-                    target: Some(next),
-                });
-                self.set_current(next);
-                Some(dest)
+                    dest_ty,
+                    span,
+                ))
             }
             ("iter::rev", 1) => {
                 if self.lazy_iter_ty_family(ty).is_some()
@@ -1679,8 +1683,11 @@ impl<'a> Builder<'a> {
                         vec_ty,
                         span,
                     );
-                    let reversed = self.emit_combinator_call(
-                        "gos_rt_iter_reversed_i64",
+                    let (_, snapshot_abi) = self.iter_elem_abi(vec_ty);
+                    let reversed = self.emit_iter_combinator_call(
+                        "rev",
+                        snapshot_abi,
+                        None,
                         vec![Operand::Copy(Place::local(collected))],
                         vec_ty,
                         span,
@@ -1707,7 +1714,7 @@ impl<'a> Builder<'a> {
                         span,
                     ));
                 }
-                self.lower_iter_simple_vec_in_vec_out("gos_rt_iter_reversed_i64", args, ty, span)
+                self.lower_iter_simple_vec_in_vec_out("rev", args, ty, span)
             }
             ("iter::chain", 2) => {
                 if self.lazy_iter_ty_family(ty).is_some()
@@ -1757,29 +1764,60 @@ impl<'a> Builder<'a> {
                     );
                     return Some(joined_local);
                 }
-                let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
-                let dest = self.fresh(vec_i64);
-                let next = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_chain_i64".to_string())),
-                    args: vec![
+                let dest_ty = self.iter_result_vec_ty(ty, a);
+                Some(self.emit_iter_combinator_call(
+                    "chain",
+                    ElemAbi::Word,
+                    None,
+                    vec![
                         Operand::Copy(Place::local(a)),
                         Operand::Copy(Place::local(b)),
                     ],
-                    destination: Place::local(dest),
-                    target: Some(next),
-                });
-                self.set_current(next);
-                Some(dest)
+                    dest_ty,
+                    span,
+                ))
             }
             ("iter::dedup", 1) => {
-                self.lower_iter_simple_vec_in_vec_out("gos_rt_iter_dedup_i64", args, ty, span)
+                let v = self.lower_iter_vec_arg(&args[0])?;
+                let vec_ty = self.iter_result_vec_ty(ty, v);
+                // Consecutive equality is the element's own, so an element
+                // whose slot word is not its value travels with the ordering
+                // descriptor the runtime compares it through.
+                let unit_ty = self.tcx.unit();
+                let elem = self.iter_result_elem_ty(unit_ty, v);
+                let desc = self.elem_equality_descriptor(elem);
+                let has_desc = i128::from(!desc.is_empty());
+                let string_ty = self.tcx.string_ty();
+                let desc_local = self.fresh(string_ty);
+                self.emit_assign(
+                    Place::local(desc_local),
+                    Rvalue::Use(Operand::Const(ConstValue::Str(desc))),
+                    span,
+                );
+                Some(self.emit_iter_combinator_call(
+                    "dedup",
+                    ElemAbi::Word,
+                    None,
+                    vec![
+                        Operand::Copy(Place::local(v)),
+                        Operand::Copy(Place::local(desc_local)),
+                        Operand::Const(ConstValue::Int(has_desc)),
+                    ],
+                    vec_ty,
+                    span,
+                ))
             }
             ("iter::flatten", 1) => {
                 let vec_local = self.lower_iter_vec_arg(&args[0])?;
-                let dest_ty = self.tcx.intern(TyKind::Vec(i64_ty));
-                Some(self.emit_combinator_call(
-                    "gos_rt_iter_flatten_i64",
+                // The flattened sequence carries the inner sequence's element,
+                // which is the element of the element that was read.
+                let inner_seq = self.iter_result_elem_ty(ty, vec_local);
+                let elem = self.sequence_elem_ty_of(inner_seq).unwrap_or(inner_seq);
+                let dest_ty = self.tcx.intern(TyKind::Vec(elem));
+                Some(self.emit_iter_combinator_call(
+                    "flatten",
+                    ElemAbi::Word,
+                    None,
                     vec![Operand::Copy(Place::local(vec_local))],
                     dest_ty,
                     span,
@@ -1810,10 +1848,14 @@ impl<'a> Builder<'a> {
                 if wide_abi == ElemAbi::Ptr {
                     return Some(self.lower_enumerate_wide_elem(vec_local, wide_elem, span));
                 }
-                let pair = self.tcx.intern(TyKind::Tuple(vec![i64_ty, i64_ty]));
+                let unit_ty = self.tcx.unit();
+                let elem = self.iter_result_elem_ty(unit_ty, vec_local);
+                let pair = self.tcx.intern(TyKind::Tuple(vec![i64_ty, elem]));
                 let dest_ty = self.tcx.intern(TyKind::Vec(pair));
-                Some(self.emit_combinator_call(
-                    "gos_rt_iter_enumerate_i64",
+                Some(self.emit_iter_combinator_call(
+                    "enumerate",
+                    ElemAbi::Word,
+                    None,
                     vec![Operand::Copy(Place::local(vec_local))],
                     dest_ty,
                     span,
@@ -1851,8 +1893,10 @@ impl<'a> Builder<'a> {
                 if self.zip_slot_is_the_element(a_elem) && self.zip_slot_is_the_element(b_elem) {
                     let pair = self.tcx.intern(TyKind::Tuple(vec![a_elem, b_elem]));
                     let dest_ty = self.tcx.intern(TyKind::Vec(pair));
-                    return Some(self.emit_combinator_call(
-                        "gos_rt_iter_zip_i64",
+                    return Some(self.emit_iter_combinator_call(
+                        "zip",
+                        ElemAbi::Word,
+                        None,
                         vec![
                             Operand::Copy(Place::local(a)),
                             Operand::Copy(Place::local(b)),
@@ -1863,24 +1907,44 @@ impl<'a> Builder<'a> {
                 }
                 Some(self.lower_zip_general(a, b, a_elem, b_elem, span))
             }
+            // Successive overlapping pairs are the sequence zipped against
+            // itself advanced by one, which is the general pairing lowering
+            // and carries any element through by its own width.
             ("iter::pairwise", 1) => {
                 let vec_local = self.lower_iter_vec_arg(&args[0])?;
-                let pair = self.tcx.intern(TyKind::Tuple(vec![i64_ty, i64_ty]));
-                let dest_ty = self.tcx.intern(TyKind::Vec(pair));
-                Some(self.emit_combinator_call(
-                    "gos_rt_iter_pairwise_i64",
-                    vec![Operand::Copy(Place::local(vec_local))],
-                    dest_ty,
+                let elem = self
+                    .sequence_elem_ty_of(self.locals[vec_local.0 as usize].ty)
+                    .unwrap_or(i64_ty);
+                let vec_ty = self.locals[vec_local.0 as usize].ty;
+                let one = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(one),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(1))),
                     span,
-                ))
+                );
+                let tail = self.emit_iter_combinator_call(
+                    "skip",
+                    ElemAbi::Word,
+                    None,
+                    vec![
+                        Operand::Copy(Place::local(one)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    vec_ty,
+                    span,
+                );
+                Some(self.lower_zip_general(vec_local, tail, elem, elem, span))
             }
             ("iter::windows", 2) => {
                 let n = self.lower_expr(&args[0])?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let inner = self.tcx.intern(TyKind::Vec(i64_ty));
+                let unit_ty = self.tcx.unit();
+                let inner = self.iter_result_vec_ty(unit_ty, vec_local);
                 let dest_ty = self.tcx.intern(TyKind::Vec(inner));
-                Some(self.emit_combinator_call(
-                    "gos_rt_iter_windowed_i64",
+                Some(self.emit_iter_combinator_call(
+                    "windows",
+                    ElemAbi::Word,
+                    None,
                     vec![
                         Operand::Copy(Place::local(n)),
                         Operand::Copy(Place::local(vec_local)),
@@ -1892,10 +1956,13 @@ impl<'a> Builder<'a> {
             ("iter::chunks", 2) => {
                 let n = self.lower_expr(&args[0])?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let inner = self.tcx.intern(TyKind::Vec(i64_ty));
+                let unit_ty = self.tcx.unit();
+                let inner = self.iter_result_vec_ty(unit_ty, vec_local);
                 let dest_ty = self.tcx.intern(TyKind::Vec(inner));
-                Some(self.emit_combinator_call(
-                    "gos_rt_iter_chunk_by_size_i64",
+                Some(self.emit_iter_combinator_call(
+                    "chunks",
+                    ElemAbi::Word,
+                    None,
                     vec![
                         Operand::Copy(Place::local(n)),
                         Operand::Copy(Place::local(vec_local)),
@@ -1906,10 +1973,21 @@ impl<'a> Builder<'a> {
             }
             ("iter::unzip", 1) => {
                 let vec_local = self.lower_iter_vec_arg(&args[0])?;
-                let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
-                let dest_ty = self.tcx.intern(TyKind::Tuple(vec![vec_i64, vec_i64]));
-                Some(self.emit_combinator_call(
-                    "gos_rt_iter_unzip_i64",
+                // Each side carries its own half of the pair that was read.
+                let unit_ty = self.tcx.unit();
+                let pair = self.iter_result_elem_ty(unit_ty, vec_local);
+                let halves = match self.tcx.kind_of(pair) {
+                    TyKind::Tuple(parts) if parts.len() == 2 => Some((parts[0], parts[1])),
+                    _ => None,
+                };
+                let (left, right) = halves.unwrap_or((i64_ty, i64_ty));
+                let left_vec = self.tcx.intern(TyKind::Vec(left));
+                let right_vec = self.tcx.intern(TyKind::Vec(right));
+                let dest_ty = self.tcx.intern(TyKind::Tuple(vec![left_vec, right_vec]));
+                Some(self.emit_iter_combinator_call(
+                    "unzip",
+                    ElemAbi::Word,
+                    None,
                     vec![Operand::Copy(Place::local(vec_local))],
                     dest_ty,
                     span,
@@ -1920,41 +1998,27 @@ impl<'a> Builder<'a> {
             // unified callable infra ships an env pointer with the
             // body address at env[0].
             ("iter::for_each", 2) => {
-                let f64_ty = self.tcx.float_ty(gossamer_types::FloatTy::F64);
-                let elem_ty = self
-                    .iter_element_kind(args[1].ty)
-                    .map(|kind| self.tcx.intern(kind));
-                let elem_is_f64 =
-                    elem_ty.is_some_and(|elem| matches!(self.tcx.kind_of(elem), TyKind::Float(_)));
-                let elem_is_aggregate = elem_ty.is_some_and(|elem| self.is_inline_aggregate(elem));
-                let (in_ty, helper) = if elem_is_f64 {
-                    (f64_ty, "gos_rt_iter_for_each_f64")
-                } else if elem_is_aggregate {
-                    (
-                        elem_ty.expect("aggregate iterator has an element type"),
-                        "gos_rt_iter_for_each_ptr",
-                    )
-                } else if let Some(elem) = elem_ty
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let (mut in_ty, elem_abi) = self.iter_callback_shape(vec_local);
+                // A String is a managed pointer word, so it rides the word
+                // shim while keeping its own type at the callback.
+                if let Some(elem) = self.sequence_elem_ty_of(self.locals[vec_local.0 as usize].ty)
                     && matches!(self.tcx.kind_of(elem), TyKind::String)
                 {
-                    (elem, "gos_rt_iter_for_each_i64")
-                } else {
-                    (i64_ty, "gos_rt_iter_for_each_i64")
-                };
+                    in_ty = elem;
+                }
                 let closure_local = self.lower_iter_closure(&args[0], &[in_ty], i64_ty, span)?;
-                let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let dest = self.fresh(unit_ty);
-                let next = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
-                    args: vec![
+                let _ = self.emit_iter_combinator_call(
+                    "for_each",
+                    elem_abi,
+                    None,
+                    vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
                     ],
-                    destination: Place::local(dest),
-                    target: Some(next),
-                });
-                self.set_current(next);
+                    unit_ty,
+                    span,
+                );
                 Some(self.lower_unit(span))
             }
             ("iter::map", 2) => {
@@ -2016,21 +2080,20 @@ impl<'a> Builder<'a> {
                 // A word-result map changes the element type, so the output
                 // vec cannot inherit the source's stride: the mapped element's
                 // own declared width travels with the call.
-                let (helper, declares_width) = match (in_abi, out_abi) {
-                    (ElemAbi::Ptr, ElemAbi::Float) => ("gos_rt_iter_map_ptr_f64", false),
-                    (ElemAbi::Ptr, _) => ("gos_rt_iter_map_ptr_i64", true),
-                    (ElemAbi::Float, ElemAbi::Float) => ("gos_rt_iter_map_f64", false),
-                    (ElemAbi::Float, _) => ("gos_rt_iter_map_f64_word", true),
-                    (ElemAbi::Word, ElemAbi::Float) => ("gos_rt_iter_map_word_f64", false),
-                    (ElemAbi::Word, _) => ("gos_rt_iter_map_i64", true),
+                // The mapped element rides an integer register unless it is
+                // an `f64`; an aggregate result travels as the address of its
+                // slots, which is a word.
+                let out_class = match out_abi {
+                    ElemAbi::Float => ElemAbi::Float,
+                    _ => ElemAbi::Word,
                 };
+                let declares_width = out_class == ElemAbi::Word;
                 let closure_local = self.lower_iter_closure(&args[0], &[in_ty], out_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 // The eager shim answers with a `GosVec`, so the destination
                 // carries a Vec type even where the surface promised iterator
                 // state: downstream terminals read the value's real shape.
                 let dest_ty = self.eager_seq_result_ty(ty, out_ty);
-                let dest = self.fresh(dest_ty);
                 let mut call_args = vec![
                     Operand::Copy(Place::local(closure_local)),
                     Operand::Copy(Place::local(vec_local)),
@@ -2044,15 +2107,14 @@ impl<'a> Builder<'a> {
                     let by_block = i128::from(self.elem_is_slot_addressed(out_ty));
                     call_args.push(Operand::Const(ConstValue::Int(by_block)));
                 }
-                let next = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
-                    args: call_args,
-                    destination: Place::local(dest),
-                    target: Some(next),
-                });
-                self.set_current(next);
-                Some(dest)
+                Some(self.emit_iter_combinator_call(
+                    "map",
+                    in_abi,
+                    Some(out_class),
+                    call_args,
+                    dest_ty,
+                    span,
+                ))
             }
             ("iter::filter", 2) => {
                 let bool_ty = self.tcx.bool_ty();
@@ -2080,27 +2142,20 @@ impl<'a> Builder<'a> {
                     self.propagate_aggr_state(iter_local, dest);
                     return Some(dest);
                 }
-                let helper = match in_abi {
-                    ElemAbi::Ptr => "gos_rt_iter_filter_ptr",
-                    ElemAbi::Float => "gos_rt_iter_filter_f64",
-                    ElemAbi::Word => "gos_rt_iter_filter_i64",
-                };
                 let closure_local = self.lower_iter_closure(&args[0], &[in_ty], bool_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 let dest_ty = self.eager_seq_result_ty(ty, in_ty);
-                let dest = self.fresh(dest_ty);
-                let next = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
-                    args: vec![
+                Some(self.emit_iter_combinator_call(
+                    "filter",
+                    in_abi,
+                    None,
+                    vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
                     ],
-                    destination: Place::local(dest),
-                    target: Some(next),
-                });
-                self.set_current(next);
-                Some(dest)
+                    dest_ty,
+                    span,
+                ))
             }
             ("iter::fold", 3) => {
                 // The accumulator's type is the fold's result and the
@@ -2137,29 +2192,25 @@ impl<'a> Builder<'a> {
                     self.set_current(next);
                     return Some(dest);
                 }
-                let helper = match (acc_abi, elem_abi) {
-                    (ElemAbi::Float, ElemAbi::Ptr) => "gos_rt_iter_fold_f64_ptr",
-                    (ElemAbi::Float, ElemAbi::Float) => "gos_rt_iter_fold_f64",
-                    (ElemAbi::Float, ElemAbi::Word) => "gos_rt_iter_fold_f64_word",
-                    (_, ElemAbi::Ptr) => "gos_rt_iter_fold_ptr",
-                    (_, ElemAbi::Float) => "gos_rt_iter_fold_word_f64",
-                    (_, ElemAbi::Word) => "gos_rt_iter_fold_i64",
+                // The accumulator rides an integer register unless it is an
+                // `f64`; the element keeps its own class independently.
+                let acc_class = match acc_abi {
+                    ElemAbi::Float => ElemAbi::Float,
+                    _ => ElemAbi::Word,
                 };
                 let vec_local = self.lower_iter_vec_arg(&args[2])?;
-                let dest = self.fresh(acc_ty);
-                let next = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
-                    args: vec![
+                Some(self.emit_iter_combinator_call(
+                    "fold",
+                    elem_abi,
+                    Some(acc_class),
+                    vec![
                         Operand::Copy(Place::local(init_local)),
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
                     ],
-                    destination: Place::local(dest),
-                    target: Some(next),
-                });
-                self.set_current(next);
-                Some(dest)
+                    acc_ty,
+                    span,
+                ))
             }
             ("iter::sum_by", 2) => {
                 let (elem_ty, elem_abi) = self.iter_elem_abi(args[1].ty);
@@ -2168,29 +2219,23 @@ impl<'a> Builder<'a> {
                     ElemAbi::Float => self.tcx.float_ty(gossamer_types::FloatTy::F64),
                     _ => i64_ty,
                 };
-                let helper = match (elem_abi, out_abi) {
-                    (ElemAbi::Ptr, ElemAbi::Float) => "gos_rt_iter_sum_by_ptr_f64",
-                    (ElemAbi::Ptr, _) => "gos_rt_iter_sum_by_ptr",
-                    (ElemAbi::Float, ElemAbi::Float) => "gos_rt_iter_sum_by_f64",
-                    (ElemAbi::Float, _) => "gos_rt_iter_sum_by_f64_word",
-                    (ElemAbi::Word, ElemAbi::Float) => "gos_rt_iter_sum_by_word_f64",
-                    (ElemAbi::Word, _) => "gos_rt_iter_sum_by_i64",
+                let out_class = match out_abi {
+                    ElemAbi::Float => ElemAbi::Float,
+                    _ => ElemAbi::Word,
                 };
                 let closure_local = self.lower_iter_closure(&args[0], &[elem_ty], out_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let dest = self.fresh(out_ty);
-                let next = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
-                    args: vec![
+                Some(self.emit_iter_combinator_call(
+                    "sum_by",
+                    elem_abi,
+                    Some(out_class),
+                    vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
                     ],
-                    destination: Place::local(dest),
-                    target: Some(next),
-                });
-                self.set_current(next);
-                Some(dest)
+                    out_ty,
+                    span,
+                ))
             }
             ("iter::any", 2) => {
                 let bool_ty = self.tcx.bool_ty();
@@ -2220,26 +2265,20 @@ impl<'a> Builder<'a> {
                 let (elem_ty, elem_abi) = self.iter_elem_abi(args[1].ty);
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 let closure_local = self.lower_iter_closure(&args[0], &[elem_ty], bool_ty, span)?;
-                let helper = match elem_abi {
-                    ElemAbi::Ptr => "gos_rt_iter_any_ptr",
-                    ElemAbi::Float => "gos_rt_iter_any_f64",
-                    ElemAbi::Word => "gos_rt_iter_any_i64",
-                };
+                let combinator = "any";
                 // Bool-typed destination so `{}` renders true/false
                 // like the VM; the shim returns i64 0/1.
-                let dest = self.fresh(bool_ty);
-                let next = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
-                    args: vec![
+                Some(self.emit_iter_combinator_call(
+                    combinator,
+                    elem_abi,
+                    None,
+                    vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
                     ],
-                    destination: Place::local(dest),
-                    target: Some(next),
-                });
-                self.set_current(next);
-                Some(dest)
+                    bool_ty,
+                    span,
+                ))
             }
             ("iter::all", 2) => {
                 let bool_ty = self.tcx.bool_ty();
@@ -2266,26 +2305,20 @@ impl<'a> Builder<'a> {
                 let (elem_ty, elem_abi) = self.iter_elem_abi(args[1].ty);
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 let closure_local = self.lower_iter_closure(&args[0], &[elem_ty], bool_ty, span)?;
-                let helper = match elem_abi {
-                    ElemAbi::Ptr => "gos_rt_iter_all_ptr",
-                    ElemAbi::Float => "gos_rt_iter_all_f64",
-                    ElemAbi::Word => "gos_rt_iter_all_i64",
-                };
+                let combinator = "all";
                 // Bool-typed destination so `{}` renders true/false
                 // like the VM; the shim returns i64 0/1.
-                let dest = self.fresh(bool_ty);
-                let next = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
-                    args: vec![
+                Some(self.emit_iter_combinator_call(
+                    combinator,
+                    elem_abi,
+                    None,
+                    vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
                     ],
-                    destination: Place::local(dest),
-                    target: Some(next),
-                });
-                self.set_current(next);
-                Some(dest)
+                    bool_ty,
+                    span,
+                ))
             }
             ("iter::find", 2) => {
                 // Build an Option<i64> from a (flag, value) pair so
@@ -2315,34 +2348,29 @@ impl<'a> Builder<'a> {
                         span,
                     ));
                 }
-                let _ = elem_abi;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let value = self.fresh(i64_ty);
-                let after_value = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_find_i64".to_string())),
-                    args: vec![
+                let value = self.emit_iter_combinator_call(
+                    "find",
+                    elem_abi,
+                    None,
+                    vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
                     ],
-                    destination: Place::local(value),
-                    target: Some(after_value),
-                });
-                self.set_current(after_value);
-                let flag = self.fresh(i64_ty);
-                let after_flag = self.new_block(span);
-                self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str(
-                        "gos_rt_iter_find_i64_flag".to_string(),
-                    )),
-                    args: vec![
+                    i64_ty,
+                    span,
+                );
+                let flag = self.emit_iter_combinator_call(
+                    "find_flag",
+                    elem_abi,
+                    None,
+                    vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
                     ],
-                    destination: Place::local(flag),
-                    target: Some(after_flag),
-                });
-                self.set_current(after_flag);
+                    i64_ty,
+                    span,
+                );
                 // Convert flag (0/1) → disc (0 for Some, 1 for None).
                 let disc = self.fresh(i64_ty);
                 self.emit_assign(
@@ -3026,26 +3054,50 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::filter_map" | "iter::find_map", 2) => {
-                let opt_i64 = self.option_payload_adt_ty(i64_ty);
-                let closure = self.lower_iter_closure(&args[0], &[i64_ty], opt_i64, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let (helper, dest_ty) = if joined == "iter::filter_map" {
-                    let dest = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
+                let (in_ty, elem_abi) = self.iter_callback_shape(vec_local);
+                // The kept payloads are the callback's results, so the result
+                // element is the callback's Some payload, not the input's.
+                let payload_ty = self
+                    .callable_output_of(&args[0])
+                    .and_then(|out| self.option_payload_of(out))
+                    .unwrap_or(i64_ty);
+                let opt_payload = self.option_payload_adt_ty(payload_ty);
+                let closure = self.lower_iter_closure(&args[0], &[in_ty], opt_payload, span)?;
+                if joined == "iter::filter_map" {
+                    let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
                         ty
                     } else {
-                        self.tcx.intern(TyKind::Vec(i64_ty))
+                        self.tcx.intern(TyKind::Vec(payload_ty))
                     };
-                    ("gos_rt_iter_filter_map_i64", dest)
-                } else {
-                    ("gos_rt_iter_find_map_i64", opt_i64)
-                };
-                Some(self.emit_combinator_call(
-                    helper,
+                    // A kept payload wider than a slot is answered as the
+                    // address of its storage, so the shim copies the block
+                    // rather than storing the word.
+                    let width = i128::from(self.elem_bytes_of(payload_ty));
+                    let by_block = i128::from(self.elem_is_slot_addressed(payload_ty));
+                    return Some(self.emit_iter_combinator_call(
+                        "filter_map",
+                        elem_abi,
+                        None,
+                        vec![
+                            Operand::Copy(Place::local(closure)),
+                            Operand::Copy(Place::local(vec_local)),
+                            Operand::Const(ConstValue::Int(width)),
+                            Operand::Const(ConstValue::Int(by_block)),
+                        ],
+                        dest_ty,
+                        span,
+                    ));
+                }
+                Some(self.emit_iter_combinator_call(
+                    "find_map",
+                    elem_abi,
+                    None,
                     vec![
                         Operand::Copy(Place::local(closure)),
                         Operand::Copy(Place::local(vec_local)),
                     ],
-                    dest_ty,
+                    opt_payload,
                     span,
                 ))
             }
@@ -3067,18 +3119,28 @@ impl<'a> Builder<'a> {
                         .expect("arr_len derived from callable output"),
                     None => vec_i64,
                 };
-                let closure = self.lower_iter_closure(&args[0], &[i64_ty], cb_out, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let (in_ty, elem_abi) = self.iter_callback_shape(vec_local);
+                let closure = self.lower_iter_closure(&args[0], &[in_ty], cb_out, span)?;
+                // The concatenation carries the callback's element, not the
+                // one that was read.
+                let inner = self
+                    .callable_output_of(&args[0])
+                    .and_then(|out| self.sequence_elem_ty_of(out));
                 let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
                     ty
                 } else {
-                    vec_i64
+                    inner.map_or(vec_i64, |elem| self.tcx.intern(TyKind::Vec(elem)))
                 };
                 let mut call_args = vec![
                     Operand::Copy(Place::local(closure)),
                     Operand::Copy(Place::local(vec_local)),
                 ];
-                let helper = if let Some(len) = arr_len {
+                // A callback answering a fixed array hands back a raw slot
+                // buffer with no header rather than a sequence, so the array
+                // variant reads that buffer directly. The element it was
+                // called on still crosses in its own class.
+                if let Some(len) = arr_len {
                     let len_local = self.fresh(i64_ty);
                     let len_i128 = i128::try_from(len.to_usize()).unwrap_or(0);
                     self.emit_assign(
@@ -3087,18 +3149,32 @@ impl<'a> Builder<'a> {
                         span,
                     );
                     call_args.push(Operand::Copy(Place::local(len_local)));
-                    "gos_rt_iter_flat_map_arr_i64"
-                } else {
-                    "gos_rt_iter_flat_map_i64"
-                };
-                Some(self.emit_combinator_call(helper, call_args, dest_ty, span))
+                    return Some(self.emit_iter_combinator_call(
+                        "flat_map_arr",
+                        elem_abi,
+                        None,
+                        call_args,
+                        dest_ty,
+                        span,
+                    ));
+                }
+                Some(self.emit_iter_combinator_call(
+                    "flat_map", elem_abi, None, call_args, dest_ty, span,
+                ))
             }
             ("iter::reduce", 2) => {
-                let closure = self.lower_iter_closure(&args[0], &[i64_ty, i64_ty], i64_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let dest_ty = self.option_payload_adt_ty(i64_ty);
-                Some(self.emit_combinator_call(
-                    "gos_rt_iter_reduce_i64",
+                let (in_ty, elem_abi) = self.iter_callback_shape(vec_local);
+                // The accumulator is an element, so the callback takes two of
+                // them and answers one, and the Option carries that element.
+                let closure = self.lower_iter_closure(&args[0], &[in_ty, in_ty], in_ty, span)?;
+                let unit_ty = self.tcx.unit();
+                let elem = self.iter_result_elem_ty(unit_ty, vec_local);
+                let dest_ty = self.option_payload_adt_ty(elem);
+                Some(self.emit_iter_combinator_call(
+                    "reduce",
+                    elem_abi,
+                    None,
                     vec![
                         Operand::Copy(Place::local(closure)),
                         Operand::Copy(Place::local(vec_local)),
@@ -3109,15 +3185,26 @@ impl<'a> Builder<'a> {
             }
             ("iter::scan", 3) => {
                 let init = self.lower_expr(&args[0])?;
-                let closure = self.lower_iter_closure(&args[1], &[i64_ty, i64_ty], i64_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[2])?;
+                let (in_ty, elem_abi) = self.iter_callback_shape(vec_local);
+                // The accumulator's own type is the callback's, which the
+                // element's class does not decide.
+                let acc_ty = self.locals[init.0 as usize].ty;
+                let acc_class = self.scalar_abi_of(acc_ty);
+                let acc_class = match acc_class {
+                    ElemAbi::Float => ElemAbi::Float,
+                    _ => ElemAbi::Word,
+                };
+                let closure = self.lower_iter_closure(&args[1], &[acc_ty, in_ty], acc_ty, span)?;
                 let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
                     ty
                 } else {
-                    self.tcx.intern(TyKind::Vec(i64_ty))
+                    self.tcx.intern(TyKind::Vec(acc_ty))
                 };
-                Some(self.emit_combinator_call(
-                    "gos_rt_iter_scan_i64",
+                Some(self.emit_iter_combinator_call(
+                    "scan",
+                    elem_abi,
+                    Some(acc_class),
                     vec![
                         Operand::Copy(Place::local(init)),
                         Operand::Copy(Place::local(closure)),
@@ -3128,10 +3215,13 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::product_by", 2) => {
-                let closure = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                Some(self.emit_combinator_call(
-                    "gos_rt_iter_product_by_i64",
+                let (in_ty, elem_abi) = self.iter_callback_shape(vec_local);
+                let closure = self.lower_iter_closure(&args[0], &[in_ty], i64_ty, span)?;
+                Some(self.emit_iter_combinator_call(
+                    "product_by",
+                    elem_abi,
+                    None,
                     vec![
                         Operand::Copy(Place::local(closure)),
                         Operand::Copy(Place::local(vec_local)),
@@ -3142,19 +3232,14 @@ impl<'a> Builder<'a> {
             }
             ("iter::position", 2) => {
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                // A struct element reaches the predicate by slot address; see
-                // `iter::any`.
-                let ptr_elem_ty = self.iter_wide_elem_ty(vec_local);
-                let closure_inputs = ptr_elem_ty.map_or_else(|| vec![i64_ty], |elem| vec![elem]);
-                let closure = self.lower_iter_closure(&args[0], &closure_inputs, bool_ty, span)?;
-                let helper = if ptr_elem_ty.is_some() {
-                    "gos_rt_iter_position_ptr"
-                } else {
-                    "gos_rt_iter_position_i64"
-                };
+                let (in_ty, elem_abi) = self.iter_callback_shape(vec_local);
+                let closure = self.lower_iter_closure(&args[0], &[in_ty], bool_ty, span)?;
+                // The answer is an index whatever the element was.
                 let dest_ty = self.option_payload_adt_ty(i64_ty);
-                Some(self.emit_combinator_call(
-                    helper,
+                Some(self.emit_iter_combinator_call(
+                    "position",
+                    elem_abi,
+                    None,
                     vec![
                         Operand::Copy(Place::local(closure)),
                         Operand::Copy(Place::local(vec_local)),
@@ -3164,20 +3249,19 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::take_while" | "iter::skip_while", 2) => {
-                let closure = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
-                    ty
+                let (in_ty, elem_abi) = self.iter_callback_shape(vec_local);
+                let closure = self.lower_iter_closure(&args[0], &[in_ty], bool_ty, span)?;
+                let dest_ty = self.iter_result_vec_ty(ty, vec_local);
+                let combinator = if joined == "iter::take_while" {
+                    "take_while"
                 } else {
-                    self.tcx.intern(TyKind::Vec(i64_ty))
+                    "skip_while"
                 };
-                let helper = if joined == "iter::take_while" {
-                    "gos_rt_iter_take_while_i64"
-                } else {
-                    "gos_rt_iter_skip_while_i64"
-                };
-                Some(self.emit_combinator_call(
-                    helper,
+                Some(self.emit_iter_combinator_call(
+                    combinator,
+                    elem_abi,
+                    None,
                     vec![
                         Operand::Copy(Place::local(closure)),
                         Operand::Copy(Place::local(vec_local)),
@@ -3187,16 +3271,20 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::partition", 2) => {
-                let closure = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let (in_ty, elem_abi) = self.iter_callback_shape(vec_local);
+                let closure = self.lower_iter_closure(&args[0], &[in_ty], bool_ty, span)?;
                 let dest_ty = if matches!(self.tcx.kind_of(ty), TyKind::Tuple(_)) {
                     ty
                 } else {
-                    let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
-                    self.tcx.intern(TyKind::Tuple(vec![vec_i64, vec_i64]))
+                    let unit_ty = self.tcx.unit();
+                    let side = self.iter_result_vec_ty(unit_ty, vec_local);
+                    self.tcx.intern(TyKind::Tuple(vec![side, side]))
                 };
-                Some(self.emit_combinator_call(
-                    "gos_rt_iter_partition_i64",
+                Some(self.emit_iter_combinator_call(
+                    "partition",
+                    elem_abi,
+                    None,
                     vec![
                         Operand::Copy(Place::local(closure)),
                         Operand::Copy(Place::local(vec_local)),
@@ -3206,24 +3294,25 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::sort_by" | "iter::min_by" | "iter::max_by", 2) => {
-                let closure = self.lower_iter_closure(&args[0], &[i64_ty, i64_ty], i64_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let (helper, dest_ty) = match joined {
+                let (in_ty, elem_abi) = self.iter_callback_shape(vec_local);
+                // The comparator takes two elements and answers an ordering,
+                // so both operands ride the element's own register class.
+                let closure = self.lower_iter_closure(&args[0], &[in_ty, in_ty], i64_ty, span)?;
+                let unit_ty = self.tcx.unit();
+                let elem = self.iter_result_elem_ty(unit_ty, vec_local);
+                let (combinator, dest_ty) = match joined {
                     "iter::sort_by" => {
-                        let dest = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
-                            ty
-                        } else {
-                            self.tcx.intern(TyKind::Vec(i64_ty))
-                        };
-                        ("gos_rt_iter_sorted_by_i64", dest)
+                        let dest = self.iter_result_vec_ty(ty, vec_local);
+                        ("sort_by", dest)
                     }
-                    "iter::min_by" => {
-                        ("gos_rt_iter_min_by_i64", self.option_payload_adt_ty(i64_ty))
-                    }
-                    _ => ("gos_rt_iter_max_by_i64", self.option_payload_adt_ty(i64_ty)),
+                    "iter::min_by" => ("min_by", self.option_payload_adt_ty(elem)),
+                    _ => ("max_by", self.option_payload_adt_ty(elem)),
                 };
-                Some(self.emit_combinator_call(
-                    helper,
+                Some(self.emit_iter_combinator_call(
+                    combinator,
+                    elem_abi,
+                    None,
                     vec![
                         Operand::Copy(Place::local(closure)),
                         Operand::Copy(Place::local(vec_local)),
@@ -3234,24 +3323,11 @@ impl<'a> Builder<'a> {
             }
             ("iter::sort_by_key" | "iter::min_by_key" | "iter::max_by_key", 2) => {
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let vec_elem_ty = match self.tcx.kind_of(self.locals[vec_local.0 as usize].ty) {
-                    TyKind::Vec(elem) | TyKind::Slice(elem) => Some(*elem),
-                    _ => None,
-                };
-                let elem_is_aggregate =
-                    vec_elem_ty.is_some_and(|elem| self.is_inline_aggregate(elem));
                 // The element and the key each pick their own register class,
                 // so the callback must be built with, and called through, the
-                // exact pair: a float in either position rides an SSE
-                // register that an integer-shaped signature never fills.
-                let elem_is_float = !elem_is_aggregate
-                    && vec_elem_ty
-                        .is_some_and(|elem| matches!(self.tcx.kind_of(elem), TyKind::Float(_)));
-                let in_ty = if elem_is_aggregate || elem_is_float {
-                    vec_elem_ty.expect("iterator has an element type")
-                } else {
-                    i64_ty
-                };
+                // exact pair: a float in either position rides an SSE register
+                // that an integer-shaped signature never fills.
+                let (in_ty, elem_abi) = self.iter_callback_shape(vec_local);
                 let key_ty = self.callable_output_of(&args[0]).unwrap_or(i64_ty);
                 let key_is_f64 = matches!(self.tcx.kind_of(key_ty), TyKind::Float(_));
                 let closure_ret = if key_is_f64 {
@@ -3260,54 +3336,20 @@ impl<'a> Builder<'a> {
                     i64_ty
                 };
                 let closure = self.lower_iter_closure(&args[0], &[in_ty], closure_ret, span)?;
-                let elem_payload_ty = if elem_is_aggregate || elem_is_float {
-                    in_ty
-                } else {
-                    i64_ty
-                };
-                let suffix = if elem_is_aggregate {
-                    "ptr"
-                } else if elem_is_float {
-                    "f64"
-                } else {
-                    "i64"
-                };
-                let (helper, dest_ty) = match joined {
+                let unit_ty = self.tcx.unit();
+                let elem = self.iter_result_elem_ty(unit_ty, vec_local);
+                let (combinator, dest_ty) = match joined {
                     "iter::sort_by_key" => {
-                        let dest = if matches!(self.tcx.kind_of(ty), TyKind::Vec(_)) {
-                            ty
-                        } else {
-                            self.tcx.intern(TyKind::Vec(elem_payload_ty))
-                        };
-                        // A sorted sequence hands back the source's own
-                        // elements, so an aggregate element keeps the eager
-                        // word-slot shim rather than the by-address one.
-                        let name = if elem_is_float {
-                            "gos_rt_iter_sorted_by_key_f64"
-                        } else {
-                            "gos_rt_iter_sorted_by_key_i64"
-                        };
-                        (name, dest)
+                        let dest = self.iter_result_vec_ty(ty, vec_local);
+                        ("sort_by_key", dest)
                     }
-                    "iter::min_by_key" => (
-                        match suffix {
-                            "ptr" => "gos_rt_iter_min_by_key_ptr",
-                            "f64" => "gos_rt_iter_min_by_key_f64",
-                            _ => "gos_rt_iter_min_by_key_i64",
-                        },
-                        self.option_payload_adt_ty(elem_payload_ty),
-                    ),
-                    _ => (
-                        match suffix {
-                            "ptr" => "gos_rt_iter_max_by_key_ptr",
-                            "f64" => "gos_rt_iter_max_by_key_f64",
-                            _ => "gos_rt_iter_max_by_key_i64",
-                        },
-                        self.option_payload_adt_ty(elem_payload_ty),
-                    ),
+                    "iter::min_by_key" => ("min_by_key", self.option_payload_adt_ty(elem)),
+                    _ => ("max_by_key", self.option_payload_adt_ty(elem)),
                 };
-                Some(self.emit_combinator_call(
-                    helper,
+                Some(self.emit_iter_combinator_call(
+                    combinator,
+                    elem_abi,
+                    None,
                     vec![
                         Operand::Copy(Place::local(closure)),
                         Operand::Copy(Place::local(vec_local)),
@@ -3318,20 +3360,23 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("iter::chunk_by" | "iter::count_by", 2) => {
-                let closure = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let (helper, dest_ty) = if joined == "iter::chunk_by" {
+                let (in_ty, elem_abi) = self.iter_callback_shape(vec_local);
+                let closure = self.lower_iter_closure(&args[0], &[in_ty], i64_ty, span)?;
+                let (combinator, dest_ty) = if joined == "iter::chunk_by" {
                     let dest = if matches!(self.tcx.kind_of(ty), TyKind::HashMap { .. }) {
                         ty
                     } else {
-                        let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
+                        // The groups hold the source's own elements.
+                        let unit_ty = self.tcx.unit();
+                        let group = self.iter_result_vec_ty(unit_ty, vec_local);
                         self.tcx.intern(TyKind::HashMap {
                             key: i64_ty,
-                            value: vec_i64,
+                            value: group,
                             ordered: false,
                         })
                     };
-                    ("gos_rt_iter_group_by_i64", dest)
+                    ("chunk_by", dest)
                 } else {
                     let dest = if matches!(self.tcx.kind_of(ty), TyKind::HashMap { .. }) {
                         ty
@@ -3342,10 +3387,12 @@ impl<'a> Builder<'a> {
                             ordered: false,
                         })
                     };
-                    ("gos_rt_iter_count_by_i64", dest)
+                    ("count_by", dest)
                 };
-                Some(self.emit_combinator_call(
-                    helper,
+                Some(self.emit_iter_combinator_call(
+                    combinator,
+                    elem_abi,
+                    None,
                     vec![
                         Operand::Copy(Place::local(closure)),
                         Operand::Copy(Place::local(vec_local)),
@@ -3397,6 +3444,45 @@ impl<'a> Builder<'a> {
 
     /// Emits a call to `helper` and returns the destination local.
     pub(crate) fn emit_combinator_call(
+        &mut self,
+        helper: &str,
+        args: Vec<Operand>,
+        dest_ty: Ty,
+        span: Span,
+    ) -> Local {
+        // A shim that declares an element crossing has a family of twins its
+        // C-ABI signature cannot tell apart, so the one to call follows from
+        // the element class rather than from a name written at the call site.
+        debug_assert!(
+            gossamer_abi::combinator_abi_of(helper).is_none(),
+            "{helper} declares an element crossing, so it must be reached \
+             through emit_iter_combinator_call, which derives the symbol from \
+             the class present at the call site"
+        );
+        self.emit_combinator_call_raw(helper, args, dest_ty, span)
+    }
+
+    /// Emits a sequence-combinator call, choosing the shim from the element
+    /// crossing present rather than from a name spelled at the call site.
+    ///
+    /// `elem` is the class of the sequence being read and `result` the class
+    /// of the element produced, for the combinators whose symbol distinguishes
+    /// one. A crossing the registry declares no shim for is a gap in the shim
+    /// family, and it is named here rather than reaching the linker.
+    pub(crate) fn emit_iter_combinator_call(
+        &mut self,
+        combinator: &str,
+        elem: ElemAbi,
+        result: Option<ElemAbi>,
+        args: Vec<Operand>,
+        dest_ty: Ty,
+        span: Span,
+    ) -> Local {
+        let helper = iter_combinator_helper(combinator, elem, result);
+        self.emit_combinator_call_raw(helper, args, dest_ty, span)
+    }
+
+    fn emit_combinator_call_raw(
         &mut self,
         helper: &str,
         args: Vec<Operand>,
@@ -3459,31 +3545,12 @@ impl<'a> Builder<'a> {
     /// as the integer its bits spell.
     pub(crate) fn lower_iter_simple_vec_opt(
         &mut self,
-        helper_i64: &str,
-        helper_f64: &str,
+        combinator: &str,
         args: &[HirExpr],
         span: Span,
     ) -> Option<Local> {
-        use gossamer_types::TyKind;
-        let elem_is_f64 = matches!(self.iter_element_kind(args[0].ty), Some(TyKind::Float(_)));
-        let payload_ty = if elem_is_f64 {
-            self.tcx.float_ty(gossamer_types::FloatTy::F64)
-        } else {
-            self.tcx.int_ty(gossamer_types::IntTy::I64)
-        };
-        let helper = if elem_is_f64 { helper_f64 } else { helper_i64 };
-        let opt_ty = self.option_payload_adt_ty(payload_ty);
         let v = self.lower_iter_vec_arg(&args[0])?;
-        let dest = self.fresh(opt_ty);
-        let next = self.new_block(span);
-        self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str(helper.to_string())),
-            args: vec![Operand::Copy(Place::local(v))],
-            destination: Place::local(dest),
-            target: Some(next),
-        });
-        self.set_current(next);
-        Some(dest)
+        self.lower_iter_vec_opt_local(v, combinator, span)
     }
 
     /// `min` / `max` over an already-lowered sequence local, returning
@@ -3491,8 +3558,7 @@ impl<'a> Builder<'a> {
     pub(crate) fn lower_iter_vec_opt_local(
         &mut self,
         v: Local,
-        helper_i64: &str,
-        helper_f64: &str,
+        combinator: &str,
         span: Span,
     ) -> Option<Local> {
         let (elem_ty, elem_abi) = self.iter_elem_abi(self.locals[v.0 as usize].ty);
@@ -3500,44 +3566,38 @@ impl<'a> Builder<'a> {
             ElemAbi::Float => self.tcx.float_ty(gossamer_types::FloatTy::F64),
             _ => elem_ty,
         };
-        let helper = if elem_abi == ElemAbi::Float {
-            helper_f64
-        } else {
-            helper_i64
-        };
         let opt_ty = self.option_payload_adt_ty(payload_ty);
-        Some(self.emit_combinator_call(helper, vec![Operand::Copy(Place::local(v))], opt_ty, span))
+        Some(self.emit_iter_combinator_call(
+            combinator,
+            elem_abi,
+            None,
+            vec![Operand::Copy(Place::local(v))],
+            opt_ty,
+            span,
+        ))
     }
 
     pub(crate) fn lower_iter_simple_vec_in_vec_out(
         &mut self,
-        helper: &str,
+        combinator: &str,
         args: &[HirExpr],
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
-        use gossamer_types::{IntTy, TyKind};
         let v = self.lower_iter_vec_arg(&args[0])?;
         // Pin the dest to `Vec<elem>` (never the call's raw Array/Var
         // type): the shim returns a heap `*mut GosVec`, so an
         // unannotated `iter::rev(xs)[i]` would otherwise take the
         // stack-array index path on a heap pointer and SIGSEGV.
-        let i64_ty = self.tcx.int_ty(IntTy::I64);
-        let elem = match self.tcx.kind_of(ty) {
-            TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => *elem,
-            _ => i64_ty,
-        };
-        let vec_ty = self.tcx.intern(TyKind::Vec(elem));
-        let dest = self.fresh(vec_ty);
-        let next = self.new_block(span);
-        self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str(helper.to_string())),
-            args: vec![Operand::Copy(Place::local(v))],
-            destination: Place::local(dest),
-            target: Some(next),
-        });
-        self.set_current(next);
-        Some(dest)
+        let vec_ty = self.iter_result_vec_ty(ty, v);
+        Some(self.emit_iter_combinator_call(
+            combinator,
+            ElemAbi::Word,
+            None,
+            vec![Operand::Copy(Place::local(v))],
+            vec_ty,
+            span,
+        ))
     }
 
     /// How a combinator's callback receives one element of an eager sequence.
@@ -3692,6 +3752,75 @@ impl<'a> Builder<'a> {
 
         self.set_current(exit);
         Some(out)
+    }
+
+    /// The callback parameter type and element class for a combinator reading
+    /// `vec_local`.
+    ///
+    /// An `f64` element reaches its callback in an SSE register, an element
+    /// wider than one slot by the address of its storage, and everything else
+    /// as the word its slot spells. The shim to call and the type the callback
+    /// is built with both follow from this, so they are decided together and
+    /// cannot drift apart.
+    pub(crate) fn iter_callback_shape(&mut self, vec_local: Local) -> (Ty, ElemAbi) {
+        let seq_ty = self.locals[vec_local.0 as usize].ty;
+        let (elem, abi) = self.iter_elem_abi(seq_ty);
+        match abi {
+            ElemAbi::Word => (self.tcx.int_ty(gossamer_types::IntTy::I64), abi),
+            ElemAbi::Float | ElemAbi::Ptr => (elem, abi),
+        }
+    }
+
+    /// The ordering descriptor to compare two of `elem` through, or an empty
+    /// string when comparing the element's bytes is already its equality.
+    ///
+    /// A scalar's slot spells its value, so its bytes are its identity. A
+    /// String, a struct or tuple holding one, and an enum reached through its
+    /// node are all values two of which can be equal at different addresses,
+    /// and those are compared through the descriptor instead.
+    pub(crate) fn elem_equality_descriptor(&mut self, elem: Ty) -> String {
+        use gossamer_types::TyKind;
+        let scalar = matches!(
+            self.tcx.kind_of(elem),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char
+        );
+        if scalar {
+            return String::new();
+        }
+        self.ordering_stream(elem)
+            .map(|tags| tags.iter().map(|&b| b as char).collect())
+            .unwrap_or_default()
+    }
+
+    /// The element a combinator's result sequence carries: the expected type's
+    /// element when the call site names a sequence, and otherwise the element
+    /// of the sequence that was read.
+    ///
+    /// A combinator that answers what it read carries the element with it. The
+    /// word fallback stands only for a sequence whose element neither side
+    /// names, and reaching it for a wider element is what renders that element
+    /// as its raw slot bits.
+    pub(crate) fn iter_result_elem_ty(&mut self, expected: Ty, source: Local) -> Ty {
+        if let Some(elem) = self.sequence_elem_ty_of(expected) {
+            return elem;
+        }
+        let src_ty = self.locals[source.0 as usize].ty;
+        self.sequence_elem_ty_of(src_ty)
+            .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64))
+    }
+
+    /// `Vec<T>` over [`Self::iter_result_elem_ty`].
+    pub(crate) fn iter_result_vec_ty(&mut self, expected: Ty, source: Local) -> Ty {
+        let elem = self.iter_result_elem_ty(expected, source);
+        self.tcx.intern(gossamer_types::TyKind::Vec(elem))
+    }
+
+    /// The class a combinator's sequence argument is read as, from the local
+    /// holding it. The address-taken classes are what a callback receives by
+    /// slot address rather than as a loaded word.
+    pub(crate) fn iter_local_elem_abi(&mut self, vec_local: Local) -> ElemAbi {
+        let ty = self.locals[vec_local.0 as usize].ty;
+        self.iter_elem_abi(ty).1
     }
 
     pub(crate) fn iter_elem_abi(&mut self, seq_ty: Ty) -> (Ty, ElemAbi) {
@@ -4404,8 +4533,10 @@ impl<'a> Builder<'a> {
         let bool_ty = self.tcx.bool_ty();
         let vec_local = self.lower_iter_vec_arg(seq_arg)?;
         let kept_ty = self.tcx.intern(TyKind::Vec(elem_ty));
-        let kept = self.emit_combinator_call(
-            "gos_rt_iter_filter_ptr",
+        let kept = self.emit_iter_combinator_call(
+            "filter",
+            ElemAbi::Ptr,
+            None,
             vec![
                 Operand::Copy(Place::local(closure_local)),
                 Operand::Copy(Place::local(vec_local)),
@@ -4459,7 +4590,14 @@ impl<'a> Builder<'a> {
         );
         let kept = vec_local;
         let zero = index;
-        let rty = self.result_repr_ty(ty);
+        // The payload is the element by construction, so where the call site
+        // names no `Option` the carrier takes its payload from the element
+        // rather than falling back to a word.
+        let rty = if self.option_payload_of(ty).is_some() {
+            self.result_repr_ty(ty)
+        } else {
+            self.option_payload_adt_ty(elem_ty)
+        };
         let dest = self.fresh(rty);
         let some_block = self.new_block(span);
         let none_block = self.new_block(span);

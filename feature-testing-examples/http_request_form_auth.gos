@@ -26,13 +26,13 @@ impl http::Handler for App {
         let role = r.form_value("role")
         let missing = r.form_value("nope")
         let auth = match r.basic_auth() {
-            Some((u, p)) => "auth=" + &u + ":" + &p
+            Some((u, p)) => "auth=" + u + ":" + p
             None => "auth=none"
         }
         http::Response::text(
             200
-            "form_user=" + &user + " form_role=" + &role
-            + " missing=[" + &missing + "] " + &auth
+            "form_user=" + user + " form_role=" + role
+            + " missing=[" + missing + "] " + auth
         )
     }
 }

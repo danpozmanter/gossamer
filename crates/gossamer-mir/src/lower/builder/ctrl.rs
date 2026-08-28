@@ -3185,9 +3185,9 @@ impl<'a> Builder<'a> {
             HirExprKind::Array(arr) => {
                 let len_opt = match arr {
                     gossamer_hir::HirArrayExpr::List(elems) => Some(elems.len() as i64),
-                    gossamer_hir::HirArrayExpr::Repeat { count, .. } => {
-                        literal_u64(count).and_then(|c| i64::try_from(c).ok())
-                    }
+                    gossamer_hir::HirArrayExpr::Repeat { count, .. } => self
+                        .static_repeat_len(for_loop.iter_expr.ty, count)
+                        .and_then(|c| i64::try_from(c).ok()),
                 };
                 if let Some(len) = len_opt {
                     return self.lower_for_array(
@@ -3246,9 +3246,9 @@ impl<'a> Builder<'a> {
                     if let HirExprKind::Array(arr) = &recv.kind {
                         let len = match arr {
                             gossamer_hir::HirArrayExpr::List(elems) => Some(elems.len() as i64),
-                            gossamer_hir::HirArrayExpr::Repeat { count, .. } => {
-                                literal_u64(count).and_then(|c| i64::try_from(c).ok())
-                            }
+                            gossamer_hir::HirArrayExpr::Repeat { count, .. } => self
+                                .static_repeat_len(recv.ty, count)
+                                .and_then(|c| i64::try_from(c).ok()),
                         };
                         if let Some(len) = len {
                             return self.lower_for_array(

@@ -323,6 +323,19 @@ const SEQUENCE_COMBINATOR_METHODS: &[&str] = &[
     "min",
     "max",
     "count",
+    "filter_map",
+    "find_map",
+    "flat_map",
+    "chunk_by",
+    "count_by",
+    "max_by",
+    "min_by",
+    "partition",
+    "product_by",
+    "reduce",
+    "sum_by",
+    "unzip",
+    "scan",
 ];
 
 /// The `Set` and `BTreeSet` method surface: membership, cardinality, and set
@@ -741,6 +754,11 @@ struct TypeChecker<'a> {
     /// use site unconstrained and the codegen reading the slot at
     /// the wrong layout.
     const_tys: HashMap<gossamer_resolve::DefId, Ty>,
+    /// Integer value of every `const` item whose initializer is an integer
+    /// literal, keyed by `DefId`. An array length is part of the array's type,
+    /// so it is read here rather than at run time: a `const` is a
+    /// compile-time constant, and naming one as a length resolves to its value.
+    const_int_values: HashMap<gossamer_resolve::DefId, u128>,
     /// Declared mutability of `static` items, keyed by `DefId`, so place
     /// mutability checks treat `static` and `static mut` like their local
     /// binding counterparts.
@@ -996,6 +1014,7 @@ impl<'a> TypeChecker<'a> {
             enum_variant_named_payloads: HashMap::new(),
             enum_tys: HashMap::new(),
             const_tys: HashMap::new(),
+            const_int_values: HashMap::new(),
             static_mutability: HashMap::new(),
             alias_targets: HashMap::new(),
             alias_expanding: std::collections::HashSet::new(),
@@ -1743,7 +1762,10 @@ impl<'a> TypeChecker<'a> {
             return None;
         };
         let idx = idx.0 as usize;
-        let mut a = arg_ty;
+        // An argument that is a binding rather than a literal reaches here as
+        // the inference variable its `let` bound, so the length is read after
+        // resolving it: the array's own length is what names the parameter.
+        let mut a = self.infer.resolve(self.tcx, arg_ty);
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(a) {
             a = *inner;
         }
@@ -2635,7 +2657,7 @@ impl<'a> TypeChecker<'a> {
                     self.validate_declared_bounds(&decl.generics, &decl.where_clause, item.span);
                     self.register_enum(item.id, decl, item.span, module_path);
                 }
-                ItemKind::Const(decl) => self.register_const(item.id, &decl.ty),
+                ItemKind::Const(decl) => self.register_const(item.id, &decl.ty, &decl.value),
                 ItemKind::Static(decl) => {
                     if let Some(def) = self.resolutions.definition_of(item.id) {
                         self.static_mutability.insert(
@@ -2815,12 +2837,31 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn register_const(&mut self, item_id: NodeId, ty: &gossamer_ast::Type) {
+    fn register_const(&mut self, item_id: NodeId, ty: &gossamer_ast::Type, value: &Expr) {
         let Some(def) = self.resolutions.definition_of(item_id) else {
             return;
         };
         let resolved = self.type_from_ast(ty);
         self.const_tys.insert(def, resolved);
+        if let Some(literal) = evaluate_const_int_from_expr(value) {
+            self.const_int_values.insert(def, literal);
+        }
+    }
+
+    /// The integer a length expression names when it is a path to a `const`
+    /// item holding one, or `None` for any other expression.
+    fn const_int_of_path(&mut self, expr: &Expr) -> Option<u128> {
+        let ExprKind::Path(_) = &expr.kind else {
+            return None;
+        };
+        let Resolution::Def {
+            def,
+            kind: gossamer_resolve::DefKind::Const,
+        } = self.resolutions.get(expr.id)?
+        else {
+            return None;
+        };
+        self.const_int_values.get(&def).copied()
     }
 
     /// Records each `type X<..> = T` alias's type-parameter names and
@@ -10868,11 +10909,13 @@ impl<'a> TypeChecker<'a> {
             (
                 m @ ("map" | "filter" | "for_each" | "any" | "all" | "find" | "position"
                 | "max_by_key" | "min_by_key" | "take_while" | "skip_while" | "skip" | "chain"
-                | "zip" | "windows" | "chunks"),
+                | "zip" | "windows" | "chunks" | "filter_map" | "find_map" | "flat_map"
+                | "chunk_by" | "count_by" | "partition" | "product_by" | "sum_by" | "min_by"
+                | "max_by" | "reduce"),
                 1,
             )
-            | (m @ ("enumerate" | "rev" | "dedup" | "flatten" | "pairwise"), 0)
-            | (m @ "fold", 2) => self.std_combinator_ty_at(
+            | (m @ ("enumerate" | "rev" | "dedup" | "flatten" | "pairwise" | "unzip"), 0)
+            | (m @ ("fold" | "scan"), 2) => self.std_combinator_ty_at(
                 "iter",
                 m,
                 arg_tys,
@@ -16914,7 +16957,7 @@ impl<'a> TypeChecker<'a> {
     /// diagnostic when the literal magnitude exceeds `usize::MAX`.
     /// Returns `None` for non-literal forms.
     fn evaluate_array_len(&mut self, expr: &Expr) -> Option<usize> {
-        let raw = evaluate_const_int_from_expr(expr)?;
+        let raw = evaluate_const_int_from_expr(expr).or_else(|| self.const_int_of_path(expr))?;
         if raw > usize::MAX as u128 {
             self.emit(
                 TypeError::IntLiteralOverflow {

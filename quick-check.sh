@@ -15,7 +15,17 @@
 #   generated     the checked-in tables and pages that go stale when a
 #                 stdlib module, a CLI argument, or a doc line
 #                 changes - the `gos` binary they need dominates      (90s)
-#   behavior      every fixture through the VM and the JIT, compared
+#   behavior      every fixture through the pure bytecode VM and through
+#                 the JIT, compared
+#
+# The behavior gate is where the pure-bytecode tier is covered here: the
+# sweep runs every fixture once with `GOS_JIT=0` and once with the JIT
+# on, so a body that answers differently once promoted is caught in
+# seconds. The tier-parity walk carries the same column against the two
+# native tiers as well, and it stays out of this script for the reason
+# every other CI-mirroring gate does - it builds each fixture natively
+# and costs tens of minutes. Run it with
+# `cargo test --release -p gossamer-cli --test tier_parity`.
 #
 # The slow gates that mirror the rest of CI are opt-in, since they take
 # tens of minutes and answer questions a dependency bump or an unsafe

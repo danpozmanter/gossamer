@@ -33,8 +33,14 @@ impl Token {
     /// privilege dropped.
     ///
     /// `DISABLE_MAX_PRIVILEGE` removes every privilege but
-    /// `SeChangeNotifyPrivilege`, which the child needs to traverse
-    /// directories at all.
+    /// `SeChangeNotifyPrivilege`, which the child needs for change
+    /// notifications.
+    ///
+    /// It does not buy the child the traverse-check bypass that
+    /// privilege usually carries: the fast traverse check declines to
+    /// run for a restricted token, which is what this makes. Every
+    /// directory on the way to a granted path is therefore access-
+    /// checked, and `super::acl::grant_traverse` is what answers it.
     pub(crate) fn restricted() -> Result<Self, String> {
         let mut current: HANDLE = std::ptr::null_mut();
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &raw mut current) } == 0

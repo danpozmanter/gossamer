@@ -1302,20 +1302,20 @@ pub(crate) fn request_to_value(request: &http_std::Request) -> Value {
             ]))
         })
         .collect();
-    let query_pairs: Vec<Value> = query_string
-        .split('&')
-        .filter(|seg| !seg.is_empty())
-        .map(|seg| {
-            let (k, v) = match seg.split_once('=') {
-                Some((k, v)) => (k, v),
-                None => (seg, ""),
-            };
-            Value::Tuple(Arc::from(vec![
-                Value::String(SmolStr::from(k.to_string())),
-                Value::String(SmolStr::from(v.to_string())),
-            ]))
-        })
-        .collect();
+    // Through the runtime's own parser, which is what the compiled
+    // tiers read this field with: splitting here without decoding
+    // answered `hello+world` where they answer `hello world`.
+    let query_pairs: Vec<Value> = gossamer_runtime::c_abi::http_query::parse_query_pairs(
+        query_string.as_str(),
+    )
+    .into_iter()
+    .map(|(name, value)| {
+        Value::Tuple(Arc::from(vec![
+            Value::String(SmolStr::from(name)),
+            Value::String(SmolStr::from(value)),
+        ]))
+    })
+    .collect();
     let body_text = String::from_utf8_lossy(&request.body).into_owned();
     // Binary-safe sibling of the UTF-8-lossy `body` field - one
     // `Value::Int` per byte, matching the `resp.raw_bytes` and

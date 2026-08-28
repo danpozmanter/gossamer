@@ -1,5 +1,181 @@
 # Changelog
 
+## 0.57.0 - Generic callable ABI, dead-item elimination, LLVM boost, a fifth tier column, Windows sandbox enforcement
+
+- Every `iter::` combinator now answers the same on `gos build` as it does on
+  the bytecode VM, whatever the sequence holds. A combinator shim reads its
+  buffer as a word, an `f64`, or the address of an element wider than a slot,
+  and which one it reads was decided by the symbol the compiler spelled at
+  each of 34 call sites - so `xs.iter().take_while(..)` over a `Vec<(i64,
+  i64)>` crashed, `min_by` over a `Vec<String>` printed a pointer, and
+  `windows`/`chunks` over anything but `i64` rebuilt their inner sequences at
+  the wrong width. 110 of the 287 combinator-and-element pairings disagreed
+  with the VM; all 287 now match. The element class is part of a shim's
+  declared contract in the ABI registry, the compiler derives the symbol from
+  the element in front of it, and a crossing no shim implements is a named
+  gap rather than a wrong call or an undefined symbol at link time.
+- `iter::pairwise` builds. It named a symbol nothing exported, so any program
+  reaching it failed to link; it is now the sequence zipped against itself
+  advanced by one, which carries any element through by its own width.
+- `sort`, `min`, and `max` order a payload-bearing enum by variant and payload
+  on the compiled tiers. Such an enum is reached through its node, so ordering
+  compared addresses: `#[Circle(3.0), Square, Circle(1.0)]` sorted to
+  `#[Square, Circle(3.0), Circle(1.0)]` under `gos build --release` and to
+  `#[Circle(1.0), Circle(3.0), Square]` on the VM.
+- `iter::dedup` compares whole elements. Two equal values built at different
+  addresses - a `String`, a struct holding one, a payload enum - were left as
+  separate elements on the compiled tiers, and the VM dropped no duplicate
+  aggregate at all because its equality answered false for everything that was
+  not a scalar.
+- A map printed through a value that carries its own rendering - a struct
+  element, a user `Display` - now prints key-sorted, as every other map
+  already did. `xs.iter().chunk_by(..)` over structs printed its groups in an
+  order the hash decided, so two runs of one program could disagree.
+- A capturing closure's environment is reclaimed. Every closure that captured
+  something allocated an environment nothing ever freed, so a two-million
+  iteration loop that built one per iteration reached 63 MB of resident memory
+  where the same loop with a non-capturing closure held 1 MB. A callable is
+  now reference-counted like any other heap value, and a callable handed to
+  `spawn` gives the goroutine a share of its own.
+- A `const` naming an integer is an array length. `const N: i64 = 4` then
+  `[0; N]` reported GT0051 and refused to compile, though an array's length is
+  part of its type and a `const` is exactly the compile-time constant that
+  type wants.
+- A const-generic length is inferred from an array binding, not only from an
+  array written at the call site. `let a = [1, 2, 3]` then `sum(a)` against
+  `fn sum<const K: usize>(xs: [i64; K])` reported a mismatch between `[i64;
+  N0]` and `[i64; 3]`.
+- A `Vec` answers the eager combinators its own surface advertises.
+  `partition`, `reduce`, `scan`, `unzip`, `filter_map`, `find_map`,
+  `flat_map`, `chunk_by`, `count_by`, `min_by`, `max_by`, `product_by`, and
+  `sum_by` were reachable on an iterator and listed by `%info` on a `Vec`, but
+  a call on the collection itself reported no such method.
+- A generic instantiated through a callable parameter now calls the right
+  ABI on the compiled tiers. `fn apply<T>(x: T, f: Fn(T) -> T) -> T` called
+  with `f64` passed the argument in an integer register and read the result
+  out of one, so `apply(2.5, |v| v * 2.0)` answered a denormal under `gos
+  run` while the bytecode VM and `gos build --release` both answered 5. A
+  specialisation substituted its concrete types into every local's type but
+  not into the signature a callable local carries, and a callable is where a
+  float-versus-word decision is made.
+- `gos build --release` no longer compiles the code the program does not
+  reach. A file with 2000 unused functions and a `main` that calls one spent
+  1.13 s in code generation and produced a binary 215 KB larger than the same
+  entry alone; it now spends 0.05 s and produces a binary within 1% of hello
+  world's. `GOS_MIR_NO_DCE=1` lowers everything, and `--timings` reports
+  `pruned_count`.
+- `gos clean` no longer removes a `target/` directory this toolchain did not
+  write. It removed `./target` in whatever directory it ran in, so running it
+  inside a Cargo project deleted that project's build output. It now removes
+  the directory only where a `project.toml` anchors it or where `gos build`
+  left its stamp, and says which it found otherwise.
+- The Cranelift backend builds its runtime-call signatures from the ABI
+  registry the LLVM backend already builds its declarations from. The two
+  were declared separately, and 74 of the hand-written entries disagreed with
+  the registry: 69 read a two-word `Result` or `Option` return as one word,
+  one read a bool return as an integer, and four dropped a parameter
+  entirely, so `slog::info(msg, fields)` never passed its fields. A test now
+  pins the registry to the Rust definitions it describes.
+- `gos build --release` prefers the LLVM major `rustc` bundles, which is 22,
+  and says so when an older one answers instead. Discovery used to lead with
+  18 and prefer it over 20, so a host with several installed silently built
+  with the oldest, and every workflow that installed an unpinned `llvm clang`
+  took whatever the runner shipped - which made a perf or sanitizer result
+  incomparable with an ordinary build's. The supported floor is unchanged at
+  LLVM 18; every workflow now installs one explicit major.
+- The tier-parity suite gained a fifth column: `gos run` with the JIT off.
+  The `vm` column promotes bodies at the usual threshold, so the pure
+  bytecode interpreter, which is also the tier `comptime` folds on, was the
+  one tier nothing compared.
+- `request.query_pairs` answers on a compiled tier. The field was missing
+  from the request-field lowering table while every other documented field
+  was there, so the read landed on something that was not a sequence and the
+  handler goroutine never returned. The pairs are also decoded now, and
+  decoded the same way on every tier: the bytecode VM split the query without
+  decoding it at all, so `b=hello+world` read back with the `+` still in it
+  where the Rust-side accessor answered a space.
+- `s.clone()` on a `String` takes a share of its own. It lowered to nothing
+  at all, so a clone and its source were one value with one share between
+  them: `m.insert(key.clone(), value)` on a key that reached the frame by
+  value handed the consuming insert the caller's only share, and the caller's
+  binding read back as whatever the next allocation of that size wrote - a
+  wrong query, or a decode error once the bytes were not text.
+- A struct taken by value owns its heap fields for the length of the call.
+  The frame's copy is a shallow copy of the slots, so it shared every heap
+  field with the caller while everything downstream treated it as an owner:
+  a field written through a `&mut self` method released a value the caller
+  was still holding, and the caller released it again on the way out. A
+  handle closed in a callee that took it by value took the process down with
+  it.
+- `push(*p)` stores the value on a compiled tier, as `let v = *p; push(v)`
+  already did. A deref of a `&mut` to a struct, a tuple, or a fixed array
+  answered the reference rather than a copy of what it names, so the
+  container stored the address of a slot that was about to go away and the
+  program took a hard fault. The two spellings now lower to the same copy.
+- `gos check` reports a name a path dependency does not bind. A module-
+  qualified path inside a bundled dependency - `helper::f` written in a
+  package whose source the consumer inlines under `mod deppkg` - was looked
+  up as `helper` rather than as `deppkg::helper`, found nothing, and was left
+  for the runtime to fail on: the dependent reported `ok` and the program
+  died with GX0002. A relative module path now resolves against the module it
+  is written in, and the diagnostic names the dependency's own file and line.
+- A generated JSON decoder no longer takes its local names from the struct's
+  fields. A field named after a compiler-known call - `format`, `panic`,
+  `matches` - made the compiler emit code that failed its own check, and
+  report it against a line number past the end of the user's file.
+- A shared `&` in binary-operator and compound-assignment position is
+  reported under GP0055, as it already was on an argument. `a + &b` and
+  `acc += &b` passed `check`, `lint`, and `--fix` in silence, so a codebase
+  migrated with `--fix` kept every one of them.
+- `gos check --fix` no longer accepts a batch of edits because the total
+  diagnostic count fell. A batch that traded three style diagnostics for one
+  type error was applied and reported as a success; a rewrite is now kept
+  only when every code still reported was already reported.
+- `gos check --fix` declines to drop a `&` whose removal would let the
+  argument bind as a call on the argument before it, and says why. Two
+  newline-separated arguments, the second opening with `(`, silently became
+  one call with the sigils gone.
+- `gos check --fix` reports a line per file it edited, and a total when more
+  than one changed. It reported a single count against the unit's entry file
+  however many of the unit's files the rewrite actually reached, so a user
+  told one file changed had no reason to review the other twelve.
+- A sandboxed child on Windows reads the standard input it was given. Every
+  child created at `standard` or `strict` got a write-only handle to `NUL`
+  whatever the caller asked for, so a piped command read nothing. `Stdio`'s
+  contract - capturing what a command says does not silence what it is told -
+  now holds on the `CreateProcessAsUser` path as it already did on the
+  ordinary one.
+- A sandboxed child's error stream on Windows is its own. An inheriting
+  child's stderr was a duplicate of the caller's *stdout*, so a caller that
+  redirected the two separately got both on one. A caller with no console at
+  all - a service, a detached process - no longer fails process creation
+  outright.
+- A Windows `strict` grant now also grants traverse on the path to the
+  granted object. An app container is access-checked on each directory it
+  opens and a restricted token does not get the fast traverse check, so a
+  grant on a directory under a user's profile was reachable only if every
+  directory above it already named the package SID - which the system
+  directories do and a home directory does not. Each ancestor gets a
+  traverse-only, non-inheriting ACE, recorded and revoked with the grant
+  itself; one that is already reachable is left untouched, and one the user
+  cannot relabel fails the policy closed rather than proceeding.
+- A Windows `strict` read-write grant now lowers the object's mandatory label
+  for the run, and puts it back after. An app container runs at low integrity
+  and integrity is checked ahead of the DACL, so a granted directory the
+  container could reach was still not one it could write. The previous label
+  is recorded before the change, restored on the way out, and restored by the
+  stale-grant sweep after an interrupted run; a path whose label this user
+  cannot change fails the policy closed.
+- A Windows `strict` policy no longer writes the same subtree twice. A rule
+  naming a path an enclosing grant already reaches with at least the same
+  access is redundant, and an inheritable ACE costs a full walk of the subtree
+  when it is written and again when it is removed.
+- `benchmarks/comptime/` and `benchmarks/combinators/` record what a comptime
+  fold and what the runtime-call boundary cost, with checked-in baselines and
+  a runner that fails on a regression. The fold runs once on the build path,
+  not twice: `--timings` reports the same ~124 ms of `comptime_us` that `gos
+  check` spends on the same file.
+
 ## 0.56.1 - Line-flushed stdout, one HTTP watcher per process, labelled spawns, cancellation-shielded and time-bounded work
 
 - Output that ends in a newline leaves the process on the write that ends

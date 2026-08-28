@@ -814,6 +814,22 @@ pub unsafe extern "C" fn gos_rt_str_retain_typed(s: *const c_char) {
     unsafe { str_retain_impl(s, true) };
 }
 
+/// `s.clone()` for a `String`: a second share of the same text.
+///
+/// A `String` is immutable in place - an append that has to grow builds a
+/// new one - so a clone does not have to copy the bytes to behave like a
+/// separate value. What it does have to do is take a share of its own:
+/// answering the argument unchanged, as this once did by lowering to
+/// nothing at all, hands a consuming callee the caller's only share, and
+/// the caller's binding is freed while it is still holding it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_clone(s: *const c_char) -> *const c_char {
+    ffi_entry!(std::ptr::null(), {
+        unsafe { str_retain_impl(s, true) };
+        s
+    })
+}
+
 /// Marks a `STR_BUILDER` string as goroutine-shared so subsequent
 /// retain/release use atomic counting. No-op for other string kinds (static /
 /// region / fixed `STR_ALLOC` strings carry no refcount). Called from

@@ -1,0 +1,12 @@
+// String assembly, the shape `codegen` uses: a comptime fold that grows
+// one String across 300k appends.
+comptime fn table_text(n: i64) -> String {
+    let mut s = ""
+    let mut i = 0
+    while i < n { s += format("{},", i * i % 9973); i += 1 }
+    s
+}
+
+const TABLE_LEN: i64 = table_text(300000).byte_len()
+
+fn main() { println("{}", TABLE_LEN) }

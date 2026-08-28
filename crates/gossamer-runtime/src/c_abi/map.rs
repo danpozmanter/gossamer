@@ -2473,6 +2473,31 @@ unsafe fn compare_tuple_elements(
     let mut result = 0i64;
     for _ in 0..count {
         let tag = unsafe { *tags.add(*tag_cursor) };
+        // A descriptor tag names a value whose slot word is not its own
+        // order - an enum reached through its RC node, a nested sequence -
+        // so it is compared through the ordering descriptor rather than as
+        // the word the slot spells.
+        if tag >= gossamer_abi::DESC_VEC {
+            let field = *tag_cursor;
+            let span = unsafe { crate::c_abi::desc_cmp::desc_slot_span(tags, field) };
+            let mut walk = field;
+            let ord = unsafe {
+                crate::c_abi::desc_cmp::compare_desc(
+                    a.add(*slot_cursor).cast::<u8>(),
+                    b.add(*slot_cursor).cast::<u8>(),
+                    tags,
+                    &mut walk,
+                    crate::c_abi::desc_cmp::CmpStorage::Inline,
+                    None,
+                )
+            };
+            *tag_cursor = walk;
+            *slot_cursor += span;
+            if result == 0 {
+                result = ord;
+            }
+            continue;
+        }
         *tag_cursor += 1;
         if tag == TUPLE_TAG_NESTED {
             let nested = unsafe { *tags.add(*tag_cursor) } as usize;

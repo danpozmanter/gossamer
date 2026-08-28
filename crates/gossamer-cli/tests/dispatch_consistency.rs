@@ -110,6 +110,26 @@ fn macro_generated_export(line: &str) -> Option<String> {
     }
 }
 
+/// The exported symbol a line names when it is one argument of a multi-line
+/// export-generating macro invocation: a `gos_rt_*` identifier that is the
+/// whole argument, written either as `gos_rt_name,` or as
+/// `gos_rt_name = (..),`.
+///
+/// The identifier must be the line's only one, which is what separates an
+/// argument from a `use` list's continuation line.
+fn standalone_macro_arg_export(line: &str) -> Option<String> {
+    let token: String = line.chars().take_while(|&c| is_ident_char(c)).collect();
+    if !token.starts_with("gos_rt_") {
+        return None;
+    }
+    let rest = line[token.len()..].trim_start();
+    if rest == "," {
+        return Some(token);
+    }
+    let named = rest.strip_prefix('=')?.trim_start();
+    (named.starts_with('(') && named.ends_with("),")).then_some(token)
+}
+
 fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
@@ -149,6 +169,13 @@ fn extract_runtime_exports() -> Vec<String> {
             // generated `fn`, so recognise the macro call's first
             // standalone `gos_rt_*` identifier argument.
             if let Some(name) = macro_generated_export(trimmed) {
+                out.push(name);
+                continue;
+            }
+            // A multi-line export-generating invocation names each symbol on
+            // its own line, as `gos_rt_name,` or `gos_rt_name = (..)`, which
+            // the single-line scan above cannot see.
+            if let Some(name) = standalone_macro_arg_export(trimmed) {
                 out.push(name);
             }
         }

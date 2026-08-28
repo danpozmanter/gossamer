@@ -282,58 +282,12 @@ pub fn split_path_query(target: &str) -> (String, String) {
     )
 }
 
+/// `name=value` pairs of a query string, through the runtime's own
+/// parser - the same one the bytecode VM and both compiled tiers read
+/// `query_pairs` with, so all three answer the same thing.
 fn parse_query_pairs(query: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    if query.is_empty() {
-        return out;
-    }
-    for pair in query.split('&') {
-        if pair.is_empty() {
-            continue;
-        }
-        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-        out.push((decode_query_component(name), decode_query_component(value)));
-    }
-    out
+    gossamer_runtime::c_abi::http_query::parse_query_pairs(query)
 }
-
-fn decode_query_component(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'+' => {
-                out.push(' ');
-                i += 1;
-            }
-            b'%' if i + 2 < bytes.len() => {
-                let hi = (bytes[i + 1] as char).to_digit(16);
-                let lo = (bytes[i + 2] as char).to_digit(16);
-                if let (Some(h), Some(l)) = (hi, lo) {
-                    let byte = (h * 16 + l) as u8;
-                    // Push the byte; if it forms invalid UTF-8 in
-                    // the final string, `from_utf8_lossy` would be
-                    // the safer route. We instead push the byte
-                    // value as ASCII (or build the string as
-                    // bytes). For practical query strings the
-                    // bytes are valid UTF-8.
-                    out.push(byte as char);
-                    i += 3;
-                } else {
-                    out.push('%');
-                    i += 1;
-                }
-            }
-            b => {
-                out.push(b as char);
-                i += 1;
-            }
-        }
-    }
-    out
-}
-
 /// Lazily-read response body - the server drains it to the wire in
 /// chunked frames instead of buffering it in memory.
 pub struct BodyStream(pub Box<dyn std::io::Read + Send>);

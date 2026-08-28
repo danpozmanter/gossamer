@@ -24,7 +24,7 @@ comptime fn create_table(table: String, fields: Vec<(String, String)>) -> String
         }
         cols += name + " " + sql_ty
     }
-    "CREATE TABLE " + &table + " (" + &cols + ")"
+    "CREATE TABLE " + table + " (" + cols + ")"
 }
 
 // Comptime: build a comma-separated field-name list from reflection.

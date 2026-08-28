@@ -1,0 +1,19 @@
+# Median `gos check` and cold `gos build --release` wall time in
+# milliseconds, three runs. Recorded 2026-08-27 on x86_64 Linux for
+# 0.57.0.
+#
+# The `check` column is the fold and nothing after it. The `build`
+# column is the fold plus the rest of a native build, which is why the
+# control still costs something: it is a whole build with no fold in it.
+#
+# `ct_heavy` folds in ~129 ms under `check` and reports ~124 ms of
+# `comptime_us` under `build --timings`, which is the same single fold -
+# the gap between the two commands is the authoritative front end
+# running again over the folded source, not a second evaluation.
+#
+# fixture	check_ms	build_ms
+ct_table.gos	64	245
+ct_tally.gos	22	114
+ct_sieve.gos	48	193
+ct_heavy.gos	129	280
+ct_control.gos	2	96

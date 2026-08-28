@@ -37,7 +37,7 @@ impl http::Handler for App {
     fn serve(&self, r: http::Request) -> http::Response {
         let auth = header_of(r.headers, "authorization")
         let cred = match middleware::decode_basic_auth(auth) {
-            Some((u, p)) => "cred=" + &u + ":" + &p
+            Some((u, p)) => "cred=" + u + ":" + p
             None => "cred=none"
         }
         let up = if websocket::is_websocket_upgrade(r) {
@@ -45,7 +45,7 @@ impl http::Handler for App {
         } else {
             "up=no"
         }
-        http::Response::text(200, cred + " " + &up)
+        http::Response::text(200, cred + " " + up)
     }
 }
 

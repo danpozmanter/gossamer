@@ -618,11 +618,13 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GP0055",
-        "A call argument was written as a shared reference. No parameter is\n\
-            a shared reference, so the sigil changes nothing: an argument is\n\
-            passed without copying either way, and a callee writes to the\n\
-            caller's variable only through a `&mut` parameter, which is\n\
-            spelled `&mut` at the call too. `--fix` drops the `&`.",
+        "A call argument or a binary operand was written as a shared\n\
+            reference. There is no shared-reference type left for the sigil\n\
+            to name: an argument and an operand are both read without\n\
+            copying either way, and a callee writes to the caller's variable\n\
+            only through a `&mut` parameter, which is spelled `&mut` at the\n\
+            call too. `--fix` drops the `&`, except where dropping it would\n\
+            let the argument bind as a call on the one before it.",
     ),
     (
         "GP0056",

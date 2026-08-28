@@ -1,0 +1,405 @@
+// Every `iter::` combinator against every element ABI class: a word
+// (`i64`, `bool`, a managed `String` pointer, a payload enum reached
+// through its node), an `f64` in an SSE register, and the inline slots of
+// a tuple or struct reached by address.
+//
+// The C ABI has no generics, so which class a shim reads its sequence
+// buffer as is carried by the symbol the compiler calls. This fixture is
+// what holds that choice to the element actually present, on every tier.
+
+use std::iter
+
+struct Part {
+    id: i64
+    w: f64
+}
+
+enum Shape {
+    Circle(f64)
+    Square
+}
+
+fn word_elements() {
+    let xs: Vec<i64> = #[3, 1, 2, 2]
+    let ys: Vec<i64> = #[10, 20, 30, 40]
+    let ns: Vec<Vec<i64>> = #[#[1, 2], #[3]]
+    let ps: Vec<(i64, i64)> = #[(1, 2), (3, 4)]
+    println("word take {:?}", iter::take(xs, 2))
+    println("word skip {:?}", iter::skip(xs, 1))
+    println("word step_by {:?}", xs.iter().step_by(2).collect())
+    println("word zip {:?}", iter::zip(xs, ys))
+    println("word enumerate {:?}", xs.iter().enumerate().collect())
+    println("word chain {:?}", iter::chain(xs, ys))
+    println("word flatten {:?}", iter::flatten(ns))
+    println("word rev {:?}", iter::rev(xs))
+    println("word dedup {:?}", iter::dedup(xs))
+    println("word map {:?}", xs.map(|v| v + 1))
+    println("word filter {:?}", xs.filter(|v| v > 1))
+    println("word fold {:?}", xs.fold(0, |acc, v| acc + (|v| v)(v)))
+    println("word flat_map {:?}", xs.iter().flat_map(|v| #[v, v]).collect())
+    println("word any {:?}", xs.iter().any(|v| v > 1))
+    println("word all {:?}", xs.iter().all(|v| v > 1))
+    println("word min {:?}", iter::min(xs))
+    println("word max {:?}", iter::max(xs))
+    println("word windows {:?}", xs.windows(2))
+    println("word pairwise {:?}", iter::pairwise(xs))
+    println("word chunks {:?}", xs.chunks(2))
+    println("word unzip {:?}", iter::unzip(ps))
+    println("word for_each")
+    xs.iter().for_each(|v| println("  fe {:?}", v))
+    println("word filter_map {:?}", xs.iter().filter_map(|v| if v > 1 { Some(v) } else { None }).collect())
+    println("word reduce {:?}", xs.iter().reduce(|a, b| if (|a, b| a - b)(a, b) > 0 { a } else { b }))
+    println("word scan {:?}", xs.iter().scan(0, |acc, v| acc + (|v| v)(v)).collect())
+    println("word sum_by {:?}", xs.iter().sum_by(|v| v))
+    println("word product_by {:?}", xs.iter().product_by(|v| v))
+    println("word find {:?}", xs.iter().find(|v| v > 1))
+    println("word position {:?}", xs.iter().position(|v| v > 1))
+    println("word find_map {:?}", xs.iter().find_map(|v| if v > 1 { Some(v) } else { None }))
+    println("word take_while {:?}", xs.iter().take_while(|v| v > 1).collect())
+    println("word skip_while {:?}", xs.iter().skip_while(|v| v > 1).collect())
+    println("word partition {:?}", xs.iter().partition(|v| v > 1))
+    println("word sort_by {:?}", iter::sort_by(xs, |a, b| a - b))
+    println("word sort_by_key {:?}", iter::sort_by_key(xs, |v| v))
+    println("word min_by {:?}", xs.iter().min_by(|a, b| a - b))
+    println("word max_by {:?}", xs.iter().max_by(|a, b| a - b))
+    println("word min_by_key {:?}", xs.iter().min_by_key(|v| v))
+    println("word max_by_key {:?}", xs.iter().max_by_key(|v| v))
+    println("word chunk_by {:?}", xs.iter().chunk_by(|v| v))
+    println("word count_by {:?}", xs.iter().count_by(|v| v))
+}
+
+fn float_elements() {
+    let xs: Vec<f64> = #[3.5, 1.5, 2.5, 2.5]
+    let ys: Vec<f64> = #[10.5, 20.5, 30.5, 40.5]
+    let ns: Vec<Vec<f64>> = #[#[1.5, 2.5], #[3.5]]
+    let ps: Vec<(i64, i64)> = #[(1, 2), (3, 4)]
+    println("float take {:?}", iter::take(xs, 2))
+    println("float skip {:?}", iter::skip(xs, 1))
+    println("float step_by {:?}", xs.iter().step_by(2).collect())
+    println("float zip {:?}", iter::zip(xs, ys))
+    println("float enumerate {:?}", xs.iter().enumerate().collect())
+    println("float chain {:?}", iter::chain(xs, ys))
+    println("float flatten {:?}", iter::flatten(ns))
+    println("float rev {:?}", iter::rev(xs))
+    println("float dedup {:?}", iter::dedup(xs))
+    println("float map {:?}", xs.map(|v| v + 1.0))
+    println("float filter {:?}", xs.filter(|v| v > 1.5))
+    println("float fold {:?}", xs.fold(0, |acc, v| acc + (|v| v as i64)(v)))
+    println("float flat_map {:?}", xs.iter().flat_map(|v| #[v, v]).collect())
+    println("float any {:?}", xs.iter().any(|v| v > 1.5))
+    println("float all {:?}", xs.iter().all(|v| v > 1.5))
+    println("float min {:?}", iter::min(xs))
+    println("float max {:?}", iter::max(xs))
+    println("float windows {:?}", xs.windows(2))
+    println("float pairwise {:?}", iter::pairwise(xs))
+    println("float chunks {:?}", xs.chunks(2))
+    println("float unzip {:?}", iter::unzip(ps))
+    println("float for_each")
+    xs.iter().for_each(|v| println("  fe {:?}", v))
+    println("float filter_map {:?}", xs.iter().filter_map(|v| if v > 1.5 { Some(v) } else { None }).collect())
+    println("float reduce {:?}", xs.iter().reduce(|a, b| if (|a, b| (a - b) as i64)(a, b) > 0 { a } else { b }))
+    println("float scan {:?}", xs.iter().scan(0, |acc, v| acc + (|v| v as i64)(v)).collect())
+    println("float sum_by {:?}", xs.iter().sum_by(|v| v as i64))
+    println("float product_by {:?}", xs.iter().product_by(|v| v as i64))
+    println("float find {:?}", xs.iter().find(|v| v > 1.5))
+    println("float position {:?}", xs.iter().position(|v| v > 1.5))
+    println("float find_map {:?}", xs.iter().find_map(|v| if v > 1.5 { Some(v) } else { None }))
+    println("float take_while {:?}", xs.iter().take_while(|v| v > 1.5).collect())
+    println("float skip_while {:?}", xs.iter().skip_while(|v| v > 1.5).collect())
+    println("float partition {:?}", xs.iter().partition(|v| v > 1.5))
+    println("float sort_by {:?}", iter::sort_by(xs, |a, b| (a - b) as i64))
+    println("float sort_by_key {:?}", iter::sort_by_key(xs, |v| v as i64))
+    println("float min_by {:?}", xs.iter().min_by(|a, b| (a - b) as i64))
+    println("float max_by {:?}", xs.iter().max_by(|a, b| (a - b) as i64))
+    println("float min_by_key {:?}", xs.iter().min_by_key(|v| v as i64))
+    println("float max_by_key {:?}", xs.iter().max_by_key(|v| v as i64))
+    println("float chunk_by {:?}", xs.iter().chunk_by(|v| v as i64))
+    println("float count_by {:?}", xs.iter().count_by(|v| v as i64))
+}
+
+fn bool_elements() {
+    let xs: Vec<bool> = #[true, false, true, true]
+    let ys: Vec<bool> = #[false, true, false, true]
+    let ns: Vec<Vec<bool>> = #[#[true, false], #[true]]
+    let ps: Vec<(i64, i64)> = #[(1, 2), (3, 4)]
+    println("bool take {:?}", iter::take(xs, 2))
+    println("bool skip {:?}", iter::skip(xs, 1))
+    println("bool step_by {:?}", xs.iter().step_by(2).collect())
+    println("bool zip {:?}", iter::zip(xs, ys))
+    println("bool enumerate {:?}", xs.iter().enumerate().collect())
+    println("bool chain {:?}", iter::chain(xs, ys))
+    println("bool flatten {:?}", iter::flatten(ns))
+    println("bool rev {:?}", iter::rev(xs))
+    println("bool dedup {:?}", iter::dedup(xs))
+    println("bool map {:?}", xs.map(|v| !v))
+    println("bool filter {:?}", xs.filter(|v| v))
+    println("bool fold {:?}", xs.fold(0, |acc, v| acc + (|v| if v { 1 } else { 0 })(v)))
+    println("bool flat_map {:?}", xs.iter().flat_map(|v| #[v, v]).collect())
+    println("bool any {:?}", xs.iter().any(|v| v))
+    println("bool all {:?}", xs.iter().all(|v| v))
+    println("bool min {:?}", iter::min(xs))
+    println("bool max {:?}", iter::max(xs))
+    println("bool windows {:?}", xs.windows(2))
+    println("bool pairwise {:?}", iter::pairwise(xs))
+    println("bool chunks {:?}", xs.chunks(2))
+    println("bool unzip {:?}", iter::unzip(ps))
+    println("bool for_each")
+    xs.iter().for_each(|v| println("  fe {:?}", v))
+    println("bool filter_map {:?}", xs.iter().filter_map(|v| if v { Some(v) } else { None }).collect())
+    println("bool reduce {:?}", xs.iter().reduce(|a, b| if (|a, b| (if a { 1 } else { 0 }) - (if b { 1 } else { 0 }))(a, b) > 0 { a } else { b }))
+    println("bool scan {:?}", xs.iter().scan(0, |acc, v| acc + (|v| if v { 1 } else { 0 })(v)).collect())
+    println("bool sum_by {:?}", xs.iter().sum_by(|v| if v { 1 } else { 0 }))
+    println("bool product_by {:?}", xs.iter().product_by(|v| if v { 1 } else { 0 }))
+    println("bool find {:?}", xs.iter().find(|v| v))
+    println("bool position {:?}", xs.iter().position(|v| v))
+    println("bool find_map {:?}", xs.iter().find_map(|v| if v { Some(v) } else { None }))
+    println("bool take_while {:?}", xs.iter().take_while(|v| v).collect())
+    println("bool skip_while {:?}", xs.iter().skip_while(|v| v).collect())
+    println("bool partition {:?}", xs.iter().partition(|v| v))
+    println("bool sort_by {:?}", iter::sort_by(xs, |a, b| (if a { 1 } else { 0 }) - (if b { 1 } else { 0 })))
+    println("bool sort_by_key {:?}", iter::sort_by_key(xs, |v| if v { 1 } else { 0 }))
+    println("bool min_by {:?}", xs.iter().min_by(|a, b| (if a { 1 } else { 0 }) - (if b { 1 } else { 0 })))
+    println("bool max_by {:?}", xs.iter().max_by(|a, b| (if a { 1 } else { 0 }) - (if b { 1 } else { 0 })))
+    println("bool min_by_key {:?}", xs.iter().min_by_key(|v| if v { 1 } else { 0 }))
+    println("bool max_by_key {:?}", xs.iter().max_by_key(|v| if v { 1 } else { 0 }))
+    println("bool chunk_by {:?}", xs.iter().chunk_by(|v| if v { 1 } else { 0 }))
+    println("bool count_by {:?}", xs.iter().count_by(|v| if v { 1 } else { 0 }))
+}
+
+fn string_elements() {
+    let xs: Vec<String> = #["ccc", "a", "bb", "bb"]
+    let ys: Vec<String> = #["x", "y", "z", "w"]
+    let ns: Vec<Vec<String>> = #[#["a", "b"], #["c"]]
+    let ps: Vec<(i64, i64)> = #[(1, 2), (3, 4)]
+    println("string take {:?}", iter::take(xs, 2))
+    println("string skip {:?}", iter::skip(xs, 1))
+    println("string step_by {:?}", xs.iter().step_by(2).collect())
+    println("string zip {:?}", iter::zip(xs, ys))
+    println("string enumerate {:?}", xs.iter().enumerate().collect())
+    println("string chain {:?}", iter::chain(xs, ys))
+    println("string flatten {:?}", iter::flatten(ns))
+    println("string rev {:?}", iter::rev(xs))
+    println("string dedup {:?}", iter::dedup(xs))
+    println("string map {:?}", xs.map(|v| v + "!"))
+    println("string filter {:?}", xs.filter(|v| v.len() > 1))
+    println("string fold {:?}", xs.fold(0, |acc, v| acc + (|v| v.len())(v)))
+    println("string flat_map {:?}", xs.iter().flat_map(|v| #[v, v]).collect())
+    println("string any {:?}", xs.iter().any(|v| v.len() > 1))
+    println("string all {:?}", xs.iter().all(|v| v.len() > 1))
+    println("string min {:?}", iter::min(xs))
+    println("string max {:?}", iter::max(xs))
+    println("string windows {:?}", xs.windows(2))
+    println("string pairwise {:?}", iter::pairwise(xs))
+    println("string chunks {:?}", xs.chunks(2))
+    println("string unzip {:?}", iter::unzip(ps))
+    println("string for_each")
+    xs.iter().for_each(|v| println("  fe {:?}", v))
+    println("string filter_map {:?}", xs.iter().filter_map(|v| if v.len() > 1 { Some(v) } else { None }).collect())
+    println("string reduce {:?}", xs.iter().reduce(|a, b| if (|a, b| a.len() - b.len())(a, b) > 0 { a } else { b }))
+    println("string scan {:?}", xs.iter().scan(0, |acc, v| acc + (|v| v.len())(v)).collect())
+    println("string sum_by {:?}", xs.iter().sum_by(|v| v.len()))
+    println("string product_by {:?}", xs.iter().product_by(|v| v.len()))
+    println("string find {:?}", xs.iter().find(|v| v.len() > 1))
+    println("string position {:?}", xs.iter().position(|v| v.len() > 1))
+    println("string find_map {:?}", xs.iter().find_map(|v| if v.len() > 1 { Some(v) } else { None }))
+    println("string take_while {:?}", xs.iter().take_while(|v| v.len() > 1).collect())
+    println("string skip_while {:?}", xs.iter().skip_while(|v| v.len() > 1).collect())
+    println("string partition {:?}", xs.iter().partition(|v| v.len() > 1))
+    println("string sort_by {:?}", iter::sort_by(xs, |a, b| a.len() - b.len()))
+    println("string sort_by_key {:?}", iter::sort_by_key(xs, |v| v.len()))
+    println("string min_by {:?}", xs.iter().min_by(|a, b| a.len() - b.len()))
+    println("string max_by {:?}", xs.iter().max_by(|a, b| a.len() - b.len()))
+    println("string min_by_key {:?}", xs.iter().min_by_key(|v| v.len()))
+    println("string max_by_key {:?}", xs.iter().max_by_key(|v| v.len()))
+    println("string chunk_by {:?}", xs.iter().chunk_by(|v| v.len()))
+    println("string count_by {:?}", xs.iter().count_by(|v| v.len()))
+}
+
+fn tuple_elements() {
+    let xs: Vec<(i64, i64)> = #[(3, 30), (1, 10), (2, 20), (2, 20)]
+    let ys: Vec<(i64, i64)> = #[(9, 90), (8, 80), (7, 70), (6, 60)]
+    let ns: Vec<Vec<(i64, i64)>> = #[#[(1, 2)], #[(3, 4)]]
+    let ps: Vec<(i64, i64)> = #[(1, 2), (3, 4)]
+    println("tuple take {:?}", iter::take(xs, 2))
+    println("tuple skip {:?}", iter::skip(xs, 1))
+    println("tuple step_by {:?}", xs.iter().step_by(2).collect())
+    println("tuple zip {:?}", iter::zip(xs, ys))
+    println("tuple enumerate {:?}", xs.iter().enumerate().collect())
+    println("tuple chain {:?}", iter::chain(xs, ys))
+    println("tuple flatten {:?}", iter::flatten(ns))
+    println("tuple rev {:?}", iter::rev(xs))
+    println("tuple dedup {:?}", iter::dedup(xs))
+    println("tuple map {:?}", xs.map(|p| (p.0 + 1, p.1)))
+    println("tuple filter {:?}", xs.filter(|p| p.0 > 1))
+    println("tuple fold {:?}", xs.fold(0, |acc, v| acc + (|p| p.0)(v)))
+    println("tuple flat_map {:?}", xs.iter().flat_map(|v| #[v, v]).collect())
+    println("tuple any {:?}", xs.iter().any(|p| p.0 > 1))
+    println("tuple all {:?}", xs.iter().all(|p| p.0 > 1))
+    println("tuple min {:?}", iter::min(xs))
+    println("tuple max {:?}", iter::max(xs))
+    println("tuple windows {:?}", xs.windows(2))
+    println("tuple pairwise {:?}", iter::pairwise(xs))
+    println("tuple chunks {:?}", xs.chunks(2))
+    println("tuple unzip {:?}", iter::unzip(ps))
+    println("tuple for_each")
+    xs.iter().for_each(|v| println("  fe {:?}", v))
+    println("tuple filter_map {:?}", xs.iter().filter_map(|p| if p.0 > 1 { Some(p) } else { None }).collect())
+    println("tuple reduce {:?}", xs.iter().reduce(|a, b| if (|a, b| a.0 - b.0)(a, b) > 0 { a } else { b }))
+    println("tuple scan {:?}", xs.iter().scan(0, |acc, v| acc + (|p| p.0)(v)).collect())
+    println("tuple sum_by {:?}", xs.iter().sum_by(|p| p.0))
+    println("tuple product_by {:?}", xs.iter().product_by(|p| p.0))
+    println("tuple find {:?}", xs.iter().find(|p| p.0 > 1))
+    println("tuple position {:?}", xs.iter().position(|p| p.0 > 1))
+    println("tuple find_map {:?}", xs.iter().find_map(|p| if p.0 > 1 { Some(p) } else { None }))
+    println("tuple take_while {:?}", xs.iter().take_while(|p| p.0 > 1).collect())
+    println("tuple skip_while {:?}", xs.iter().skip_while(|p| p.0 > 1).collect())
+    println("tuple partition {:?}", xs.iter().partition(|p| p.0 > 1))
+    println("tuple sort_by {:?}", iter::sort_by(xs, |a, b| a.0 - b.0))
+    println("tuple sort_by_key {:?}", iter::sort_by_key(xs, |p| p.0))
+    println("tuple min_by {:?}", xs.iter().min_by(|a, b| a.0 - b.0))
+    println("tuple max_by {:?}", xs.iter().max_by(|a, b| a.0 - b.0))
+    println("tuple min_by_key {:?}", xs.iter().min_by_key(|p| p.0))
+    println("tuple max_by_key {:?}", xs.iter().max_by_key(|p| p.0))
+    println("tuple chunk_by {:?}", xs.iter().chunk_by(|p| p.0))
+    println("tuple count_by {:?}", xs.iter().count_by(|p| p.0))
+}
+
+fn struct_elements() {
+    let xs: Vec<Part> = #[Part { id: 3, w: 3.5 }, Part { id: 1, w: 1.5 }, Part { id: 2, w: 2.5 }, Part { id: 2, w: 2.5 }]
+    let ys: Vec<Part> = #[Part { id: 9, w: 9.5 }, Part { id: 8, w: 8.5 }, Part { id: 7, w: 7.5 }, Part { id: 6, w: 6.5 }]
+    let ns: Vec<Vec<Part>> = #[#[Part { id: 1, w: 1.0 }], #[Part { id: 2, w: 2.0 }]]
+    let ps: Vec<(i64, i64)> = #[(1, 2), (3, 4)]
+    println("struct take {:?}", iter::take(xs, 2))
+    println("struct skip {:?}", iter::skip(xs, 1))
+    println("struct step_by {:?}", xs.iter().step_by(2).collect())
+    println("struct zip {:?}", iter::zip(xs, ys))
+    println("struct enumerate {:?}", xs.iter().enumerate().collect())
+    println("struct chain {:?}", iter::chain(xs, ys))
+    println("struct flatten {:?}", iter::flatten(ns))
+    println("struct rev {:?}", iter::rev(xs))
+    println("struct dedup {:?}", iter::dedup(xs))
+    println("struct map {:?}", xs.map(|p| Part { id: p.id + 1, w: p.w }))
+    println("struct filter {:?}", xs.filter(|p| p.id > 1))
+    println("struct fold {:?}", xs.fold(0, |acc, v| acc + (|p| p.id)(v)))
+    println("struct flat_map {:?}", xs.iter().flat_map(|v| #[v, v]).collect())
+    println("struct any {:?}", xs.iter().any(|p| p.id > 1))
+    println("struct all {:?}", xs.iter().all(|p| p.id > 1))
+    println("struct min {:?}", iter::min(xs))
+    println("struct max {:?}", iter::max(xs))
+    println("struct windows {:?}", xs.windows(2))
+    println("struct pairwise {:?}", iter::pairwise(xs))
+    println("struct chunks {:?}", xs.chunks(2))
+    println("struct unzip {:?}", iter::unzip(ps))
+    println("struct for_each")
+    xs.iter().for_each(|v| println("  fe {:?}", v))
+    println("struct filter_map {:?}", xs.iter().filter_map(|p| if p.id > 1 { Some(p) } else { None }).collect())
+    println("struct reduce {:?}", xs.iter().reduce(|a, b| if (|a, b| a.id - b.id)(a, b) > 0 { a } else { b }))
+    println("struct scan {:?}", xs.iter().scan(0, |acc, v| acc + (|p| p.id)(v)).collect())
+    println("struct sum_by {:?}", xs.iter().sum_by(|p| p.id))
+    println("struct product_by {:?}", xs.iter().product_by(|p| p.id))
+    println("struct find {:?}", xs.iter().find(|p| p.id > 1))
+    println("struct position {:?}", xs.iter().position(|p| p.id > 1))
+    println("struct find_map {:?}", xs.iter().find_map(|p| if p.id > 1 { Some(p) } else { None }))
+    println("struct take_while {:?}", xs.iter().take_while(|p| p.id > 1).collect())
+    println("struct skip_while {:?}", xs.iter().skip_while(|p| p.id > 1).collect())
+    println("struct partition {:?}", xs.iter().partition(|p| p.id > 1))
+    println("struct sort_by {:?}", iter::sort_by(xs, |a, b| a.id - b.id))
+    println("struct sort_by_key {:?}", iter::sort_by_key(xs, |p| p.id))
+    println("struct min_by {:?}", xs.iter().min_by(|a, b| a.id - b.id))
+    println("struct max_by {:?}", xs.iter().max_by(|a, b| a.id - b.id))
+    println("struct min_by_key {:?}", xs.iter().min_by_key(|p| p.id))
+    println("struct max_by_key {:?}", xs.iter().max_by_key(|p| p.id))
+    println("struct chunk_by {:?}", xs.iter().chunk_by(|p| p.id))
+    println("struct count_by {:?}", xs.iter().count_by(|p| p.id))
+}
+
+fn enum_elements() {
+    let xs: Vec<Shape> = #[Shape::Circle(3.0), Shape::Square, Shape::Circle(1.0), Shape::Circle(1.0)]
+    let ys: Vec<Shape> = #[Shape::Square, Shape::Circle(9.0), Shape::Square, Shape::Circle(8.0)]
+    let ns: Vec<Vec<Shape>> = #[#[Shape::Square], #[Shape::Circle(1.0)]]
+    let ps: Vec<(i64, i64)> = #[(1, 2), (3, 4)]
+    println("enum take {:?}", iter::take(xs, 2))
+    println("enum skip {:?}", iter::skip(xs, 1))
+    println("enum step_by {:?}", xs.iter().step_by(2).collect())
+    println("enum zip {:?}", iter::zip(xs, ys))
+    println("enum enumerate {:?}", xs.iter().enumerate().collect())
+    println("enum chain {:?}", iter::chain(xs, ys))
+    println("enum flatten {:?}", iter::flatten(ns))
+    println("enum rev {:?}", iter::rev(xs))
+    println("enum dedup {:?}", iter::dedup(xs))
+    println("enum map {:?}", xs.map(|s| match s { Shape::Circle(r) => Shape::Circle(r + 1.0), Shape::Square => Shape::Square }))
+    println("enum filter {:?}", xs.filter(|s| matches(s, Shape::Circle(_))))
+    println("enum fold {:?}", xs.fold(0, |acc, v| acc + (|s| match s { Shape::Circle(r) => r as i64, Shape::Square => 0 })(v)))
+    println("enum flat_map {:?}", xs.iter().flat_map(|v| #[v, v]).collect())
+    println("enum any {:?}", xs.iter().any(|s| matches(s, Shape::Circle(_))))
+    println("enum all {:?}", xs.iter().all(|s| matches(s, Shape::Circle(_))))
+    println("enum min {:?}", iter::min(xs))
+    println("enum max {:?}", iter::max(xs))
+    println("enum windows {:?}", xs.windows(2))
+    println("enum pairwise {:?}", iter::pairwise(xs))
+    println("enum chunks {:?}", xs.chunks(2))
+    println("enum unzip {:?}", iter::unzip(ps))
+    println("enum for_each")
+    xs.iter().for_each(|v| println("  fe {:?}", v))
+    println("enum filter_map {:?}", xs.iter().filter_map(|s| if matches(s, Shape::Circle(_)) { Some(s) } else { None }).collect())
+    println("enum reduce {:?}", xs.iter().reduce(|a, b| if (|a, b| (match a { Shape::Circle(r) => r as i64, Shape::Square => 0 }) - (match b { Shape::Circle(r) => r as i64, Shape::Square => 0 }))(a, b) > 0 { a } else { b }))
+    println("enum scan {:?}", xs.iter().scan(0, |acc, v| acc + (|s| match s { Shape::Circle(r) => r as i64, Shape::Square => 0 })(v)).collect())
+    println("enum sum_by {:?}", xs.iter().sum_by(|s| match s { Shape::Circle(r) => r as i64, Shape::Square => 0 }))
+    println("enum product_by {:?}", xs.iter().product_by(|s| match s { Shape::Circle(r) => r as i64, Shape::Square => 0 }))
+    println("enum find {:?}", xs.iter().find(|s| matches(s, Shape::Circle(_))))
+    println("enum position {:?}", xs.iter().position(|s| matches(s, Shape::Circle(_))))
+    println("enum find_map {:?}", xs.iter().find_map(|s| if matches(s, Shape::Circle(_)) { Some(s) } else { None }))
+    println("enum take_while {:?}", xs.iter().take_while(|s| matches(s, Shape::Circle(_))).collect())
+    println("enum skip_while {:?}", xs.iter().skip_while(|s| matches(s, Shape::Circle(_))).collect())
+    println("enum partition {:?}", xs.iter().partition(|s| matches(s, Shape::Circle(_))))
+    println("enum sort_by {:?}", iter::sort_by(xs, |a, b| (match a { Shape::Circle(r) => r as i64, Shape::Square => 0 }) - (match b { Shape::Circle(r) => r as i64, Shape::Square => 0 })))
+    println("enum sort_by_key {:?}", iter::sort_by_key(xs, |s| match s { Shape::Circle(r) => r as i64, Shape::Square => 0 }))
+    println("enum min_by {:?}", xs.iter().min_by(|a, b| (match a { Shape::Circle(r) => r as i64, Shape::Square => 0 }) - (match b { Shape::Circle(r) => r as i64, Shape::Square => 0 })))
+    println("enum max_by {:?}", xs.iter().max_by(|a, b| (match a { Shape::Circle(r) => r as i64, Shape::Square => 0 }) - (match b { Shape::Circle(r) => r as i64, Shape::Square => 0 })))
+    println("enum min_by_key {:?}", xs.iter().min_by_key(|s| match s { Shape::Circle(r) => r as i64, Shape::Square => 0 }))
+    println("enum max_by_key {:?}", xs.iter().max_by_key(|s| match s { Shape::Circle(r) => r as i64, Shape::Square => 0 }))
+    println("enum chunk_by {:?}", xs.iter().chunk_by(|s| match s { Shape::Circle(r) => r as i64, Shape::Square => 0 }))
+    println("enum count_by {:?}", xs.iter().count_by(|s| match s { Shape::Circle(r) => r as i64, Shape::Square => 0 }))
+}
+
+/// A hot body over the same surface, so the JIT actually compiles this
+/// fixture and its Cranelift parity column is a native run rather than a
+/// second pass of the bytecode VM.
+fn warmed_total(rounds: i64) -> i64 {
+    let xs: Vec<i64> = #[3, 1, 2, 2]
+    // A map local is a bytecode-only repr for the JIT, so the two
+    // map-answering combinators stay out of this body and are covered by the
+    // printed matrix below.
+    let mut total = 0
+    for _ in 0..rounds {
+        total += xs.iter().take_while(|v| v > 0).count()
+        total += xs.iter().skip_while(|v| v > 2).count()
+        total += xs.iter().filter_map(|v| if v > 1 { Some(v) } else { None }).count()
+        total += xs.iter().position(|v| v == 2).unwrap_or(0)
+        total += xs.iter().sum_by(|v| v)
+        total += xs.iter().product_by(|v| v)
+        total += xs.iter().reduce(|a, b| a + b).unwrap_or(0)
+        total += xs.iter().scan(0, |acc, v| acc + v).count()
+        total += iter::partition(xs, |v| v > 1).0.len()
+        total += xs.iter().flat_map(|v| #[v, v]).count()
+        total += xs.dedup().len()
+        total += iter::rev(xs).len()
+        total += iter::take(xs, 2).len()
+        total += iter::skip(xs, 1).len()
+        total += xs.windows(2).len()
+        total += xs.chunks(2).len()
+        total += iter::pairwise(xs).len()
+    }
+    total
+}
+
+fn main() {
+    println("warmed {}", warmed_total(40))
+    word_elements()
+    float_elements()
+    bool_elements()
+    string_elements()
+    tuple_elements()
+    struct_elements()
+    enum_elements()
+}

@@ -1972,6 +1972,52 @@ unsafe fn vec_release_elem_at(v: *mut GosVec, idx: i64) {
     }
 }
 
+/// Appends `src[idx]` to `dst`, moving the element whole at the source's own
+/// stride and giving `dst` its own share of any reference-counted children.
+///
+/// The element's width lives in the source's header, so this is the copy a
+/// sequence combinator makes whatever its element: a word, an `f64`'s bits,
+/// a managed pointer, or inline aggregate slots. Answers false when the copy
+/// could not be made, which leaves `dst` unchanged.
+pub(crate) unsafe fn vec_push_elem_from(dst: *mut GosVec, src: *const GosVec, idx: i64) -> bool {
+    if dst.is_null() || src.is_null() {
+        return false;
+    }
+    let src_ref = unsafe { &*src };
+    let stride = src_ref.elem_bytes as usize;
+    if stride == 0 || src_ref.ptr.is_null() || idx < 0 || idx >= src_ref.len {
+        return false;
+    }
+    if !unsafe { vec_retain_elem_at_for_copy(src, idx) } {
+        return false;
+    }
+    let elem = unsafe { src_ref.ptr.add((idx as usize) * stride) };
+    unsafe { gos_rt_vec_push(dst, elem) };
+    true
+}
+
+/// True when `a[i]` and `b[j]` hold the same bytes at the shared element
+/// stride. Both vectors must carry the same element width.
+///
+/// Reached from the sequence shims, which are native-only.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) unsafe fn vec_elem_bytes_eq(a: *const GosVec, i: i64, b: *const GosVec, j: i64) -> bool {
+    if a.is_null() || b.is_null() {
+        return false;
+    }
+    let (av, bv) = unsafe { (&*a, &*b) };
+    let stride = av.elem_bytes as usize;
+    if stride == 0 || stride != bv.elem_bytes as usize {
+        return false;
+    }
+    if av.ptr.is_null() || bv.ptr.is_null() || i < 0 || j < 0 || i >= av.len || j >= bv.len {
+        return false;
+    }
+    let pa = unsafe { av.ptr.add((i as usize) * stride) };
+    let pb = unsafe { bv.ptr.add((j as usize) * stride) };
+    unsafe { std::slice::from_raw_parts(pa, stride) == std::slice::from_raw_parts(pb, stride) }
+}
+
 unsafe fn vec_retain_elem_at_for_copy(v: *const GosVec, idx: i64) -> bool {
     if v.is_null() || idx < 0 {
         return false;

@@ -406,6 +406,14 @@ impl<'a> Builder<'a> {
                             self.tcx.intern(gossamer_types::TyKind::Vec(tup)),
                         ))
                     }
+                    ("http::Request", "query_pairs") => {
+                        let s = self.tcx.string_ty();
+                        let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+                        Some((
+                            "gos_rt_http_request_query_pairs",
+                            self.tcx.intern(gossamer_types::TyKind::Vec(tup)),
+                        ))
+                    }
                     ("errors::Error", "message") => {
                         Some(("gos_rt_error_message", self.tcx.string_ty()))
                     }

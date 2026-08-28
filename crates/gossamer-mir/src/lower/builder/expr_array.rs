@@ -232,6 +232,28 @@ impl<'a> Builder<'a> {
         self.lower_array_repeat_into(value, count, ty, span, None)
     }
 
+    /// The element count of `[value; count]` when it is known at compile time,
+    /// or `None` for a repeat whose length is only known at run time.
+    ///
+    /// A fixed array's length is part of its type, and the checker resolves it
+    /// there - from a literal, or from a `const` item naming one. Every place
+    /// that asks whether a repeat is statically sized asks it here, so the
+    /// question has one answer: a caller reading the count expression alone
+    /// would call a `const` length dynamic while the lowering built a fixed
+    /// array, and the binding would never receive the value.
+    pub(crate) fn static_repeat_len(&self, ty: Ty, count: &HirExpr) -> Option<u64> {
+        use gossamer_types::TyKind;
+        if let TyKind::Array {
+            len: gossamer_types::ArrayLen::Concrete(n),
+            ..
+        } = self.tcx.kind_of(ty)
+            && let Ok(n) = u64::try_from(*n)
+        {
+            return Some(n);
+        }
+        literal_u64(count)
+    }
+
     pub(crate) fn lower_array_repeat_into(
         &mut self,
         value: &HirExpr,
@@ -247,7 +269,7 @@ impl<'a> Builder<'a> {
         // Vec promotion and covers both a literal and a runtime count.
         let wants_vec = matches!(self.tcx.kind_of(ty), TyKind::Vec(_));
         if !wants_vec {
-            if let Some(count_u64) = literal_u64(count) {
+            if let Some(count_u64) = self.static_repeat_len(ty, count) {
                 let value_local = self.lower_expr(value)?;
                 let value_ty = self.locals[value_local.0 as usize].ty;
                 let value_struct = self

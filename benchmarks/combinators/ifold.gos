@@ -1,0 +1,16 @@
+// A fold over a 20M-element `Vec<i64>` through the runtime's shim.
+//
+// The cost this measures is the boundary, not the arithmetic: the shim
+// is opaque object code to the optimiser, so the callback is an
+// indirect call per element that nothing can inline or vectorise. The
+// hand-written loop below the same data is the floor that cost is read
+// against.
+use std::env
+
+fn main() {
+    let n = env::args().first().unwrap_or("20000000").to_i64().unwrap_or(20000000)
+    let mut xs = #[]
+    let mut i = 0
+    while i < n { xs.push(i % 7); i += 1 }
+    println("{}", xs.fold(0, |acc, v| acc + v))
+}

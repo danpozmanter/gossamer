@@ -2100,6 +2100,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_http_request_query as *const u8,
         ),
         (
+            "gos_rt_http_request_query_pairs",
+            crate::c_abi::gos_rt_http_request_query_pairs as *const u8,
+        ),
+        (
             "gos_rt_http_request_peer_addr",
             crate::c_abi::gos_rt_http_request_peer_addr as *const u8,
         ),
@@ -2748,10 +2752,6 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_iter_flatten_i64",
             crate::c_abi::gos_rt_iter_flatten_i64 as *const u8,
-        ),
-        (
-            "gos_rt_iter_pairwise_i64",
-            crate::c_abi::gos_rt_iter_pairwise_i64 as *const u8,
         ),
         (
             "gos_rt_iter_unzip_i64",
@@ -5456,6 +5456,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_str_clear as *const u8,
         ),
         (
+            "gos_rt_str_clone",
+            crate::c_abi::gos_rt_str_clone as *const u8,
+        ),
+        (
             "gos_rt_str_with_capacity",
             crate::c_abi::gos_rt_str_with_capacity as *const u8,
         ),
@@ -7132,6 +7136,162 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_zip_write",
             crate::c_abi::gos_rt_zip_write as *const u8,
+        ),
+        (
+            "gos_rt_iter_count_by_f64",
+            crate::c_abi::gos_rt_iter_count_by_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_count_by_ptr",
+            crate::c_abi::gos_rt_iter_count_by_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_filter_map_f64",
+            crate::c_abi::gos_rt_iter_filter_map_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_filter_map_ptr",
+            crate::c_abi::gos_rt_iter_filter_map_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_find_map_f64",
+            crate::c_abi::gos_rt_iter_find_map_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_find_map_ptr",
+            crate::c_abi::gos_rt_iter_find_map_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_flat_map_f64",
+            crate::c_abi::gos_rt_iter_flat_map_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_flat_map_ptr",
+            crate::c_abi::gos_rt_iter_flat_map_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_group_by_f64",
+            crate::c_abi::gos_rt_iter_group_by_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_group_by_ptr",
+            crate::c_abi::gos_rt_iter_group_by_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_max_by_f64",
+            crate::c_abi::gos_rt_iter_max_by_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_max_by_ptr",
+            crate::c_abi::gos_rt_iter_max_by_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_min_by_f64",
+            crate::c_abi::gos_rt_iter_min_by_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_min_by_ptr",
+            crate::c_abi::gos_rt_iter_min_by_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_partition_f64",
+            crate::c_abi::gos_rt_iter_partition_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_partition_ptr",
+            crate::c_abi::gos_rt_iter_partition_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_position_f64",
+            crate::c_abi::gos_rt_iter_position_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_product_by_f64",
+            crate::c_abi::gos_rt_iter_product_by_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_product_by_ptr",
+            crate::c_abi::gos_rt_iter_product_by_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_reduce_f64",
+            crate::c_abi::gos_rt_iter_reduce_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_reduce_ptr",
+            crate::c_abi::gos_rt_iter_reduce_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_scan_f64",
+            crate::c_abi::gos_rt_iter_scan_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_scan_ptr",
+            crate::c_abi::gos_rt_iter_scan_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_skip_while_f64",
+            crate::c_abi::gos_rt_iter_skip_while_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_skip_while_ptr",
+            crate::c_abi::gos_rt_iter_skip_while_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_sorted_by_f64",
+            crate::c_abi::gos_rt_iter_sorted_by_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_sorted_by_key_ptr",
+            crate::c_abi::gos_rt_iter_sorted_by_key_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_sorted_by_ptr",
+            crate::c_abi::gos_rt_iter_sorted_by_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_take_while_f64",
+            crate::c_abi::gos_rt_iter_take_while_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_take_while_ptr",
+            crate::c_abi::gos_rt_iter_take_while_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_find_f64",
+            crate::c_abi::gos_rt_iter_find_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_find_ptr",
+            crate::c_abi::gos_rt_iter_find_ptr as *const u8,
+        ),
+        (
+            "gos_rt_iter_find_f64_flag",
+            crate::c_abi::gos_rt_iter_find_f64_flag as *const u8,
+        ),
+        (
+            "gos_rt_iter_find_ptr_flag",
+            crate::c_abi::gos_rt_iter_find_ptr_flag as *const u8,
+        ),
+        (
+            "gos_rt_iter_scan_word_f64",
+            crate::c_abi::gos_rt_iter_scan_word_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_scan_f64_word",
+            crate::c_abi::gos_rt_iter_scan_f64_word as *const u8,
+        ),
+        (
+            "gos_rt_iter_scan_ptr_f64",
+            crate::c_abi::gos_rt_iter_scan_ptr_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_flat_map_arr_f64",
+            crate::c_abi::gos_rt_iter_flat_map_arr_f64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_flat_map_arr_ptr",
+            crate::c_abi::gos_rt_iter_flat_map_arr_ptr as *const u8,
         ),
     ]
 }

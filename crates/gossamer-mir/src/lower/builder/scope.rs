@@ -374,14 +374,31 @@ impl<'a> Builder<'a> {
             self.register_closure_env_meta(&name.name, &child_entries)
         };
 
+        // Only the environment carries the closure's own type, so that type
+        // says "owns a reference-counted environment" and the drop passes can
+        // reclaim it from that alone. The sizes, offsets, body address, and
+        // store sinks around it are plain words and say so.
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let unit_ty = self.tcx.unit();
         let size = i128::from((captures.len() + 1) as i64 * 8);
-        let size_local = self.fresh(ty);
+        let size_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(size_local),
             Rvalue::Use(Operand::Const(ConstValue::Int(size))),
             span,
         );
-        let env_local = self.fresh(ty);
+        // The environment is the callable's carrying form, so it takes the
+        // type that says an environment is owned here. A bare `fn` pointer
+        // type names an address with nothing to reclaim, and reading this
+        // allocation as one would leave it to leak.
+        let env_ty = match self.tcx.kind_of(ty) {
+            gossamer_types::TyKind::FnPtr(sig) => {
+                let sig = sig.clone();
+                self.tcx.intern(gossamer_types::TyKind::FnTrait(sig))
+            }
+            _ => ty,
+        };
+        let env_local = self.fresh(env_ty);
         self.emit_assign(
             Place::local(env_local),
             Rvalue::CallIntrinsic {
@@ -393,7 +410,7 @@ impl<'a> Builder<'a> {
             },
             span,
         );
-        let fn_addr_local = self.fresh(ty);
+        let fn_addr_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(fn_addr_local),
             Rvalue::CallIntrinsic {
@@ -402,13 +419,13 @@ impl<'a> Builder<'a> {
             },
             span,
         );
-        let zero_offset_local = self.fresh(ty);
+        let zero_offset_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(zero_offset_local),
             Rvalue::Use(Operand::Const(ConstValue::Int(0))),
             span,
         );
-        let sink = self.fresh(ty);
+        let sink = self.fresh(unit_ty);
         self.emit_assign(
             Place::local(sink),
             Rvalue::CallIntrinsic {
@@ -423,7 +440,7 @@ impl<'a> Builder<'a> {
         );
         for (i, value_local) in capture_locals.into_iter().enumerate() {
             let offset = (i as i64 + 1) * 8;
-            let offset_local = self.fresh(ty);
+            let offset_local = self.fresh(i64_ty);
             self.emit_assign(
                 Place::local(offset_local),
                 Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(offset)))),
@@ -434,7 +451,7 @@ impl<'a> Builder<'a> {
             // an acquisition; a Vec carries its count outside the RC header,
             // so its share is taken here, exactly as an enum payload's is.
             if vec_captures[i] {
-                let retain_dest = self.fresh(ty);
+                let retain_dest = self.fresh(unit_ty);
                 self.emit_assign(
                     Place::local(retain_dest),
                     Rvalue::CallIntrinsic {
@@ -444,7 +461,7 @@ impl<'a> Builder<'a> {
                     span,
                 );
             }
-            let sink = self.fresh(ty);
+            let sink = self.fresh(unit_ty);
             self.emit_assign(
                 Place::local(sink),
                 Rvalue::CallIntrinsic {

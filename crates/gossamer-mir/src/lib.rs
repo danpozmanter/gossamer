@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod cleanup;
+mod dce;
 mod escape;
 mod ir;
 mod lower;
@@ -20,6 +21,7 @@ pub use cleanup::{
     CleanupEntry, CleanupPlan, DropAt, HEAP_ALLOCATOR_PAIRS, plan as plan_cleanup,
     plan_with_summary as plan_cleanup_with_summary,
 };
+pub use dce::{PruneReport, Scope, prune_scoped, prune_unreachable};
 pub use escape::{
     CaptureSummary, EscapeSet, analyse as analyse_escape,
     analyse_with_summary as analyse_escape_with_summary, build_capture_summary,

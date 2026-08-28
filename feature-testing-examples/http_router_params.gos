@@ -19,17 +19,17 @@ use std::process
 use std::time
 
 fn show_user(r: http::Request) -> http::Response {
-    http::Response::text(200, "user=" + &r.path_value("id"))
+    http::Response::text(200, "user=" + r.path_value("id"))
 }
 
 fn show_file(r: http::Request) -> http::Response {
-    http::Response::text(200, "file=" + &r.path_value("path"))
+    http::Response::text(200, "file=" + r.path_value("path"))
 }
 
 fn missing(r: http::Request) -> http::Response {
     // A capture name that the matched pattern does not declare yields
     // the empty string on every tier.
-    http::Response::text(200, "missing=[" + &r.path_value("nope") + "]")
+    http::Response::text(200, "missing=[" + r.path_value("nope") + "]")
 }
 
 fn serve_router() {

@@ -1,0 +1,46 @@
+// A `Vec` already holds its values, so a combinator written on it traverses
+// eagerly and answers a materialised result. Every name the collection offers
+// in method form is exercised here, because a name the surface advertises and
+// the checker does not resolve reads to a caller as a missing method.
+
+/// A hot body over the same eager surface, so the JIT compiles this fixture
+/// and its Cranelift parity column is a native run rather than a second pass
+/// of the bytecode VM.
+fn warmed_total(rounds: i64) -> i64 {
+    let xs: Vec<i64> = #[3, 1, 2, 2]
+    // A map local is a bytecode-only repr for the JIT, so the two
+    // map-answering combinators stay out of this body and are covered by the
+    // printed matrix below.
+    let mut total = 0
+    for _ in 0..rounds {
+        total += xs.filter_map(|v| if v > 1 { Some(v) } else { None }).len()
+        total += xs.flat_map(|v| #[v, v]).len()
+        total += xs.partition(|v| v > 1).0.len()
+        total += xs.product_by(|v| v)
+        total += xs.sum_by(|v| v)
+        total += xs.reduce(|a, b| a + b).unwrap_or(0)
+        total += xs.scan(0, |acc, v| acc + v).len()
+    }
+    total
+}
+
+fn main() {
+    println("warmed {}", warmed_total(40))
+    let xs: Vec<i64> = #[3, 1, 2, 2]
+
+    println("{:?}", xs.filter_map(|v| if v > 1 { Some(v * 10) } else { None }))
+    println("{:?}", xs.find_map(|v| if v > 2 { Some(v * 10) } else { None }))
+    println("{:?}", xs.flat_map(|v| #[v, v]))
+    println("{:?}", xs.chunk_by(|v| v))
+    println("{:?}", xs.count_by(|v| v))
+    println("{:?}", xs.min_by(|a, b| a - b))
+    println("{:?}", xs.max_by(|a, b| a - b))
+    println("{:?}", xs.partition(|v| v > 1))
+    println("{}", xs.product_by(|v| v))
+    println("{:?}", xs.reduce(|a, b| a + b))
+    println("{}", xs.sum_by(|v| v))
+    println("{:?}", xs.scan(0, |acc, v| acc + v))
+
+    let pairs: Vec<(i64, i64)> = #[(1, 2), (3, 4)]
+    println("{:?}", pairs.unzip())
+}

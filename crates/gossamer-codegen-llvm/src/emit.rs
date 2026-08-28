@@ -2,7 +2,7 @@
 //! per-function lowering + `llc -O3` invocation.
 
 use std::fmt::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use gossamer_mir::Body;
@@ -2734,6 +2734,132 @@ fn cap_diagnostic_stream(buf: Vec<u8>) -> Vec<u8> {
     out
 }
 
+/// The LLVM major discovery prefers: the one `rustc` bundles.
+///
+/// What this buys is one optimiser between a developer's machine and
+/// CI. The emitted IR is optimised by whichever `clang` / `opt` / `llc`
+/// discovery finds, so an unpinned toolchain means two machines compile
+/// the same program through two different optimisers - and in a project
+/// whose quality argument is that any tier divergence is a bug, a
+/// divergence that is really an LLVM-version artifact costs a real
+/// investigation. Preferring the major `rustc` already bundles means
+/// the whole toolchain has one version to name.
+///
+/// It is pinned to `rust-toolchain.toml`, not to LLVM's release
+/// cadence: `preferred_llvm_major_matches_rustc` fails the build when
+/// the two drift apart, so a toolchain bump is one deliberate change to
+/// both.
+pub const PREFERRED_LLVM_MAJOR: u32 = 22;
+
+/// The oldest LLVM major that still compiles this emitter's IR.
+///
+/// It stays where the toolchain has always had it. Every fixture that
+/// builds under 18 builds bit-identically under 20, and the two changes
+/// this emitter would have had to care about - LLVM 21's `nocapture`
+/// rename and the debug-record transition - reach IR it does not write:
+/// it emits only `nounwind` and `noalias`, and no `llvm.dbg.*` at all.
+/// An older major therefore produces the same program, and Ubuntu 24.04
+/// still ships 18, so raising this floor would cost those users a manual
+/// LLVM install and buy them nothing.
+pub const MINIMUM_LLVM_MAJOR: u32 = 18;
+
+/// A floor above the preferred major would leave no version satisfying
+/// both, so the pair is checked where it is written rather than at run
+/// time.
+const _: () = assert!(MINIMUM_LLVM_MAJOR <= PREFERRED_LLVM_MAJOR);
+
+/// The LLVM major `tool` reports, or `None` when it does not answer a
+/// recognisable `--version`.
+fn llvm_tool_major(tool: &Path) -> Option<u32> {
+    let out = std::process::Command::new(tool)
+        .arg("--version")
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    parse_llvm_major(&text)
+}
+
+/// The major from an LLVM tool's `--version` banner, which spells the
+/// version either as `LLVM version 22.1.2` or, for a vendor clang, as
+/// `clang version 22.1.8`.
+fn parse_llvm_major(text: &str) -> Option<u32> {
+    for marker in ["LLVM version ", "clang version "] {
+        if let Some(rest) = text.split(marker).nth(1) {
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(major) = digits.parse::<u32>() {
+                return Some(major);
+            }
+        }
+    }
+    None
+}
+
+/// Reports the found tool's major once, when it is not the preferred
+/// one. An older major still builds a correct program; what it cannot
+/// do is take part in cross-language LTO, so the warning names that and
+/// not something vaguer. Below the minimum is an error, because the IR
+/// this emitter writes is not known to parse there at all.
+fn check_llvm_major(tool_name: &str, path: &Path) -> std::result::Result<(), String> {
+    static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    let Some(major) = llvm_tool_major(path) else {
+        return Ok(());
+    };
+    if major == PREFERRED_LLVM_MAJOR {
+        return Ok(());
+    }
+    if major < MINIMUM_LLVM_MAJOR {
+        return Err(format!(
+            "{tool_name} at {} is LLVM {major}, below the minimum this toolchain \
+             emits IR for (LLVM {MINIMUM_LLVM_MAJOR}). Install LLVM \
+             {PREFERRED_LLVM_MAJOR}, or set the tool override to a newer one.",
+            path.display(),
+        ));
+    }
+    WARNED.get_or_init(|| {
+        eprintln!(
+            "note: building with LLVM {major} ({}), not the LLVM \
+             {PREFERRED_LLVM_MAJOR} this toolchain is built against. The program is \
+             the same; a timing or a codegen difference measured against a \
+             build made with LLVM {PREFERRED_LLVM_MAJOR} is not comparable.",
+            path.display(),
+        );
+    });
+    Ok(())
+}
+
+#[cfg(test)]
+mod llvm_version_tests {
+    use super::parse_llvm_major;
+
+    /// The two banners the tools this backend shells out to actually
+    /// print: `opt` and `llc` name LLVM, a vendor clang names itself.
+    #[test]
+    fn a_major_is_read_from_either_banner_spelling() {
+        assert_eq!(
+            parse_llvm_major("Ubuntu LLVM version 22.1.2\n  Optimized build.\n"),
+            Some(22)
+        );
+        assert_eq!(
+            parse_llvm_major("Ubuntu clang version 22.1.8 (++20260714)\nTarget: x86_64\n"),
+            Some(22)
+        );
+    }
+
+    #[test]
+    fn a_banner_with_no_version_answers_nothing() {
+        assert_eq!(parse_llvm_major("some other tool\n"), None);
+        assert_eq!(parse_llvm_major(""), None);
+    }
+
+    /// A tool that answers nothing recognisable is left alone rather
+    /// than refused: a wrapper script that prints its own banner is
+    /// still the tool the caller chose.
+    #[test]
+    fn an_unparsed_banner_does_not_look_like_a_mismatch() {
+        assert!(parse_llvm_major("clang wrapper\n").is_none());
+    }
+}
+
 fn find_opt() -> Result<PathBuf> {
     static OPT_PATH: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
     OPT_PATH
@@ -2755,7 +2881,9 @@ fn find_clang() -> Result<PathBuf> {
     CLANG_PATH
         .get_or_init(|| {
             if let Ok(path) = std::env::var("GOS_LLVM_CLANG") {
-                return Ok(PathBuf::from(path));
+                let path = PathBuf::from(path);
+                check_llvm_major("clang", &path)?;
+                return Ok(path);
             }
             // Prefer the Clang beside the selected `opt`; this avoids mixing
             // LLVM major versions when several installations are present.
@@ -2765,10 +2893,13 @@ fn find_clang() -> Result<PathBuf> {
                 for name in if cfg!(windows) {
                     &["clang.exe"][..]
                 } else {
-                    &["clang", "clang-18", "clang-19", "clang-20", "clang-17"][..]
+                    &[
+                        "clang", "clang-22", "clang-21", "clang-20", "clang-19", "clang-18",
+                    ][..]
                 } {
                     let candidate = dir.join(name);
                     if candidate.is_file() {
+                        check_llvm_major("clang", &candidate)?;
                         return Ok(candidate);
                     }
                 }
@@ -2806,14 +2937,20 @@ fn find_llvm_tool(
     env_var: &str,
     candidates: &[&str],
 ) -> std::result::Result<PathBuf, String> {
-    if let Ok(path) = std::env::var(env_var) {
-        return Ok(PathBuf::from(path));
-    }
-    candidates
-        .iter()
-        .find(|candidate| is_executable(candidate))
-        .map(PathBuf::from)
-        .ok_or_else(|| missing_llvm_tool_message(tool, env_var))
+    // The override says which tool to use, not that its version stops
+    // mattering: a major below the floor cannot compile this emitter's
+    // IR whoever chose it.
+    let found = if let Ok(path) = std::env::var(env_var) {
+        PathBuf::from(path)
+    } else {
+        candidates
+            .iter()
+            .find(|candidate| is_executable(candidate))
+            .map(PathBuf::from)
+            .ok_or_else(|| missing_llvm_tool_message(tool, env_var))?
+    };
+    check_llvm_major(tool, &found)?;
+    Ok(found)
 }
 
 /// Cross-platform candidate list for the LLVM `opt` driver. Order
@@ -2822,32 +2959,44 @@ fn find_llvm_tool(
 /// and Intel prefixes), and Windows (MSYS2 mingw - which is the only
 /// commonly-installed source that actually ships `opt.exe` / `llc.exe`
 /// on Windows, since the upstream LLVM installer ships only the clang
-/// front-end). Version-suffixed entries cover 18 first (target),
-/// then 19 / 20 / 17 as graceful fall-backs.
+/// front-end).
+///
+/// Version-suffixed entries lead with [`PREFERRED_LLVM_MAJOR`], the
+/// major `rustc` bundles, so a host that has it uses it, and descend to
+/// [`MINIMUM_LLVM_MAJOR`]. Which one gets picked used to depend on the
+/// order a list happened to be written in - the previous ordering put
+/// 18 ahead of 20, so a host with both silently built with the older -
+/// and [`check_llvm_major`] now says which one answered. The bare name
+/// comes after the suffixed ones because it is whichever major the
+/// distro's `llvm` metapackage last pointed at.
 const OPT_CANDIDATES: &[&str] = &[
     // PATH lookups
-    "opt",
-    "opt-18",
-    "opt-19",
+    "opt-22",
+    "opt-21",
     "opt-20",
-    "opt-17",
+    "opt-19",
+    "opt-18",
+    "opt",
     // Linux (apt-installed)
-    "/usr/lib/llvm-18/bin/opt",
-    "/usr/lib/llvm-19/bin/opt",
+    "/usr/lib/llvm-22/bin/opt",
+    "/usr/lib/llvm-21/bin/opt",
     "/usr/lib/llvm-20/bin/opt",
-    "/usr/lib/llvm-17/bin/opt",
+    "/usr/lib/llvm-19/bin/opt",
+    "/usr/lib/llvm-18/bin/opt",
     // macOS Homebrew (Apple Silicon)
-    "/opt/homebrew/opt/llvm@18/bin/opt",
-    "/opt/homebrew/opt/llvm@19/bin/opt",
+    "/opt/homebrew/opt/llvm@22/bin/opt",
+    "/opt/homebrew/opt/llvm@21/bin/opt",
     "/opt/homebrew/opt/llvm@20/bin/opt",
-    "/opt/homebrew/opt/llvm@17/bin/opt",
+    "/opt/homebrew/opt/llvm@19/bin/opt",
+    "/opt/homebrew/opt/llvm@18/bin/opt",
     "/opt/homebrew/opt/llvm/bin/opt",
     "/opt/homebrew/bin/opt",
     // macOS Homebrew (Intel)
-    "/usr/local/opt/llvm@18/bin/opt",
-    "/usr/local/opt/llvm@19/bin/opt",
+    "/usr/local/opt/llvm@22/bin/opt",
+    "/usr/local/opt/llvm@21/bin/opt",
     "/usr/local/opt/llvm@20/bin/opt",
-    "/usr/local/opt/llvm@17/bin/opt",
+    "/usr/local/opt/llvm@19/bin/opt",
+    "/usr/local/opt/llvm@18/bin/opt",
     "/usr/local/opt/llvm/bin/opt",
     "/usr/local/bin/opt",
     // Windows (MSYS2 mingw - full LLVM via `pacman -S
@@ -2866,25 +3015,29 @@ const OPT_CANDIDATES: &[&str] = &[
 /// Parallel candidate list for `llc`. See [`OPT_CANDIDATES`] for the
 /// ordering rationale; the entries mirror it directly.
 const LLC_CANDIDATES: &[&str] = &[
-    "llc",
-    "llc-18",
-    "llc-19",
+    "llc-22",
+    "llc-21",
     "llc-20",
-    "llc-17",
-    "/usr/lib/llvm-18/bin/llc",
-    "/usr/lib/llvm-19/bin/llc",
+    "llc-19",
+    "llc-18",
+    "llc",
+    "/usr/lib/llvm-22/bin/llc",
+    "/usr/lib/llvm-21/bin/llc",
     "/usr/lib/llvm-20/bin/llc",
-    "/usr/lib/llvm-17/bin/llc",
-    "/opt/homebrew/opt/llvm@18/bin/llc",
-    "/opt/homebrew/opt/llvm@19/bin/llc",
+    "/usr/lib/llvm-19/bin/llc",
+    "/usr/lib/llvm-18/bin/llc",
+    "/opt/homebrew/opt/llvm@22/bin/llc",
+    "/opt/homebrew/opt/llvm@21/bin/llc",
     "/opt/homebrew/opt/llvm@20/bin/llc",
-    "/opt/homebrew/opt/llvm@17/bin/llc",
+    "/opt/homebrew/opt/llvm@19/bin/llc",
+    "/opt/homebrew/opt/llvm@18/bin/llc",
     "/opt/homebrew/opt/llvm/bin/llc",
     "/opt/homebrew/bin/llc",
-    "/usr/local/opt/llvm@18/bin/llc",
-    "/usr/local/opt/llvm@19/bin/llc",
+    "/usr/local/opt/llvm@22/bin/llc",
+    "/usr/local/opt/llvm@21/bin/llc",
     "/usr/local/opt/llvm@20/bin/llc",
-    "/usr/local/opt/llvm@17/bin/llc",
+    "/usr/local/opt/llvm@19/bin/llc",
+    "/usr/local/opt/llvm@18/bin/llc",
     "/usr/local/opt/llvm/bin/llc",
     "/usr/local/bin/llc",
     "C:\\msys64\\mingw64\\bin\\llc.exe",
@@ -2895,25 +3048,30 @@ const LLC_CANDIDATES: &[&str] = &[
 ];
 
 /// Clang candidates used for the integrated LLVM IR-to-object pipeline.
+/// Ordered like [`OPT_CANDIDATES`].
 const CLANG_CANDIDATES: &[&str] = &[
-    "clang-18",
-    "clang-19",
+    "clang-22",
+    "clang-21",
     "clang-20",
-    "clang-17",
+    "clang-19",
+    "clang-18",
     "clang",
-    "/usr/lib/llvm-18/bin/clang",
-    "/usr/lib/llvm-19/bin/clang",
+    "/usr/lib/llvm-22/bin/clang",
+    "/usr/lib/llvm-21/bin/clang",
     "/usr/lib/llvm-20/bin/clang",
-    "/usr/lib/llvm-17/bin/clang",
-    "/opt/homebrew/opt/llvm@18/bin/clang",
-    "/opt/homebrew/opt/llvm@19/bin/clang",
+    "/usr/lib/llvm-19/bin/clang",
+    "/usr/lib/llvm-18/bin/clang",
+    "/opt/homebrew/opt/llvm@22/bin/clang",
+    "/opt/homebrew/opt/llvm@21/bin/clang",
     "/opt/homebrew/opt/llvm@20/bin/clang",
-    "/opt/homebrew/opt/llvm@17/bin/clang",
+    "/opt/homebrew/opt/llvm@19/bin/clang",
+    "/opt/homebrew/opt/llvm@18/bin/clang",
     "/opt/homebrew/opt/llvm/bin/clang",
-    "/usr/local/opt/llvm@18/bin/clang",
-    "/usr/local/opt/llvm@19/bin/clang",
+    "/usr/local/opt/llvm@22/bin/clang",
+    "/usr/local/opt/llvm@21/bin/clang",
     "/usr/local/opt/llvm@20/bin/clang",
-    "/usr/local/opt/llvm@17/bin/clang",
+    "/usr/local/opt/llvm@19/bin/clang",
+    "/usr/local/opt/llvm@18/bin/clang",
     "/usr/local/opt/llvm/bin/clang",
     "C:\\msys64\\mingw64\\bin\\clang.exe",
     "C:\\msys64\\clang64\\bin\\clang.exe",
@@ -2924,9 +3082,13 @@ const CLANG_CANDIDATES: &[&str] = &[
 
 fn missing_llvm_tool_message(tool: &str, env_var: &str) -> String {
     format!(
-        "{tool} (LLVM toolchain) not found. Install LLVM 18+ and retry:\n  \
-         Linux:   apt install llvm-18-dev               (or the distro equivalent)\n  \
-         macOS:   brew install llvm@18\n  \
+        "{tool} (LLVM toolchain) not found. Install LLVM {MINIMUM_LLVM_MAJOR} or \
+         newer and retry ({PREFERRED_LLVM_MAJOR} is what this toolchain is built \
+         against):\n  \
+         Linux:   apt install llvm-{MINIMUM_LLVM_MAJOR}-dev clang-{MINIMUM_LLVM_MAJOR}\n           \
+                  (for LLVM {PREFERRED_LLVM_MAJOR}, which most distros do not\n           \
+                  package yet, add the apt.llvm.org repository)\n  \
+         macOS:   brew install llvm@{PREFERRED_LLVM_MAJOR}\n  \
          Windows: pacman -S mingw-w64-x86_64-llvm       (from MSYS2; the upstream LLVM\n           \
                                                          Windows installer ships clang\n           \
                                                          but not `opt`/`llc`)\n\

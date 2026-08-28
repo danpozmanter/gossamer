@@ -1,0 +1,185 @@
+// Median `gos check` and cold `gos build --release` wall time per
+// comptime fixture, against the checked-in baseline.
+//
+// Usage: gos run benchmarks/comptime/run.gos [--gos PATH] [--runs N]
+//                                            [--baseline FILE] [--no-build]
+//
+// Comptime folds on the bytecode VM while the compiler is running, so a
+// regression there reaches users as "builds got slower" rather than as a
+// failing test. Recording both columns is what makes the fold visible:
+// `check` is the fold alone, and `build` minus the control is the fold
+// plus whatever the build path adds on top of it.
+
+use std::{env, fs, path, process, time}
+use std::collections::Map
+
+/// Fixtures in the order the report lists them; the control last, since
+/// every other row is read against it.
+const FIXTURES: [String; 5] = [
+    "ct_table.gos",
+    "ct_tally.gos",
+    "ct_sieve.gos",
+    "ct_heavy.gos",
+    "ct_control.gos",
+]
+
+/// Stdout each fixture must produce, so a timing is never accepted from
+/// a run that folded to the wrong value or did not fold at all.
+fn expected_stdout(name: String) -> String {
+    match name {
+        "ct_table.gos" => "1466183\n"
+        "ct_tally.gos" => "500000\n"
+        "ct_sieve.gos" => "41538\n"
+        _ => "1466183\n500000\n41538\nid:int=7;name:str=jane;score:real=1.5;active:bool=true;\n"
+    }
+}
+
+struct Timing { check_ms: i64, build_ms: i64 }
+
+fn median(mut xs: Vec<i64>) -> i64 {
+    xs.sort()
+    xs[xs.len() / 2]
+}
+
+/// One timed `gos` invocation, or an error naming what the command
+/// reported. Failing runs never reach the sample set.
+fn timed(gos: String, argv: Vec<String>) -> Result<i64, String> {
+    let start = time::now_ms()
+    let out = process::run(gos, argv)?
+    let elapsed = time::now_ms() - start
+    if out.code != 0 {
+        return Err(format("exit {}: {}", out.code, out.stderr))
+    }
+    Ok(elapsed)
+}
+
+fn main() {
+    let mut gos = "./target/release/gos"
+    let mut runs = 3
+    let mut baseline_path = "benchmarks/comptime/baseline.tsv"
+    let mut do_build = true
+    let args = env::args()
+    let mut i = 0
+    while i < args.len() {
+        let has_value = i + 1 < args.len()
+        match args[i] {
+            "--gos" => { if has_value { gos = args[i + 1]; i += 1 } }
+            "--runs" => { if has_value { runs = args[i + 1].to_i64().unwrap_or(3); i += 1 } }
+            "--baseline" => { if has_value { baseline_path = args[i + 1]; i += 1 } }
+            "--no-build" => { do_build = false }
+            other => { eprintln("comptime: unknown argument {}", other); process::exit(2) }
+        }
+        i += 1
+    }
+
+    let dir = "benchmarks/comptime"
+    let mut results: Map<String, Timing> = Map::new()
+    for name in FIXTURES {
+        let src = path::join(dir, name)
+        let want = expected_stdout(name)
+        let probe = match process::run(gos, #["run", src]) {
+            Ok(v) => v
+            Err(e) => { eprintln("comptime: {} did not run: {}", name, e); process::exit(1) }
+        }
+        if probe.stdout != want {
+            eprintln("comptime: {} printed {:?}, expected {:?}", name, probe.stdout, want)
+            process::exit(1)
+        }
+
+        let mut checks = #[]
+        let mut r = 0
+        while r < runs {
+            match timed(gos, #["check", src]) {
+                Ok(ms) => checks.push(ms)
+                Err(e) => { eprintln("comptime: check {}: {}", name, e); process::exit(1) }
+            }
+            r += 1
+        }
+
+        let mut build_ms = -1
+        if do_build {
+            let mut builds = #[]
+            r = 0
+            while r < runs {
+                // `gos build` writes the executable beside its input, so the
+                // fixture is copied into a scratch directory rather than
+                // built in place, and the parse cache is dropped first so
+                // every sample is a cold build.
+                let scratch = path::join(env::temp_dir(), format("gos-ct-{}-{}", name, r))
+                let _ = fs::remove_dir_all(scratch)
+                if let Err(e) = fs::create_dir_all(scratch) {
+                    eprintln("comptime: scratch: {}", e)
+                    process::exit(1)
+                }
+                let copy = path::join(scratch, name)
+                if let Err(e) = fs::copy(src, copy) {
+                    eprintln("comptime: copy {}: {}", name, e)
+                    process::exit(1)
+                }
+                if let Err(e) = process::run(gos, #["clean"]) {
+                    eprintln("comptime: clean: {}", e)
+                    process::exit(1)
+                }
+                match timed(gos, #["build", "--release", copy]) {
+                    Ok(ms) => builds.push(ms)
+                    Err(e) => { eprintln("comptime: build {}: {}", name, e); process::exit(1) }
+                }
+                let _ = fs::remove_dir_all(scratch)
+                r += 1
+            }
+            build_ms = median(builds)
+        }
+        results.insert(name, Timing { check_ms: median(checks), build_ms: build_ms })
+    }
+
+    let baseline = read_baseline(baseline_path)
+    println("{:<16} {:>10} {:>10} {:>10} {:>10}", "fixture", "check ms", "base ms", "build ms", "base ms")
+    let mut breaches = #[]
+    for name in FIXTURES {
+        let t = results.get_or(name, Timing { check_ms: -1, build_ms: -1 })
+        let b = baseline.get_or(name, Timing { check_ms: -1, build_ms: -1 })
+        println("{:<16} {:>10} {:>10} {:>10} {:>10}", name, t.check_ms, b.check_ms, t.build_ms, b.build_ms)
+        breaches = record_breach(breaches, name, "check", t.check_ms, b.check_ms)
+        if do_build { breaches = record_breach(breaches, name, "build", t.build_ms, b.build_ms) }
+    }
+    if breaches.is_empty() {
+        println("comptime: within 10% of baseline on every fixture")
+    } else {
+        for line in breaches { eprintln("{}", line) }
+        process::exit(1)
+    }
+}
+
+/// The 10% regression threshold from the release's acceptance criteria,
+/// with a 20 ms floor so a fixture that folds in single-digit
+/// milliseconds is not gated by scheduler noise.
+fn record_breach(mut breaches: Vec<String>, name: String, column: String, got: i64, base: i64) -> Vec<String> {
+    if base < 0 || got < 0 { return breaches }
+    let allowed = max(base + base / 10, base + 20)
+    if got > allowed {
+        breaches.push(format("comptime: {} {} {} ms exceeds baseline {} ms by more than 10%", name, column, got, base))
+    }
+    breaches
+}
+
+/// `name<TAB>check_ms<TAB>build_ms` rows; a missing file simply reports
+/// no baseline column rather than failing, so a first run on a new host
+/// still produces numbers.
+fn read_baseline(p: String) -> Map<String, Timing> {
+    let mut out: Map<String, Timing> = Map::new()
+    let text = match fs::read_to_string(p) {
+        Ok(v) => v
+        Err(_) => return out
+    }
+    for line in text.lines() {
+        let row = line.trim()
+        if row.is_empty() || row.starts_with("#") { continue }
+        let cols = row.split("\t")
+        if cols.len() < 3 { continue }
+        out.insert(cols[0], Timing {
+            check_ms: cols[1].to_i64().unwrap_or(-1),
+            build_ms: cols[2].to_i64().unwrap_or(-1),
+        })
+    }
+    out
+}

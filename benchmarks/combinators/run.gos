@@ -1,0 +1,101 @@
+// Median wall time per combinator fixture across the tiers, so the cost
+// of the runtime boundary has a tracked number rather than a memory.
+//
+// Usage: gos run benchmarks/combinators/run.gos [--gos PATH] [--runs N]
+//                                               [--elements N]
+//
+// The three fixtures are the same arithmetic reached three ways: a fold
+// through the runtime shim, a map through it, and a hand-written loop
+// that never crosses it. Their spread is what a change to the boundary
+// moves.
+
+use std::{env, fs, path, process, time}
+
+const FIXTURES: [String; 3] = ["ifold.gos", "imap.gos", "hand_loop.gos"]
+
+fn median(mut xs: Vec<i64>) -> i64 {
+    xs.sort()
+    xs[xs.len() / 2]
+}
+
+/// One timed run, or an error naming what the command reported.
+fn timed(gos: String, argv: Vec<String>) -> Result<i64, String> {
+    let start = time::now_ms()
+    let out = process::run(gos, argv)?
+    let elapsed = time::now_ms() - start
+    if out.code != 0 {
+        return Err(format("exit {}: {}", out.code, out.stderr))
+    }
+    Ok(elapsed)
+}
+
+fn best_of(gos: String, argv: Vec<String>, runs: i64) -> i64 {
+    let mut samples = #[]
+    let mut r = 0
+    while r < runs {
+        match timed(gos, argv) {
+            Ok(ms) => samples.push(ms)
+            Err(e) => { eprintln("combinators: {}", e); process::exit(1) }
+        }
+        r += 1
+    }
+    median(samples)
+}
+
+fn main() {
+    let mut gos = "./target/release/gos"
+    let mut runs = 3
+    // The count the three-tier spread is stated at: large enough that
+    // the boundary dominates, small enough that the pure-bytecode column
+    // finishes in the same run as the other two.
+    let mut elements = "2000000"
+    let args = env::args()
+    let mut i = 0
+    while i < args.len() {
+        let has_value = i + 1 < args.len()
+        match args[i] {
+            "--gos" => { if has_value { gos = args[i + 1]; i += 1 } }
+            "--runs" => { if has_value { runs = args[i + 1].to_i64().unwrap_or(3); i += 1 } }
+            "--elements" => { if has_value { elements = args[i + 1]; i += 1 } }
+            other => { eprintln("combinators: unknown argument {}", other); process::exit(2) }
+        }
+        i += 1
+    }
+
+    println("{:<14} {:>12} {:>12} {:>12}", "fixture", "bytecode ms", "jit ms", "native ms")
+    for name in FIXTURES {
+        let src = path::join("benchmarks/combinators", name)
+        let scratch = path::join(env::temp_dir(), format("gos-comb-{}", name))
+        let _ = fs::remove_dir_all(scratch)
+        if let Err(e) = fs::create_dir_all(scratch) {
+            eprintln("combinators: scratch: {}", e)
+            process::exit(1)
+        }
+        let copy = path::join(scratch, name)
+        if let Err(e) = fs::copy(src, copy) {
+            eprintln("combinators: copy: {}", e)
+            process::exit(1)
+        }
+        // The compiled tier is measured as the binary's own run, so the
+        // build is not counted as part of the workload.
+        match process::run(gos, #["build", "--release", copy]) {
+            Ok(out) => {
+                if out.code != 0 {
+                    eprintln("combinators: build {}: {}", name, out.stderr)
+                    process::exit(1)
+                }
+            }
+            Err(e) => { eprintln("combinators: build {}: {}", name, e); process::exit(1) }
+        }
+        let stem = name.replace(".gos", "")
+        let binary = path::join(path::join(path::join(scratch, "target"), "release"), stem)
+
+        // Options come before the file; every token after it is the
+        // program's own argument.
+        let bytecode = best_of(gos, #["run", "--no-jit", copy, elements], runs)
+        let jit = best_of(gos, #["run", copy, elements], runs)
+        let native = best_of(binary, #[elements], runs)
+        println("{:<14} {:>12} {:>12} {:>12}", name, bytecode, jit, native)
+        let _ = fs::remove_dir_all(scratch)
+    }
+}

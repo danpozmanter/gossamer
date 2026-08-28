@@ -2027,6 +2027,33 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // value is released and the stored one retained exactly as on an owned
     // aggregate. Their fields are never released at return: the borrow owns
     // nothing.
+    // By-value aggregate PARAMETERS carrying RC fields.
+    //
+    // The frame's copy of one is a shallow copy of its slots, so it shares
+    // every field's heap value with the caller without a share of its own.
+    // Everything else already treats such a frame's struct as owning its
+    // fields - a field store through a `&mut` receiver releases the old
+    // value and retains the new one - so the copy has to own them too, or
+    // the release frees a value the caller still holds and the retained
+    // one is never freed at all. Entry retains and a return release are
+    // what make the two agree.
+    //
+    // Kept apart from `agg_locals` because a parameter must NOT be
+    // zero-initialised: its slots arrive holding the caller's values.
+    let param_agg_locals: Vec<(usize, AggFieldPaths)> = (1..=arity.min(n_locals.saturating_sub(1)))
+        .filter(|&i| {
+            !body.locals[i].region
+                && !matches!(
+                    tcx.kind_of(body.locals[i].ty),
+                    gossamer_types::TyKind::Ref { .. }
+                )
+        })
+        .filter_map(|i| {
+            let fields = agg_rc_fields(body.locals[i].ty);
+            (!fields.is_empty()).then_some((i, fields))
+        })
+        .collect();
+
     let ref_agg_locals: Vec<(usize, AggFieldPaths)> = (0..n_locals)
         .filter(|&i| {
             !body.locals[i].region
@@ -2045,6 +2072,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         && retain_sites.is_empty()
         && terminator_retains.is_empty()
         && agg_locals.is_empty()
+        && param_agg_locals.is_empty()
         && ref_agg_locals.is_empty()
     {
         return;
@@ -2181,6 +2209,9 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     .iter()
                     .all(|p| matches!(p, crate::ir::Projection::Field(_)))
                 && (agg_locals.iter().any(|(l, _)| *l == place.local.0 as usize)
+                    || param_agg_locals
+                        .iter()
+                        .any(|(l, _)| *l == place.local.0 as usize)
                     || ref_agg_locals
                         .iter()
                         .any(|(l, _)| *l == place.local.0 as usize))
@@ -2207,6 +2238,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     .collect();
                 if let Some((_, kind)) = agg_locals
                     .iter()
+                    .chain(param_agg_locals.iter())
                     .chain(ref_agg_locals.iter())
                     .find(|(l, _)| *l == place.local.0 as usize)
                     .and_then(|(_, fields)| fields.iter().find(|(p, _)| *p == path))
@@ -2314,7 +2346,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             }
         }
         if matches!(block.terminator, Terminator::Return) {
-            for (li, fields) in &agg_locals {
+            for (li, fields) in agg_locals.iter().chain(param_agg_locals.iter()) {
                 for (f, w) in fields {
                     field_gaps[bi][len].push((
                         false,
@@ -2360,6 +2392,17 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             for (f, w) in fields {
                 field_gaps[succ][0].push((true, destination.local, f.clone(), *w));
             }
+        }
+    }
+
+    // The frame's own share of each by-value aggregate parameter's RC
+    // fields, taken before anything reads them. Pushed at the entry
+    // block's first gap so it precedes every use, including a field store
+    // in the entry block itself.
+    let has_entry_gap = field_gaps.first().is_some_and(|block| !block.is_empty());
+    for (li, fields) in param_agg_locals.iter().filter(|_| has_entry_gap) {
+        for (f, w) in fields {
+            field_gaps[0][0].push((true, Local(u32::try_from(*li).unwrap_or(0)), f.clone(), *w));
         }
     }
 
@@ -4010,8 +4053,16 @@ pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtx
             let mut ls: Vec<Local> = Vec::new();
             match &block.terminator {
                 Terminator::Call {
-                    args, destination, ..
+                    callee,
+                    args,
+                    destination,
+                    ..
                 } => {
+                    // The callee is read by the call as much as an argument
+                    // is: a callable value reaches its body through this
+                    // operand, so a release hoisted past it would free the
+                    // environment the call is about to enter.
+                    locals_in_operand(callee, &mut ls);
                     for a in args {
                         locals_in_operand(a, &mut ls);
                     }

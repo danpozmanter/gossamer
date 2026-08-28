@@ -375,6 +375,22 @@ fn http_request_values_parity_across_tiers() {
     );
 }
 
+/// `r.query_pairs` is the query string as decoded `(name, value)`
+/// pairs, derived from the URL on each read. Every tier has to derive
+/// them the same way: a `+` is a space, a `%NN` escape is its byte, a
+/// name with no `=` pairs with the empty string, and a repeated name is
+/// a second entry rather than a replacement.
+#[test]
+fn http_request_query_pairs_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_request_query_pairs.gos",
+        &[
+            "status=200 body=path=/list query=a=1&b=hello+world&c&d=x%2Fy&a=2 n=5 \
+             [a=1] [b=hello world] [c=] [d=x/y] [a=2]",
+        ],
+    );
+}
+
 /// `r.form_value(key)` reads an x-www-form-urlencoded body field and
 /// `r.basic_auth()` decodes the `Authorization: Basic` header into
 /// `Option<(String, String)>`; both must read back bit-identically on

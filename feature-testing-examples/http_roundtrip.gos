@@ -70,7 +70,7 @@ impl http::Handler for Proxy {
             return match http::get("http://127.0.0.1:23908/data", Vec::from([])) {
                 Ok(up) => {
                     let tag = header_of(up.headers, "x-up")
-                    Ok(http::Response::text(up.status, "fwd:" + &up.body)
+                    Ok(http::Response::text(up.status, "fwd:" + up.body)
                         .with_header("x-up", tag))
                 }
                 Err(_) => Ok(http::Response::text(502, "bad upstream"))

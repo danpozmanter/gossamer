@@ -459,6 +459,18 @@ hosts, executed natively or under QEMU, and compared with the pure bytecode
 VM. Intel macOS is artifact-only pending execution evidence; armv7, riscv64,
 and wasm are not supported execution targets.
 
+### LLVM
+
+`gos build --release` shells out to `llc` / `opt` / `clang`, and prefers LLVM
+22 - the major `rustc` bundles - so a developer's machine and CI put the same
+optimiser behind the same program. A build made with another major is the same
+program; what it is not is comparable, so the toolchain says which one
+answered.
+
+LLVM 18 and newer are supported. Most distributions package one of those;
+LLVM 22 usually comes from [apt.llvm.org](https://apt.llvm.org) on Linux or
+`brew install llvm@22` on macOS.
+
 ### Raspberry Pi
 
 Raspberry Pi OS 64-bit (and any `aarch64` Linux) is first-class. Install

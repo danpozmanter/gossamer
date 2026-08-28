@@ -1220,11 +1220,15 @@ fn render_display(
             Ok(format!("{} {{ {} }}", inner.name, parts.join(", ")))
         }
         Value::Map(map) => {
-            let entries: Vec<(crate::value::MapKey, Value)> = map
+            let mut entries: Vec<(crate::value::MapKey, Value)> = map
                 .lock()
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
+            // Native map storage has its own order, so entries are rendered
+            // key-sorted here exactly as the plain formatter and both compiled
+            // tiers' `gos_rt_map_format` render them.
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
             let mut parts = Vec::with_capacity(entries.len());
             for (key, entry) in &entries {
                 // A map renders a string key quoted, the way the synthesized

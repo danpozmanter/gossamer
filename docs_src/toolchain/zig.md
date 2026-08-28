@@ -14,7 +14,7 @@ call:
 | Command | Backend | External tools |
 | --- | --- | --- |
 | `gos build` | Cranelift AOT | A C linker only (`cc` / `$CC` / `ld.lld`) |
-| `gos build --release` | LLVM `-O3` | `llc` + `opt` (LLVM 18), via `PATH` or `GOS_LLC` / `GOS_LLVM_OPT` |
+| `gos build --release` | LLVM `-O3` | `llc` + `opt` (LLVM 22 preferred, 20 accepted), via `PATH` or `GOS_LLC` / `GOS_LLVM_OPT` |
 
 The `gos` binary links no libLLVM - it shells out to `llc` / `opt` - so
 the toolchain itself is portable regardless of how you build your own
@@ -60,9 +60,24 @@ For native builds zig is never required:
   native target. This is how the static `gos-<version>-linux-x86_64-musl`
   release binary is produced.
 - **`gos build` (Cranelift).** Only a host `cc`.
-- **`gos build --release` (LLVM).** `llc` / `opt` from a system LLVM 18
-  (`apt-get install -y llvm clang`), or pointed at with `GOS_LLC` /
-  `GOS_LLVM_OPT`.
+- **`gos build --release` (LLVM).** `llc` / `opt` from a system LLVM,
+  or pointed at with `GOS_LLC` / `GOS_LLVM_OPT`.
+
+  The version this toolchain prefers is the major `rustc` bundles, which
+  is **LLVM 22**: the prebuilt `libgossamer_runtime.a` carries that
+  major's bitcode, and an older LLVM cannot read it, so matching is what
+  makes linking across the two possible at all. Most distributions stop
+  a major or two short, so 22 usually comes from
+  [apt.llvm.org](https://apt.llvm.org) on Linux (`wget -qO- \
+  https://apt.llvm.org/llvm.sh | sudo bash -s -- 22`) or from
+  `brew install llvm@22` on macOS.
+
+  **LLVM 20 still builds the same program.** Every fixture that compiles
+  under 18 produces bit-identical output under 20, so an older major is
+  accepted with a one-line warning naming what it gives up rather than
+  refused. What it gives up is cross-language optimisation with the Rust
+  runtime, which needs the majors to match. Below 20 is an error: the IR
+  this emitter writes is not known to parse there.
 
 ## Why Gossamer uses zig, and how narrowly
 

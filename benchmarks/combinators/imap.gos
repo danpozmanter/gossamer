@@ -1,0 +1,13 @@
+// A map over a 20M-element `Vec<i64>` through the runtime's shim, which
+// allocates the result sequence as well as crossing the boundary once
+// per element.
+use std::env
+
+fn main() {
+    let n = env::args().first().unwrap_or("20000000").to_i64().unwrap_or(20000000)
+    let mut xs = #[]
+    let mut i = 0
+    while i < n { xs.push(i % 7); i += 1 }
+    let doubled = xs.map(|v| v * 2)
+    println("{}", doubled.len())
+}

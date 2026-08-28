@@ -48,7 +48,7 @@ fn main() {
     // A client-built request echoes the token in the cookie + header.
     let req = http::Client::new().post("http://app.example.com/do")
         .header("origin", "https://app.example.com")
-        .header("cookie", "gos_csrf=" + &token)
+        .header("cookie", "gos_csrf=" + token)
         .header("X-CSRF-Token", token)
 
     let supplied = match http::csrf::extract_token(req, cfg) {
@@ -71,7 +71,7 @@ fn main() {
     // A request from an untrusted origin is rejected.
     let evil = http::Client::new().post("http://evil/")
         .header("origin", "https://evil.example.org")
-        .header("cookie", "gos_csrf=" + &token)
+        .header("cookie", "gos_csrf=" + token)
         .header("X-CSRF-Token", token)
     match http::csrf::check(evil, http::csrf::RouteAuth::CookieSession, cfg) {
         Ok(_) => println("check_evil=ok")

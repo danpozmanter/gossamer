@@ -63,6 +63,11 @@ fn fresh_dir(tag: &str) -> PathBuf {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tier {
     Vm,
+    /// `gos run` with `GOS_JIT=0`: the bytecode VM with no native
+    /// promotion at all. The default `Vm` tier JITs at the usual
+    /// threshold, so this is the only column that proves the pure
+    /// interpreter - the tier `comptime` folds on.
+    Bytecode,
     Cranelift,
     Llvm,
     /// `gos build` without `--release`: a different MIR optimisation
@@ -75,6 +80,7 @@ impl Tier {
     fn label(self) -> &'static str {
         match self {
             Tier::Vm => "vm",
+            Tier::Bytecode => "bytecode",
             Tier::Cranelift => "cranelift",
             Tier::Llvm => "llvm",
             Tier::LlvmDebug => "llvm-debug",
@@ -200,6 +206,9 @@ const SPECS: &[Spec] = &[
     // through its env blob as the two-word carrier the compiled body
     // answers, rather than as the first of those two words.
     spec("feature-testing-examples/callable_carrier_return.gos"),
+    spec("feature-testing-examples/combinator_element_crossings.gos"),
+    spec("feature-testing-examples/const_array_length.gos"),
+    spec("feature-testing-examples/vec_eager_combinator_methods.gos"),
     spec("feature-testing-examples/combinator_element_kinds.gos"),
     spec("feature-testing-examples/debug_impl_dispatch.gos"),
     spec("feature-testing-examples/debugfmt_nested_adts.gos"),
@@ -1012,6 +1021,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/json_yaml_encode.gos"),
     spec("feature-testing-examples/bounded_channel.gos"),
     spec("feature-testing-examples/generic_function_monomorphization.gos"),
+    spec("feature-testing-examples/generic_fn_param.gos"),
     spec("feature-testing-examples/named_function_item_coercion.gos"),
     spec("feature-testing-examples/goroutine_panic_isolation.gos"),
     Spec {
@@ -1468,6 +1478,18 @@ const SPECS: &[Spec] = &[
     // take its own reference, or `unwrap` leaves one reference with two
     // owners and the second release frees storage the first returned.
     spec("feature-testing-examples/option_vec_payload_ownership.gos"),
+    // A two-word `Option` / `Result` carrier at an odd word offset inside a
+    // struct, which is the shape the emitted datalayout's 8-byte `i128`
+    // alignment exists for.
+    spec("feature-testing-examples/carrier_at_odd_slot_offset.gos"),
+    // `m.insert(k.clone(), v)` on a key that reached the frame by value:
+    // the clone has to be a share of its own, or the consuming insert
+    // takes the caller's.
+    spec("feature-testing-examples/clone_into_consuming_call.gos"),
+    // A struct taken by value and written through a `&mut self` method:
+    // the frame's shallow copy has to own shares of its heap fields, or
+    // the write frees what the caller still holds.
+    spec("feature-testing-examples/by_value_param_owns_its_fields.gos"),
     // The test surface: a handler called in memory, and a wall clock a test
     // controls rather than waits on.
     spec("feature-testing-examples/httptest_record_and_clock.gos"),
@@ -1503,6 +1525,7 @@ const DEDICATED_FEATURE_TESTING_EXAMPLES: &[&str] = &[
     "http_redirect_policy.gos",
     "http_request_headers.gos",
     "http_request_values.gos",
+    "http_request_query_pairs.gos",
     "http_request_form_auth.gos",
     "http_form_file.gos",
     "http_response_headers.gos",
@@ -1811,6 +1834,42 @@ fn run_vm(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
     )
 }
 
+/// The pure-bytecode tier: `gos run` with the JIT switched off, so no
+/// body is ever promoted to native code.
+fn run_bytecode(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
+    let gos = gos_bin();
+    let mut cmd = Command::new(&gos);
+    cmd.arg("run")
+        .arg(src)
+        .env("GOS_JIT", "0")
+        .env_remove("GOSSAMER_JIT_THRESHOLD");
+    let mut parts: Vec<String> = vec!["GOS_JIT=0".to_string(), gos.display().to_string()];
+    parts.push("run".to_string());
+    parts.push(src.display().to_string());
+    if !args.is_empty() {
+        cmd.args(args);
+        parts.extend(args.iter().map(std::string::ToString::to_string));
+    }
+    let workdir = cmd.get_current_dir().map_or_else(
+        || env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        std::path::Path::to_path_buf,
+    );
+    let child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn gos");
+    run_with_timeout(
+        child,
+        stdin,
+        Instant::now() + PER_RUN_TIMEOUT,
+        gos,
+        parts.join(" "),
+        workdir,
+    )
+}
+
 fn run_jit(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
     let gos = gos_bin();
     let mut cmd = Command::new(&gos);
@@ -1954,6 +2013,7 @@ fn run_tier(spec: &Spec, tier: Tier) -> Result<Run, String> {
     let src = workspace_root().join(spec.path);
     match tier {
         Tier::Vm => Ok(run_vm(&src, spec.args, spec.stdin)),
+        Tier::Bytecode => Ok(run_bytecode(&src, spec.args, spec.stdin)),
         Tier::Cranelift => Ok(run_jit(&src, spec.args, spec.stdin)),
         Tier::Llvm | Tier::LlvmDebug => {
             let release = tier == Tier::Llvm;
@@ -2064,8 +2124,12 @@ fn vm_runs_every_example_without_crashing() {
 const PARITY_GROUPS: usize = 6;
 
 macro_rules! parity_group_tests {
-    ($($g:literal => $cranelift:ident, $llvm:ident, $llvm_debug:ident, $strict:ident;)*) => {
+    ($($g:literal => $bytecode:ident, $cranelift:ident, $llvm:ident, $llvm_debug:ident, $strict:ident;)*) => {
         $(
+            #[test]
+            fn $bytecode() {
+                parity_walk(Tier::Bytecode, $g);
+            }
             #[test]
             fn $cranelift() {
                 parity_walk(Tier::Cranelift, $g);
@@ -2087,12 +2151,12 @@ macro_rules! parity_group_tests {
 }
 
 parity_group_tests! {
-    0 => cranelift_parity_group_0, llvm_parity_group_0, llvm_debug_parity_group_0, llvm_strict_lower_group_0;
-    1 => cranelift_parity_group_1, llvm_parity_group_1, llvm_debug_parity_group_1, llvm_strict_lower_group_1;
-    2 => cranelift_parity_group_2, llvm_parity_group_2, llvm_debug_parity_group_2, llvm_strict_lower_group_2;
-    3 => cranelift_parity_group_3, llvm_parity_group_3, llvm_debug_parity_group_3, llvm_strict_lower_group_3;
-    4 => cranelift_parity_group_4, llvm_parity_group_4, llvm_debug_parity_group_4, llvm_strict_lower_group_4;
-    5 => cranelift_parity_group_5, llvm_parity_group_5, llvm_debug_parity_group_5, llvm_strict_lower_group_5;
+    0 => bytecode_parity_group_0, cranelift_parity_group_0, llvm_parity_group_0, llvm_debug_parity_group_0, llvm_strict_lower_group_0;
+    1 => bytecode_parity_group_1, cranelift_parity_group_1, llvm_parity_group_1, llvm_debug_parity_group_1, llvm_strict_lower_group_1;
+    2 => bytecode_parity_group_2, cranelift_parity_group_2, llvm_parity_group_2, llvm_debug_parity_group_2, llvm_strict_lower_group_2;
+    3 => bytecode_parity_group_3, cranelift_parity_group_3, llvm_parity_group_3, llvm_debug_parity_group_3, llvm_strict_lower_group_3;
+    4 => bytecode_parity_group_4, cranelift_parity_group_4, llvm_parity_group_4, llvm_debug_parity_group_4, llvm_strict_lower_group_4;
+    5 => bytecode_parity_group_5, cranelift_parity_group_5, llvm_parity_group_5, llvm_debug_parity_group_5, llvm_strict_lower_group_5;
 }
 
 /// The overflow fixtures `skip_all` excludes from the parity walk, because

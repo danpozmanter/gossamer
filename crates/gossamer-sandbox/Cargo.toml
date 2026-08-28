@@ -44,3 +44,12 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+
+# The Windows enforcement cases replace the test process's own standard
+# input to prove the child reads what the parent was given, which is a
+# `SetStdHandle` call the crate's own code has no reason to make.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }

@@ -1010,6 +1010,24 @@ impl<'a> Builder<'a> {
                             | gossamer_types::TyKind::Duration
                             | gossamer_types::TyKind::Instant
                     );
+                    // An aggregate pointee read as a value is a copy of
+                    // what the reference names, the same copy
+                    // `let taken = *p` makes. Answering the reference
+                    // itself instead leaves the caller holding an alias:
+                    // a container given one stores the address of a slot
+                    // that is about to go away, and a one-word element
+                    // store writes the pointer where the value belongs.
+                    if self.aggregate_deref_copies(pointee) {
+                        let dest = self.fresh(pointee);
+                        let mut place = Place::local(inner);
+                        place.projection.push(crate::ir::Projection::Deref);
+                        self.emit_assign(
+                            Place::local(dest),
+                            Rvalue::Use(Operand::Copy(place)),
+                            span,
+                        );
+                        return Some(dest);
+                    }
                     let mut_string_pointee = mutability == gossamer_types::Mutbl::Mut
                         && matches!(self.tcx.kind_of(pointee), gossamer_types::TyKind::String);
                     if scalar_pointee || mut_string_pointee {
@@ -1068,6 +1086,26 @@ impl<'a> Builder<'a> {
             span,
         );
         Some(local)
+    }
+
+    /// Whether `*p` on a reference to `ty` answers a copy of the value
+    /// rather than the reference.
+    ///
+    /// A struct, a tuple, or a fixed array is stored as a run of slots
+    /// and copied by those slots. The heap containers are excluded: each
+    /// is one managed handle, and copying the handle is what sharing it
+    /// already means.
+    fn aggregate_deref_copies(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Tuple(_) | TyKind::Array { .. } => true,
+            // A user struct; the sentinel `Adt`s are `Option` / `Result`
+            // and the runtime handles, which travel as one word.
+            TyKind::Adt { def, .. } => {
+                def.local < u32::MAX - 16 && self.tcx.struct_field_tys(*def).is_some()
+            }
+            _ => false,
+        }
     }
 
     /// Marks `value` (and its reachable RC subgraph) as escaped to
@@ -2158,6 +2196,21 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Whether `ty` is an enum some variant of which carries fields.
+    ///
+    /// A variant-only enum's slot spells its variant rank, so the word it
+    /// holds is already its order; one with a payload is reached through the
+    /// node holding that payload, and ordering its slot would order addresses.
+    fn enum_has_payload(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let TyKind::Adt { def, .. } = self.tcx.kind_of(ty) else {
+            return false;
+        };
+        self.tcx
+            .enum_variant_tys(*def)
+            .is_some_and(|variants| variants.iter().any(|fields| !fields.is_empty()))
+    }
+
     pub(crate) fn tuple_element_stream(&self, ty: Ty) -> Option<(usize, Vec<u8>)> {
         use gossamer_types::TyKind;
         let mut peeled = ty;
@@ -2176,10 +2229,22 @@ impl<'a> Builder<'a> {
             let value = self.scalar_cmp_tag(payload)?;
             return Some((2, vec![0, value]));
         }
-        let elems = self.inline_field_tys(peeled)?;
-        if elems.is_empty() {
-            return None;
-        }
+        let Some(elems) = self.inline_field_tys(peeled).filter(|e| !e.is_empty()) else {
+            // An element whose slot word is not its own order - a payload
+            // enum reached through its RC node - is ordered by the descriptor
+            // the runtime walks alongside its slot. An inline enum keeps the
+            // word path: its slot spells the tag its order is, and the
+            // descriptor's own inline layout spans a second slot no sequence
+            // element carries.
+            if self.tcx.is_inline_enum_ty(peeled) || !self.enum_has_payload(peeled) {
+                return None;
+            }
+            let desc = self.ordering_stream(peeled)?;
+            return desc
+                .first()
+                .is_some_and(|tag| *tag == gossamer_abi::DESC_ENUM)
+                .then_some((1, desc));
+        };
         let mut tags = Vec::with_capacity(elems.len());
         for e in &elems {
             tags.extend(self.tuple_stream_tags(*e)?);

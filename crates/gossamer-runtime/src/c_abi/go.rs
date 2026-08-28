@@ -53,6 +53,27 @@ fn deliver_outcome(ch_addr: usize, disc: i64, payload: i64) {
 /// The child's share of the one-shot handle channel. Declared first in
 /// the spawned body so it drops last: every other guard has already
 /// delivered its outcome by the time this releases, whichever path the
+/// Releases the child's share of a spawned callable's environment when the
+/// goroutine leaves, by any edge. The spawn site takes that share, so the
+/// spawning frame's own release and this one are the environment's two
+/// owners; a non-capturing callable's environment is reference-counted the
+/// same way, and a null one releases as a no-op.
+struct ChildEnvRef {
+    env: usize,
+}
+
+impl Drop for ChildEnvRef {
+    fn drop(&mut self) {
+        if self.env == 0 {
+            return;
+        }
+        let payload: *mut u8 = std::ptr::with_exposed_provenance_mut(self.env);
+        // SAFETY: the spawn site retained this environment for the child, so
+        // the share released here is the child's own.
+        unsafe { crate::c_abi::rc::gos_rt_rc_release(payload) };
+    }
+}
+
 /// body left by.
 struct ChildChanRef {
     ch_addr: usize,
@@ -283,6 +304,11 @@ pub unsafe extern "C" fn gos_rt_spawn_ex(
             let _joinable = gossamer_coro::JoinableScope::enter(true);
             super::cohort::enter_child(cohort);
             let _chan_ref = ChildChanRef { ch_addr };
+            // The child holds its own share of the environment, taken at the
+            // spawn site, and gives it back however it leaves - including on
+            // an unwind, which is why the guard drops it rather than a call
+            // after the body.
+            let _env_ref = ChildEnvRef { env };
             let mut guard = SpawnOutcomeGuard {
                 ch_addr,
                 armed: true,

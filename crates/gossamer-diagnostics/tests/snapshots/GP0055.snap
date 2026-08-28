@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0055]: A call argument was written as a shared reference. No parameter is - here
+error[GP0055]: A call argument or a binary operand was written as a shared - here
 --- framed ---
-error[GP0055]: A call argument was written as a shared reference. No parameter is
+error[GP0055]: A call argument or a binary operand was written as a shared
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

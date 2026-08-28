@@ -42,7 +42,7 @@ fn main() {
     println("{}", TABLE)
 
     // String, float, bool, and char results all fold to literals.
-    println("{}", comptime { "compile" + &"-time" })
+    println("{}", comptime { "compile" + "-time" })
     println("{:.3}", comptime { 1.0 / 8.0 })
     println("{}", comptime { fib(10) > 50 })
     println("{}", comptime {
