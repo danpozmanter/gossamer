@@ -13777,6 +13777,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-runtime-root",
+      "name": "std::runtime::root",
+      "kind": "function",
+      "signature": "fn root() -> String",
+      "description": "The root cohort's descriptor line, in the shape `cohorts()` answers, or an empty String when no cohort is open. The root is the one cohort every program has - `main` runs inside it - and the one whose drain bounds process exit.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdruntime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-runtime-scheduler-stats-json",
       "name": "std::runtime::scheduler_stats_json",
       "kind": "function",
@@ -13811,443 +13830,6 @@
       "limits": [],
       "cookbook_tags": [],
       "doc_anchor": "docs_src/stdlib.md#stdruntime",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-Policy",
-      "name": "std::sandbox::Policy",
-      "kind": "type",
-      "signature": null,
-      "description": "What a command may reach. Built with read_write / read_only / deny / read_only_cwd / network_mode / for_fetch_phase / env_allow / env_allow_all / env_set / temp / level / working_directory, each answering the policy as it now stands; an explicit allow outranks a deny of the same path, and a deny beneath a grant wins by being the more specific rule. A policy says what a command may reach, never how long it may take. Read back with check / mechanisms / to_json / access / read_write_grants / read_only_grants / denials / environment_names / environment_value / level_name / network_name / working_directory_path / level_blocker, and asked what this host will actually honor with network_enforcement_kind / network_enforcement_reason.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-capabilities-json",
-      "name": "std::sandbox::capabilities_json",
-      "kind": "function",
-      "signature": "fn capabilities_json() -> String",
-      "description": "The whole host capability report as JSON, for a program that wants more than the scalar accessors give it.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-env-never-passed",
-      "name": "std::sandbox::env_never_passed",
-      "kind": "function",
-      "signature": "fn env_never_passed(name: String) -> bool",
-      "description": "env_never_passed(name) -> bool. Whether a policy refuses to pass name to a sandboxed command, because it redirects the loader or an interpreter's startup. The floor under any environment allowlist.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-exit-command-not-found",
-      "name": "std::sandbox::exit_command_not_found",
-      "kind": "function",
-      "signature": "fn exit_command_not_found() -> i64",
-      "description": "The exit code for a command that was not found inside the sandbox.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-exit-level-unavailable",
-      "name": "std::sandbox::exit_level_unavailable",
-      "kind": "function",
-      "signature": "fn exit_level_unavailable() -> i64",
-      "description": "The exit code for a level this host cannot honor.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-exit-policy-error",
-      "name": "std::sandbox::exit_policy_error",
-      "kind": "function",
-      "signature": "fn exit_policy_error() -> i64",
-      "description": "The exit code for a policy that would not compile, a sandbox that could not start, or a tree killed for exceeding its timeout.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-exit-signal-base",
-      "name": "std::sandbox::exit_signal_base",
-      "kind": "function",
-      "signature": "fn exit_signal_base() -> i64",
-      "description": "The number added to a signal when a child dies on one, so a wrapper reports what a shell would.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-expand",
-      "name": "std::sandbox::expand",
-      "kind": "function",
-      "signature": "fn expand(text: String) -> Option<String>",
-      "description": "expand(text) -> Option<String>. A written path with ~ and environment references resolved, so a profile can name a path the way an operator writes it.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-filesystem-kind",
-      "name": "std::sandbox::filesystem_kind",
-      "kind": "function",
-      "signature": "fn filesystem_kind() -> String",
-      "description": "full, partial, or none - the filesystem verdict as an arm to match on rather than a line to print.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-filesystem-reason",
-      "name": "std::sandbox::filesystem_reason",
-      "kind": "function",
-      "signature": "fn filesystem_reason() -> String",
-      "description": "What a partial filesystem verdict does not cover, or the empty string when the verdict carries no reason.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-home-directory",
-      "name": "std::sandbox::home_directory",
-      "kind": "function",
-      "signature": "fn home_directory() -> Option<String>",
-      "description": "home_directory() -> Option<String>. The caller's home, as the presets resolve it.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-max-level",
-      "name": "std::sandbox::max_level",
-      "kind": "function",
-      "signature": "fn max_level() -> String",
-      "description": "The highest level this host can honor: none, basic, standard, or strict. A level above it fails closed rather than downgrading.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-network-kind",
-      "name": "std::sandbox::network_kind",
-      "kind": "function",
-      "signature": "fn network_kind() -> String",
-      "description": "full, partial, or none - the host's network verdict as an arm to match on.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-network-reason",
-      "name": "std::sandbox::network_reason",
-      "kind": "function",
-      "signature": "fn network_reason() -> String",
-      "description": "What a partial network verdict does not cover, or the empty string.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-notes",
-      "name": "std::sandbox::notes",
-      "kind": "function",
-      "signature": "fn notes() -> Vec<String>",
-      "description": "Everything the scalar accessors cannot say: the Landlock ABI the kernel reports, the sysctl that blocks strict, whether loopback works inside an AppContainer.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-os-description",
-      "name": "std::sandbox::os_description",
-      "kind": "function",
-      "signature": "fn os_description() -> String",
-      "description": "The host as the capability report names it: the OS and architecture a note about this machine would cite.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-platform",
-      "name": "std::sandbox::platform",
-      "kind": "function",
-      "signature": "fn platform() -> String",
-      "description": "Which backend answers here: linux, macos, windows, or unsupported.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-prefix-of",
-      "name": "std::sandbox::prefix_of",
-      "kind": "function",
-      "signature": "fn prefix_of(name: String) -> Option<String>",
-      "description": "prefix_of(name) -> Option<String>. The install prefix of a tool on PATH, for granting a toolchain without hard-coding where it lives.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-process-isolation-kind",
-      "name": "std::sandbox::process_isolation_kind",
-      "kind": "function",
-      "signature": "fn process_isolation_kind() -> String",
-      "description": "full, partial, or none - the process-isolation verdict as an arm to match on.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-process-isolation-reason",
-      "name": "std::sandbox::process_isolation_reason",
-      "kind": "function",
-      "signature": "fn process_isolation_reason() -> String",
-      "description": "What a partial process-isolation verdict does not cover, or the empty string.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-resolve-on-path",
-      "name": "std::sandbox::resolve_on_path",
-      "kind": "function",
-      "signature": "fn resolve_on_path(name: String) -> Option<String>",
-      "description": "resolve_on_path(name) -> Option<String>. Where PATH resolves a command name.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-run",
-      "name": "std::sandbox::run",
-      "kind": "function",
-      "signature": "fn run(policy: sandbox::Policy, argv: Vec<String>) -> Result<process::Output, errors::Error>",
-      "description": "run(policy, argv) -> Result<Output, errors::Error>. Runs argv under the policy and answers the same { stdout, stderr, code } shape process::run does. Blocks for the length of the child, off the scheduler.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
-      "example_id": null,
-      "reference_status": "catalog_only"
-    },
-    {
-      "id": "std-sandbox-run-inherit",
-      "name": "std::sandbox::run_inherit",
-      "kind": "function",
-      "signature": "fn run_inherit(policy: sandbox::Policy, argv: Vec<String>) -> i64",
-      "description": "run_inherit(policy, argv) -> i64. Runs argv with the caller's own streams and answers the exit code the contract gives, which is the shape a wrapper command wants.",
-      "lifecycle": "experimental",
-      "tier_support": [
-        "not_audited",
-        "not_audited",
-        "not_audited"
-      ],
-      "platform_support": "not_audited",
-      "limits": [],
-      "cookbook_tags": [],
-      "doc_anchor": "docs_src/stdlib.md#stdsandbox",
       "example_id": null,
       "reference_status": "catalog_only"
     },
@@ -15734,6 +15316,44 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-sync-shield",
+      "name": "std::sync::shield",
+      "kind": "function",
+      "signature": "fn shield<T>(f: Fn() -> T) -> T",
+      "description": "Runs a callable in a cohort exempt from cancellation and answers its value: a cancel landing on an enclosing cohort does not reach the work inside. The shielded region is still counted and still drained.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdsync",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-sync-with-timeout",
+      "name": "std::sync::with_timeout",
+      "kind": "function",
+      "signature": "fn with_timeout<T>(f: Fn() -> T, ms: i64) -> Result<T, errors::Error>",
+      "description": "Runs a callable on a child of a cohort bounded by a millisecond deadline, answering `Ok(value)` when it finished inside the bound and `Err` naming the bound when it did not. Cancellation is cooperative: a child that reaches no cancellation point runs on and is named in the cohort's drain report.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdsync",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-testing-Runner",
       "name": "std::testing::Runner",
       "kind": "type",
@@ -16005,6 +15625,25 @@
       "kind": "function",
       "signature": "fn advance(ms: i64) -> i64",
       "description": "`advance(ms) -> i64` - move a frozen wall clock forward and answer the new reading. Freezes at the current reading first when it is not already frozen.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdtime",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
+      "id": "std-time-after",
+      "name": "std::time::after",
+      "kind": "function",
+      "signature": "fn after(d: time::Duration) -> Receiver<i64>",
+      "description": "A `Receiver` that yields once after `Duration`, so a deadline composes with `select` and `while let` the way any other channel does.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",

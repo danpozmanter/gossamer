@@ -47,14 +47,71 @@ fn emit_stdlib_writes_one_page_per_module_plus_index() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("stdlib pages to"));
-    // At minimum: index plus a handful of well-known modules.
     assert!(dir.join("index.md").exists());
-    assert!(dir.join("http.md").exists());
-    assert!(dir.join("io.md").exists());
-    assert!(dir.join("crypto_sha256.md").exists());
+    // Every module the manifest declares, not a sample of them. A module
+    // that reaches the language but not the reference is invisible to
+    // anyone reading the docs, and the gap is silent: the module works,
+    // so nothing else fails.
     let index = std::fs::read_to_string(dir.join("index.md")).unwrap();
+    let missing: Vec<String> = documented_modules()
+        .into_iter()
+        .filter(|module| !dir.join(format!("{}.md", page_slug(module))).exists())
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "manifest modules with no emitted page: {missing:?}"
+    );
     assert!(index.contains("std::http"));
     cleanup(&dir);
+}
+
+/// The page name `--emit-stdlib` writes for a module path.
+fn page_slug(module: &str) -> String {
+    module
+        .strip_prefix("std::")
+        .unwrap_or(module)
+        .replace("::", "_")
+}
+
+/// Every module path `gos doc std` lists.
+fn documented_modules() -> Vec<String> {
+    let out = Command::new(gos_bin())
+        .args(["doc", "std"])
+        .output()
+        .expect("spawn gos doc std");
+    assert!(out.status.success(), "gos doc std failed");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("- "))
+        .filter_map(|line| line.split(" - ").next())
+        .filter(|path| path.starts_with("std::"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// A module a program may import has a page in the reference.
+///
+/// The two lists are maintained by hand and drift apart silently in one
+/// direction: an export added to the resolver works the day it lands, so
+/// nothing fails when the manifest entry behind its page is forgotten.
+#[test]
+fn every_importable_module_reaches_the_reference() {
+    let undocumented: Vec<&str> = gossamer_resolve::STDLIB_MODULE_PATHS
+        .iter()
+        .copied()
+        .filter(|path| {
+            let full = format!("std::{path}");
+            let out = Command::new(gos_bin())
+                .args(["doc", &full])
+                .output()
+                .expect("spawn gos doc");
+            !out.status.success()
+        })
+        .collect();
+    assert!(
+        undocumented.is_empty(),
+        "importable modules missing from the stdlib reference: {undocumented:?}"
+    );
 }
 
 #[test]

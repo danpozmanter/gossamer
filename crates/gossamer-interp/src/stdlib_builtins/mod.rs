@@ -186,8 +186,6 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_http_static_server(globals);
     #[cfg(not(target_arch = "wasm32"))]
     install_uuid(globals);
-    #[cfg(not(target_arch = "wasm32"))]
-    install_sandbox(globals);
     install_os_user(globals);
     install_netip(globals);
     install_mime(globals);
@@ -324,10 +322,6 @@ pub mod os_user;
 pub mod path;
 pub mod result;
 pub mod rwlock;
-// Process spawn has no meaning on wasm, so the sandbox surface is
-// absent there exactly as `uuid` and `image` are.
-#[cfg(not(target_arch = "wasm32"))]
-pub mod sandbox;
 pub mod set;
 pub mod shared;
 pub mod sort;
@@ -485,8 +479,6 @@ pub(crate) use result::install_result;
 pub use result::*;
 pub(crate) use rwlock::install_rwlock;
 pub use rwlock::*;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use sandbox::install_sandbox;
 pub(crate) use set::install_set;
 pub use set::*;
 pub(crate) use shared::install_shared;

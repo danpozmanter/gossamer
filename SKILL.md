@@ -819,43 +819,6 @@ Full path spelling is validated (GR0005); discover signatures with
   middleware/session/csrf/form/multipart/state/health, `html`,
   `mime`. Experimental: `html::template::render_json`, `tls`,
   `database::sql` (drivers via `[rust-bindings]`).
-- Sandbox: `sandbox` - one policy, three OS backends.
-  `sandbox::Policy::new()` then `read_write` / `read_only` / `deny` /
-  `read_only_cwd` / `network_mode("none"|"client"|"open")` /
-  `for_fetch_phase()` / `env_allow` / `env_set` /
-  `temp("private"|"inherit")` / `level("standard")` /
-  `working_directory`, each answering the policy as it stands so a
-  method chain reads as one expression; `Policy::command_default(&cwd)`
-  is the shipped policy as a constructor. An explicit allow outranks a
-  deny of the same path, while a deny beneath a grant still wins by
-  being the more specific rule; a daemon socket no policy may reach is
-  refused rather than granted. An unknown enum spelling leaves the
-  setting as it was, so a typo never weakens a policy.
-  `sandbox::run(&policy, &argv) -> Result<Output, errors::Error>`
-  answers the same `{stdout, stderr, code}` `process::run` does;
-  `run_inherit(&policy, &argv) -> i64` gives the child the caller's own
-  streams and answers the shared exit-code contract
-  (`exit_policy_error()`, `exit_command_not_found()`,
-  `exit_level_unavailable()`, `exit_signal_base()`). A policy says what
-  a command may reach, never how long it may take or how much memory it
-  may use.
-  **What a policy asks for and what a host will honor are separate
-  questions.** Read the policy back with `check()` / `mechanisms()` /
-  `to_json()` / `access(path)` / `read_write_grants()` /
-  `read_only_grants()` / `denials()` / `environment_names()` /
-  `environment_value(name)` / `level_name()` / `network_name()` /
-  `working_directory_path()`; ask what will actually hold with
-  `level_blocker()` (empty when nothing blocks it) and
-  `network_enforcement_kind()` / `_reason()`. The capability report is
-  a value, not a printout: `max_level()`, `platform()`,
-  `os_description()`, `notes()`, `capabilities_json()`, and the verdict
-  as an arm to match on - `filesystem_kind()` / `_reason()`,
-  `network_kind()` / `_reason()`, `process_isolation_kind()` /
-  `_reason()`, each `"full"`, `"partial"`, or `"none"`. Path discovery
-  for a profile: `expand(text)`, `prefix_of(name)`,
-  `resolve_on_path(name)`, `home_directory()` (each `Option<String>`),
-  and `env_never_passed(name)` for the floor under any allowlist.
-  A level a host cannot honor fails closed rather than downgrading.
 - Misc: `sort`, `math::{rand, big}`, `crypto::{rand, sha256, sha512,
   hmac, blake3, aead, ed25519, ecdsa, x509, kdf, password
   (Argon2id), subtle}` (`crypto::insecure` = MD5/SHA1 compat only),
@@ -963,7 +926,6 @@ output wraps to the terminal width, capped at 80 columns.
 | `gos watch / clean / env / completion / bindgen / feature-status` | Re-run on change; caches; toolchain info; shell completions; Rust-binding skeletons; feature registry. |
 | `gos skill-prompt` | Print this card (`gos skill-prompt \| claude --append-system-prompt`). |
 | `--comptime-io=none\|confined\|full` | Capabilities a `comptime` region may reach while compiling. `confined` is the default: reads under the source tree, everything else denied. A denial is `GX0010`. `project.comptime-io` pins it; the more restrictive of manifest and command line wins. |
-| `gos build --sandbox[=basic\|standard\|strict]` | Compile `[rust-bindings]` inside an OS-native sandbox; covers `check`, `doc`, `repl`, `run`, `test` too. Fetch runs networked, build runs `--offline`. `--sandbox-rw` / `--sandbox-ro` / `--sandbox-network` / `--sandbox-explain`. Default `none` this release. |
 
 ## 16. When in doubt
 

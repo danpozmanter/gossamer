@@ -90,7 +90,6 @@ nav:
       - Formatter behavior: misc/tooling_faithful_fmt.md
       - Lints: toolchain/lints.md
       - Diagnostics: toolchain/diagnostics.md
-      - Sandboxing: toolchain/sandbox.md
       - Building with Zig: toolchain/zig.md
   - Examples: examples.md
   - Production:

@@ -286,13 +286,6 @@ const LEGACY_HANDLE_CTORS: &[LegacyHandleCtor] = &[
     (&["http", "Response"], "text", 5, "http::Response"),
     (&["http", "Response"], "json", 5, "http::Response"),
     (&["http", "Response"], "stream", 5, "http::Response"),
-    (&["sandbox", "Policy"], "new", 13, "sandbox::Policy"),
-    (
-        &["sandbox", "Policy"],
-        "command_default",
-        13,
-        "sandbox::Policy",
-    ),
 ];
 
 /// Eager sequence combinators callable in method form on a `Vec`.
@@ -7327,13 +7320,6 @@ impl<'a> TypeChecker<'a> {
         Some(ret)
     }
 
-    /// Types a `sandbox::Policy` method.
-    ///
-    /// Every builder answers the policy, so a chain keeps the handle
-    /// type; every reader answers what it reads. Without this the
-    /// receiver would stay an inference variable, `println!("{}", p)`
-    /// would pass `gos check` and fail the LLVM build, and a mistyped
-    /// builder would reach a bare-name lookup instead of a diagnostic.
     /// Types a method on a runtime handle, whichever family owns it.
     ///
     /// Each family answers `None` for a receiver it does not own, so the
@@ -7349,7 +7335,6 @@ impl<'a> TypeChecker<'a> {
     ) -> Option<Ty> {
         let span = receiver.span;
         self.bytes_handle_method_ret(method, args, arg_tys, resolved, span)
-            .or_else(|| self.sandbox_handle_method_ret(method, args, arg_tys, resolved, span))
             .or_else(|| self.regex_handle_method_ret(method, args, arg_tys, resolved, span))
             .or_else(|| self.fs_handle_method_ret(method, args, arg_tys, resolved, span))
     }
@@ -7398,75 +7383,6 @@ impl<'a> TypeChecker<'a> {
             "captures_all" => (vec![string], all_groups),
             "replace" | "replace_all" => (vec![string, string], string),
             "split" => (vec![string], strings),
-            _ => {
-                let error =
-                    self.unresolved_method_call(owner.clone(), method, resolved, args.len());
-                self.emit(error, span);
-                return Some(self.tcx.error_ty());
-            }
-        };
-        if args.len() != params.len() {
-            self.emit(
-                TypeError::CallArityMismatch {
-                    callee: format!("{owner}::{method}"),
-                    expected: params.len(),
-                    found: args.len(),
-                },
-                span,
-            );
-            return Some(self.tcx.error_ty());
-        }
-        for (param, (arg_ty, arg)) in params.iter().zip(arg_tys.iter().zip(args)) {
-            self.check_expected_integer_literal_range(arg, Expectation::HasType(*param), *arg_ty);
-            self.check_sig_param_arg(*param, *arg_ty, arg);
-        }
-        Some(ret)
-    }
-
-    fn sandbox_handle_method_ret(
-        &mut self,
-        method: &str,
-        args: &[Expr],
-        arg_tys: &[Ty],
-        resolved: Ty,
-        span: Span,
-    ) -> Option<Ty> {
-        // A handle is conventionally written `&sandbox::Policy` where it is
-        // a parameter, and the builders answer the policy either way.
-        let resolved = self.peel_refs(resolved);
-        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
-            return None;
-        };
-        let owner = self.tcx.def_name(*def)?.to_string();
-        if owner != "sandbox::Policy" {
-            return None;
-        }
-        let string = self.tcx.string_ty();
-        let strings = self.tcx.intern(TyKind::Vec(string));
-        let unit = self.tcx.unit();
-        let policy = resolved;
-        let (params, ret) = match method {
-            // Builders: each answers the policy as it now stands.
-            "read_write" | "read_only" | "deny" | "working_directory" | "temp" | "network_mode"
-            | "level" | "env_allow" => (vec![string], policy),
-            // One edit for a whole list: each builder call copies the
-            // policy, so allow-listing an inherited environment one name at
-            // a time copies a growing policy once per variable.
-            "env_allow_all" => (vec![strings], policy),
-            "env_set" => (vec![string, string], policy),
-            "for_fetch_phase" | "read_only_cwd" => (vec![], policy),
-            // Readers.
-            "to_json"
-            | "level_name"
-            | "network_name"
-            | "working_directory_path"
-            | "level_blocker"
-            | "network_enforcement_kind"
-            | "network_enforcement_reason" => (vec![], string),
-            "access" | "environment_value" => (vec![string], string),
-            "mechanisms" | "read_write_grants" | "read_only_grants" | "denials"
-            | "environment_names" => (vec![], strings),
-            "check" => (vec![], self.fallible(unit)),
             _ => {
                 let error =
                     self.unresolved_method_call(owner.clone(), method, resolved, args.len());
@@ -16550,13 +16466,12 @@ impl<'a> TypeChecker<'a> {
         // through to gos_rt_json_get instead of a Field(idx) projection.
         let tail = path.segments.last().map_or("", |s| s.name.name.as_str());
         let stdlib_def_offset: Option<u32> = match tail {
-            // A written `sandbox::Policy` / `regex::Pattern` annotation is
+            // A written `regex::Pattern` annotation is
             // the same sentinel handle the constructor answers. A parameter
             // carries no construction site, so without this the receiver
             // stays an inference variable and its methods dispatch by bare
             // name - a spelling the bytecode VM registers and the compiled
             // tiers have no symbol for.
-            "Policy" => Some(13),
             "Pattern" => Some(26),
             "DirInfo" => Some(2),
             "Output" => Some(3),
@@ -16597,7 +16512,6 @@ impl<'a> TypeChecker<'a> {
                 // The qualified name the constructor path registers, so a
                 // written annotation and a constructed value name one type
                 // and the method tables recognise both.
-                "Policy" => self.tcx.register_def_name(def, "sandbox::Policy"),
                 "Pattern" => self.tcx.register_def_name(def, "regex::Pattern"),
                 _ => {}
             }

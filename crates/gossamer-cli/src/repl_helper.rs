@@ -567,22 +567,8 @@ mod repl_helper_tests {
     #[test]
     fn every_owner_with_a_method_surface_completes() {
         for owner in [
-            "Array",
-            "Slice",
-            "Vec",
-            "String",
-            "Map",
-            "Set",
-            "Deque",
-            "Queue",
-            "Stack",
-            "MinHeap",
-            "MaxHeap",
-            "Iterator",
-            "Option",
-            "Result",
-            "Tuple",
-            "sandbox::Policy",
+            "Array", "Slice", "Vec", "String", "Map", "Set", "Deque", "Queue", "Stack", "MinHeap",
+            "MaxHeap", "Iterator", "Option", "Result", "Tuple",
         ] {
             let owners = surfaces(&[("x", owner)]);
             let (_, candidates) = complete_at("x.", 2, &owners, &[]);

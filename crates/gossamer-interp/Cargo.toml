@@ -21,7 +21,6 @@ gossamer-lex = { workspace = true }
 gossamer-mir = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-runtime = { workspace = true }
-gossamer-sandbox = { workspace = true }
 gossamer-std = { workspace = true }
 gossamer-types = { workspace = true }
 gossamer-ws = { workspace = true }

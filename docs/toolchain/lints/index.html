@@ -1095,8 +1095,6 @@
 
 
 
-
-
     <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
 
 
@@ -1851,34 +1849,6 @@
 
 
     Diagnostics
-
-
-
-  </span>
-
-
-
-      </a>
-    </li>
-
-
-
-
-
-
-
-
-
-
-    <li class="md-nav__item">
-      <a href="../sandbox/" class="md-nav__link">
-
-
-
-  <span class="md-ellipsis">
-
-
-    Sandboxing
 
 
 
@@ -3624,7 +3594,7 @@ one of them to make the data flow obvious.</p>
 <p>An empty <code>{}</code> block is almost always a mistake. Add an explicit
 <code>()</code> tail if the block is intentional.</p>
 <h2 id="panic_in_main"><code>panic_in_main</code><a class="headerlink" href="#panic_in_main" title="Permanent link">&para;</a></h2>
-<p><code>panic</code> inside <code>main</code> aborts without a clean exit code. Return a
+<p><code>panic!</code> inside <code>main</code> aborts without a clean exit code. Return a
 <code>Result</code> from <code>main</code> and use <code>?</code> so the error propagates.</p>
 <h2 id="redundant_clone"><code>redundant_clone</code><a class="headerlink" href="#redundant_clone" title="Permanent link">&para;</a></h2>
 <p>Calling <code>.clone()</code> on a literal or already-copied value is

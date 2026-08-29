@@ -1089,8 +1089,6 @@
 
 
 
-
-
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1226,34 +1224,6 @@
 
 
     Diagnostics
-
-
-
-  </span>
-
-
-
-      </a>
-    </li>
-
-
-
-
-
-
-
-
-
-
-    <li class="md-nav__item">
-      <a href="../../toolchain/sandbox/" class="md-nav__link">
-
-
-
-  <span class="md-ellipsis">
-
-
-    Sandboxing
 
 
 
@@ -2100,6 +2070,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
 
         <li class="md-nav__item">
+  <a href="#buffering" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Buffering
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#api-details-and-source" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -2132,6 +2113,26 @@
 <p>Stream-oriented I/O abstractions and process standard streams.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
+<h2 id="buffering">Buffering<a class="headerlink" href="#buffering" title="Permanent link">&para;</a></h2>
+<p>Standard output is buffered so that the several writes a formatted line
+arrives as - the literal segments, a rendered value, the newline - cost one
+<code>write(2)</code>. The buffer drains on the newline that ends a write, so a line is
+on its way out as soon as it is complete, whether standard output is a
+terminal, a pipe, or a file. A program that announces a line and then blocks
+is therefore visible to whatever is reading it:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">println</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">server</span><span class="p">.</span><span class="n">addr</span><span class="p">())</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">server</span><span class="p">.</span><span class="n">serve</span><span class="p">(</span><span class="n">routes</span><span class="p">)</span><span class="o">?</span>
+</code></pre></div>
+<p>Text with no terminator accumulates: a prompt written with <code>print</code> needs an
+explicit flush before the read.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">io</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">print</span><span class="p">(</span><span class="s">&quot;name: &quot;</span><span class="p">)</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">io</span>::<span class="n">stdout</span><span class="p">().</span><span class="n">flush</span><span class="p">()</span>
+</code></pre></div>
+<p>Byte-at-a-time and byte-range writes accumulate too - that is the
+high-throughput path, and it drains when the buffer fills, on an explicit
+<code>flush</code>, and at exit. Standard error is never buffered, and writing to it
+flushes standard output first, so the two streams keep their order.</p>
 <h2 id="api-details-and-source">API details and source<a class="headerlink" href="#api-details-and-source" title="Permanent link">&para;</a></h2>
 <p>The <a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/io.rs">implementation source</a> contains the complete declarations and implementation notes. The table below lists canonical Gossamer call signatures; every item name links directly to its implementation file.</p>
 <table>

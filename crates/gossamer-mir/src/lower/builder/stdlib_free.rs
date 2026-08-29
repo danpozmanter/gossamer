@@ -913,7 +913,6 @@ impl<'a> Builder<'a> {
         resolved = resolved.or_else(|| self.lower_http_4_free(joined, args));
         resolved = resolved.or_else(|| self.lower_exec_free(joined, args));
         resolved = resolved.or_else(|| self.lower_signal_flag_free(joined, args));
-        resolved = resolved.or_else(|| self.lower_sandbox_free(joined, args));
         resolved
     }
 
@@ -4164,93 +4163,6 @@ impl<'a> Builder<'a> {
         })
     }
 
-    /// Lowers the `std::sandbox` free calls.
-    ///
-    /// A `sandbox::Policy` is an `i64` handle pinned to its own
-    /// sentinel Adt, so method dispatch on a bound policy routes
-    /// through the `sandbox::Policy` runtime kind rather than falling
-    /// back to a bare-name lookup.
-    fn lower_sandbox_free(
-        &mut self,
-        joined: &str,
-        _args: &[HirExpr],
-    ) -> Option<(&'static str, gossamer_types::Ty)> {
-        let string_ty = self.tcx.string_ty();
-        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-        Some(match joined {
-            "sandbox::Policy::new" | "sandbox::new" => {
-                ("gos_rt_sandbox_policy_new", self.sandbox_policy_ty())
-            }
-            "sandbox::Policy::command_default" | "sandbox::command_default" => (
-                "gos_rt_sandbox_policy_command_default",
-                self.sandbox_policy_ty(),
-            ),
-            // `sandbox::run(policy, argv) -> Result<Output, errors::Error>`.
-            // Reuses the `Output` sentinel Adt `process::run` answers,
-            // so `out.stdout` / `out.stderr` / `out.code` project
-            // through the field layout that already exists.
-            "sandbox::run" => {
-                let output_def = gossamer_resolve::DefId::local(u32::MAX - 3);
-                let output_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
-                    def: output_def,
-                    substs: gossamer_types::Substs::new(),
-                });
-                let err_ty = self.tcx.dyn_error_ty();
-                let substs = gossamer_types::Substs::from_types([output_ty, err_ty]);
-                let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
-                    def: gossamer_resolve::DefId::local(u32::MAX),
-                    substs,
-                });
-                ("gos_rt_sandbox_run", result_ty)
-            }
-            "sandbox::max_level" => ("gos_rt_sandbox_max_level", string_ty),
-            "sandbox::platform" => ("gos_rt_sandbox_platform", string_ty),
-            "sandbox::capabilities_json" => ("gos_rt_sandbox_capabilities_json", string_ty),
-            "sandbox::notes" => (
-                "gos_rt_sandbox_notes",
-                self.tcx.intern(gossamer_types::TyKind::Vec(string_ty)),
-            ),
-            "sandbox::os_description" => ("gos_rt_sandbox_os_description", string_ty),
-            "sandbox::filesystem_kind" => ("gos_rt_sandbox_filesystem_kind", string_ty),
-            "sandbox::filesystem_reason" => ("gos_rt_sandbox_filesystem_reason", string_ty),
-            "sandbox::network_kind" => ("gos_rt_sandbox_network_kind", string_ty),
-            "sandbox::network_reason" => ("gos_rt_sandbox_network_reason", string_ty),
-            "sandbox::process_isolation_kind" => {
-                ("gos_rt_sandbox_process_isolation_kind", string_ty)
-            }
-            "sandbox::process_isolation_reason" => {
-                ("gos_rt_sandbox_process_isolation_reason", string_ty)
-            }
-            "sandbox::exit_policy_error" => ("gos_rt_sandbox_exit_policy_error", i64_ty),
-            "sandbox::exit_command_not_found" => ("gos_rt_sandbox_exit_command_not_found", i64_ty),
-            "sandbox::exit_level_unavailable" => ("gos_rt_sandbox_exit_level_unavailable", i64_ty),
-            "sandbox::exit_signal_base" => ("gos_rt_sandbox_exit_signal_base", i64_ty),
-            "sandbox::run_inherit" => ("gos_rt_sandbox_run_inherit", i64_ty),
-            "sandbox::env_never_passed" => ("gos_rt_sandbox_env_never_passed", self.tcx.bool_ty()),
-            "sandbox::expand" => ("gos_rt_sandbox_expand", self.option_string_adt_ty()),
-            "sandbox::prefix_of" => ("gos_rt_sandbox_prefix_of", self.option_string_adt_ty()),
-            "sandbox::resolve_on_path" => (
-                "gos_rt_sandbox_resolve_on_path",
-                self.option_string_adt_ty(),
-            ),
-            "sandbox::home_directory" => {
-                ("gos_rt_sandbox_home_directory", self.option_string_adt_ty())
-            }
-            _ => return None,
-        })
-    }
-
-    /// The sentinel Adt a `sandbox::Policy` handle carries, so method
-    /// dispatch on a bound policy finds the `sandbox::Policy` kind.
-    pub(crate) fn sandbox_policy_ty(&mut self) -> gossamer_types::Ty {
-        let def = gossamer_resolve::DefId::local(u32::MAX - 13);
-        self.tcx.register_def_name(def, "Policy");
-        self.tcx.intern(gossamer_types::TyKind::Adt {
-            def,
-            substs: gossamer_types::Substs::new(),
-        })
-    }
-
     fn lower_exec_free(
         &mut self,
         joined: &str,
@@ -4681,9 +4593,6 @@ impl<'a> Builder<'a> {
     fn stdlib_runtime_kind(rt_name: &str) -> Option<&'static str> {
         match rt_name {
             "gos_rt_flag_set_new" => Some("flag::Set"),
-            "gos_rt_sandbox_policy_new" | "gos_rt_sandbox_policy_command_default" => {
-                Some("sandbox::Policy")
-            }
             "gos_rt_signal_on" => Some("signal::Notifier"),
             "gos_rt_bufio_scanner_new" => Some("bufio::Scanner"),
             "gos_rt_http_client_new" => Some("http::Client"),

@@ -56,7 +56,6 @@
   {"name":"std::regex","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::result","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::runtime","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
-  {"name":"std::sandbox","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::slog","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::sort","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},
   {"name":"std::strconv","tiers":{"vm":"pass","cranelift":"pass","llvm":"pass"}},

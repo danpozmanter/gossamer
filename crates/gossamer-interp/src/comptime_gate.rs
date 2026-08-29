@@ -36,7 +36,6 @@ const MODULE_CAPABILITIES: &[(&str, Option<Capability>)] = &[
     // doing that. The whole module is denied rather than the one call
     // that spawns: over-denial here costs nothing that
     // `--comptime-io=full` does not restore.
-    ("sandbox", Some(Capability::Exec)),
     ("exec", Some(Capability::Exec)),
     ("signal", Some(Capability::Exec)),
     ("Child", Some(Capability::Exec)),
@@ -79,10 +78,6 @@ const MODULE_CAPABILITIES: &[(&str, Option<Capability>)] = &[
     // twin's capability by implementation identity.
     ("File", None),
     ("OpenOptions", None),
-    // Bare `Policy::` method spellings mirror the `sandbox::Policy::`
-    // registrations one for one and inherit their capability by
-    // implementation identity.
-    ("Policy", None),
     // Reads of host identity that are not path-shaped.
     ("user", Some(Capability::Read)),
     // Mixed modules: pure by default, members named individually.

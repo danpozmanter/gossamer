@@ -104,12 +104,6 @@ pub struct ProjectTable {
     /// more restrictive of the two, so a manifest may tighten the
     /// posture and may never loosen it.
     pub comptime_io: Option<String>,
-    /// `project.sandbox` - the level `[rust-bindings]` compilation
-    /// runs at, spelled `none`, `basic`, `standard`, or `strict`. The
-    /// toolchain takes the more restrictive of the manifest and
-    /// `--sandbox`, so a project may raise its own floor and a fetched
-    /// dependency's manifest can never lower it.
-    pub sandbox: Option<String>,
 }
 
 /// One entry in `[dependencies]`.
@@ -434,19 +428,6 @@ impl Manifest {
                 });
             }
         }
-        let sandbox = optional_toml_str(project, "sandbox", "project.sandbox")?;
-        if let Some(level) = &sandbox {
-            if !matches!(level.as_str(), "none" | "basic" | "standard" | "strict") {
-                return Err(ManifestError::Malformed {
-                    line_no: 0,
-                    line: format!(
-                        "project.sandbox must be one of `none`, `basic`, `standard`, \
-                         `strict`; found `{level}`"
-                    ),
-                });
-            }
-        }
-
         let mut deps: BTreeMap<String, DependencySpec> = BTreeMap::new();
         let mut dep_modules: BTreeMap<String, String> = BTreeMap::new();
         if let Some(table) = optional_toml_table(root, "dependencies")? {
@@ -527,7 +508,6 @@ impl Manifest {
                 entry,
                 enforce_format,
                 comptime_io,
-                sandbox,
             },
             dependencies: deps,
             dependency_modules: dep_modules,

@@ -709,6 +709,28 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#naming-what-is-running" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Naming what is running
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#library-combinators" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Library combinators
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#nesting" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -1219,8 +1241,6 @@
 
 
 
-
-
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -1356,34 +1376,6 @@
 
 
     Diagnostics
-
-
-
-  </span>
-
-
-
-      </a>
-    </li>
-
-
-
-
-
-
-
-
-
-
-    <li class="md-nav__item">
-      <a href="../../toolchain/sandbox/" class="md-nav__link">
-
-
-
-  <span class="md-ellipsis">
-
-
-    Sandboxing
 
 
 
@@ -2285,6 +2277,28 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#naming-what-is-running" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Naming what is running
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#library-combinators" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Library combinators
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#nesting" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -2485,17 +2499,51 @@ above is one, and so is any ordinary call on an outer iteration.</p>
   unchanged. The retired <code>context:</code> spelling reports <code>GP0056</code> with the
   rewrite, and <code>--fix</code> applies it.</li>
 </ul>
+<h2 id="naming-what-is-running">Naming what is running<a class="headerlink" href="#naming-what-is-running" title="Permanent link">&para;</a></h2>
+<p><code>spawn(f, reason: "..")</code> labels a goroutine. The label is text a report
+prints: the cohort's enumeration and its drain report name a labelled child
+by it in place of the bare spawn index.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">bounded</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cohort</span><span class="p">(</span><span class="n">drain</span>: <span class="mi">2000</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">_a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">flush_logs</span><span class="p">(),</span><span class="w"> </span><span class="n">reason</span>: <span class="s">&quot;log flush&quot;</span><span class="p">)</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">_b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">rebuild_index</span><span class="p">())</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="p">}</span>
+</code></pre></div>
+<p>If that drain gives up it says which children it left running:</p>
+<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>gossamer: cohort drain bound of 2000ms elapsed with 2 goroutine(s) still running (spawn index 0 &quot;log flush&quot;, 1)
+</code></pre></div>
+<p><code>runtime::cohorts()</code> renders the same phrase in each live cohort's
+<code>live=[..]</code> field, and <code>runtime::root()</code> answers that line for the root -
+the cohort <code>main</code> runs inside, and the one whose drain bounds process exit.</p>
+<h2 id="library-combinators">Library combinators<a class="headerlink" href="#library-combinators" title="Permanent link">&para;</a></h2>
+<p>The two concurrency primitives are <code>cohort</code> and <code>spawn</code>; everything built on
+them is an ordinary function. Two ship in <code>std::sync</code>:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">sync</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="c1">// Runs the callable in a region cancellation does not reach, and answers</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1">// its value. The region is still counted and still drained.</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="kd">let</span><span class="w"> </span><span class="n">saved</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sync</span>::<span class="n">shield</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">write_checkpoint</span><span class="p">(</span><span class="n">state</span><span class="p">))</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1">// Runs the callable under a deadline the caller computes, which a</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="c1">// `timeout:` header - a compile-time constant - cannot take.</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="k">match</span><span class="w"> </span><span class="n">sync</span>::<span class="n">with_timeout</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">fetch</span><span class="p">(</span><span class="n">url</span><span class="p">),</span><span class="w"> </span><span class="n">budget_ms</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">body</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">serve</span><span class="p">(</span><span class="n">body</span><span class="p">)</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="w">    </span><span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">fall_back</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="p">}</span>
+</code></pre></div>
+<p>Cancellation stays cooperative in both: <code>with_timeout</code> cancels the work when
+its bound elapses, and a child that reaches no cancellation point runs on and
+is named in the cohort's drain report.</p>
 <h2 id="nesting">Nesting<a class="headerlink" href="#nesting" title="Permanent link">&para;</a></h2>
 <p>Cohorts nest, and a nested one is joined before the block containing it
 continues. Cancelling the outer cohort cancels the inner one through the
 same chain a child's own check walks.</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">outcome</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cohort</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">_top</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">stage_one</span><span class="p">())</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="n">cohort</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">_a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">stage_two</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">_b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">stage_two</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="p">}</span><span class="o">?</span>
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="p">}</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">outcome</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cohort</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">_top</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">stage_one</span><span class="p">())</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="n">cohort</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">_a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">stage_two</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">_b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">stage_two</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="p">}</span><span class="o">?</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="p">}</span>
 </code></pre></div>
 <h2 id="what-a-cohort-does-not-do">What a cohort does not do<a class="headerlink" href="#what-a-cohort-does-not-do" title="Permanent link">&para;</a></h2>
 <ul>

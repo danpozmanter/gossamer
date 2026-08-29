@@ -37,7 +37,7 @@ completion**:
 This is the same limit every language has on single-threaded WebAssembly.
 Gossamer reports it as a clean panic rather than freezing the tab.
 
-## What is omitted (the browser sandbox)
+## What is omitted (the browser environment)
 
 A browser tab cannot touch the filesystem, open sockets, or spawn processes, so
 these are unavailable in the playground. They work normally in native `gos`

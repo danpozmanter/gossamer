@@ -1,7 +1,20 @@
 # Changelog
 
-## 0.57.2 - Match payloads, clone shares, Windows sandbox grant cost
+## 0.58.0 - Match payloads, clone shares, sandbox removed
 
+- `std::sandbox`, `gos build --sandbox`, and `project.sandbox` are gone. An OS
+  sandbox is the operating system's to describe, and one policy model spanning
+  Landlock, Seatbelt, and AppContainer could only ever mean the weakest of the
+  three: macOS had no `strict` at all, Windows `standard` enforced no per-path
+  policy, and Linux `standard` denied only TCP. Windows also could not sandbox
+  without editing the host - a package-SID ACE on every granted path, a
+  traverse entry on every ancestor, a lowered integrity label for writes - so a
+  run left residue a crash could strand, refused any path the user did not own,
+  and could not run twice at once. A program that needs a policy states it to
+  the platform that enforces it.
+- `--comptime-io` stays and still defaults to `confined`: what a `comptime`
+  region may reach while compiling is the compiler's business, not the
+  operating system's.
 - A match guard runs once its arm's pattern has matched, so it reads the
   payload of the variant the value actually is. Every guard was evaluated
   ahead of the test instead, over payload words extracted for an arm the value

@@ -182,18 +182,10 @@ const SPECS: &[Spec] = &[
     // element is a block of slots, not one word, and its reference-counted
     // children are handed over with the copy.
     spec("feature-testing-examples/vec_tuple_element_assign.gos"),
-    // `policy.env_allow_all(names)`: one edit for a whole list, reaching
-    // the same policy a call per name does.
-    spec("feature-testing-examples/sandbox_env_allow_all.gos"),
-    // `std::sandbox`: the policy builder, the capability report, and a
-    // run under a level-`none` policy, which is what makes the fixture
-    // host-independent - every tier answers the same lines whatever the
-    // host can enforce.
     // A closure called through its value coerces its arguments the way
     // a named callee does: a fixed array reaching a `&[T]` parameter
     // becomes a borrowing view rather than a flat buffer (#219).
     spec("feature-testing-examples/closure_slice_param.gos"),
-    spec("feature-testing-examples/sandbox.gos"),
     // Callback shorthands: a std free function named in value position
     // and a `$`-headed projection both stand for the closure that calls
     // them, so every tier sees the same closure.

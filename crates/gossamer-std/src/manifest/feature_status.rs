@@ -296,7 +296,6 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/nul_in_strings.gos",
             "feature-testing-examples/os_args_clone_roundtrip.gos",
             "feature-testing-examples/process_run_in.gos",
-            "feature-testing-examples/sandbox_env_allow_all.gos",
             "feature-testing-examples/stdlib_alias_wiring.gos",
             "feature-testing-examples/stdlib_env_portable.gos",
             "feature-testing-examples/stdlib_fs_portable.gos",
@@ -667,13 +666,6 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
             "feature-testing-examples/cycle_shared_goroutines.gos",
             "feature-testing-examples/panic_hook.gos",
             "feature-testing-examples/weak_into_strong_cycle.gos",
-        ],
-    ),
-    (
-        "std::sandbox",
-        &[
-            "feature-testing-examples/sandbox.gos",
-            "feature-testing-examples/sandbox_env_allow_all.gos",
         ],
     ),
     ("std::slog", &["feature-testing-examples/stdlib_slog.gos"]),

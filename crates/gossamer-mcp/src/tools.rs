@@ -428,15 +428,9 @@ pub(crate) fn call(
                 if let Some(extra) = json::as_array(field(args, "args")) {
                     command.extend(extra.iter().filter_map(json::as_str).map(String::from));
                 }
-                // The one tool that runs a program the model wrote, so
-                // the one tool that states what the program may reach.
-                exec::run_gos_sandboxed(
-                    &config.gos_exe,
-                    &command,
-                    timeout_from(args),
-                    Some(&source),
-                )
-                .map(|outcome| exec_result(&outcome))
+                let _ = &source;
+                exec::run_gos(&config.gos_exe, &command, timeout_from(args))
+                    .map(|outcome| exec_result(&outcome))
             }
         },
         "build" => {

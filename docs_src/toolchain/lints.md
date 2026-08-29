@@ -116,7 +116,7 @@ An empty `{}` block is almost always a mistake. Add an explicit
 
 ## `panic_in_main`
 
-`panic` inside `main` aborts without a clean exit code. Return a
+`panic!` inside `main` aborts without a clean exit code. Return a
 `Result` from `main` and use `?` so the error propagates.
 
 ## `redundant_clone`

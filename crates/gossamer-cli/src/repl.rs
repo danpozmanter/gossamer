@@ -5946,7 +5946,7 @@ mod tests {
     #[test]
     fn every_member_explain_lists_is_completed() {
         let declarations = vec![
-            "use std::{sandbox, time}".to_string(),
+            "use std::time".to_string(),
             "struct Point { x: i64, y: i64 }".to_string(),
             "impl Point { fn norm(&self) -> i64 { self.x + self.y } }".to_string(),
         ];
@@ -5966,12 +5966,11 @@ mod tests {
             "let pair = (1, 2)".to_string(),
             "let point = Point { x: 1, y: 2 }".to_string(),
             "let span = time::Duration::from_millis(5)".to_string(),
-            "let policy = sandbox::Policy::new()".to_string(),
             "let mut cursor = #[1, 2].iter()".to_string(),
         ];
         for name in [
             "array", "vector", "text", "scores", "sorted", "names", "deque", "queue", "stack",
-            "heap", "maybe", "outcome", "pair", "point", "span", "policy", "cursor",
+            "heap", "maybe", "outcome", "pair", "point", "span", "cursor",
         ] {
             let var = ReplBindingVar {
                 name: name.to_string(),
@@ -6057,11 +6056,7 @@ mod tests {
     #[test]
     fn a_constructor_is_not_a_member_of_its_own_type() {
         let entries = core_method_entries();
-        for (owner, name) in [
-            ("Duration", "from_millis"),
-            ("Policy", "command_default"),
-            ("Policy", "new"),
-        ] {
+        for (owner, name) in [("Duration", "from_millis"), ("Instant", "now")] {
             let entry = entries
                 .iter()
                 .find(|entry| entry.owner == owner && entry.name == name)

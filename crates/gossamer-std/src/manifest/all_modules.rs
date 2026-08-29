@@ -78,7 +78,6 @@ pub const ALL_MODULES: &[StdModule] = &[
     OS_SIGNAL,
     ENV,
     PROCESS,
-    SANDBOX,
     THREAD,
     STRINGS,
     STRCONV,

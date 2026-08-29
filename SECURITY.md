@@ -64,36 +64,6 @@ A denied call reports `GX0010` naming the builtin, the capability
 class, and the option that would permit it. Run
 `gos explain GX0010` for the long form.
 
-## Sandboxing
-
-`gos build --sandbox` puts `[rust-bindings]` compilation - Cargo, every
-dependency `build.rs`, every procedural macro, the linker, and every
-descendant - inside an OS-native policy, and covers `check`, `doc`,
-`repl`, `run`, and `test` with it. `std::sandbox` exposes the same
-policy model to a Gossamer program.
-
-A level name means the same guarantee on every operating system. A host
-that cannot meet a level reports it unavailable and names the blocking
-primitive; it never offers a weaker thing under the same name. macOS has
-no process-namespace equivalent, so it reports `strict` unavailable
-rather than delivering `standard` under that name.
-
-What is deliberately not claimed:
-
-- Not a defense against a kernel local-privilege-escalation exploit.
-- Not equivalent to a VM or a hypervisor boundary.
-- Not a defense against a hostile process already running as another
-  user.
-- Not a side-channel or timing-attack boundary.
-- On macOS, not a supported-API boundary at all: the platform offers no
-  supported public API for sandboxing an arbitrary child, so the backend
-  rides Seatbelt, which is deprecated SPI.
-
-Every escape the sandbox cannot close is documented with the mechanism
-named, alongside the adversarial corpus that produced it.
-`sandbox::capabilities_json()` reports what the host in front of you
-actually honors.
-
 ## Out of scope
 
 - Self-DoS: slow programs, large files, or runaway recursion in the

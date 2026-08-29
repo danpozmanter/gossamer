@@ -13,5 +13,4 @@ workspace = true
 
 [dependencies]
 gossamer-lsp = { workspace = true }
-gossamer-sandbox = { workspace = true }
 gossamer-std = { workspace = true }
