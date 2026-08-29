@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.58.2 - Container reclamation, language evidence
+
+- A `Set`, `Deque`, `Queue`, or `Stack` is released when the frame that built
+  it is done with it. Only a sequence and a map reached the per-site
+  reclamation path, so every other container took the one reserved for a
+  handle that may be aliased - a single free at the return - and a container
+  rebuilt each iteration freed all but the last. A loop building 320k sets
+  held 114 MB and now holds 4 MB.
+- A binding taken from a `Set`, `Map`, `Deque`, `Queue`, or `Stack` copies its
+  storage, and that copy is now reclaimed the way a constructed one is. Only
+  the sequence copy was named, so every other container's binding copy was
+  allocated and never freed.
+- `gos feature-status` proves `lang::generics` and `lang::slicing`. A
+  construct earns its row from the fixtures that contain it, and these two had
+  no rule: a `<` between `fn name` and its parameter list, and a `..` between
+  brackets, are spellings nothing else produces.
+
 ## 0.58.1 - Iterator element classes, container ownership
 
 - A combinator's callback receives an `Option` / `Result` element correctly.

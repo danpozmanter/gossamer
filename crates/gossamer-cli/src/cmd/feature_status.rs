@@ -933,10 +933,12 @@ mod tests {
         );
         assert!(!evidence.positive_tests.is_empty());
 
-        // A construct no line scan can name uniquely still claims nothing.
+        // A construct no line scan can name uniquely still claims nothing: a
+        // callback shorthand is a bare path in argument position, which
+        // nothing distinguishes from any other path.
         let unproven = feature_status::item_evidence(
-            "lang::slicing",
-            feature_status::derived_status("lang::slicing", Status::Shipped),
+            "lang::callback_shorthand",
+            feature_status::derived_status("lang::callback_shorthand", Status::Shipped),
         );
         let mut bare = String::new();
         bare.push_str(&json_string(unproven.status.tag()));

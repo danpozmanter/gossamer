@@ -121,6 +121,27 @@ fn probes() -> Vec<(String, String)> {
             println("{}", acc)
         }
         """)
+        ("set_rebuilt", """
+        fn main() {
+            let mut n = 0
+            for i in 0..COUNT { let mut s = Set::new(); s.insert(i); n += s.len() }
+            println("{}", n)
+        }
+        """)
+        ("deque_rebuilt", """
+        fn main() {
+            let mut n = 0
+            for i in 0..COUNT { let d = Deque::from([i, i + 1]); n += d.len() }
+            println("{}", n)
+        }
+        """)
+        ("stack_rebuilt", """
+        fn main() {
+            let mut n = 0
+            for i in 0..COUNT { let s = Stack::from([i, i + 1]); n += s.len() }
+            println("{}", n)
+        }
+        """)
         ("map_of_vecs", """
         fn main() {
             let mut acc = 0

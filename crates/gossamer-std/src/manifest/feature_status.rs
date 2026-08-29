@@ -2341,6 +2341,28 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "lang::generics",
+        &[
+            "feature-testing-examples/assoc_const_read.gos",
+            "feature-testing-examples/assoc_type_binding.gos",
+            "feature-testing-examples/assoc_type_default.gos",
+            "feature-testing-examples/assoc_type_through_bound.gos",
+            "feature-testing-examples/comptime_inline_for.gos",
+            "feature-testing-examples/const_array_length.gos",
+            "feature-testing-examples/const_generic_array_len.gos",
+            "feature-testing-examples/enum_method_dispatch_and_generics.gos",
+            "feature-testing-examples/generic_call_result.gos",
+            "feature-testing-examples/generic_fn_param.gos",
+            "feature-testing-examples/generic_impl_bound_dispatch.gos",
+            "feature-testing-examples/generic_struct_types.gos",
+            "feature-testing-examples/generic_trait_bound_method.gos",
+            "feature-testing-examples/mut_ref_container_params.gos",
+            "feature-testing-examples/trait_bounds.gos",
+            "feature-testing-examples/trait_impl_primitive_receiver.gos",
+            "feature-testing-examples/typing_multi_bound.gos",
+        ],
+    ),
+    (
         "lang::if",
         &[
             "examples/binary_search.gos",
@@ -4079,6 +4101,20 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "lang::slicing",
+        &[
+            "examples/caesar_cipher.gos",
+            "examples/derive.gos",
+            "feature-testing-examples/slice_methods.gos",
+            "feature-testing-examples/slice_pattern_fixed_array.gos",
+            "feature-testing-examples/slice_patterns.gos",
+            "feature-testing-examples/str_substring_utf8_boundary.gos",
+            "feature-testing-examples/typing_match_exhaustiveness.gos",
+            "feature-testing-examples/unicode_full.gos",
+            "feature-testing-examples/vec_push_typed_storage.gos",
+        ],
+    ),
+    (
         "lang::spawn",
         &[
             "examples/concurrency.gos",
@@ -5254,17 +5290,26 @@ enum LangMark {
     Has(&'static str),
     /// The line contains any of these.
     HasAny(&'static [&'static str]),
+    /// The line declares a function whose name is followed by a generic
+    /// parameter list: `fn name<...>(`.
+    GenericFn,
+    /// The line indexes with a range: `xs[a..b]`, either end optional.
+    RangeIndex,
 }
 
 /// Every `lang::` item a line of source can be read as exercising.
 ///
 /// A construct with no rule that names it uniquely is deliberately absent
 /// and stays `unproven`: `callback_shorthand`, `doctest`,
-/// `generics`, `keyword_arguments`, `slicing`, and `unicode_identifiers`
-/// have no spelling a line scan can claim without also matching something
-/// else.
+/// `keyword_arguments`, and `unicode_identifiers` have no spelling a line
+/// scan can claim without also matching something else - a callback
+/// shorthand is a bare path in argument position, a doctest is a fence
+/// inside a comment, a named argument is an `=` inside a call, and a
+/// non-ASCII identifier is indistinguishable from non-ASCII text.
 const LANG_MARKS: &[(&str, LangMark)] = &[
     ("attribute", LangMark::Has("#[")),
+    ("generics", LangMark::GenericFn),
+    ("slicing", LangMark::RangeIndex),
     ("cfg", LangMark::Has("#[cfg(")),
     ("break", LangMark::Word("break")),
     ("continue", LangMark::Word("continue")),
@@ -5330,6 +5375,18 @@ fn line_matches(line: &str, mark: &LangMark) -> bool {
             .any(|token| token == *kw),
         LangMark::Has(text) => line.contains(text),
         LangMark::HasAny(texts) => texts.iter().any(|text| line.contains(text)),
+        // `fn` then a name then `<` before the parameter list. A call site
+        // writes no `fn`, and a non-generic declaration reaches `(` first.
+        LangMark::GenericFn => line.split("fn ").skip(1).any(|rest| {
+            rest.find('<')
+                .is_some_and(|open| rest.find('(').is_none_or(|call| open < call))
+        }),
+        // A `..` between brackets. A bare range (`0..n`) carries no bracket,
+        // and a sequence literal's elements are separated by commas.
+        LangMark::RangeIndex => line.split('[').skip(1).any(|rest| {
+            rest.find(']')
+                .is_some_and(|close| rest[..close].contains(".."))
+        }),
     }
 }
 

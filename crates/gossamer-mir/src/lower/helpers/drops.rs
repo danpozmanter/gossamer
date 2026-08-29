@@ -4560,6 +4560,15 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             // row lands in a Slice-typed local the type-based inference
             // below does not cover).
             "gos_rt_vec_clone" => Some("gos_rt_vec_free"),
+            // A binding taken from a container copies its storage, so the
+            // copy is the frame's to reclaim exactly as a constructed one is.
+            // A queue and a stack share the deque header, so they share its
+            // reclamation too.
+            "gos_rt_set_clone" => Some("gos_rt_set_free"),
+            "gos_rt_map_clone" => Some("gos_rt_map_free"),
+            "gos_rt_deque_clone" | "gos_rt_queue_clone" | "gos_rt_stack_clone" => {
+                Some("gos_rt_deque_free")
+            }
             "gos_rt_set_new"
             | "gos_rt_btree_set_new"
             | "gos_rt_set_union"
@@ -5618,7 +5627,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
         })
         .collect();
 
-    // Non-aliased Vec/Map ctor locals get full per-site management below
+    // Non-aliased container ctor locals get full per-site management below
     // (zero-init + drop-before-overwrite + at-return, all null-safe) so a
     // container rebuilt each loop iteration frees every prior allocation
     // instead of leaking all but the last. Aliased locals (the source of a
@@ -5629,7 +5638,15 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     let reuse: Vec<(Local, &'static str)> = drop_targets_all
         .iter()
         .filter(|(l, free)| {
-            !aliased[l.0 as usize] && matches!(*free, "gos_rt_vec_free" | "gos_rt_map_free")
+            // Every counted container reclaims per site, not only the two
+            // that were named here: a `Set`, a `Deque`, a `Queue`, and a
+            // `Stack` rebuilt each iteration reached the return-only path and
+            // so freed all but the last.
+            !aliased[l.0 as usize]
+                && matches!(
+                    *free,
+                    "gos_rt_vec_free" | "gos_rt_map_free" | "gos_rt_set_free" | "gos_rt_deque_free"
+                )
         })
         .copied()
         .collect();
