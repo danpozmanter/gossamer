@@ -162,13 +162,24 @@ pub unsafe extern "C" fn gos_rt_chan_new(elem_bytes: u32, cap: i64) -> *mut GosC
     })
 }
 
+/// Sends a value, blocking until the channel can take it.
+///
+/// Sending into a closed channel panics with `send on closed channel`,
+/// matching Go and the double-close panic below: a receiver has been told
+/// no more values are coming, so a value handed over after that would be
+/// dropped where the program expects it delivered. The panic is
+/// goroutine-scoped and is raised outside the FFI catch-guard so the unwind
+/// reaches the coroutine boundary rather than being converted to a sentinel.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
-    ffi_entry!((), {
+pub unsafe extern "C-unwind" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
+    let sent_on_closed = ffi_entry!(false, {
         if c.is_null() || val.is_null() {
-            return;
+            return false;
         }
         let chan = unsafe { &*c };
+        if *chan.closed.lock() {
+            return true;
+        }
         let bytes_len = chan.elem_bytes as usize;
         let mut queued_unbuffered = false;
         let send_id = if chan.cap == 0 {
@@ -181,9 +192,15 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
             // so the send stops waiting rather than pinning its child in a
             // block the cohort is trying to wind down.
             if super::cohort::current_is_cancelled() {
-                return;
+                return false;
             }
             let mut guard = chan.buf.lock();
+            // A channel closed while this send was parked has no reader
+            // left expecting the value, which is the same program error as
+            // sending into one already closed.
+            if *chan.closed.lock() {
+                return true;
+            }
             chan.sync_ready(storage_len(&guard));
             if chan.cap == 0 {
                 if !queued_unbuffered {
@@ -197,7 +214,7 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
                     continue;
                 }
                 if !storage_contains_id(&guard, send_id) {
-                    return;
+                    return false;
                 }
             } else if chan.cap < 0 || (storage_len(&guard) as i64) < chan.cap {
                 push_back(&mut guard, 0, val, bytes_len);
@@ -206,7 +223,7 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
                 chan.last_sender
                     .store(i64::from(crate::race::current_gid()), Ordering::Release);
                 wake_one_recv(chan);
-                return;
+                return false;
             }
             // Buffer full. Goroutines park; OS threads block. Either way,
             // a runtime with nothing left able to run cannot deliver the
@@ -254,6 +271,9 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
             }
         }
     });
+    if sent_on_closed {
+        super::panic::panic_text("send on closed channel");
+    }
 }
 
 /// Releases a send registration when the wait ends, by any path. The
@@ -346,13 +366,19 @@ fn wake_all(chan: &GosChan) {
     chan.not_full.notify_all();
 }
 
+/// Sends without blocking, answering `1` when the value was taken and `0`
+/// when it was not. Sending into a closed channel panics exactly as the
+/// blocking [`gos_rt_chan_send`] does.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_chan_try_send(c: *mut GosChan, val: *const u8) -> i32 {
-    ffi_entry!(-1, {
+pub unsafe extern "C-unwind" fn gos_rt_chan_try_send(c: *mut GosChan, val: *const u8) -> i32 {
+    let outcome = ffi_entry!(-1, {
         if c.is_null() || val.is_null() {
             return 0;
         }
         let chan = unsafe { &*c };
+        if *chan.closed.lock() {
+            return CLOSED_SEND;
+        }
         let bytes_len = chan.elem_bytes as usize;
         let mut guard = chan.buf.lock();
         if chan.cap == 0 {
@@ -373,8 +399,18 @@ pub unsafe extern "C" fn gos_rt_chan_try_send(c: *mut GosChan, val: *const u8) -
             .store(i64::from(crate::race::current_gid()), Ordering::Release);
         wake_one_recv(chan);
         1
-    })
+    });
+    if outcome == CLOSED_SEND {
+        super::panic::panic_text("send on closed channel");
+        return 0;
+    }
+    outcome
 }
+
+/// [`gos_rt_chan_try_send`]'s internal answer for a send into a closed
+/// channel, distinguished from a refused send (`0`) and a null channel
+/// (`-1`) so the panic is raised outside the FFI catch-guard.
+const CLOSED_SEND: i32 = -2;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 {
@@ -817,7 +853,7 @@ pub(crate) fn chan_close_idempotent(chan: &GosChan) -> bool {
 /// that goroutine) and exits 101 on the main goroutine - it never
 /// aborts the whole process. Callers may ignore the return value.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_chan_close(c: *mut GosChan) -> i32 {
+pub unsafe extern "C-unwind" fn gos_rt_chan_close(c: *mut GosChan) -> i32 {
     // `None` = null channel, `Some(false)` = already closed. The close
     // itself runs under the FFI catch-guard; the double-close panic is
     // raised below, *outside* the guard, so a goroutine-scoped unwind

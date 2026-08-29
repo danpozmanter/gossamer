@@ -802,6 +802,7 @@ impl<'a> Lowerer<'a> {
             | RawIntrinsic::EnumSetDisc
             | RawIntrinsic::Load
             | RawIntrinsic::Store
+            | RawIntrinsic::StoreI128
             | RawIntrinsic::Alloc
             | RawIntrinsic::RcAlloc
             | RawIntrinsic::RcAllocTagged

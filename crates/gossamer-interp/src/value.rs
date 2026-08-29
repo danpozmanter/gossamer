@@ -2151,6 +2151,20 @@ impl Value {
         Self::Native(Arc::new(NativeInner { name, call }))
     }
 }
+/// What a send did.
+///
+/// A send into a closed channel is a program error, matching Go: the
+/// receiver has been told no more values are coming. A deadlocked send is
+/// one no runnable goroutine can ever complete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendOutcome {
+    /// The value is on the channel.
+    Sent,
+    /// Nothing left running can take the value.
+    Deadlocked,
+    /// The channel was closed.
+    Closed,
+}
 
 /// Shared channel backing a `(Sender<T>, Receiver<T>)` pair.
 ///
@@ -2391,8 +2405,14 @@ impl Channel {
     /// capacity, so a producer outrunning its consumer applies
     /// backpressure exactly as the compiled tier's `gos_rt_chan_send`.
     #[must_use]
-    pub fn send(&self, value: Value) -> bool {
+    pub fn send(&self, value: Value) -> SendOutcome {
         let mut guard = self.inner.state.lock();
+        // A receiver has been told no more values are coming, so a value
+        // handed over after the close would be dropped where the program
+        // expects it delivered. Go panics here and so does this.
+        if guard.closed {
+            return SendOutcome::Closed;
+        }
         match guard.capacity {
             ChannelCapacity::Unbuffered => {
                 let id = guard.next_send_id;
@@ -2426,7 +2446,7 @@ impl Channel {
                 guard.waiting_senders = guard.waiting_senders.saturating_sub(1);
                 Self::sync_ready_count(&mut guard);
                 if deadlocked {
-                    return false;
+                    return SendOutcome::Deadlocked;
                 }
             }
             ChannelCapacity::Unbounded => {
@@ -2450,14 +2470,19 @@ impl Channel {
                     guard.waiting_senders = guard.waiting_senders.saturating_sub(1);
                     Self::sync_ready_count(&mut guard);
                     if deadlocked {
-                        return false;
+                        return SendOutcome::Deadlocked;
                     }
                 }
                 guard.buf.push_back(ChannelMessage { id: 0, value });
                 self.notify_channel_changed(&mut guard);
             }
         }
-        true
+        // A close that landed while this send was parked leaves no reader
+        // expecting the value, which is the same program error.
+        if guard.closed {
+            return SendOutcome::Closed;
+        }
+        SendOutcome::Sent
     }
 
     /// Non-blocking send. Enqueues `value` and returns `true` when the
@@ -2466,29 +2491,32 @@ impl Channel {
     /// Used by `select` so a full send arm reads as not-ready instead
     /// of blocking inside the readiness probe.
     #[must_use]
-    pub fn try_send(&self, value: Value) -> bool {
+    pub fn try_send(&self, value: Value) -> SendOutcome {
         let mut guard = self.inner.state.lock();
+        if guard.closed {
+            return SendOutcome::Closed;
+        }
         match guard.capacity {
             ChannelCapacity::Unbuffered => {
                 if guard.waiting_receivers == 0 {
-                    return false;
+                    return SendOutcome::Deadlocked;
                 }
                 guard.buf.push_back(ChannelMessage { id: 0, value });
                 self.notify_channel_changed(&mut guard);
-                true
+                SendOutcome::Sent
             }
             ChannelCapacity::Unbounded => {
                 guard.buf.push_back(ChannelMessage { id: 0, value });
                 self.notify_channel_changed(&mut guard);
-                true
+                SendOutcome::Sent
             }
             ChannelCapacity::Bounded(capacity) => {
                 if guard.buf.len() >= capacity {
-                    return false;
+                    return SendOutcome::Deadlocked;
                 }
                 guard.buf.push_back(ChannelMessage { id: 0, value });
                 self.notify_channel_changed(&mut guard);
-                true
+                SendOutcome::Sent
             }
         }
     }
@@ -3006,7 +3034,10 @@ impl Value {
 }
 
 impl fmt::Display for Value {
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one match whose length is the value set"
+    )]
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Primitive formatting delegates to the shared runtime
         // helpers so the interpreter and the native backend produce
@@ -4478,7 +4509,10 @@ thread_local! {
 /// The native enum shape that uniquely declares a variant named `name`, or
 /// `None` if no native shape declares it or more than one does.
 #[must_use]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "reached only from the native-enum path a target may not compile"
+)]
 pub(crate) fn native_shape_for_variant(tag: TypeTag, name: &str) -> Option<Arc<NativeEnumShape>> {
     use std::sync::atomic::Ordering;
     let generation = NATIVE_SHAPE_GENERATION.load(Ordering::Acquire);

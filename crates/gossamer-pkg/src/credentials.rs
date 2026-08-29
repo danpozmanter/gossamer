@@ -253,7 +253,7 @@ fn unquote(s: &str) -> String {
 // Win32 ACL programming is inherently `unsafe` FFI; the block is
 // self-contained and audited (two-call TOKEN_USER pattern + DACL set).
 #[cfg(windows)]
-#[allow(unsafe_code)]
+#[allow(unsafe_code, reason = "Windows ACL editing has no safe wrapper in std")]
 fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
     use std::io;
     use std::os::windows::ffi::OsStrExt;

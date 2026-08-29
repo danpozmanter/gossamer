@@ -56,7 +56,10 @@ pub fn set_current_dir(path: &str) -> Result<(), IoError> {
 /// Returns the calling user's home directory if known.
 #[must_use]
 pub fn home_dir() -> Option<String> {
-    #[allow(deprecated)]
+    #[allow(
+        deprecated,
+        reason = "std::env::home_dir is the only std path to the home directory and its Windows behaviour is what this wants"
+    )]
     std::env::home_dir().map(|p| p.to_string_lossy().into_owned())
 }
 

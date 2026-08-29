@@ -1793,6 +1793,9 @@ fn regenerate_item_fixtures(check: bool) -> Result<()> {
         for module in stdlib_modules_used(&source) {
             by_module.entry(module).or_default().push(fixture.clone());
         }
+        for feature in gossamer_std::manifest::feature_status::lang_features_used(&source) {
+            by_module.entry(feature).or_default().push(fixture.clone());
+        }
     }
     for fixtures in by_module.values_mut() {
         fixtures.sort();

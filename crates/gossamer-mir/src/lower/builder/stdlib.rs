@@ -1104,20 +1104,21 @@ impl<'a> Builder<'a> {
     ) -> Option<Local> {
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let n_args = payload.len();
-        // Payload bytes only: the discriminant lives in the RC header byte.
-        let bytes = (n_args.max(1) * 8) as i128;
 
         // Declared field types of this variant (tuple and struct payloads
         // both record theirs), used to materialize a fixed-array argument
-        // into a heap GosVec when the field is `Vec<T>` / `[T]`.
+        // into a heap GosVec when the field is `Vec<T>` / `[T]`, and to place
+        // each field within the node's slot slab.
         let field_tys: Vec<Ty> = self
             .enums
             .by_enum
             .get(enum_name)
             .and_then(|vs| vs.get(variant_idx as usize))
-            .and_then(|vname| self.enums.variant_field_tys.get(vname))
-            .cloned()
+            .and_then(|vname| self.enums.field_tys_of(enum_name, vname))
             .unwrap_or_default();
+        let payload_offsets = self.variant_payload_offsets(&field_tys, n_args);
+        // Payload bytes only: the discriminant lives in the RC header byte.
+        let bytes = i128::from(self.variant_payload_bytes(&field_tys, n_args));
 
         // Inline-able enums (every variant <=1 field that fits in 8 bytes) use
         // the 2-word by-value `i128` [disc, payload] representation - pack the
@@ -1227,19 +1228,23 @@ impl<'a> Builder<'a> {
             let payload_local =
                 self.coerce_enum_payload_array(value, field_tys.get(i).copied(), span);
             let payload_ty = self.locals[payload_local.0 as usize].ty;
+            // A child entry names the field's WORD within the slot slab, so
+            // it follows the field's placement rather than its position.
+            let child_word = payload_offsets.get(i).copied().unwrap_or((i * 8) as i64) / 8;
             // A multi-slot aggregate payload (struct / tuple / array > 1 word)
             // does not fit the one-word payload slot. Heap-box it into an RC
             // cell and store the POINTER; the box owns its RC children (a
             // `String` / nested node field) and is reclaimed when the enum's
             // child release frees it. Sentinel ADTs (Option / Result) are
-            // by-value 2-word values handled by their own path, never boxed.
+            // by-value 2-word values that occupy both of their words in
+            // place, the way a struct field of the same type does.
             if self.is_boxable_aggregate_payload(payload_ty) {
                 let boxed = self.box_aggregate_payload(payload_local, payload_ty, span);
-                child_offsets.push(i as i64);
+                child_offsets.push(child_word);
                 payload_locals.push(boxed);
             } else {
                 if payload_ty == ty || self.tcx.is_rc_managed(payload_ty) {
-                    child_offsets.push(i as i64);
+                    child_offsets.push(child_word);
                 } else if matches!(
                     self.tcx.kind_of(payload_ty),
                     gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
@@ -1250,7 +1255,7 @@ impl<'a> Builder<'a> {
                     // so the vec survives the constructing frame however
                     // the node escapes (return, call argument, container).
                     use gossamer_abi::rc::{RC_CHILD_KIND_SHIFT, RC_CHILD_VEC};
-                    child_offsets.push((i as i64) | (RC_CHILD_VEC << RC_CHILD_KIND_SHIFT));
+                    child_offsets.push(child_word | (RC_CHILD_VEC << RC_CHILD_KIND_SHIFT));
                     vec_payloads[i] = true;
                 }
                 payload_locals.push(payload_local);
@@ -1331,14 +1336,22 @@ impl<'a> Builder<'a> {
             let off_local = self.fresh(i64_ty);
             self.emit_assign(
                 Place::local(off_local),
-                Rvalue::Use(Operand::Const(ConstValue::Int((i * 8) as i128))),
+                Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(
+                    payload_offsets.get(i).copied().unwrap_or((i * 8) as i64),
+                )))),
                 span,
+            );
+            // A two-word carrier field owns both of its words in the node,
+            // so its write takes the store sized for it.
+            let wide = crate::lower::carrier_ref::is_two_word_carrier(
+                self.tcx,
+                self.locals[payload_local.0 as usize].ty,
             );
             let payload_dest = self.fresh(unit_ty);
             self.emit_assign(
                 Place::local(payload_dest),
                 Rvalue::CallIntrinsic {
-                    name: "gos_store",
+                    name: if wide { "gos_store_i128" } else { "gos_store" },
                     args: vec![
                         Operand::Copy(Place::local(dest)),
                         Operand::Copy(Place::local(off_local)),

@@ -1,0 +1,203 @@
+// Compiled-tier leak oracle: peak RSS may not grow with the loop count.
+//
+// A reference-counted value the compiled tiers never release shows up as
+// RSS that scales with how many times the loop ran. Every probe below
+// holds nothing across iterations, so its peak belongs to one iteration
+// whatever the count - running it at N and at 4N and comparing the two
+// peaks says whether anything is being kept. Tier parity cannot see this
+// at all: a leaking program prints exactly what a correct one prints.
+//
+// The oracle needs no baseline from another tier. Comparing against the
+// bytecode VM was the obvious shape and is the wrong one: `gos run`
+// promotes hot bodies, so the reference leaks alongside the thing it is
+// supposed to bound.
+//
+// Usage: gos run scripts/leak_oracle.gos [gos-binary]
+
+use std::{env, fs, path, process}
+
+/// Iterations the small run makes; the large run makes four times as many.
+const SMALL: i64 = 50000
+
+/// How much the large run may exceed the small one. A correct program's
+/// peak is one iteration's allocation plus a fixed runtime, so the two
+/// runs differ only by allocator noise; a per-iteration leak at these
+/// counts is tens of megabytes.
+const SLACK_KB: i64 = 4096
+
+/// Programs whose peak belongs to one iteration, each written against a
+/// `COUNT` the harness substitutes.
+fn probes() -> Vec<(String, String)> {
+    #[
+        ("struct_vec_field", """
+        struct Node { kids: Vec<i64> }
+        fn main() {
+            let mut acc = 0
+            for i in 0..COUNT { let t = Node { kids: #[i, i + 1] }; acc += t.kids.len() }
+            println("{}", acc)
+        }
+        """)
+        ("struct_string_and_vec", """
+        struct Row { name: String, cells: Vec<i64> }
+        fn main() {
+            let mut acc = 0
+            for i in 0..COUNT {
+                let r = Row { name: format("r{}", i), cells: #[i, i + 1, i + 2] }
+                acc += r.cells.len() + r.name.len()
+            }
+            println("{}", acc)
+        }
+        """)
+        ("tuple_vec_element", """
+        fn main() {
+            let mut acc = 0
+            for i in 0..COUNT { let t = (i, #[i, i + 1]); acc += t.1.len() }
+            println("{}", acc)
+        }
+        """)
+        ("enum_vec_payload", """
+        enum Holder { Empty, Full(Vec<i64>) }
+        fn main() {
+            let mut acc = 0
+            for i in 0..COUNT {
+                let h = Holder::Full(#[i, i + 1])
+                acc += match h { Holder::Empty => 0, Holder::Full(v) => v.len() }
+            }
+            println("{}", acc)
+        }
+        """)
+        ("nested_struct_tree", """
+        struct Node { name: String, kids: Vec<Node> }
+        fn build(d: i64) -> Node {
+            if d == 0 { return Node { name: "leaf", kids: #[] } }
+            Node { name: format("n{}", d), kids: #[build(d - 1), build(d - 1)] }
+        }
+        fn count(n: Node) -> i64 { let mut c = 1; for k in n.kids { c += count(k) }; c }
+        fn main() {
+            let mut acc = 0
+            for _ in 0..(COUNT / 5000) { let t = build(8); acc += count(t) }
+            println("{}", acc)
+        }
+        """)
+        ("closure_over_vec", """
+        fn main() {
+            let mut total = 0
+            for i in 0..COUNT {
+                let xs = #[i, i + 1, i + 2]
+                let f = |k: i64| xs.len() + k
+                total += f(1)
+            }
+            println("{}", total)
+        }
+        """)
+        ("map_of_vecs", """
+        fn main() {
+            let mut acc = 0
+            for round in 0..(COUNT / 500) {
+                let mut m = Map::new()
+                for i in 0..500 { m.insert(format("k{}", i), #[i, round]) }
+                for (k, v) in m { acc += v[0] + k.len() }
+            }
+            println("{}", acc)
+        }
+        """)
+    ]
+}
+
+/// Peak RSS in KB of `argv`, or `None` when the run failed.
+///
+/// `/usr/bin/time -v` reports the kernel's own high-water mark, which is
+/// the only number that reflects memory the program never gave back.
+fn peak_rss_kb(argv: Vec<String>) -> Option<i64> {
+    let mut full = #["-v"]
+    for a in argv { full.push(a) }
+    let out = match process::run("/usr/bin/time", full) {
+        Ok(out) => out
+        Err(e) => {
+            eprintln("leak_oracle: running the probe: {}", e)
+            return None
+        }
+    }
+    if out.code != 0 {
+        eprintln("leak_oracle: probe exited {}: {}", out.code, out.stderr)
+        return None
+    }
+    for line in out.stderr.split("\n") {
+        let trimmed = line.trim()
+        if trimmed.starts_with("Maximum resident set size") {
+            if let Some((_, value)) = trimmed.split_once(":") {
+                return value.trim().to_i64()
+            }
+        }
+    }
+    None
+}
+
+/// Builds `source` with `COUNT` substituted and answers the binary's peak.
+///
+/// Each probe gets its own output directory, because `--out-dir` names the
+/// directory and the binary keeps the source's stem - so the two counts of
+/// one probe would otherwise land on the same path.
+fn peak_at(gos: String, dir: String, name: String, source: String, count: i64) -> Option<i64> {
+    let out = path::join(dir, format("{}_{}", name, count))
+    let src = path::join(out, format("{}.gos", name))
+    let bin = path::join(out, name)
+    if let Err(e) = fs::create_dir_all(out) {
+        eprintln("leak_oracle: creating {}: {}", out, e)
+        return None
+    }
+    if let Err(e) = fs::write(src, source.replace("COUNT", format("{}", count)).as_bytes()) {
+        eprintln("leak_oracle: writing {}: {}", src, e)
+        return None
+    }
+    match process::run(gos, #["build", "--out-dir", out, src]) {
+        Ok(out) => {
+            if out.code != 0 {
+                eprintln("leak_oracle: {}: build failed: {}", name, out.stderr)
+                return None
+            }
+        }
+        Err(e) => {
+            eprintln("leak_oracle: {}: build failed: {}", name, e)
+            return None
+        }
+    }
+    peak_rss_kb(#[bin])
+}
+
+fn main() {
+    let args = env::args()
+    let gos = if args.len() > 0 { args[0] } else { "./target/debug/gos" }
+    let dir = path::join(env::temp_dir(), "gos-leak-oracle")
+    // A binary left by an earlier run would be measured instead of the one
+    // this run builds, so the tree starts empty.
+    let _ = fs::remove_dir_all(dir)
+    if let Err(e) = fs::create_dir_all(dir) {
+        eprintln("leak_oracle: creating {}: {}", dir, e)
+        process::exit(1)
+    }
+    let mut failures = #[]
+    for (name, source) in probes() {
+        let Some(small) = peak_at(gos, dir, name, source, SMALL) else {
+            failures.push(name)
+            continue
+        }
+        let Some(large) = peak_at(gos, dir, name, source, SMALL * 4) else {
+            failures.push(name)
+            continue
+        }
+        let budget = small + SLACK_KB
+        let verdict = if large > budget { "LEAK" } else { "ok" }
+        println("{:<24} n={:>8} KB  4n={:>8} KB  budget={:>8} KB  {}"
+            name, small, large, budget, verdict)
+        if large > budget {
+            failures.push(name)
+        }
+    }
+    if failures.len() > 0 {
+        eprintln("leak_oracle: {} probe(s) grew with the loop count: {:?}"
+            failures.len(), failures)
+        process::exit(1)
+    }
+    println("leak_oracle: no probe's peak grew with the loop count")
+}

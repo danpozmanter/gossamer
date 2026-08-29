@@ -72,7 +72,10 @@ pub enum TokenKind {
 
 /// Every reserved keyword recognised by the lexer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(missing_docs)]
+#[allow(
+    missing_docs,
+    reason = "each variant is its own spelling and a doc line would only repeat it"
+)]
 pub enum Keyword {
     As,
     Async,
@@ -206,7 +209,10 @@ impl Keyword {
 
 /// Every operator or punctuation token recognised by the lexer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(missing_docs)]
+#[allow(
+    missing_docs,
+    reason = "each variant is its own spelling and a doc line would only repeat it"
+)]
 pub enum Punct {
     Plus,
     Minus,

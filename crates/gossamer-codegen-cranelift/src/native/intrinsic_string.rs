@@ -1821,9 +1821,15 @@ pub(super) fn lower_intrinsic_call_string(
             )?;
             Ok(true)
         }
-        #[allow(unreachable_patterns)]
+        #[allow(
+            unreachable_patterns,
+            reason = "the catch-all keeps the arm list open as intrinsics are added"
+        )]
         _ => Ok(false),
-        #[allow(unreachable_patterns)]
+        #[allow(
+            unreachable_patterns,
+            reason = "the catch-all keeps the arm list open as intrinsics are added"
+        )]
         _ => Ok(false),
     }
 }

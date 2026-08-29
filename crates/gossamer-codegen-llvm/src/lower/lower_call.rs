@@ -508,6 +508,7 @@ impl<'a> Lowerer<'a> {
             name.as_str(),
             "gos_load"
                 | "gos_store"
+                | "gos_store_i128"
                 | "gos_alloc"
                 | "gos_rc_alloc"
                 | "gos_rc_alloc_reuse"
@@ -1540,17 +1541,21 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
                 let lv = self.fresh();
+                // A two-word `Option` / `Result` / inline-enum field occupies
+                // both of its words in the node, so the read takes its own
+                // width - a word-sized load keeps only the discriminant.
+                let load_ty = if dest_ty == "i128" { "i128" } else { "i64" };
                 // Payload memory: `gos_enum_load` is emitted only for a match
                 // arm reading a variant payload word out of an enum node, and
                 // a node's words are a flat slot slab - the same class the
                 // projection walk tags, never a `GosVec` / string header word.
-                writeln!(self.out, "  {lv} = load i64, ptr {addr}{TBAA_DATA}").unwrap();
+                writeln!(self.out, "  {lv} = load {load_ty}, ptr {addr}{TBAA_DATA}").unwrap();
                 writeln!(self.out, "  br label %{done_l}").unwrap();
                 writeln!(self.out, "{done_l}:").unwrap();
                 let v = self.fresh();
                 writeln!(
                     self.out,
-                    "  {v} = phi i64 [ 0, %{entry_l} ], [ {lv}, %{load_l} ]"
+                    "  {v} = phi {load_ty} [ 0, %{entry_l} ], [ {lv}, %{load_l} ]"
                 )
                 .unwrap();
                 // A multi-slot aggregate payload (struct / tuple / array > 1
@@ -1607,7 +1612,7 @@ impl<'a> Lowerer<'a> {
                     writeln!(self.out, "  {tmp} = bitcast i64 {v} to {dest_ty}").unwrap();
                     tmp
                 } else {
-                    self.coerce_llvm_value(&v, "i64", &dest_ty)
+                    self.coerce_llvm_value(&v, load_ty, &dest_ty)
                 };
                 self.store_value_to_place(destination, &dest_ty, &coerced);
             }
@@ -1785,8 +1790,9 @@ impl<'a> Lowerer<'a> {
                 };
                 self.store_value_to_place(destination, &dest_ty, &coerced);
             }
-            "gos_store" => {
-                // gos_store(ptr, offset, value) - writes 8 bytes.
+            "gos_store" | "gos_store_i128" => {
+                // gos_store(ptr, offset, value) writes 8 bytes;
+                // gos_store_i128 writes both words of a two-word carrier.
                 if args.len() < 3 {
                     return Err(BuildError::InternalLoweringBug("gos_store arity"));
                 }
@@ -1816,12 +1822,15 @@ impl<'a> Lowerer<'a> {
                 // wrong here: `fptosi(0.5)` is `0`, losing the
                 // capture. Emit `bitcast` explicitly for the
                 // float-to-i64 store path.
+                // The wide store is `gos_store_i128`; this one writes the word
+                // every other slot in the language is.
+                let store_ty = if name == "gos_store_i128" { "i128" } else { "i64" };
                 let val64 = if val_ty == "double" || val_ty == "float" {
                     let tmp = self.fresh();
                     writeln!(self.out, "  {tmp} = bitcast {val_ty} {val_v} to i64").unwrap();
                     tmp
                 } else {
-                    self.coerce_llvm_value(&val_v, &val_ty, "i64")
+                    self.coerce_llvm_value(&val_v, &val_ty, store_ty)
                 };
                 let addr = self.fresh();
                 writeln!(
@@ -1839,7 +1848,7 @@ impl<'a> Lowerer<'a> {
                     )
                     .unwrap();
                 }
-                writeln!(self.out, "  store i64 {val64}, ptr {addr}").unwrap();
+                writeln!(self.out, "  store {store_ty} {val64}, ptr {addr}").unwrap();
                 if dest_ty != "void" && !is_unit(self.tcx, dest_ty_mir) {
                     // Sink stores: pick a zero-shaped literal that
                     // matches the destination's LLVM type so `opt`

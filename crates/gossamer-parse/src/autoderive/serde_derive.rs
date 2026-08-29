@@ -495,6 +495,17 @@ fn ty_is_renderable_within(
                     _ => false,
                 };
             }
+            // A `Result` renders through whichever arm it holds, so it
+            // renders when both of them do.
+            if name == "Result" {
+                return seg.generics.len() == 2
+                    && seg.generics.iter().all(|arg| match arg {
+                        gossamer_ast::GenericArg::Type(inner) => {
+                            ty_is_renderable_within(inner, formattable, params, aliases, depth)
+                        }
+                        gossamer_ast::GenericArg::Const(_) => false,
+                    });
+            }
             // A keyed, ordered, or slot-backed container renders through
             // the runtime, element by element, so it renders exactly when
             // every type it holds does.

@@ -81,7 +81,7 @@ macro_rules! register_module {
         $crate::__paste::paste! {
             #[$crate::linkme::distributed_slice($crate::FORCE_LINK_FNS)]
             #[linkme(crate = $crate::linkme)]
-            #[allow(non_upper_case_globals, unreachable_pub)]
+            #[allow(non_upper_case_globals, unreachable_pub, reason = "the linker anchor is named after the user's module, and the macro expands at the caller's visibility")]
             static [< __GOS_FORCE_LINK_ $name >]: fn() = [< __gos_ $name >]::force_link;
         }
     };
@@ -102,7 +102,7 @@ macro_rules! register_module {
         $crate::__paste::paste! {
             #[$crate::linkme::distributed_slice($crate::FORCE_LINK_FNS)]
             #[linkme(crate = $crate::linkme)]
-            #[allow(non_upper_case_globals, unreachable_pub)]
+            #[allow(non_upper_case_globals, unreachable_pub, reason = "the linker anchor is named after the user's module, and the macro expands at the caller's visibility")]
             static [< __GOS_FORCE_LINK_ $sym >]: fn() = $modname::force_link;
         }
     };
@@ -127,7 +127,7 @@ macro_rules! register_module {
         $crate::__paste::paste! {
             #[$crate::linkme::distributed_slice($crate::FORCE_LINK_FNS)]
             #[linkme(crate = $crate::linkme)]
-            #[allow(non_upper_case_globals, unreachable_pub)]
+            #[allow(non_upper_case_globals, unreachable_pub, reason = "the linker anchor is named after the user's module, and the macro expands at the caller's visibility")]
             static [< __GOS_FORCE_LINK_ $modname >]: fn() = $modname::force_link;
         }
     };
@@ -159,7 +159,7 @@ macro_rules! __rm_munch {
         })* ],
         rest = []
     ) => {
-        #[allow(non_snake_case, dead_code, clippy::missing_docs_in_private_items)]
+        #[allow(non_snake_case, dead_code, clippy::missing_docs_in_private_items, reason = "the module is named after the user's binding and holds generated thunks nothing else documents")]
         mod $modname {
             use super::*;
 
@@ -167,7 +167,7 @@ macro_rules! __rm_munch {
                 $(
                     pub fn $sn($($sa : $st),*) -> $sr $sb
 
-                    #[allow(non_snake_case)]
+                    #[allow(non_snake_case, reason = "the thunk is named after the user's function, whose case the macro cannot change")]
                     pub fn [< __thunk_ $sn >](
                         _dispatch: &mut dyn $crate::NativeDispatch,
                         args: &[$crate::Value],
@@ -199,7 +199,7 @@ macro_rules! __rm_munch {
                         $($ca : $ct),*
                     ) -> $cr $cb_body
 
-                    #[allow(non_snake_case)]
+                    #[allow(non_snake_case, reason = "the thunk is named after the user's function, whose case the macro cannot change")]
                     pub fn [< __thunk_ $cn >](
                         _dispatch: &mut dyn $crate::NativeDispatch,
                         args: &[$crate::Value],
@@ -283,7 +283,7 @@ macro_rules! __rm_munch {
 
             #[$crate::linkme::distributed_slice($crate::REGISTRY)]
             #[linkme(crate = $crate::linkme)]
-            #[allow(non_upper_case_globals)]
+            #[allow(non_upper_case_globals, reason = "the static is named after the user's binding, whose case the macro cannot change")]
             static REGISTERED: &'static $crate::Module = &MODULE;
 
             /// Emits a hard reference to `MODULE` so the linker
@@ -375,7 +375,7 @@ macro_rules! __rm_emit_native_export {
     ($sym:ident, $name:ident, ( $($arg:ident : $argty:ty),* ), $ret:ty) => {
         $crate::__paste::paste! {
             #[unsafe(no_mangle)]
-            #[allow(non_snake_case, unused_variables, unused_unsafe)]
+            #[allow(non_snake_case, unused_variables, unused_unsafe, reason = "the export is named after the user's function, and a binding with no arguments uses none of them")]
             pub extern "C" fn [< gos_binding_ $sym __ $name >](
                 $( $arg : <$argty as $crate::native::BindingAbi>::Input ),*
             ) -> <$ret as $crate::native::BindingAbi>::Output {
@@ -395,14 +395,14 @@ macro_rules! __rm_emit_native_export {
                 })
             }
 
-            #[allow(non_snake_case)]
+            #[allow(non_snake_case, reason = "the thunk is named after the user's function, whose case the macro cannot change")]
             fn [< __addr_ $sym __ $name >]() -> *const u8 {
                 [< gos_binding_ $sym __ $name >] as *const u8
             }
 
             #[$crate::linkme::distributed_slice($crate::NATIVE_SYMBOLS)]
             #[linkme(crate = $crate::linkme)]
-            #[allow(non_upper_case_globals)]
+            #[allow(non_upper_case_globals, reason = "the static is named after the user's binding, whose case the macro cannot change")]
             static [< __NATIVE_SYM_ $sym __ $name >]: $crate::NativeSymbolEntry =
                 $crate::NativeSymbolEntry {
                     name: concat!(

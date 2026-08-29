@@ -354,7 +354,10 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
 pub fn compress_gzip<H: Handler + 'static>(min_bytes: usize, inner: H) -> impl Handler {
     let inner = Arc::new(inner);
     move |req: &Request, params: &Params| -> Response {
-        #[allow(unused_mut)]
+        #[allow(
+            unused_mut,
+            reason = "the binding is mutated only on the compression path this build may not include"
+        )]
         let mut resp = inner.serve(req, params);
         if resp.body.len() < min_bytes {
             return resp;

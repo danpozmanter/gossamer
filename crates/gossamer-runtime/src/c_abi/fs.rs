@@ -25,7 +25,10 @@ use super::*;
 use parking_lot::Mutex;
 
 #[derive(Default)]
-#[allow(clippy::struct_excessive_bools)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the flags mirror the OS open flags one for one"
+)]
 struct GosOpenOptions {
     read: bool,
     write: bool,

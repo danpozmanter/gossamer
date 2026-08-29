@@ -1,0 +1,50 @@
+// An enum variant payload that is an `Option` / `Result` carrier: two words,
+// a discriminant beside a payload, held in the node beside the other fields.
+
+enum Tagged {
+    Bare
+    Counted(i64, Option<Vec<i64>>)
+    Named(String, Option<String>)
+    Checked(Result<i64, String>)
+}
+
+enum Level { Low, High }
+
+enum Nested {
+    Only(Level, i64)
+}
+
+fn weight(t: Tagged) -> i64 {
+    match t {
+        Tagged::Bare => 0
+        Tagged::Counted(k, tags) => k + match tags { Some(v) => v.len(), None => 0 }
+        Tagged::Named(n, alias) => n.len() + alias.map(|a| a.len()).unwrap_or(0)
+        Tagged::Checked(r) => r.unwrap_or(-1)
+    }
+}
+
+fn rank(n: Nested) -> i64 {
+    match n {
+        Nested::Only(level, base) => base + match level { Level::Low => 1, Level::High => 2 }
+    }
+}
+
+fn main() {
+    println("{}", weight(Tagged::Bare))
+    println("{}", weight(Tagged::Counted(10, Some(#[1, 2, 3]))))
+    println("{}", weight(Tagged::Counted(10, None)))
+    println("{}", weight(Tagged::Named("abcd", Some("xy"))))
+    println("{}", weight(Tagged::Named("abcd", None)))
+    println("{}", weight(Tagged::Checked(Ok(7))))
+    println("{}", weight(Tagged::Checked(Err("no"))))
+    println("{}", rank(Nested::Only(Level::Low, 40)))
+    println("{}", rank(Nested::Only(Level::High, 40)))
+    println("{:?}", Tagged::Counted(1, Some(#[9, 8])))
+    println("{:?}", Tagged::Named("k", None))
+    let mut total = 0
+    for i in 0..200 {
+        total += weight(Tagged::Counted(i, Some(#[i, i + 1])))
+        total += weight(Tagged::Named(format("n{}", i), Some("tag")))
+    }
+    println("{}", total)
+}

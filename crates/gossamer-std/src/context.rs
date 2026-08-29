@@ -96,7 +96,10 @@ unsafe extern "C" fn ctx_register_hook(ctx_handle: *const u8, gid: u32) {
     }
 }
 
-#[allow(unsafe_code)]
+#[allow(
+    unsafe_code,
+    reason = "a C-ABI hook the runtime calls through a function pointer"
+)]
 unsafe extern "C" fn ctx_deregister_hook(ctx_handle: *const u8, gid: u32) {
     if ctx_handle.is_null() {
         return;
@@ -113,7 +116,10 @@ unsafe extern "C" fn ctx_deregister_hook(ctx_handle: *const u8, gid: u32) {
     }
 }
 
-#[allow(unsafe_code)]
+#[allow(
+    unsafe_code,
+    reason = "a C-ABI hook the runtime calls through a function pointer"
+)]
 unsafe extern "C" fn ctx_is_cancelled_hook(ctx_handle: *const u8) -> i32 {
     if ctx_handle.is_null() {
         return 0;

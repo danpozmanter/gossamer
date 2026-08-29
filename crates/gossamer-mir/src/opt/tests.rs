@@ -948,7 +948,7 @@ mod elision_tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, reason = "one test whose length is the chain it walks")]
     fn bounds_fact_flows_through_straight_line_access_chain() {
         use gossamer_types::IntTy;
         let mut tcx = TyCtxt::new();

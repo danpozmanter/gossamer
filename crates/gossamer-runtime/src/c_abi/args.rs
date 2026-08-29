@@ -365,7 +365,10 @@ pub unsafe extern "C" fn gos_rt_env_vars() -> *mut GosMap {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_env_home_dir() -> i128 {
     ffi_entry!(0i128, {
-        #[allow(deprecated)]
+        #[allow(
+            deprecated,
+            reason = "std::env::home_dir is the only std path to the home directory and its Windows behaviour is what this wants"
+        )]
         match std::env::home_dir() {
             Some(path) => {
                 let bytes = path.to_string_lossy();

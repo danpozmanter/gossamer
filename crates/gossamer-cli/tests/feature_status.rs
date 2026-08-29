@@ -128,11 +128,16 @@ fn check_mode_passes_when_shipped_item_has_docs_without_tier_evidence() {
     fs::create_dir_all(docs.join("language")).unwrap();
     fs::create_dir_all(docs.join("stdlib")).unwrap();
 
-    // Shipped means available and documented. Only Stable requires
-    // compatibility evidence from the sidecar.
+    // Shipped means available and documented. The tier record beside it is
+    // what the ledger already knows; this checks the docs requirement, so the
+    // record is present and passing and the doc page is what varies.
     let sidecar = tmp.join("sidecar.json");
     fs::write(docs.join("language/if_let.md"), "Status: shipped\n").unwrap();
-    fs::write(&sidecar, "[]\n").unwrap();
+    fs::write(
+        &sidecar,
+        "[{\"name\":\"lang::if_let\",\"tiers\":         {\"vm\":\"pass\",\"cranelift\":\"pass\",\"llvm\":\"pass\"}}]\n",
+    )
+    .unwrap();
 
     // Filter down to the one path so unrelated registry entries don't
     // bring the check down.
@@ -161,7 +166,11 @@ fn check_mode_passes_when_shipped_lacks_tier_evidence() {
     fs::write(docs.join("language/match.md"), "Status: shipped\n").unwrap();
 
     let sidecar = tmp.join("sidecar.json");
-    fs::write(&sidecar, "[]\n").unwrap();
+    fs::write(
+        &sidecar,
+        "[{\"name\":\"lang::match\",\"tiers\":         {\"vm\":\"pass\",\"cranelift\":\"pass\",\"llvm\":\"pass\"}}]\n",
+    )
+    .unwrap();
 
     let (code, stdout, stderr) = run(&[
         "feature-status",

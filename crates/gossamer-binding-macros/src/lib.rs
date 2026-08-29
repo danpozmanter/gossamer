@@ -253,7 +253,7 @@ fn expand_gos_opaque(block: &ItemImpl) -> TokenStream2 {
             #( #keep_methods )*
         }
 
-        #[allow(non_upper_case_globals)]
+        #[allow(non_upper_case_globals, reason = "the registry static is named after the user's type, whose case the macro cannot change")]
         static #registry_ident: ::gossamer_binding::opaque::Registry<::gossamer_binding::parking_lot::Mutex<#self_ty>>
             = ::gossamer_binding::opaque::Registry::new();
 

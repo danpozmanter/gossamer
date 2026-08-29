@@ -2876,7 +2876,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one table-driven test whose length is its case list"
+    )]
     fn deterministic_non_register_operand_mutations_are_rejected() {
         let cases = [
             (

@@ -1379,6 +1379,48 @@ impl<'a> Builder<'a> {
         self.expr_runtime_kind(expr) == Some("http::SendResult")
     }
 
+    /// Byte offset of each payload field within a heap enum node's slot slab.
+    ///
+    /// A field occupies its declared slot width, the way a struct field does,
+    /// so a two-word `Option` / `Result` / inline-enum field keeps both its
+    /// discriminant and its payload word. Every other field is one word: a
+    /// multi-slot struct / tuple / array payload is stored as the pointer to
+    /// its box, and a field whose declared type never resolved is read and
+    /// written as a bare word.
+    ///
+    /// Construction and every match site must agree on these offsets, so both
+    /// ends compute them from the same declared field types.
+    pub(crate) fn variant_payload_offsets(&self, field_tys: &[Ty], n_fields: usize) -> Vec<i64> {
+        use gossamer_types::TyKind;
+        let mut offsets = Vec::with_capacity(n_fields);
+        let mut byte = 0i64;
+        for i in 0..n_fields {
+            offsets.push(byte);
+            let wide = field_tys
+                .get(i)
+                .copied()
+                .filter(|&t| !matches!(self.tcx.kind_of(t), TyKind::Var(_) | TyKind::Error))
+                .is_some_and(|t| crate::lower::carrier_ref::is_two_word_carrier(self.tcx, t));
+            byte += if wide { 16 } else { 8 };
+        }
+        offsets
+    }
+
+    /// Total payload bytes of a variant whose fields have these offsets.
+    pub(crate) fn variant_payload_bytes(&self, field_tys: &[Ty], n_fields: usize) -> i64 {
+        use gossamer_types::TyKind;
+        let mut byte = 0i64;
+        for i in 0..n_fields {
+            let wide = field_tys
+                .get(i)
+                .copied()
+                .filter(|&t| !matches!(self.tcx.kind_of(t), TyKind::Var(_) | TyKind::Error))
+                .is_some_and(|t| crate::lower::carrier_ref::is_two_word_carrier(self.tcx, t));
+            byte += if wide { 16 } else { 8 };
+        }
+        byte.max(8)
+    }
+
     /// Whether `ty`'s Ok / Some payload is itself a `Result` or `Option`.
     ///
     /// A carrier is two words and does not fit the payload half, so a

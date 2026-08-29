@@ -1602,10 +1602,12 @@ fn builtin_channel_send(args: &[Value]) -> RuntimeResult<Value> {
         ));
     };
     let value = args.get(1).cloned().unwrap_or(Value::Unit);
-    if channel.send(value) {
-        Ok(Value::Unit)
-    } else {
-        Err(crate::value::deadlock_error("send"))
+    match channel.send(value) {
+        crate::value::SendOutcome::Sent => Ok(Value::Unit),
+        crate::value::SendOutcome::Closed => Err(RuntimeError::Panic(
+            "send on closed channel".to_string(),
+        )),
+        crate::value::SendOutcome::Deadlocked => Err(crate::value::deadlock_error("send")),
     }
 }
 

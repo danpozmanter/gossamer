@@ -26,7 +26,10 @@ fn data_array(response: &Value) -> Vec<u32> {
 
 /// Decoded view of one semantic-token quintuple.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "the fields are read by the assertions this test builds"
+)]
 struct Token {
     line: u32,
     start: u32,

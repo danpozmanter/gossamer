@@ -1437,7 +1437,10 @@ fn sync_parent_dir(parent: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-#[allow(clippy::unnecessary_wraps)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the Windows arm shares the fallible signature its Unix twin needs"
+)]
 fn sync_parent_dir(_parent: &Path) -> io::Result<()> {
     // Windows directory handles need platform-specific sharing flags. Rename
     // is still atomic here; this helper keeps the API portable until that

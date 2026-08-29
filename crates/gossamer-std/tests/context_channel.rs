@@ -27,7 +27,7 @@ use gossamer_std::context::{Context, with_cancel};
 
 #[test]
 fn chan_recv_ctx_returns_some_value_when_send_happens_before_cancel() {
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, reason = "the test drives the raw channel C-ABI directly")]
     let chan: *mut u8 = unsafe { gossamer_runtime::c_abi::gos_rt_chan_new(8, 0).cast() };
     assert!(!chan.is_null(), "chan_new returned null");
 
@@ -37,7 +37,7 @@ fn chan_recv_ctx_returns_some_value_when_send_happens_before_cancel() {
     let sender = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(20));
         let val_slot: i64 = 42;
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, reason = "the test drives the raw channel C-ABI directly")]
         unsafe {
             gossamer_runtime::c_abi::gos_rt_chan_send(
                 chan_send as *mut _,
@@ -50,7 +50,7 @@ fn chan_recv_ctx_returns_some_value_when_send_happens_before_cancel() {
     assert_eq!(result, Some(42), "expected Some(42), got {result:?}");
     sender.join().expect("sender thread");
 
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, reason = "the test drives the raw channel C-ABI directly")]
     unsafe {
         gossamer_runtime::c_abi::gos_rt_chan_drop(chan.cast());
     }
@@ -58,7 +58,7 @@ fn chan_recv_ctx_returns_some_value_when_send_happens_before_cancel() {
 
 #[test]
 fn chan_recv_ctx_returns_none_when_context_is_already_cancelled_at_entry() {
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, reason = "the test drives the raw channel C-ABI directly")]
     let chan: *mut u8 = unsafe { gossamer_runtime::c_abi::gos_rt_chan_new(8, 0).cast() };
     assert!(!chan.is_null(), "chan_new returned null");
 
@@ -75,7 +75,7 @@ fn chan_recv_ctx_returns_none_when_context_is_already_cancelled_at_entry() {
         "pre-cancelled context must short-circuit to None, got {result:?}",
     );
 
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, reason = "the test drives the raw channel C-ABI directly")]
     unsafe {
         gossamer_runtime::c_abi::gos_rt_chan_drop(chan.cast());
     }
@@ -92,7 +92,7 @@ fn chan_recv_ctx_returns_none_when_cancel_fires_mid_recv_from_os_thread() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicI64, Ordering};
 
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, reason = "the test drives the raw channel C-ABI directly")]
     let chan: *mut u8 = unsafe { gossamer_runtime::c_abi::gos_rt_chan_new(8, 0).cast() };
     assert!(!chan.is_null());
 
@@ -125,7 +125,7 @@ fn chan_recv_ctx_returns_none_when_cancel_fires_mid_recv_from_os_thread() {
 
 #[test]
 fn chan_recv_ctx_returns_none_when_channel_is_closed_with_no_value() {
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, reason = "the test drives the raw channel C-ABI directly")]
     let chan: *mut u8 = unsafe { gossamer_runtime::c_abi::gos_rt_chan_new(8, 0).cast() };
     assert!(!chan.is_null(), "chan_new returned null");
 

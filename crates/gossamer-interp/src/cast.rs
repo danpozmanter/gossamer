@@ -11,7 +11,10 @@ use crate::value::Value;
 /// `pub` because it rides inside the (crate-private) `bytecode::Op`
 /// enum, which is itself declared `pub` within its private module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(unreachable_pub)]
+#[allow(
+    unreachable_pub,
+    reason = "the cast target is public to the crate's own backends only"
+)]
 pub enum CastTarget {
     /// Narrow signed/unsigned int: truncate to `width` bits, then
     /// extend by `signed`.

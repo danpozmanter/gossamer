@@ -1172,7 +1172,17 @@ pub(super) fn lower_intrinsic_call_io_math(
         }
         "gos_enum_load" => {
             // Load i64 at ((ptr & !7) + off) - enum payload read; mask is
-            // a no-op for header-repr (aligned) pointers.
+            // a no-op for header-repr (aligned) pointers. A two-word
+            // `Option` / `Result` / inline-enum field occupies both its words
+            // in the node, so the read takes its own width - a word-sized
+            // load would keep only the discriminant.
+            let load_ty = intrinsics
+                .body_cl_types
+                .get(destination.local.0 as usize)
+                .copied()
+                .flatten()
+                .filter(|&t| t == types::I128)
+                .unwrap_or(types::I64);
             let p = match args.first() {
                 Some(arg) => {
                     lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
@@ -1190,8 +1200,15 @@ pub(super) fn lower_intrinsic_call_io_math(
             // dereferencing address zero.
             let load_b = builder.create_block();
             let done_b = builder.create_block();
-            builder.append_block_param(done_b, types::I64);
-            let zero = builder.ins().iconst(types::I64, 0);
+            builder.append_block_param(done_b, load_ty);
+            // `iconst` carries at most 64 bits, so a wide zero is built from
+            // two halves.
+            let zero = if load_ty == types::I128 {
+                let half = builder.ins().iconst(types::I64, 0);
+                builder.ins().iconcat(half, half)
+            } else {
+                builder.ins().iconst(load_ty, 0)
+            };
             builder
                 .ins()
                 .brif(base, load_b, &[], done_b, &[zero.into()]);
@@ -1199,7 +1216,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             builder.seal_block(load_b);
             let addr = builder.ins().iadd(base, off);
             let lv = builder.ins().load(
-                types::I64,
+                load_ty,
                 cranelift_codegen::ir::MemFlagsData::trusted(),
                 addr,
                 0,
@@ -1585,10 +1602,11 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
-        "gos_store" => {
+        "gos_store" | "gos_store_i128" => {
             // Raw heap store: `gos_store(ptr, offset, value)` writes
             // `value` as an i64 at `ptr + offset`. Companion to
-            // `gos_load` + `gos_alloc`.
+            // `gos_load` + `gos_alloc`. `gos_store_i128` writes both words
+            // of a two-word carrier into a slot sized for it.
             if args.len() < 3 {
                 bail!("native codegen: gos_store requires (ptr, offset, value)");
             }
@@ -1608,7 +1626,13 @@ pub(super) fn lower_intrinsic_call_io_math(
             // adding so the iadd doesn't trip the verifier.
             let ptr_val = coerce_arg_to(builder, ptr_raw, types::I64).unwrap_or(ptr_raw);
             let offset_val = coerce_arg_to(builder, offset_raw, types::I64).unwrap_or(offset_raw);
-            let value = coerce_arg_to(builder, value, types::I64).unwrap_or(value);
+            // The wide store keeps both words of a two-word carrier; every
+            // other slot in the language is the one word `gos_store` writes.
+            let value = if name == "gos_store_i128" {
+                coerce_arg_to(builder, value, types::I128).unwrap_or(value)
+            } else {
+                coerce_arg_to(builder, value, types::I64).unwrap_or(value)
+            };
             let addr_i64 = builder.ins().iadd(ptr_val, offset_val);
             let addr = if ptr_ty == types::I64 {
                 addr_i64

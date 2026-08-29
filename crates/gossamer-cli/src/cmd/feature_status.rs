@@ -916,6 +916,8 @@ mod tests {
     /// the ledger derives, and tiers only a fixture can put there.
     #[test]
     fn json_output_includes_item_evidence_fields() {
+        // A language construct earns its tiers from the fixtures that contain
+        // it, the way a module earns them from the fixtures that import it.
         let derived = feature_status::derived_status("lang::if", Status::Shipped);
         let evidence = feature_status::item_evidence("lang::if", derived);
         let mut output = String::new();
@@ -924,12 +926,26 @@ mod tests {
             &mut output,
             evidence.supported_tiers.iter().map(|tier| tier.tag()),
         );
-        assert_eq!(output, "\"unproven\"[]");
+        assert_eq!(output, "\"shipped\"[\"vm\",\"cranelift\",\"llvm\"]");
         assert_eq!(
             evidence.doc_path.as_deref(),
             Some("docs_src/language/if.md")
         );
-        assert!(!evidence.known_limits.is_empty());
+        assert!(!evidence.positive_tests.is_empty());
+
+        // A construct no line scan can name uniquely still claims nothing.
+        let unproven = feature_status::item_evidence(
+            "lang::slicing",
+            feature_status::derived_status("lang::slicing", Status::Shipped),
+        );
+        let mut bare = String::new();
+        bare.push_str(&json_string(unproven.status.tag()));
+        json_string_array(
+            &mut bare,
+            unproven.supported_tiers.iter().map(|tier| tier.tag()),
+        );
+        assert_eq!(bare, "\"unproven\"[]");
+        assert!(!unproven.known_limits.is_empty());
 
         let covered = feature_status::item_evidence("std::fs::read_to_string", Status::Shipped);
         let mut tiers = String::new();

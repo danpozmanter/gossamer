@@ -1042,7 +1042,10 @@ pub type RawPeerSocket = i32;
 /// is gone. Answers `false` on a platform with no such probe, where a
 /// request simply runs to completion after its client leaves.
 #[cfg(unix)]
-#[allow(unsafe_code)]
+#[allow(
+    unsafe_code,
+    reason = "probing a socket needs a raw recv with no safe wrapper"
+)]
 #[must_use]
 pub fn peer_is_gone(socket: RawPeerSocket) -> bool {
     let mut probe = [0u8; 1];
@@ -1067,7 +1070,10 @@ pub fn peer_is_gone(socket: RawPeerSocket) -> bool {
 /// readable has neither data nor an end-of-stream waiting, and a readable
 /// one answers the `MSG_PEEK` immediately without consuming the byte.
 #[cfg(windows)]
-#[allow(unsafe_code)]
+#[allow(
+    unsafe_code,
+    reason = "probing a socket needs a raw recv with no safe wrapper"
+)]
 #[must_use]
 pub fn peer_is_gone(socket: RawPeerSocket) -> bool {
     use windows_sys::Win32::Networking::WinSock::{FD_SET, MSG_PEEK, TIMEVAL, recv, select};

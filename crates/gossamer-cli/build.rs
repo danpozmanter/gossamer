@@ -36,7 +36,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[path = "../gossamer-driver/src/macos_deployment.rs"]
-#[allow(unreachable_pub)]
+#[allow(
+    unreachable_pub,
+    reason = "a build-script module the script alone consumes"
+)]
 mod macos_deployment;
 
 /// Runtime symbols that intentionally have no codegen dispatch arm.

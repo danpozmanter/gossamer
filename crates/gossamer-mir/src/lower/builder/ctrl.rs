@@ -885,6 +885,10 @@ impl<'a> Builder<'a> {
                 }
                 if let Some(order) = order {
                     let declared_tys = self.enums.field_tys_of(&matched_enum, &name.name);
+                    let payload_offsets = self.variant_payload_offsets(
+                        declared_tys.as_deref().unwrap_or(&[]),
+                        order.len(),
+                    );
                     for f in fields {
                         let pos = order.iter().position(|n| n == &f.name.name);
                         let Some(pos) = pos else { continue };
@@ -955,9 +959,12 @@ impl<'a> Builder<'a> {
                             let off_local = self.fresh(i64_ty);
                             self.emit_assign(
                                 Place::local(off_local),
-                                Rvalue::Use(Operand::Const(ConstValue::Int(
-                                    i128::from(field_idx) * 8,
-                                ))),
+                                Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(
+                                    payload_offsets
+                                        .get(pos)
+                                        .copied()
+                                        .unwrap_or(i64::from(field_idx) * 8),
+                                )))),
                                 span,
                             );
                             self.emit_assign(
@@ -1131,6 +1138,10 @@ impl<'a> Builder<'a> {
                     // loading from offsets (i+1)*8 of the scrutinee pointer.
                     let any_payload = self.enums.enum_has_any_payload(&matched_enum);
                     let declared_tys = self.enums.field_tys_of(&matched_enum, &name.name);
+                    let payload_offsets = self.variant_payload_offsets(
+                        declared_tys.as_deref().unwrap_or(&[]),
+                        fields.len(),
+                    );
                     let mut acc = cmp;
                     for (i, field) in fields.iter().enumerate() {
                         if let HirPatKind::Binding { name: bname, .. } = &field.kind {
@@ -1193,7 +1204,9 @@ impl<'a> Builder<'a> {
                                 let off_local = self.fresh(i64_ty);
                                 self.emit_assign(
                                     Place::local(off_local),
-                                    Rvalue::Use(Operand::Const(ConstValue::Int((i * 8) as i128))),
+                                    Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(
+                                        payload_offsets.get(i).copied().unwrap_or((i * 8) as i64),
+                                    )))),
                                     span,
                                 );
                                 // Use the declared variant field type (e.g. f64) so
@@ -1266,7 +1279,9 @@ impl<'a> Builder<'a> {
                                 let off_local = self.fresh(i64_ty);
                                 self.emit_assign(
                                     Place::local(off_local),
-                                    Rvalue::Use(Operand::Const(ConstValue::Int((i * 8) as i128))),
+                                    Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(
+                                        payload_offsets.get(i).copied().unwrap_or((i * 8) as i64),
+                                    )))),
                                     span,
                                 );
                                 // A multi-slot aggregate field (e.g. the
@@ -2223,6 +2238,8 @@ impl<'a> Builder<'a> {
             .enum_index_name_of(scrut_ty)
             .and_then(|en| self.enums.field_tys_of(&en, &name.name))
             .or_else(|| self.enums.variant_field_tys.get(&name.name).cloned());
+        let payload_offsets =
+            self.variant_payload_offsets(declared_tys.as_deref().unwrap_or(&[]), fields.len());
         for (i, field) in fields.iter().enumerate() {
             if matches!(field.kind, HirPatKind::Wildcard | HirPatKind::Rest) {
                 continue;
@@ -2259,7 +2276,9 @@ impl<'a> Builder<'a> {
                 let off_local = self.fresh(i64_ty);
                 self.emit_assign(
                     Place::local(off_local),
-                    Rvalue::Use(Operand::Const(ConstValue::Int((i * 8) as i128))),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(
+                        payload_offsets.get(i).copied().unwrap_or((i * 8) as i64),
+                    )))),
                     span,
                 );
                 self.emit_assign(

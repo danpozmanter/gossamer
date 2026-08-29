@@ -53,7 +53,10 @@ impl<'a> Builder<'a> {
     /// resolved by [`Self::lower_method_call`]. Extracted to keep
     /// `lower_method_call` itself under the file-size budget.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one dispatch whose length is the runtime-symbol set"
+    )]
     pub(crate) fn dispatch_via_runtime_symbol(
         &mut self,
         sym: &'static str,

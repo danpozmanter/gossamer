@@ -4723,7 +4723,10 @@ fn select_try_once(
                 // A bounded channel at capacity makes this send arm
                 // not-ready; fall through to the next arm rather than
                 // blocking inside the non-blocking probe.
-                if ch.try_send(value) {
+                // A closed channel makes this arm not-ready rather than
+                // panicking inside the readiness probe: the blocking send
+                // the arm stands for is what raises that.
+                if ch.try_send(value) == crate::value::SendOutcome::Sent {
                     return Some(arm.body_block);
                 }
             }

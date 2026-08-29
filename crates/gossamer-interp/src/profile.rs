@@ -16,7 +16,10 @@ use std::cell::RefCell;
 #[cfg(feature = "profile")]
 use std::fmt::Write as _;
 
-#[allow(unused_imports)]
+#[allow(
+    unused_imports,
+    reason = "the import is used only by the counted build of this module"
+)]
 use crate::bytecode::Op;
 
 /// Maximum opcode tag we count. The current `Op` enum has ~140
@@ -116,7 +119,10 @@ fn op_tag(op: Op) -> usize {
 /// Cheap stub when the feature is off.
 #[inline]
 #[cfg(not(feature = "profile"))]
-#[allow(unsafe_code)]
+#[allow(
+    unsafe_code,
+    reason = "the opcode tag is read off the enum's discriminant"
+)]
 fn op_tag(_op: Op) -> usize {
     0
 }
@@ -209,7 +215,11 @@ pub fn reset() {}
 /// thread. Empty when the `profile` feature is disabled.
 #[cfg(feature = "profile")]
 #[must_use]
-#[allow(clippy::too_many_lines, clippy::uninlined_format_args)]
+#[allow(
+    clippy::too_many_lines,
+    clippy::uninlined_format_args,
+    reason = "one report whose length is its column list"
+)]
 pub fn dump_report() -> String {
     CTRS.with(|c| {
         let c = c.borrow();
@@ -350,7 +360,10 @@ pub fn dump_report() -> String {
 /// match so adding a variant without updating here is a compile
 /// error inside the `profile` build.
 #[cfg(feature = "profile")]
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one match whose length is the opcode set"
+)]
 fn op_label(tag: usize) -> &'static str {
     use crate::bytecode::Op as O;
     // Build a once-cell array indexed by tag → variant name. We

@@ -1,7 +1,37 @@
 # Changelog
 
-## 0.58.0 - Match payloads, clone shares, sandbox removed
+## 0.58.0 - Carrier payloads, closed-channel sends, language evidence, sandbox removed
 
+- An enum variant's payload field occupies its declared width in the node, the
+  way a struct's field does. Every field took one word, so an `Option` or
+  `Result` field - two words, a discriminant beside a payload - kept only its
+  discriminant: `Node(10, Some(#[1, 2]))` read back as `Some(#[])` under
+  `gos build`, and a `match` on it took the `Some` arm over an empty payload.
+- `gos feature-status` reports what a language construct is proven on. Both the
+  fixture ledger and the tier-evidence walk read a fixture's `use std::` lines
+  and nothing else, so every `lang::` row - `closure`, `cohort`, `match`,
+  `for` - said `unproven` with no tier evidence whatever ran. A construct now
+  earns its row from the fixtures that contain it, the way a module does.
+- A send into a closed channel panics with `send on closed channel`, matching
+  Go and the `close of closed channel` panic beside it. Such a send used to
+  succeed silently, so a producer that kept sending after a close handed its
+  values to a receiver whose drain had already ended: the program printed a
+  different total on each tier, and lost the values on all of them.
+- `gos_rt_chan_send`, `gos_rt_chan_try_send`, and `gos_rt_chan_close` are
+  declared may-unwind, so the goroutine-scoped panic each can raise leaves the
+  shim the way every other Gossamer fault does. A panic raised inside one of
+  them from a spawned goroutine aborted the process under `gos build` - the
+  unwind crossed a `nounwind` boundary - where the same panic on the main
+  goroutine reported and exited cleanly.
+- `recv()` answers `None` when the channel is closed and drained. The skill
+  card said it also ended once every sender was gone, which no channel tracks:
+  a drain over producers that never call `close()` blocks, as it does in Go.
+- A `Result` field renders, so a type that holds one keeps its `{}` and `{:?}`
+  rendering. Only `Option` and the sequence and keyed containers were taken as
+  rendering through what they hold, so a single `Result` field or variant
+  payload left the whole enclosing type without a rendering: its other fields
+  printed through a fallback that spelled a `Vec` in bare brackets, and
+  `gos build` refused the program outright.
 - `std::sandbox`, `gos build --sandbox`, and `project.sandbox` are gone. An OS
   sandbox is the operating system's to describe, and one policy model spanning
   Landlock, Seatbelt, and AppContainer could only ever mean the weakest of the
@@ -35,21 +65,6 @@
   holding expressions and an expression holding a query each waited for the
   other to be proven renderable, so neither was, and `println` of either
   failed the build.
-- A `strict` run on Windows no longer walks a subtree for every ancestor it
-  grants traverse on. `SetNamedSecurityInfoW` recomputes the inherited entries
-  of every existing child, so a traverse entry on `C:\`, on a home directory,
-  or on a toolchain root cost a walk of everything beneath it - minutes per run
-  on a machine with a large profile - and that entry is written
-  `NO_INHERITANCE`, so the walk had nothing to change. An edit confined to one
-  object's own DACL now goes through `SetFileSecurityW`, which sets that object
-  and stops, and the object keeps the inheritance model it had: whether its
-  DACL is severed from its parent's, and whether Windows maintains the
-  inherited entries itself, are read off the descriptor the edit was built from
-  and carried onto the one that replaces it.
-- Revoking costs what granting did. Which write a revoke takes is decided by
-  the entry being removed, so an ancestor's traverse entry is taken back
-  without a walk, while an inheritable grant still propagates to the subtree it
-  reached.
 - The standard library reference lists `runtime::cohorts`, `runtime::root`,
   `sync::shield`, `sync::with_timeout`, and `time::after`, which shipped
   without reaching the generated page.

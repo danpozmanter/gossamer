@@ -1023,7 +1023,10 @@ pub(crate) fn collect_enum_variants(program: &HirProgram) -> EnumIndex {
             _ => {}
         }
     }
-    #[allow(clippy::items_after_statements)]
+    #[allow(
+        clippy::items_after_statements,
+        reason = "the nested helper belongs beside the walk that uses it"
+    )]
     pub(crate) fn scan_block(
         b: &gossamer_hir::HirBlock,
         idx: &HashMap<String, (String, usize)>,

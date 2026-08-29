@@ -161,7 +161,10 @@ fn install_native_handlers() {
 }
 
 #[cfg(windows)]
-#[allow(unsafe_code)]
+#[allow(
+    unsafe_code,
+    reason = "installing an OS signal handler is unsafe by construction"
+)]
 fn install_native_handlers() {
     use std::sync::Once;
 

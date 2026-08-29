@@ -505,6 +505,10 @@ pub enum RawIntrinsic {
     Load,
     /// `gos_store(ptr, offset, value)`.
     Store,
+    /// `gos_store_i128(ptr, offset, carrier)` - writes both words of a
+    /// two-word `Option` / `Result` / inline-enum value into a slot sized
+    /// for it. `gos_store` writes one word, which every other slot is.
+    StoreI128,
     /// `gos_alloc(size?)`.
     Alloc,
     /// `gos_rc_alloc(size?, meta?)`.
@@ -608,6 +612,7 @@ impl RawIntrinsic {
             "gos_enum_set_disc" => Self::EnumSetDisc,
             "gos_load" => Self::Load,
             "gos_store" => Self::Store,
+            "gos_store_i128" => Self::StoreI128,
             "gos_alloc" => Self::Alloc,
             "gos_rc_alloc" => Self::RcAlloc,
             "gos_rc_alloc_tagged" => Self::RcAllocTagged,
@@ -651,7 +656,9 @@ impl RawIntrinsic {
             Self::EnumLoad | Self::EnumTag | Self::EnumSetDisc | Self::Load => {
                 RawIntrinsicArity::Exact(2)
             }
-            Self::Store | Self::RcAllocReuse | Self::EnumStructEq => RawIntrinsicArity::Exact(3),
+            Self::Store | Self::StoreI128 | Self::RcAllocReuse | Self::EnumStructEq => {
+                RawIntrinsicArity::Exact(3)
+            }
             Self::MapEnumKey => RawIntrinsicArity::Range { min: 3, max: 4 },
             Self::EnumDiscTag
             | Self::EnumUntag

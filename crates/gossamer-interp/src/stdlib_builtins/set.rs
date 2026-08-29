@@ -623,7 +623,10 @@ impl MutexCell {
 }
 pub(crate) static ONCE_REGISTRY: GlobalReg<StdHashMap<i64, Arc<parking_lot::Once>>> =
     GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
-#[allow(clippy::type_complexity)]
+#[allow(
+    clippy::type_complexity,
+    reason = "the registry's type is the shared map it holds, and naming it would hide that"
+)]
 pub(crate) static SYNC_MAP_REGISTRY: GlobalReg<
     StdHashMap<i64, Arc<parking_lot::RwLock<StdHashMap<String, String>>>>,
 > = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));

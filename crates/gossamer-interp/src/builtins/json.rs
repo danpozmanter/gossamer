@@ -508,7 +508,7 @@ fn json_child_to_lazy_value(parent: &JsonInner, child: &json_std::Value) -> Valu
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, reason = "one match whose length is the value set")]
 fn gossamer_to_json_value(value: &Value) -> json_std::Value {
     match value {
         Value::Json(value) => value.to_owned_value(),

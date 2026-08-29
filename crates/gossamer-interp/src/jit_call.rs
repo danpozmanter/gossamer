@@ -406,12 +406,18 @@ pub(crate) fn build_variant_to_native_enum(
 pub(crate) struct NativeEnumBuild {
     pub(crate) ptr: i64,
     pub(crate) exclusive: bool,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "the moving-transfer path is reached only from the native-enum builder a target may not compile"
+    )]
     actions: Vec<NativeFieldAction>,
 }
 
 impl NativeEnumBuild {
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "the moving-transfer path is reached only from the native-enum builder a target may not compile"
+    )]
     pub(crate) fn apply_to_fields(self, inner: &mut VariantInner) -> (i64, bool) {
         for action in self.actions {
             match action {
@@ -429,7 +435,10 @@ impl NativeEnumBuild {
 }
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "the moving-transfer path is reached only from the native-enum builder a target may not compile"
+)]
 enum NativeFieldAction {
     DropOriginal(usize),
     TransferOriginal(usize),
@@ -449,7 +458,10 @@ struct BuiltField {
     ownership: BuiltFieldOwnership,
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "the moving-transfer path is reached only from the native-enum builder a target may not compile"
+)]
 pub(crate) fn build_variant_to_native_enum_moving(
     inner: &VariantInner,
     shape: &NativeEnumShape,

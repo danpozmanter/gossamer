@@ -236,6 +236,7 @@ const SPECS: &[Spec] = &[
     // type has to come from the call site.
     spec("feature-testing-examples/enum_method_dispatch_and_generics.gos"),
     spec("feature-testing-examples/enum_tuple_payload_collections.gos"),
+    spec("feature-testing-examples/enum_carrier_payload.gos"),
     // An indexed carrier store hands the sequence its own share of the
     // payload, so a later allocation cannot land on a block an element
     // still names.

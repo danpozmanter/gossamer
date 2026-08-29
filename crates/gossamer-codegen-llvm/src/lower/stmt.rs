@@ -301,6 +301,7 @@ impl<'a> Lowerer<'a> {
                     *name,
                     "gos_load"
                         | "gos_store"
+                        | "gos_store_i128"
                         | "gos_alloc"
                         | "gos_rc_alloc"
                         | "gos_rc_alloc_tagged"
@@ -375,6 +376,7 @@ impl<'a> Lowerer<'a> {
                     *name,
                     "gos_load"
                         | "gos_store"
+                        | "gos_store_i128"
                         | "gos_alloc"
                         | "gos_rc_alloc"
                         | "gos_rc_alloc_tagged"

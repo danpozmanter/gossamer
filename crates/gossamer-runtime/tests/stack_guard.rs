@@ -76,7 +76,10 @@ fn unbounded_recursion_reports_stack_overflow() {
 
 #[cfg(unix)]
 #[inline(never)]
-#[allow(unconditional_recursion)]
+#[allow(
+    unconditional_recursion,
+    reason = "the recursion is the subject of the test"
+)]
 fn recurse(depth: usize) -> usize {
     // A small stack-resident array keeps every frame meaningful
     // even after the optimiser inlines neighbour calls. The

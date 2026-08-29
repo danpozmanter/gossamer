@@ -2,18 +2,18 @@
 //
 // Usage: gos run scripts/feature_status_diff.gos <fresh> <committed>
 //
-// The fresh sidecar carries a record per fixture as well as per module;
-// only the `std::` rows are the committed evidence, so the comparison
-// is over those. A tier that reached no verdict is absent from a
-// record rather than marked failing, so the comparison is over the
+// The fresh sidecar carries a record per fixture as well as per catalog
+// item; only the `std::` and `lang::` rows are the committed evidence, so
+// the comparison is over those. A tier that reached no verdict is absent
+// from a record rather than marked failing, so the comparison is over the
 // tiers each row actually states.
 
 use std::{env, fs, process, sort}
 use std::collections::Map
 use std::encoding::json
 
-/// The `std::` rows of `path`, each rendered as the tiers it states.
-fn evidence(path: String, only_std: bool) -> Map<String, String> {
+/// The catalog rows of `path`, each rendered as the tiers it states.
+fn evidence(path: String, only_catalog: bool) -> Map<String, String> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text
         Err(e) => {
@@ -34,7 +34,7 @@ fn evidence(path: String, only_std: bool) -> Map<String, String> {
         let record = json::at(document, index)
         index += 1
         let name = field(record, "name")
-        if only_std && !name.starts_with("std::") {
+        if only_catalog && !name.starts_with("std::") && !name.starts_with("lang::") {
             continue
         }
         rows.insert(name, tiers_of(json::get(record, "tiers")))
