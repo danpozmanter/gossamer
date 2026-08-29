@@ -361,7 +361,6 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         let scrutinee_local = self.lower_expr(scrutinee)?;
-        let bool_ty = self.tcx.bool_ty();
         let result_local = self.fresh(ty);
         let join = self.new_block(span);
 
@@ -410,35 +409,29 @@ impl<'a> Builder<'a> {
             // (e.g. wildcard arms have no payload to extract).
             self.payload_defer_block = None;
 
-            // Combine the pattern predicate with the guard (if any).
-            let predicate = if let Some(guard_expr) = &arm.guard {
-                let guard_local = self.lower_expr(guard_expr)?;
-                let combined = self.fresh(bool_ty);
-                self.emit_assign(
-                    Place::local(combined),
-                    Rvalue::BinaryOp {
-                        // Bool is i1/i8 at runtime; bitwise and is
-                        // equivalent to logical AND for the
-                        // 0/1 truth values produced above.
-                        op: BinOp::BitAnd,
-                        lhs: Operand::Copy(Place::local(pat_match_local)),
-                        rhs: Operand::Copy(Place::local(guard_local)),
-                    },
-                    span,
-                );
-                combined
-            } else {
-                pat_match_local
-            };
-
             self.terminate(Terminator::SwitchInt {
-                discriminant: Operand::Copy(Place::local(predicate)),
+                discriminant: Operand::Copy(Place::local(pat_match_local)),
                 arms: vec![(0, next_block)],
                 default: setup_block,
             });
 
             self.set_current(setup_block);
-            self.terminate(Terminator::Goto { target: arm_block });
+            // A guard reads the names the pattern bound, and those are
+            // extracted in this block rather than in the header, so the guard
+            // belongs where they are live. That is also where the language
+            // puts it: a guard decides between this arm and the next one only
+            // once the pattern has matched, so a guard over a payload names
+            // this variant's payload.
+            if let Some(guard_expr) = &arm.guard {
+                let guard_local = self.lower_expr(guard_expr)?;
+                self.terminate(Terminator::SwitchInt {
+                    discriminant: Operand::Copy(Place::local(guard_local)),
+                    arms: vec![(0, next_block)],
+                    default: arm_block,
+                });
+            } else {
+                self.terminate(Terminator::Goto { target: arm_block });
+            }
 
             self.set_current(arm_block);
             if let Some(value_local) = self.lower_expr(&arm.body) {
@@ -1141,6 +1134,19 @@ impl<'a> Builder<'a> {
                     let mut acc = cmp;
                     for (i, field) in fields.iter().enumerate() {
                         if let HirPatKind::Binding { name: bname, .. } = &field.kind {
+                            // A payload word is only this variant's to read once
+                            // the discriminant says so. `payload_defer_block`
+                            // names the block the match arm enters after its
+                            // test, so the extraction lands there rather than in
+                            // the pre-branch header every sibling variant also
+                            // runs through. A binding typed as a multi-slot
+                            // struct materialises the payload by value, so a
+                            // header read would copy from whatever word a
+                            // narrower variant left in that slot.
+                            let saved_current = self.current;
+                            if let Some(defer) = self.payload_defer_block {
+                                self.current = Some(defer);
+                            }
                             if scrut_is_inline {
                                 // 2-word by-value enum: the single field is the
                                 // payload high word.
@@ -1227,6 +1233,7 @@ impl<'a> Builder<'a> {
                             } else {
                                 self.bind_local(&bname.name, scrutinee);
                             }
+                            self.current = saved_current;
                         } else if !matches!(field.kind, HirPatKind::Wildcard) {
                             // Nested constructor pattern (e.g. Color::Red inside
                             // Shape::Circle): load the field as i64 and recurse.
@@ -1289,6 +1296,34 @@ impl<'a> Builder<'a> {
                                     }
                                     None => self.fresh(i64_ty),
                                 };
+                                // Reading a payload word is side-effect-free
+                                // whatever variant the value turned out to be,
+                                // which is what lets the whole predicate run
+                                // ahead of the branch. Materialising an
+                                // aggregate is not: it dereferences the word as
+                                // the box the payload points at and retains that
+                                // box's children, so it belongs behind the
+                                // discriminant test that says this variant wrote
+                                // the slot. The sub-pattern reads the aggregate,
+                                // so it comes along and reports through a local
+                                // the header seeds as `false`.
+                                let guard = nested_ty.map(|_| {
+                                    let guarded = self.new_block(span);
+                                    let merge = self.new_block(span);
+                                    let answer = self.fresh(bool_ty);
+                                    self.emit_assign(
+                                        Place::local(answer),
+                                        Rvalue::Use(Operand::Const(ConstValue::Bool(false))),
+                                        span,
+                                    );
+                                    self.terminate(Terminator::SwitchInt {
+                                        discriminant: Operand::Copy(Place::local(acc)),
+                                        arms: vec![(0, merge)],
+                                        default: guarded,
+                                    });
+                                    self.set_current(guarded);
+                                    (answer, merge)
+                                });
                                 self.emit_assign(
                                     Place::local(field_local),
                                     Rvalue::CallIntrinsic {
@@ -1300,9 +1335,27 @@ impl<'a> Builder<'a> {
                                     },
                                     span,
                                 );
-                                if let Some(sub_pred) =
-                                    self.lower_pattern_predicate(field_local, field, span)
-                                {
+                                let sub = self.lower_pattern_predicate(field_local, field, span);
+                                if let Some((answer, merge)) = guard {
+                                    // Inside the guarded block `acc` is known
+                                    // true, so the sub-predicate alone is the
+                                    // answer for this field.
+                                    match sub {
+                                        Some(sub_pred) => self.emit_assign(
+                                            Place::local(answer),
+                                            Rvalue::Use(Operand::Copy(Place::local(sub_pred))),
+                                            span,
+                                        ),
+                                        None => self.emit_assign(
+                                            Place::local(answer),
+                                            Rvalue::Use(Operand::Const(ConstValue::Bool(true))),
+                                            span,
+                                        ),
+                                    }
+                                    self.terminate(Terminator::Goto { target: merge });
+                                    self.set_current(merge);
+                                    acc = answer;
+                                } else if let Some(sub_pred) = sub {
                                     let combined = self.fresh(bool_ty);
                                     self.emit_assign(
                                         Place::local(combined),

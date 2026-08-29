@@ -1,0 +1,85 @@
+// Format Mutually Recursive Types
+// A rendering is synthesized for a type whose fields all render, and a type
+// reaches its own rendering through the cycle it sits in. The cycle is as
+// often between two declarations as within one: a query holds expressions and
+// an expression holds a query, so neither renders unless both do.
+
+struct Query {
+    columns: Vec<Expr>
+    from: String
+    limit: Option<i64>
+}
+
+enum Expr {
+    Lit(i64)
+    Col(String)
+    Sub(Query)
+    Bin(String, Expr, Expr)
+    Star
+}
+
+// A self-recursive type in the same file, for the narrower cycle.
+enum Chain {
+    End
+    Link(i64, Chain)
+}
+
+// How many nodes an expression holds, walked often enough that the tree is
+// traversed rather than built once.
+fn size(e: Expr) -> i64 {
+    match e {
+        Expr::Bin(_, l, r) => 1 + size(l) + size(r)
+        Expr::Sub(q) => {
+            let mut total = 1
+            for c in q.columns { total += size(c) }
+            total
+        }
+        _ => 1
+    }
+}
+
+fn length(c: Chain) -> i64 {
+    match c {
+        Chain::Link(_, rest) => 1 + length(rest)
+        Chain::End => 0
+    }
+}
+
+fn build(depth: i64) -> Chain {
+    if depth <= 0 { return Chain::End }
+    Chain::Link(depth, build(depth - 1))
+}
+
+fn main() {
+    let inner = Query { columns: #[Expr::Col("id")], from: "teams", limit: Some(3) }
+    let outer = Query {
+        columns: #[Expr::Col("name"), Expr::Lit(1), Expr::Sub(inner), Expr::Star]
+        from: "people"
+        limit: None
+    }
+    let condition = Expr::Bin(">", Expr::Sub(outer), Expr::Lit(0))
+    println("{}", condition)
+    println("{:?}", condition)
+
+    let chain = Chain::Link(1, Chain::Link(2, Chain::End))
+    println("{}", chain)
+    println("{:?}", chain)
+
+    // The same values inside the containers that render element by element.
+    let many = #[Expr::Lit(4), Expr::Star]
+    println("{}", many)
+    println("{:?}", many)
+    println("{}", Some(Chain::Link(9, Chain::End)))
+
+    // The walks run hot, so the tree the rendering reads is the tree the
+    // traversal answers for on every tier.
+    let mut round = 0
+    let mut total = 0
+    while round < 200 {
+        total += size(condition)
+        total += length(build(round % 7))
+        round += 1
+    }
+    println("total {}", total)
+    println("still {}", condition)
+}

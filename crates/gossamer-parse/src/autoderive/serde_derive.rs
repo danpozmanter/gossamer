@@ -817,30 +817,41 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
             formattable.insert(n.clone());
         }
     }
+    // A type reaches its own `fmt` through the cycle it sits in, and the
+    // cycle is as often between two declarations as within one: an
+    // expression that holds a query and a query that holds expressions each
+    // render only if the other does. Admitting one name at a time, with only
+    // that name assumed, settles a self-reference and deadlocks a mutual one
+    // - each half waits for the half that is waiting for it. So every
+    // candidate starts admitted and the pass takes away the ones a field
+    // disproves, which reaches the same answer for a self-cycle and the right
+    // one for a cycle of any width.
+    let mut candidates: HashSet<String> = field_tys.keys().cloned().collect();
+    for name in &formattable {
+        candidates.remove(name);
+    }
     loop {
-        let mut changed = false;
-        for (name, tys) in &field_tys {
-            if formattable.contains(name) {
-                continue;
-            }
-            let params = type_params.get(name).cloned().unwrap_or_default();
-            // A recursive type reaches its own `fmt`, so treating the name
-            // under test as already formattable is what lets the fixpoint
-            // admit it at all.
-            let mut reachable = formattable.clone();
-            reachable.insert(name.clone());
-            if tys
-                .iter()
-                .all(|ty| ty_is_renderable(ty, &reachable, &params, &aliases))
-            {
-                formattable.insert(name.clone());
-                changed = true;
-            }
-        }
-        if !changed {
+        let mut reachable = formattable.clone();
+        reachable.extend(candidates.iter().cloned());
+        let disproven: Vec<String> = candidates
+            .iter()
+            .filter(|name| {
+                let params = type_params.get(*name).cloned().unwrap_or_default();
+                !field_tys.get(*name).is_some_and(|tys| {
+                    tys.iter()
+                        .all(|ty| ty_is_renderable(ty, &reachable, &params, &aliases))
+                })
+            })
+            .cloned()
+            .collect();
+        if disproven.is_empty() {
             break;
         }
+        for name in disproven {
+            candidates.remove(&name);
+        }
     }
+    formattable.extend(candidates);
 
     // Grow the set of structs / enums that compare by value structurally on
     // every tier: a type is comparable once every field is a scalar / String

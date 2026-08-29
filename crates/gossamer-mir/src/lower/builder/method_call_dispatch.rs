@@ -282,6 +282,31 @@ impl<'a> Builder<'a> {
                 Rvalue::Use(Operand::Copy(Place::local(receiver_local))),
                 span,
             );
+            // `clone` answers a value of its own. A `String` and a `Vec` say
+            // so through their own helpers, and every other reference-counted
+            // value reaches the identity copy above - a user enum's heap node,
+            // a struct's, a closure's environment. The copy alone leaves the
+            // clone and its source as one node under one share, so whichever
+            // of them is consumed first takes the other's: storing the clone
+            // into an aggregate hands over a share nobody minted, and the
+            // aggregate's own teardown then frees a node the source still
+            // names. Mint the share the method promises.
+            if method.name.as_str() == "clone" && self.tcx.is_rc_managed(dest_ty) {
+                let unit_ty = self.tcx.unit();
+                let ack = self.fresh(unit_ty);
+                self.emit_assign(
+                    Place::local(ack),
+                    Rvalue::CallIntrinsic {
+                        name: if self.tcx.is_weak_ty(dest_ty) {
+                            "gos_rt_rc_weak_retain"
+                        } else {
+                            "gos_rt_rc_retain"
+                        },
+                        args: vec![Operand::Copy(Place::local(dest))],
+                    },
+                    span,
+                );
+            }
             return Some(dest);
         }
         // Pin the destination's MIR type to the helper's

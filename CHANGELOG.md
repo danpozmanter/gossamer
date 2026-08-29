@@ -1,7 +1,27 @@
 # Changelog
 
-## 0.57.2 - Windows sandbox grant cost
+## 0.57.2 - Match payloads, clone shares, Windows sandbox grant cost
 
+- A match guard runs once its arm's pattern has matched, so it reads the
+  payload of the variant the value actually is. Every guard was evaluated
+  ahead of the test instead, over payload words extracted for an arm the value
+  did not take, so `Named(n) if n.len() > 3` ran `len` on an integer variant's
+  slot and `gos build` crashed on the first value that was not a `Named`.
+- A match arm that binds a variant's struct payload leaves that slot alone for
+  the values it does not match. Materialising a struct by value dereferences
+  the payload word as the box it points at, and that read happened ahead of the
+  discriminant test, so a narrower variant's slot was copied from as though it
+  held a struct.
+- `.clone()` on a user enum, struct, or closure answers a value with a share of
+  its own under `gos build`. `String` and `Vec` minted theirs through their own
+  helpers while every other reference-counted value took a bare copy, so a
+  clone and its source were one node under one share: whichever was released
+  first freed a node the other still named, and a tree rebuilt from cloned
+  leaves read freed memory on its next pass.
+- A type renders when its rendering closes a cycle with another type. A query
+  holding expressions and an expression holding a query each waited for the
+  other to be proven renderable, so neither was, and `println` of either
+  failed the build.
 - A `strict` run on Windows no longer walks a subtree for every ancestor it
   grants traverse on. `SetNamedSecurityInfoW` recomputes the inherited entries
   of every existing child, so a traverse entry on `C:\`, on a home directory,

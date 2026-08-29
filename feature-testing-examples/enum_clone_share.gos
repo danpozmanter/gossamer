@@ -1,0 +1,63 @@
+// Enum Clone Share
+// `clone` on a reference-counted value answers a value of its own. A user
+// enum's node reaches the identity copy rather than a `String`'s or a `Vec`'s
+// own clone helper, so the share the method promises has to be minted there:
+// without it the clone and its source are one node under one share, and
+// storing the clone into a tree hands over a share nobody made.
+
+enum Expr {
+    Lit(i64)
+    Bin(String, Expr, Expr)
+    Wild
+    Empty
+    Unit
+}
+
+struct Wrapper { inner: Expr, tag: String }
+
+// Rebuilds the tree, cloning every leaf it does not rewrite.
+fn rebuild(e: Expr) -> Expr {
+    match e {
+        Expr::Bin(op, left, right) => Expr::Bin(op.clone(), rebuild(left), rebuild(right))
+        _ => e.clone()
+    }
+}
+
+fn render(e: Expr) -> String {
+    match e {
+        Expr::Lit(n) => format("{}", n)
+        Expr::Bin(op, l, r) => format("({} {} {})", render(l), op, render(r))
+        Expr::Wild => "*"
+        Expr::Empty => "empty"
+        Expr::Unit => "unit"
+    }
+}
+
+fn main() {
+    let condition = Expr::Bin(">", Expr::Bin("+", Expr::Lit(7), Expr::Wild), Expr::Lit(0))
+    // The source is rebuilt many times over. A clone that minted no share
+    // would let the first rebuilt tree's teardown free leaves the source
+    // still names, and every later round would read them.
+    let mut round = 0
+    while round < 50 {
+        let resolved = rebuild(condition)
+        if round < 3 || round == 49 {
+            println("{} {}", round, render(resolved))
+        }
+        round += 1
+    }
+    // The source is still whole after all of it.
+    println("source {}", render(condition))
+
+    // A clone kept in a struct outlives the binding it came from.
+    let mut kept: Vec<Wrapper> = #[]
+    let mut i = 0
+    while i < 20 {
+        let leaf = Expr::Bin("*", Expr::Lit(i), Expr::Lit(i + 1))
+        kept.push(Wrapper { inner: leaf.clone(), tag: format("w{}", i) })
+        i += 1
+    }
+    println("kept {}", kept.len())
+    println("first {} {}", kept[0].tag, render(kept[0].inner))
+    println("last {} {}", kept[19].tag, render(kept[19].inner))
+}

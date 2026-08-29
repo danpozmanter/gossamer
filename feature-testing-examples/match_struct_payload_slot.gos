@@ -1,0 +1,74 @@
+// Match Struct Payload Slot
+// A variant carrying a multi-slot struct past the first payload slot is
+// matched against every sibling variant. An arm binds that struct, so the
+// arms a value does not take must leave its payload word alone: a struct
+// binding materialises the payload by value, and materialising one from a
+// narrower variant's slot reads memory that variant never wrote.
+
+struct Point {
+    x: i64
+    y: i64
+    z: i64
+    w: i64
+    v: i64
+    u: i64
+    t: i64
+    s: i64
+}
+
+enum Node {
+    Leaf(String)
+    Empty
+    Marked(i64, Point, bool)
+    Pair(String, String)
+    Count(i64)
+}
+
+// The struct sits at payload slot 1, behind an `i64`.
+fn bind_struct(node: Node) -> String {
+    match node {
+        Node::Marked(n, p, flag) => format("marked {} {} {}", n, p.x, flag)
+        _ => "other"
+    }
+}
+
+// The same slot reached through a nested struct pattern.
+fn destructure_struct(node: Node) -> String {
+    match node {
+        Node::Marked(_, Point { x, y, .. }, _) => format("nested {} {}", x, y)
+        _ => "other"
+    }
+}
+
+// A binding arm and a payload-free arm over the same enum.
+fn describe(node: Node) -> String {
+    match node {
+        Node::Leaf(text) => format("leaf {}", text)
+        Node::Empty => "empty"
+        Node::Marked(_, p, _) => format("marked {}", p.s)
+        Node::Pair(a, b) => format("pair {} {}", a, b)
+        Node::Count(n) => format("count {}", n)
+    }
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2, z: 3, w: 4, v: 5, u: 6, t: 7, s: 8 }
+    let nodes = #[
+        Node::Leaf("first")
+        Node::Empty
+        Node::Marked(9, p, true)
+        Node::Pair("a", "b")
+        Node::Count(42)
+    ]
+    // Repeated so a stale payload word from an earlier iteration would be
+    // read by a later one.
+    let mut round = 0
+    while round < 20 {
+        for node in nodes {
+            println("{}", bind_struct(node))
+            println("{}", destructure_struct(node))
+            println("{}", describe(node))
+        }
+        round += 1
+    }
+}

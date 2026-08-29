@@ -292,7 +292,7 @@ pub(crate) fn already_reachable(path: &Path, sid: Sid, writable: bool) -> bool {
     if dacl.rights_of(sid) & needed == needed {
         return true;
     }
-    let Some(packages) = OwnedSid::from_text(ALL_APPLICATION_PACKAGES) else {
+    let Ok(packages) = OwnedSid::from_text(ALL_APPLICATION_PACKAGES) else {
         return false;
     };
     dacl.rights_of(packages.raw()) & needed == needed
@@ -302,15 +302,22 @@ pub(crate) fn already_reachable(path: &Path, sid: Sid, writable: bool) -> bool {
 struct OwnedSid(Sid);
 
 impl OwnedSid {
-    fn from_text(text: &str) -> Option<Self> {
+    /// A SID from its text form. `ConvertStringSidToSidW` sets a last
+    /// error naming what it refused - `ERROR_INVALID_SID` for a string
+    /// outside the grammar - so the reason travels with the failure
+    /// rather than leaving the caller to guess at a bare `None`.
+    fn from_text(text: &str) -> Result<Self, String> {
         let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
         let mut sid: Sid = std::ptr::null_mut();
         // SAFETY: `wide` is a NUL-terminated UTF-16 buffer that outlives
         // the call, and `sid` is written only when the call succeeds.
         if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &raw mut sid) } == 0 || sid.is_null() {
-            return None;
+            return Err(format!(
+                "converting SID {text}: {}",
+                std::io::Error::last_os_error()
+            ));
         }
-        Some(Self(sid))
+        Ok(Self(sid))
     }
 
     const fn raw(&self) -> Sid {
@@ -491,7 +498,7 @@ pub(crate) fn already_traversable(path: &Path, sid: Sid) -> bool {
     if dacl.rights_of(sid) & TRAVERSE_RIGHTS == TRAVERSE_RIGHTS {
         return true;
     }
-    let Some(packages) = OwnedSid::from_text(ALL_APPLICATION_PACKAGES) else {
+    let Ok(packages) = OwnedSid::from_text(ALL_APPLICATION_PACKAGES) else {
         return false;
     };
     dacl.rights_of(packages.raw()) & TRAVERSE_RIGHTS == TRAVERSE_RIGHTS
@@ -1003,6 +1010,17 @@ mod acl_tests {
         Dacl::read(path).map_or(0, |dacl| dacl.rights_of(sid))
     }
 
+    /// A package-shaped SID no profile owns, one per case so two cases
+    /// never edit the same trustee's entry on the same object. Every
+    /// sub-authority of a SID's text form is decimal (MS-DTYP 2.4.2.1),
+    /// which a `u32` renders by construction.
+    fn case_sid(case: u32) -> OwnedSid {
+        OwnedSid::from_text(&format!(
+            "S-1-15-2-1111-2222-3333-4444-5555-6666-7777-{case}"
+        ))
+        .expect("a well-formed SID converts")
+    }
+
     /// The revoke is the inverse of the grant and nothing more: the
     /// sandbox's entry goes, and every entry the object had before -
     /// its owner's own access above all - is still there, on the
@@ -1014,10 +1032,7 @@ mod acl_tests {
         std::fs::create_dir_all(&root).expect("create root");
         let child = root.join("child.txt");
         std::fs::write(&child, "before").expect("write child");
-        // A package-shaped SID no profile owns: the ACL edit is the
-        // same whoever the trustee is.
-        let sid = OwnedSid::from_text("S-1-15-2-1111-2222-3333-4444-5555-6666-7777-8888")
-            .expect("a well-formed SID converts");
+        let sid = case_sid(8888);
         let needed = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
         assert_eq!(rights_of(&root, sid.raw()) & needed, 0);
 
@@ -1124,8 +1139,7 @@ mod acl_tests {
         let root = std::env::temp_dir().join("gos-sandbox-acl-traverse");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("create root");
-        let sid = OwnedSid::from_text("S-1-15-2-1111-2222-3333-4444-5555-6666-7777-9999")
-            .expect("a well-formed SID converts");
+        let sid = case_sid(9999);
         assert!(!already_traversable(&root, sid.raw()));
 
         grant_traverse(&root, sid.raw()).expect("grant traverse");
@@ -1169,8 +1183,7 @@ mod acl_tests {
         let child = root.join("child.txt");
         std::fs::write(&child, "before").expect("write child");
 
-        let sid = OwnedSid::from_text("S-1-15-2-1111-2222-3333-4444-5555-6666-7777-aaaa")
-            .expect("a well-formed SID converts");
+        let sid = case_sid(1010);
         let owner = OwnedSid::from_text("S-1-5-32-544").expect("the local administrators group");
         let model = inheritance_model(&root).expect("the root has a descriptor");
         let child_model = inheritance_model(&child).expect("the child has a descriptor");

@@ -1,0 +1,53 @@
+// Match Guard Payload
+// A guard decides between an arm and the next one once the arm's pattern has
+// matched, so it reads the payload of the variant the value actually is. A
+// guard that reads a `String` payload runs over every value the match walks,
+// including the ones whose variant carries an integer or nothing at all.
+
+enum Shape {
+    Named(String)
+    Blank
+    Sized(i64)
+    Tagged(String, i64)
+    Missing
+}
+
+fn describe(s: Shape) -> String {
+    match s {
+        Shape::Named(n) if n.len() > 3 => format("long {}", n)
+        Shape::Named(n) => format("short {}", n)
+        Shape::Sized(v) if v > 10 => format("big {}", v)
+        Shape::Sized(v) => format("small {}", v)
+        Shape::Tagged(n, v) if v > 0 && n.len() > 1 => format("tagged {} {}", n, v)
+        Shape::Tagged(n, _) => format("bare {}", n)
+        _ => "none"
+    }
+}
+
+// The same shape over `Option`, whose payload the guard also reads.
+fn pick(o: Option<String>) -> String {
+    match o {
+        Some(t) if t.len() > 2 => format("long {}", t)
+        Some(t) => format("short {}", t)
+        None => "nothing"
+    }
+}
+
+fn main() {
+    let shapes = #[
+        Shape::Named("abcdef")
+        Shape::Named("ab")
+        Shape::Blank
+        Shape::Sized(50)
+        Shape::Sized(2)
+        Shape::Tagged("hi", 4)
+        Shape::Tagged("x", 0)
+        Shape::Missing
+    ]
+    for s in shapes {
+        println("{}", describe(s))
+    }
+    println("{}", pick(Some("hello")))
+    println("{}", pick(Some("x")))
+    println("{}", pick(None))
+}
