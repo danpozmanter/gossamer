@@ -607,8 +607,10 @@ is reported on stderr at exit instead of vanishing.
 `Result<T, String>`) and attaches to the enclosing cohort. There is no
 detached form. `spawn(f, reason: "fetch users")` labels the goroutine, and
 the cohort's reports name a labelled child by that label instead of by its
-spawn index. Typed channels: `recv()` blocks until a value or every
-sender is gone; producers `close()`.
+spawn index. Typed channels: `recv()` blocks until a value arrives or the
+channel is closed, and closing is the producer's job - `close()` is what
+ends a `while let Some(v) = rx.recv()` drain, and a send into a closed
+channel panics with `send on closed channel`.
 
 ```gossamer
 fn gather() -> Result<(), errors::Error> {
