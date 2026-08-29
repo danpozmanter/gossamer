@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.57.2 - Windows sandbox grant cost
+
+- A `strict` run on Windows no longer walks a subtree for every ancestor it
+  grants traverse on. `SetNamedSecurityInfoW` recomputes the inherited entries
+  of every existing child, so a traverse entry on `C:\`, on a home directory,
+  or on a toolchain root cost a walk of everything beneath it - minutes per run
+  on a machine with a large profile - and that entry is written
+  `NO_INHERITANCE`, so the walk had nothing to change. An edit confined to one
+  object's own DACL now goes through `SetFileSecurityW`, which sets that object
+  and stops, and the object keeps the inheritance model it had: whether its
+  DACL is severed from its parent's, and whether Windows maintains the
+  inherited entries itself, are read off the descriptor the edit was built from
+  and carried onto the one that replaces it.
+- Revoking costs what granting did. Which write a revoke takes is decided by
+  the entry being removed, so an ancestor's traverse entry is taken back
+  without a walk, while an inheritable grant still propagates to the subtree it
+  reached.
+- The standard library reference lists `runtime::cohorts`, `runtime::root`,
+  `sync::shield`, `sync::with_timeout`, and `time::after`, which shipped
+  without reaching the generated page.
+
 ## 0.57.1 - Deref assignment ownership, Vec method discovery
 
 - `*v = value` through a `&mut Vec`, `&mut Map`, `&mut Set`, `&mut Deque` /

@@ -27,9 +27,12 @@ use windows_sys::Win32::Security::Authorization::{
     TRUSTEE_W,
 };
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, DACL_SECURITY_INFORMATION, EqualSid, GetAce,
-    GetSecurityDescriptorSacl, LABEL_SECURITY_INFORMATION, NO_INHERITANCE, PSECURITY_DESCRIPTOR,
-    SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION,
+    EqualSid, GetAce, GetSecurityDescriptorControl, GetSecurityDescriptorSacl, INHERITED_ACE,
+    InitializeSecurityDescriptor, LABEL_SECURITY_INFORMATION, NO_INHERITANCE, OBJECT_INHERIT_ACE,
+    PSECURITY_DESCRIPTOR, SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED, SECURITY_DESCRIPTOR,
+    SECURITY_DESCRIPTOR_CONTROL, SUB_CONTAINERS_AND_OBJECTS_INHERIT, SetFileSecurityW,
+    SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ,
@@ -37,6 +40,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, OPEN_EXISTING, READ_CONTROL, SYNCHRONIZE,
     WRITE_DAC, WRITE_OWNER,
 };
+use windows_sys::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
 use windows_sys::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -705,6 +709,133 @@ pub(crate) fn revoke(path: &Path, sid: Sid) -> Result<(), String> {
     modify(path, sid, false, Mode::Revoke)
 }
 
+/// How far an edit to one object's DACL reaches.
+///
+/// `SetNamedSecurityInfoW` recomputes the inherited ACEs of every
+/// existing child, which is a walk of the whole subtree. That is the
+/// right call for an edit that changes what children inherit, and it is
+/// pure cost for one that does not: an ancestor granted traverse alone
+/// gives its children nothing, so walking `C:\Users` - or a volume root -
+/// to tell them so is minutes of work with no result. An edit confined
+/// to the object's own DACL is written with `SetFileSecurityW`, which
+/// sets that object and stops.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// The edit adds or removes an inheritable ACE, so the children's
+    /// inherited entries change with it.
+    Subtree,
+    /// The edit is confined to this object's own DACL.
+    ObjectOnly,
+}
+
+/// Whether `sid` holds an ACE of its own on `acl` that children inherit.
+///
+/// An ACE the object inherited from its parent is not one a revoke
+/// removes, so it says nothing about what this edit reaches.
+fn trustee_ace_is_inherited_by_children(acl: *mut ACL, sid: Sid) -> bool {
+    if acl.is_null() {
+        return false;
+    }
+    // SAFETY: the descriptor owning this ACL is live for the length of
+    // the call this runs inside, so the header is readable.
+    let count = u32::from(unsafe { (*acl).AceCount });
+    for index in 0..count {
+        let mut entry: *mut std::ffi::c_void = std::ptr::null_mut();
+        // SAFETY: `index` is below the header's own ACE count, and the
+        // entry is written only when the call succeeds.
+        if unsafe { GetAce(acl, index, &raw mut entry) } == 0 || entry.is_null() {
+            continue;
+        }
+        // SAFETY: every ACE begins with an `ACE_HEADER`, and an allow or
+        // deny ACE continues with a mask and a SID.
+        #[allow(clippy::cast_ptr_alignment)]
+        let header = unsafe { &*entry.cast::<ACE_HEADER>() };
+        if header.AceType != ACCESS_ALLOWED_ACE_TYPE && header.AceType != ACCESS_DENIED_ACE_TYPE {
+            continue;
+        }
+        let flags = u32::from(header.AceFlags);
+        if flags & INHERITED_ACE != 0 {
+            continue;
+        }
+        if flags & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) == 0 {
+            continue;
+        }
+        #[allow(clippy::cast_ptr_alignment)]
+        let ace = unsafe { &*entry.cast::<ACCESS_ALLOWED_ACE>() };
+        let ace_sid: Sid = std::ptr::from_ref(&ace.SidStart).cast_mut().cast();
+        // SAFETY: both SIDs are live; the ACE's belongs to the ACL.
+        if unsafe { EqualSid(ace_sid, sid) } != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// The control bits that say how an object's DACL relates to its
+/// parent's: whether inheritance is severed, and whether Windows
+/// maintains the inherited entries itself.
+const INHERITANCE_MODEL: SECURITY_DESCRIPTOR_CONTROL = SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED;
+
+/// Writes `updated` as `path`'s DACL, and touches nothing beneath it.
+///
+/// The object keeps the inheritance model it already had - both control
+/// bits are read off the descriptor this edit was built from and set on
+/// the one that replaces it - and `updated` carries the object's
+/// existing entries, inherited ones included, exactly as they were read.
+/// So the only difference on disk is the entry the edit is for.
+fn set_dacl_object_only(
+    path: &Path,
+    wide: &[u16],
+    previous: PSECURITY_DESCRIPTOR,
+    updated: *mut ACL,
+) -> Result<(), String> {
+    let mut control: SECURITY_DESCRIPTOR_CONTROL = 0;
+    let mut revision: u32 = 0;
+    // SAFETY: `previous` is the live descriptor this edit was read from,
+    // and both out parameters are plain stack values.
+    let read =
+        unsafe { GetSecurityDescriptorControl(previous, &raw mut control, &raw mut revision) };
+    if read == 0 {
+        return Err(format!(
+            "reading the security descriptor of {} failed: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    let mut descriptor = SECURITY_DESCRIPTOR::default();
+    let absolute: PSECURITY_DESCRIPTOR = std::ptr::from_mut(&mut descriptor).cast();
+    // SAFETY: `descriptor` is a stack `SECURITY_DESCRIPTOR`, which is
+    // the size and alignment these three calls expect, and it outlives
+    // the `SetFileSecurityW` that reads it.
+    let built = unsafe {
+        InitializeSecurityDescriptor(absolute, SECURITY_DESCRIPTOR_REVISION) != 0
+            && SetSecurityDescriptorDacl(absolute, 1, updated, 0) != 0
+            && SetSecurityDescriptorControl(
+                absolute,
+                INHERITANCE_MODEL,
+                control & INHERITANCE_MODEL,
+            ) != 0
+    };
+    if !built {
+        return Err(format!(
+            "building the security descriptor of {} failed: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: `wide` is a NUL-terminated UTF-16 path and `absolute`
+    // points at the stack descriptor above, both live for the call.
+    let written = unsafe { SetFileSecurityW(wide.as_ptr(), DACL_SECURITY_INFORMATION, absolute) };
+    if written == 0 {
+        return Err(format!(
+            "writing the ACL of {} failed: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
 /// Which entry [`modify`] writes for the trustee.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -797,6 +928,27 @@ fn modify_with(
             ptstrName: sid.cast(),
         },
     };
+    // What the edit changes for the children decides which write it
+    // gets. An allow or deny carries its answer in `inheritance`; a
+    // revoke carries it on the object, in the entry it is about to
+    // remove.
+    let reach = match mode {
+        Mode::Allow | Mode::Deny => {
+            if inheritance == NO_INHERITANCE {
+                Reach::ObjectOnly
+            } else {
+                Reach::Subtree
+            }
+        }
+        Mode::Revoke => {
+            if trustee_ace_is_inherited_by_children(existing, sid) {
+                Reach::Subtree
+            } else {
+                Reach::ObjectOnly
+            }
+        }
+    };
+
     let mut updated: *mut ACL = std::ptr::null_mut();
     // SAFETY: `entry` and the SID it names outlive the call, `existing`
     // is owned by `descriptor` which is freed below, and `updated` is
@@ -809,28 +961,38 @@ fn modify_with(
             path.display()
         ));
     }
-    let written = unsafe {
-        SetNamedSecurityInfoW(
-            wide.as_ptr().cast_mut(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            updated,
-            std::ptr::null_mut(),
-        )
+    let outcome = match reach {
+        Reach::ObjectOnly => set_dacl_object_only(path, &wide, descriptor, updated),
+        Reach::Subtree => {
+            // SAFETY: `wide` and `updated` outlive the call, and the
+            // three null arguments are the owner, group, and SACL this
+            // edit leaves alone.
+            let written = unsafe {
+                SetNamedSecurityInfoW(
+                    wide.as_ptr().cast_mut(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    updated,
+                    std::ptr::null_mut(),
+                )
+            };
+            if written == ERROR_SUCCESS {
+                Ok(())
+            } else {
+                Err(format!(
+                    "writing the ACL of {} failed: {written}",
+                    path.display()
+                ))
+            }
+        }
     };
     unsafe {
         LocalFree(updated.cast());
         LocalFree(descriptor.cast());
     }
-    if written != ERROR_SUCCESS {
-        return Err(format!(
-            "writing the ACL of {} failed: {written}",
-            path.display()
-        ));
-    }
-    Ok(())
+    outcome
 }
 
 #[cfg(test)]
@@ -977,6 +1139,54 @@ mod acl_tests {
 
         revoke(&root, sid.raw()).expect("revoke");
         assert_eq!(rights_of(&root, sid.raw()) & TRAVERSE_RIGHTS, 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The DACL control bits of `path`, or none when it has no
+    /// descriptor to read.
+    fn inheritance_model(path: &Path) -> Option<SECURITY_DESCRIPTOR_CONTROL> {
+        let dacl = Dacl::read(path)?;
+        let mut control: SECURITY_DESCRIPTOR_CONTROL = 0;
+        let mut revision: u32 = 0;
+        // SAFETY: the descriptor is live for as long as `dacl` is, and
+        // both out parameters are plain stack values.
+        let read = unsafe {
+            GetSecurityDescriptorControl(dacl.descriptor, &raw mut control, &raw mut revision)
+        };
+        (read != 0).then_some(control & INHERITANCE_MODEL)
+    }
+
+    /// A traverse grant is written without walking the subtree, and an
+    /// object written that way keeps the inheritance model it had: a
+    /// DACL that inherited from its parent still does, and one that was
+    /// not severed from it still is not. Its children keep every right
+    /// they held, because nothing about what they inherit changed.
+    #[test]
+    fn a_traverse_grant_leaves_the_inheritance_model_and_the_children_alone() {
+        let root = std::env::temp_dir().join("gos-sandbox-acl-model");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create root");
+        let child = root.join("child.txt");
+        std::fs::write(&child, "before").expect("write child");
+
+        let sid = OwnedSid::from_text("S-1-15-2-1111-2222-3333-4444-5555-6666-7777-aaaa")
+            .expect("a well-formed SID converts");
+        let owner = OwnedSid::from_text("S-1-5-32-544").expect("the local administrators group");
+        let model = inheritance_model(&root).expect("the root has a descriptor");
+        let child_model = inheritance_model(&child).expect("the child has a descriptor");
+        let child_rights = rights_of(&child, owner.raw());
+
+        grant_traverse(&root, sid.raw()).expect("grant traverse");
+        assert_eq!(inheritance_model(&root), Some(model));
+        assert_eq!(inheritance_model(&child), Some(child_model));
+        assert_eq!(rights_of(&child, owner.raw()), child_rights);
+        std::fs::read_to_string(&child).expect("the child still reads");
+
+        revoke(&root, sid.raw()).expect("revoke");
+        assert_eq!(rights_of(&root, sid.raw()) & TRAVERSE_RIGHTS, 0);
+        assert_eq!(inheritance_model(&root), Some(model));
+        assert_eq!(inheritance_model(&child), Some(child_model));
+        assert_eq!(rights_of(&child, owner.raw()), child_rights);
         let _ = std::fs::remove_dir_all(&root);
     }
 
