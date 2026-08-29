@@ -228,6 +228,8 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         insert_json_frees(body, tcx);
         insert_vec_elem_metas(body, tcx);
         insert_early_releases(body, tcx);
+        insert_copied_key_releases(body, tcx);
+        drop_unread_map_insert_results(body, tcx);
         hoist_loop_carried_releases(body, tcx);
         // `insert_*` calls are ownership-acquiring operations: the drop pass
         // emitted a retain for the container's share immediately before the

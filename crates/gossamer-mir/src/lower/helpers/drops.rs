@@ -1129,6 +1129,12 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 if is_element_push(name) && arg_idx == 1 && vec_operand(arg).is_some() {
                     continue;
                 }
+                // A keyed container mints its own share of a stored `Vec`
+                // inside the insert, so a second one minted here would never
+                // be given back.
+                if name.starts_with("gos_rt_map_insert") && vec_operand(arg).is_some() {
+                    continue;
+                }
                 if let Some(l) = rc_operand(arg).or_else(|| vec_operand(arg)) {
                     terminator_retains.push((block_idx, l));
                     continue;
@@ -2557,6 +2563,22 @@ pub(crate) fn is_element_push(name: &str) -> bool {
         || (name.starts_with("gos_rt_bheap_") && name.contains("_push"))
 }
 
+/// Consuming calls that mint the container's own share of a stored `Vec` and
+/// give it back at the container's teardown.
+///
+/// The exchange is balanced on both sides, so the frame keeps the release of
+/// the sequence it built and reclaims it per site rather than only at the
+/// return - which is what a container filled in a loop needs.
+fn stores_owned_vec_value(name: &str) -> bool {
+    is_element_push(name)
+        || name.starts_with("gos_rt_map_insert")
+        || name.starts_with("gos_rt_map_or_insert")
+        || name.starts_with("gos_rt_omap_insert")
+        || name.starts_with("gos_rt_set_insert")
+        || name.starts_with("gos_rt_ovec_insert")
+        || name.starts_with("gos_rt_vec_insert")
+}
+
 /// Consuming calls whose container keeps the ARGUMENT'S OWN aggregate word,
 /// so a struct argument's heap fields need a share for the stored entry.
 ///
@@ -3733,6 +3755,185 @@ fn retain_anchor_end(stmts: &[Statement], si: usize) -> usize {
     end
 }
 
+/// Drops the previous-value lookup from a map insert whose result nothing
+/// reads.
+///
+/// `m.insert(k, v)` answers the value it replaced, and the answer carries a
+/// share of it for whoever receives it. In statement position nobody does, so
+/// that share has no one to give it back and a loop overwriting one key keeps
+/// every value it replaced. The insert that answers nothing does the same
+/// store without the lookup, which is both correct here and one hash probe
+/// cheaper.
+pub(crate) fn drop_unread_map_insert_results(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
+    if body.locals.is_empty() {
+        return;
+    }
+    let reads = collect_local_read_counts(body);
+    let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
+    let mut rewrites: Vec<(usize, &'static str)> = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            destination,
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if !destination.projection.is_empty()
+            || reads.get(&destination.local.0).copied().unwrap_or(0) != 0
+        {
+            continue;
+        }
+        let plain = match name.as_str() {
+            "gos_rt_map_insert_i64_i64_opt" => "gos_rt_map_insert_i64_i64",
+            "gos_rt_map_insert_str_i64_opt" => "gos_rt_map_insert_str_i64",
+            "gos_rt_map_insert_typed_str_i64_opt" => "gos_rt_map_insert_typed_str_i64",
+            "gos_rt_map_insert_str_str_opt" => "gos_rt_map_insert_str_str",
+            "gos_rt_map_insert_i64_str_opt" => "gos_rt_map_insert_i64_str",
+            _ => continue,
+        };
+        rewrites.push((bi, plain));
+    }
+    for (bi, plain) in rewrites {
+        // The insert that answers nothing returns unit where the one it
+        // replaces returns a two-word carrier, so the destination has to be a
+        // local of the new shape: keeping the carrier-typed one would have the
+        // backend read a 16-byte answer out of a call that leaves none.
+        let sink = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+        body.locals.push(LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+        let Terminator::Call {
+            callee,
+            destination,
+            ..
+        } = &mut body.blocks[bi].terminator
+        else {
+            continue;
+        };
+        *callee = Operand::Const(ConstValue::Str(plain.to_string()));
+        *destination = Place::local(sink);
+    }
+}
+
+/// Keyed containers whose storage COPIES a `String` key's text rather than
+/// keeping the pointer it was handed.
+///
+/// The frame stays the key's only owner, so it reclaims the key per site
+/// rather than only at the return - which is what a map filled in a loop
+/// needs. An enum key is the other case: the map keeps that node and releases
+/// it itself.
+fn copies_string_key(name: &str) -> bool {
+    (name.starts_with("gos_rt_map_") || name.starts_with("gos_rt_set_"))
+        && (name.contains("_str") || name.contains("_skey"))
+}
+
+/// Releases a `String` a keyed container copied and nothing else names.
+///
+/// A key built at the call site - `m.insert(format("k{i}"), v)` - is a
+/// temporary the frame owns: the container keeps the text, not the pointer, so
+/// the string has no other holder once the call returns. Only a key bound to a
+/// name reaches the binding's own release, so an unbound one is reclaimed
+/// here, at the call that consumed it.
+///
+/// The condition is deliberately narrow: the operand must be a bare local of
+/// `String` type, read exactly once in the whole body (this argument), and
+/// written by a call rather than aliased from another binding.
+pub(crate) fn insert_copied_key_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
+    use gossamer_types::TyKind;
+    if body.locals.is_empty() {
+        return;
+    }
+    let reads = collect_local_read_counts(body);
+    let mut written_by_call = vec![false; body.locals.len()];
+    let mut written_otherwise = vec![false; body.locals.len()];
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, .. } = &stmt.kind
+                && place.projection.is_empty()
+                && (place.local.0 as usize) < written_otherwise.len()
+            {
+                written_otherwise[place.local.0 as usize] = true;
+            }
+        }
+        if let Terminator::Call { destination, .. } = &block.terminator
+            && destination.projection.is_empty()
+            && (destination.local.0 as usize) < written_by_call.len()
+        {
+            written_by_call[destination.local.0 as usize] = true;
+        }
+    }
+    let mut sites: Vec<(usize, Local)> = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            target: Some(_),
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if !copies_string_key(name) {
+            continue;
+        }
+        for arg in args.iter().skip(1) {
+            let Operand::Copy(p) = arg else { continue };
+            if !p.projection.is_empty() {
+                continue;
+            }
+            let idx = p.local.0 as usize;
+            if idx >= body.locals.len()
+                || body.locals[idx].region
+                || !matches!(tcx.kind_of(body.locals[idx].ty), TyKind::String)
+                || !written_by_call[idx]
+                || written_otherwise[idx]
+                || reads.get(&p.local.0).copied().unwrap_or(0) != 1
+            {
+                continue;
+            }
+            sites.push((bi, p.local));
+        }
+    }
+    if sites.is_empty() {
+        return;
+    }
+    let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
+    for (bi, local) in sites {
+        let Terminator::Call {
+            target: Some(t), ..
+        } = body.blocks[bi].terminator
+        else {
+            continue;
+        };
+        let dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+        body.locals.push(LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+        let span = body.blocks[t.0 as usize].span;
+        body.blocks[t.0 as usize].stmts.insert(
+            0,
+            Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(dest),
+                    rvalue: Rvalue::CallIntrinsic {
+                        name: "gos_rt_str_free_typed",
+                        args: vec![Operand::Copy(Place::local(local))],
+                    },
+                },
+                span,
+            },
+        );
+    }
+}
+
 pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     // Locals whose payload is extracted anywhere in the body - a
     // by-value Result/Option slot read (`gos_rt_result_payload`) or an
@@ -4574,14 +4775,33 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // below and the reuse filter further down.
     let aliased = {
         let mut aliased = vec![false; body.locals.len()];
+        // A write into an aggregate's own field is balanced the way a store
+        // into an owning heap slot is: the by-value-aggregate pass mints the
+        // field's share at the write and gives it back at the field's death,
+        // so the source local stays reclaimable by its own frame. Without
+        // this, a container written into a field reaches only the at-return
+        // drop, so a frame that fills such a field in a loop keeps every
+        // buffer but the last.
+        let writes_owned_field = |place: &Place| -> bool {
+            let Some(&crate::ir::Projection::Field(idx)) = place.projection.first() else {
+                return false;
+            };
+            place.projection.len() == 1
+                && body.locals.get(place.local.0 as usize).is_some_and(|decl| {
+                    aggregate_rc_field_paths(tcx, decl.ty)
+                        .iter()
+                        .any(|(path, kind)| *kind == FieldRcKind::Vec && path.as_slice() == [idx])
+                })
+        };
         for block in &body.blocks {
             for stmt in &block.stmts {
                 if let StatementKind::Assign {
+                    place: dest,
                     rvalue: Rvalue::Use(Operand::Copy(p)),
-                    ..
                 } = &stmt.kind
                     && p.projection.is_empty()
                     && (p.local.0 as usize) < aliased.len()
+                    && !writes_owned_field(dest)
                 {
                     aliased[p.local.0 as usize] = true;
                 }
@@ -4625,12 +4845,12 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                         && p.projection.is_empty()
                         && (p.local.0 as usize) < aliased.len()
                     {
-                        // A Vec element pushed into a vec is BALANCED (a
-                        // retain minted below hands the container its own
-                        // share, freed by the container's element
+                        // A `Vec` stored into a container is BALANCED (a
+                        // retain minted by the container hands it its own
+                        // share, freed by the container's element or value
                         // teardown), so the frame's per-site reuse of the
-                        // pushed local stays sound and load-bearing.
-                        if is_element_push(name)
+                        // stored local stays sound and load-bearing.
+                        if stores_owned_vec_value(name)
                             && matches!(
                                 tcx.kind_of(body.locals[p.local.0 as usize].ty),
                                 TyKind::Vec(_) | TyKind::Slice(_)
@@ -5344,15 +5564,16 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // the fixpoint above so it composes with the `gos_store` rule for
     // arbitrarily deep enum/container nesting.)
 
-    // A container local (`Vec` / `[T]` / `HashMap`) consumed as an operand of
-    // a struct/tuple `Rvalue::Aggregate` is MOVED into that aggregate's field:
-    // its ownership transfers to the field, which the by-value-aggregate drop
-    // pass (`aggregate_rc_field_paths` → `gos_rt_vec_free` / `gos_rt_map_free`)
-    // now frees when the aggregate dies. Freeing it here too would double-free.
-    // (An aggregate that flows to the return slot is already excluded via
-    // `moved_into_return`; a nested-vec array pushes its elements through the
-    // consuming `gos_rt_vec_push`, not an `Aggregate` operand, so this rule
-    // does not touch nested vecs.)
+    // A `HashMap` consumed as an operand of a struct/tuple `Rvalue::Aggregate`
+    // is MOVED into that aggregate's field: nothing mints a share for the
+    // slot, so ownership transfers and the aggregate's field-death release is
+    // the only one. Freeing it here too would double-free.
+    //
+    // A `Vec` / `[T]` operand is the other case and is deliberately absent:
+    // the construction mints the field's share, so the frame keeps the release
+    // of the sequence it built. Suppressing that release left the
+    // construction's own share with nothing to return it, and a frame building
+    // such a value in a loop held every buffer it ever built.
     let moved_into_aggregate = {
         let mut moved = vec![false; body.locals.len()];
         for block in &body.blocks {
@@ -5368,7 +5589,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                             && (p.local.0 as usize) < moved.len()
                             && matches!(
                                 tcx.kind_of(body.locals[p.local.0 as usize].ty),
-                                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::HashMap { .. }
+                                TyKind::HashMap { .. }
                             )
                         {
                             moved[p.local.0 as usize] = true;

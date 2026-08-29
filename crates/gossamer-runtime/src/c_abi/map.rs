@@ -852,10 +852,16 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_i64(m: *mut GosMap, key: i64, val
         if prev.is_none() {
             map.len_cache += 1;
         }
-        if map_has_owned_values(map)
-            && let Some(old) = prev
-            && old != val
-        {
+        let owns_values = map_has_owned_values(map);
+        let replaced = prev.filter(|old| *old != val);
+        // The entry keeps this word, so the map takes a share of it here -
+        // the same exchange the string-keyed insert makes. Minting it in the
+        // runtime rather than at the call site covers every spelling that
+        // reaches a map: a literal, a method call, and the free form.
+        if owns_values && (replaced.is_some() || prev.is_none()) {
+            unsafe { retain_owned_value(map, val) };
+        }
+        if owns_values && let Some(old) = replaced {
             unsafe { release_owned_value(map, old) };
         }
     });

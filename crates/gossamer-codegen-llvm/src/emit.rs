@@ -2168,6 +2168,11 @@ fn render_shape_thunk_with_linkage(name: &str, linkage: &str) -> Option<String> 
         if c == 'b' {
             let _ = writeln!(out, "  %b{i} = trunc i8 %a{i} to i1");
             let _ = write!(call_args, "i1 %b{i}");
+        } else if c == 'q' {
+            // The caller hands the address of a two-word carrier's storage;
+            // the callee's parameter is the carrier itself.
+            let _ = writeln!(out, "  %c{i} = load i128, ptr %a{i}");
+            let _ = write!(call_args, "i128 %c{i}");
         } else {
             let _ = write!(call_args, "{t} %a{i}");
         }
@@ -2192,6 +2197,7 @@ fn render_shape_thunk_with_linkage(name: &str, linkage: &str) -> Option<String> 
 /// name. Mirrors `shape_char_to_cl_type` on the Cranelift side.
 fn shape_char_to_llvm_ty(c: char) -> Option<&'static str> {
     Some(match c {
+        'q' => "ptr",
         'b' | 'y' => "i8",
         'k' => "i16",
         'c' | 'j' => "i32",

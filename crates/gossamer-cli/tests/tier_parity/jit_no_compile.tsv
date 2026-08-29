@@ -82,6 +82,7 @@ feature-testing-examples/byte_vec_i64_model.gos	no hot body
 feature-testing-examples/bytes_builder.gos	unlowered call
 feature-testing-examples/callback_shorthands.gos	callable local
 feature-testing-examples/capture_by_reference.gos	string append
+feature-testing-examples/carrier_at_odd_slot_offset.gos	unsupported-boundary: a struct carrying two-word Option/Result fields crosses the function boundary, which the trampoline cannot marshal - the shape the fixture exists to pin
 feature-testing-examples/carrier_payload_debug_shapes.gos	aggregate print
 feature-testing-examples/chan_select_struct_payload.gos	bytecode-only local
 feature-testing-examples/chan_struct_local_recv.gos	bytecode-only local
@@ -209,6 +210,7 @@ feature-testing-examples/json_set_update.gos	no hot body
 feature-testing-examples/json_yaml_encode.gos	no hot body
 feature-testing-examples/jwt_roundtrip.gos	no hot body
 feature-testing-examples/keyed_traversal_through_ref.gos	callable local
+feature-testing-examples/lazy_iter_element_classes.gos	admission gate
 feature-testing-examples/let_destructure_struct.gos	entry shape
 feature-testing-examples/literal_forms.gos	no hot body
 feature-testing-examples/map_bare_iteration_binding.gos	admission gate
@@ -407,4 +409,3 @@ feature-testing-examples/winb_text_unicode.gos	no hot body
 feature-testing-examples/winb_text_utf8.gos	no hot body
 feature-testing-examples/write_file_bytes.gos	no hot body
 feature-testing-examples/yaml_autoderive.gos	entry shape
-feature-testing-examples/carrier_at_odd_slot_offset.gos	unsupported-boundary: a struct carrying two-word Option/Result fields crosses the function boundary, which the trampoline cannot marshal - the shape the fixture exists to pin

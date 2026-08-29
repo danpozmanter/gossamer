@@ -89,13 +89,13 @@ fn vec_valued_map_releases_replaced_and_removed_entries() {
         gos_rt_map_set_vec_values(map);
 
         let first = gos_rt_vec_with_capacity(8, 1);
-        gos_rt_vec_retain(first); // the map's share, emitted by MIR for insert
+        // The insert mints the map's share itself, so the caller hands over a
+        // value and keeps only its own.
         gos_rt_map_insert_i64_i64(map, 1, first as i64);
         gos_rt_vec_free(first); // source binding's normal scope cleanup
         assert_eq!(vec_live(), base + 1, "map must own the first Vec share");
 
         let second = gos_rt_vec_with_capacity(8, 1);
-        gos_rt_vec_retain(second); // map's replacement share
         gos_rt_map_insert_i64_i64(map, 1, second as i64);
         gos_rt_vec_free(second); // source cleanup
         assert_eq!(
@@ -108,7 +108,6 @@ fn vec_valued_map_releases_replaced_and_removed_entries() {
         assert_eq!(vec_live(), base, "remove must release the map-owned Vec");
 
         let popped = gos_rt_vec_with_capacity(8, 1);
-        gos_rt_vec_retain(popped); // map's share
         gos_rt_map_insert_i64_i64(map, 2, popped as i64);
         gos_rt_vec_free(popped); // source cleanup
         let popped_result = gos_rt_map_pop_i64(map, 2);
@@ -131,7 +130,7 @@ fn vec_valued_map_releases_replaced_and_removed_entries() {
 }
 
 #[test]
-fn compact_i64_byte_vec_map_consumes_only_the_moved_share() {
+fn compact_i64_byte_vec_map_leaves_the_caller_its_own_share() {
     let _guard = LEDGER_LOCK.lock();
     let base = vec_live();
     unsafe {
@@ -144,12 +143,16 @@ fn compact_i64_byte_vec_map_consumes_only_the_moved_share() {
                 gos_rt_vec_push(payload, (&raw const byte).cast());
             }
             gos_rt_map_insert_i64_i64(map, key, payload as i64);
+            // The entry keeps the BYTES it copied, not the header, and takes
+            // no share of the source - so the caller releases its own, the
+            // way it does after any other keyed insert.
+            gos_rt_vec_free(payload);
         }
 
         assert_eq!(
             vec_live(),
             base,
-            "the entry owns the bytes it copied, so the moved header is released"
+            "a byte entry owns its copied bytes, so no header outlives its caller"
         );
         assert_eq!(gos_rt_map_len(map), 1000);
 
@@ -159,7 +162,6 @@ fn compact_i64_byte_vec_map_consumes_only_the_moved_share() {
         for byte in 0u8..8 {
             gos_rt_vec_push(kept, (&raw const byte).cast());
         }
-        gos_rt_vec_retain(kept);
         gos_rt_map_insert_i64_i64(map, 1000, kept as i64);
         assert_eq!(vec_live(), base + 1, "the reader's own share survives");
         gos_rt_vec_free(kept);
@@ -185,8 +187,6 @@ fn compact_str_byte_vec_map_preserves_loop_carried_source_share() {
         for byte in 0u8..64 {
             gos_rt_vec_push(payload, (&raw const byte).cast());
         }
-        gos_rt_vec_retain(payload);
-        gos_rt_vec_retain(payload);
         let key = alloc_cstring(b"key-00000000");
         gos_rt_map_insert_str_i64(map, key, payload as i64);
 

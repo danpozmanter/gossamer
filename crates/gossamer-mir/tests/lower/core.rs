@@ -425,11 +425,18 @@ fn fill(n: i64) -> i64 {
 
 #[test]
 fn container_insert_keeps_balanced_source_and_container_vec_ownership() {
-    // An insert must acquire a share for the map and still release the source
+    // An insert acquires a share for the map and still releases the source
     // binding at scope exit. The old post-drop MIR pass removed every source
     // release after an insert, which made this ordinary overwrite/remove shape
-    // leak each value. Keeping both operations also makes the map's overwrite
-    // and teardown releases exactly balance the inserted share.
+    // leak each value. Keeping the release makes the map's overwrite and
+    // teardown releases exactly balance the inserted share.
+    //
+    // The map's own share is minted inside the insert rather than here: the
+    // runtime is the one place every spelling that reaches a map goes through
+    // - a literal, a method call, and the free form - where a mint at the call
+    // site covers only the shapes the lowering can see. A second one minted
+    // here would never be given back, so this checks that the lowering emits
+    // none.
     let source = r"
 use std::collections::Map
 
@@ -456,10 +463,12 @@ fn replace() -> i64 {
                 callee: Operand::Const(ConstValue::Str(name)),
                 args,
                 ..
-            } if name == "gos_rt_map_insert_i64_i64_opt" => args.get(2).and_then(|arg| match arg {
-                Operand::Copy(place) if place.projection.is_empty() => Some(place.local),
-                _ => None,
-            }),
+            } if name.starts_with("gos_rt_map_insert_i64_i64") => {
+                args.get(2).and_then(|arg| match arg {
+                    Operand::Copy(place) if place.projection.is_empty() => Some(place.local),
+                    _ => None,
+                })
+            }
             _ => None,
         })
         .expect("typed Vec-map insertion of the named source");
@@ -501,9 +510,10 @@ fn replace() -> i64 {
             )
         })
         .count();
-    assert!(
-        retains >= 1,
-        "the map must receive an explicit retained share; body: {body:#?}"
+    assert_eq!(
+        retains, 0,
+        "the insert mints the map's share itself, so the lowering must mint \
+         none; body: {body:#?}"
     );
 }
 

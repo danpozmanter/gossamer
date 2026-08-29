@@ -509,11 +509,9 @@ unsafe fn take_lazy_word(
 ) -> (Box<dyn Iterator<Item = i64>>, LazyElemTag) {
     // SAFETY: same linear-ownership contract as `take_lazy_tagged`.
     let (inner, tag) = unsafe { take_lazy_tagged(iter) };
-    debug_assert_ne!(
-        tag.class,
-        lazy_elem_class::FLOAT,
-        "lazy iterator element class mismatch: handle carries floats, consumer reads words"
-    );
+    if tag.class == lazy_elem_class::FLOAT {
+        class_mismatch(tag.class, lazy_elem_class::WORD);
+    }
     (inner, tag)
 }
 
@@ -525,12 +523,30 @@ unsafe fn take_lazy_word(
 unsafe fn take_lazy_as(iter: *mut GosLazyIterI64, want: u8) -> Box<dyn Iterator<Item = i64>> {
     // SAFETY: same linear-ownership contract as `take_lazy_tagged`.
     let (inner, tag) = unsafe { take_lazy_tagged(iter) };
-    debug_assert_eq!(
-        tag.class, want,
-        "lazy iterator element class mismatch: handle carries {}, consumer reads {want}",
-        tag.class
-    );
+    if tag.class != want {
+        class_mismatch(tag.class, want);
+    }
     inner
+}
+
+/// Ends the process when the two ends of a lazy pipeline disagree about what
+/// its slots hold.
+///
+/// The producer and the consumer of a handle have to read the same bits out of
+/// the same register file; a disagreement is a codegen fault, and there is no
+/// value to answer with. Raising it as a panic would let the FFI catch turn it
+/// into a sentinel - an empty sequence or a zero - which is how this class of
+/// fault reached programs as a wrong number instead of a stopped process.
+#[cold]
+#[inline(never)]
+fn class_mismatch(carried: u8, want: u8) -> ! {
+    eprintln!(
+        "gossamer runtime: lazy iterator element class mismatch - \
+         the handle carries class {carried} and the consumer reads class {want}. \
+         This is a code generation fault; the program cannot continue."
+    );
+    unsafe { gos_rt_flush_stdout() };
+    std::process::abort();
 }
 
 unsafe fn take_lazy_i64(iter: *mut GosLazyIterI64) -> Box<dyn Iterator<Item = i64>> {
@@ -1404,7 +1420,11 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_map_word_f64(
     iter: *mut GosLazyIterI64,
 ) -> *mut GosLazyIterI64 {
     ffi_entry!(std::ptr::null_mut(), {
-        let upstream = unsafe { take_lazy_i64(iter) };
+        // The word reaches the callback in an integer register whether it is
+        // an element's value or an aggregate element's address, so both
+        // classes are operands here - only a float slot would be read in the
+        // wrong register file.
+        let (upstream, _tag) = unsafe { take_lazy_word(iter) };
         let Some(f) = (unsafe { lazy_callback::<CallWordF64>(env) }) else {
             return lazy_f64(std::iter::empty());
         };
@@ -1492,7 +1512,9 @@ pub unsafe extern "C" fn gos_rt_lazy_iter_fold_f64_word(
     iter: *mut GosLazyIterI64,
 ) -> f64 {
     ffi_entry!(init, {
-        let upstream = unsafe { take_lazy_i64(iter) };
+        // See `gos_rt_lazy_iter_map_word_f64`: the element reaches the
+        // callback as a word either way.
+        let (upstream, _tag) = unsafe { take_lazy_word(iter) };
         let Some(f) = (unsafe { lazy_callback::<FoldF64Word>(env) }) else {
             return init;
         };

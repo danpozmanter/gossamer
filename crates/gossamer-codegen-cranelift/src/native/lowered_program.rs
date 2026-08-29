@@ -216,7 +216,7 @@ pub(super) fn fcmp_bool(
     builder.ins().fcmp(cc, a, b)
 }
 
-pub(super) fn shape_char_to_cl_type(c: char, _ptr_ty: ir::Type) -> Option<ir::Type> {
+pub(super) fn shape_char_to_cl_type(c: char, ptr_ty: ir::Type) -> Option<ir::Type> {
     Some(match c {
         'b' | 'y' => types::I8,
         'k' => types::I16,
@@ -227,6 +227,9 @@ pub(super) fn shape_char_to_cl_type(c: char, _ptr_ty: ir::Type) -> Option<ir::Ty
         'u' => types::I64,
         // 2-word packed Result/Option.
         'r' => types::I128,
+        // The ADDRESS of a two-word carrier's storage: the parameter the
+        // caller passes, which the thunk loads before calling the callee.
+        'q' => ptr_ty,
         _ => return None,
     })
 }
@@ -286,9 +289,27 @@ pub(super) fn define_shape_thunk(
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let env_param = builder.block_params(entry)[0];
+        // A `q` parameter arrives as the address of a two-word carrier's
+        // storage and reaches the callee as the carrier itself, so the load
+        // happens here - and the callee's signature takes the loaded value.
+        let call_tys: Vec<ir::Type> = inputs_str
+            .chars()
+            .zip(input_tys.iter())
+            .map(|(c, t)| if c == 'q' { types::I128 } else { *t })
+            .collect();
         let mut arg_values: Vec<ir::Value> = Vec::with_capacity(input_tys.len());
-        for i in 0..input_tys.len() {
-            arg_values.push(builder.block_params(entry)[i + 1]);
+        for (i, c) in inputs_str.chars().enumerate() {
+            let raw = builder.block_params(entry)[i + 1];
+            if c == 'q' {
+                arg_values.push(builder.ins().load(
+                    types::I128,
+                    MemFlagsData::trusted(),
+                    raw,
+                    ir::immediates::Offset32::new(0),
+                ));
+            } else {
+                arg_values.push(raw);
+            }
         }
         // Load the real fn address from env + 8.
         let real_fn_ptr = builder.ins().load(
@@ -301,7 +322,7 @@ pub(super) fn define_shape_thunk(
         // args / return - no env, since the real fn is a bare fn
         // item that doesn't take an environment.
         let mut call_sig = module.make_signature();
-        for t in &input_tys {
+        for t in &call_tys {
             call_sig.params.push(AbiParam::new(*t));
         }
         if !unit_ret {

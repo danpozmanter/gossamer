@@ -1,0 +1,51 @@
+// Every element class a combinator's callback can receive, in the lazy form
+// and the eager one.
+//
+// A combinator hands its callback an element by value when the element is a
+// word or a float, and by the address of its storage when it is wider. An
+// `Option` / `Result` is the case where the two meet: its storage is two
+// words, so the callback is handed an address, while its own parameter is the
+// carrier by value.
+
+struct Point { x: f64, y: i64 }
+
+fn main() {
+    let ints = #[1, 2, 3]
+    let floats = #[1.0, 2.0]
+    let texts = #["ab", "c"]
+    let points = #[Point { x: 1.5, y: 2 }, Point { x: 3.5, y: 4 }]
+    let pairs = #[(1, 2.5), (3, 4.5)]
+    let opts = #[Some(1), None, Some(3)]
+    let results = #[Ok(1), Err("e")]
+
+    println("{:?}", ints.iter().map(|v| v * 2).collect())
+    println("{:?}", ints.iter().map(|v| v as f64 * 1.5).collect())
+    println("{:?}", floats.iter().map(|v| v * 2.0).collect())
+    println("{:?}", floats.iter().map(|v| v as i64).collect())
+    println("{:?}", texts.iter().map(|s| s.len()).collect())
+    println("{:?}", texts.iter().map(|s| s.to_uppercase()).collect())
+
+    println("{:?}", points.iter().map(|p| p.x).collect())
+    println("{:?}", points.iter().map(|p| p.y).collect())
+    println("{}", points.iter().map(|p| p.x).sum())
+    println("{:?}", points.map(|p| p.x))
+    println("{:?}", pairs.iter().map(|t| t.0).collect())
+    println("{:?}", pairs.iter().map(|t| t.1).collect())
+    println("{}", pairs.iter().map(|t| t.1).sum())
+
+    println("{}", opts.filter(|o| o.is_some()).len())
+    println("{:?}", opts.map(|o| o.unwrap_or(0)))
+    println("{}", opts.count(|o| o.is_some()))
+    println("{:?}", opts.find(|o| o.is_none()))
+    println("{:?}", opts.position(|o| o.is_none()))
+    println("{}", opts.fold(0, |a, o| a + o.unwrap_or(0)))
+    println("{} {}", opts.any(|o| o.is_none()), opts.all(|o| o.is_some()))
+    println("{}", opts.iter().filter(|o| o.is_some()).collect().len())
+    println("{:?}", opts.iter().map(|o| o.unwrap_or(0)).collect())
+    println("{}", results.iter().filter(|r| r.is_ok()).collect().len())
+    println("{}", results.filter(|r| r.is_ok()).len())
+
+    let mut total = 0
+    for o in opts { total += o.unwrap_or(0) }
+    println("{}", total)
+}

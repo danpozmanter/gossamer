@@ -473,11 +473,9 @@ pub(crate) unsafe fn consume_byte_vec<R>(v: *mut GosVec, f: impl FnOnce(&[u8]) -
         crate::c_abi::panic::panic_text("byte vector is too large to store");
         0
     });
-    // The bytes are copied out, so the container's share of the source ends
-    // here: release exactly that one share and leave every other holder's -
-    // the frame keeps its own until its own release, which is what makes a
-    // read after an insert read live storage.
-    unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
+    // A container that keeps the BYTES rather than the handle needs no share
+    // of the vector at all, so none is given back here: the caller's own
+    // release, at the end of the scope that built the value, is the only one.
     result
 }
 
@@ -496,12 +494,8 @@ pub(crate) unsafe fn consume_byte_vec_preserving_source<R>(
         crate::c_abi::panic::panic_text("byte vector is too large to store");
         0
     });
-    match vec_rc(vec) {
-        0 | 1 => {}
-        2 | 3 => vec_set_rc(vec, 2),
-        _ => {}
-    }
-    unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
+    // As above: the bytes are what the container keeps, so the source's own
+    // holders are the only ones, and this takes none of their shares.
     result
 }
 

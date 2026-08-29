@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.58.1 - Iterator element classes, container ownership
+
+- A combinator's callback receives an `Option` / `Result` element correctly.
+  Such an element is two words, so a combinator hands the callback the address
+  of its storage the way it does a struct's - but the callback's own parameter
+  is the carrier by value, so it read registers the caller never filled and
+  every predicate answered on garbage. `xs.filter(|o| o.is_some())` counted
+  none of them under `gos build`, and `map`, `count`, `find`, `position`, and
+  `fold` were wrong the same way. The callable thunk now loads the carrier from
+  the address it is handed, which is one bridge rather than one per combinator.
+- A lazy `map` or `fold` that answers `f64` accepts an aggregate element. Its
+  upstream is read as words - which is what an element's address is - where
+  before it demanded the word class exactly, so `points.iter().map(|p| p.x)`
+  refused the handle `.iter()` had built for it.
+- A lazy iterator whose two ends disagree about what its slots hold stops the
+  program and says so. The check was an assertion the FFI boundary caught,
+  turning a code generation fault into an empty sequence or a zero: the
+  program printed a wrong number and exited 0.
+- A struct or tuple holding a `Vec` releases that sequence when it dies. The
+  construction minted the field's share and the frame's own release was then
+  dropped on the theory that the field had taken it, so both accounted for one
+  share and the buffer was never freed. A 200k-iteration loop over a one-field
+  struct held 54 MB under `gos build` and now holds 4 MB.
+- A `Map` releases the `Vec` values it holds. Only the string-keyed insert
+  minted the map's share, and it minted it beside one the caller had already
+  minted, so a map of sequences kept every value it was given. Both spellings
+  mint in the runtime now, which is the one place every call shape - a
+  literal, a method, the free form - goes through.
+- `m.insert(k, v)` in statement position no longer looks up the value it
+  replaced. The answer carries a share of that value for whoever receives it,
+  and nobody does in statement position, so a loop overwriting one key kept
+  every value it replaced. The insert that answers nothing does the same store
+  and one hash probe less.
+- A `String` key built at the call site - `m.insert(format("k{}", i), v)` - is
+  released once the container has copied its text. A keyed container keeps the
+  text rather than the pointer, and only a key bound to a name reached a
+  release.
+- A byte vector handed to a keyed container leaves its caller's share alone.
+  The container keeps the BYTES it copies, so it needs no share of the source,
+  but both byte-copying paths took one back: with the caller no longer minting
+  one, the release freed a vector its holder still named and the teardown walk
+  never terminated.
+
 ## 0.58.0 - Carrier payloads, closed-channel sends, language evidence, sandbox removed
 
 - An enum variant's payload field occupies its declared width in the node, the

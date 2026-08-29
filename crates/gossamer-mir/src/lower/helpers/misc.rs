@@ -69,6 +69,16 @@ pub(crate) fn shape_char(tcx: &gossamer_types::TyCtxt, ty: gossamer_types::Ty) -
         // so a callable returning one needs an i128-ret thunk - an
         // i64-ret thunk would truncate the payload word.
         TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1 => 'r',
+        // A reference to a two-word carrier is the one shape whose caller and
+        // callee disagree: a combinator hands its callback the ADDRESS of the
+        // element's storage, while the callback's own parameter is the carrier
+        // by value. The thunk bridges the two by loading, and this is the
+        // shape that says so.
+        TyKind::Ref { inner, .. }
+            if crate::lower::carrier_ref::is_two_word_carrier(tcx, *inner) =>
+        {
+            'q'
+        }
         // Pointer-shaped on 64-bit; refs / strings / aggregates
         // / opaque handles all share the same i64 register slot.
         _ => 'i',

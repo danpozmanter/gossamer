@@ -727,6 +727,26 @@ jobs:
       - name: The reported status may not exceed its evidence
         run: ./target/debug/gos feature-status --check
 
+  # A reference-counted value the compiled tiers never release is invisible to
+  # tier parity: a leaking program prints exactly what a correct one prints.
+  # Each probe holds nothing across iterations, so running it at two loop
+  # counts and comparing peak RSS is what catches the class.
+  leak-oracle:
+    name: Compiled-tier leak oracle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - run: rustup set profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v2-leak-oracle
+      - name: Build gos
+        run: cargo build --bin gos
+      - name: Peak RSS may not grow with the loop count
+        run: ./target/debug/gos run scripts/leak_oracle.gos
+
   # Cross-compilation correctness: `gos build --target aarch64-linux-*`
   # from a Linux host, run under QEMU, must match the bytecode VM. This is
   # the all-tier gate for the Linux-host cross path (gnu + musl).

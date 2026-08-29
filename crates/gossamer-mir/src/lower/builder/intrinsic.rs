@@ -3904,10 +3904,30 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         let raw = self.lower_expr(closure_arg)?;
-        let cb_sig = gossamer_types::FnSig {
-            inputs: inputs.to_vec(),
-            output,
-        };
+        // A combinator hands a wide element to its callback by the address of
+        // the element's storage. A struct, tuple, or array parameter IS that
+        // address, so the element type is what the callback takes. An
+        // `Option` / `Result` / inline-enum element is two words held BY
+        // VALUE, so a parameter of that type would be read out of registers
+        // the shim never filled: the callback takes a reference to it
+        // instead, which is the address the shim passes, and the
+        // carrier-reference pass rewrites the body's reads to go through it.
+        let inputs: Vec<Ty> = inputs
+            .iter()
+            .map(|&input| {
+                if crate::lower::carrier_ref::is_two_word_carrier(self.tcx, input)
+                    && self.elem_bytes_of(input) > 8
+                {
+                    self.tcx.intern(gossamer_types::TyKind::Ref {
+                        mutability: gossamer_types::Mutbl::Not,
+                        inner: input,
+                    })
+                } else {
+                    input
+                }
+            })
+            .collect();
+        let cb_sig = gossamer_types::FnSig { inputs, output };
         let cb_trait_ty = self.tcx.intern(gossamer_types::TyKind::FnTrait(cb_sig));
         Some(self.coerce_to_fn_trait_if_needed(raw, cb_trait_ty, span))
     }

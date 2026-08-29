@@ -90,6 +90,24 @@ fn probes() -> Vec<(String, String)> {
             println("{}", total)
         }
         """)
+        ("map_field_replaced", """
+        struct Cache { pages: Map<i64, Vec<u8>>, seen: Set<i64>, hits: i64 }
+        fn fill(cache: &mut Cache, page: i64) {
+            cache.pages.insert(page, #[7u8; 4])
+            let _ = cache.seen.insert(page)
+            cache.hits += 1
+            cache.pages = Map::from([(page, #[1u8, 2u8])])
+        }
+        fn main() {
+            let mut acc = 0
+            for round in 0..(COUNT / 500) {
+                let mut cache = Cache { pages: Map::new(), seen: Set::new(), hits: 0 }
+                for i in 0..50 { fill(&mut cache, i) }
+                acc += cache.pages.len() + cache.hits + cache.seen.len()
+            }
+            println("{}", acc)
+        }
+        """)
         ("map_of_vecs", """
         fn main() {
             let mut acc = 0
