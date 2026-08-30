@@ -531,7 +531,11 @@ fn decode_hex_escape<I: Iterator<Item = char>>(
 
 /// Returns the decoded char value for a `'x'` literal.
 pub(crate) fn char_literal_value(source: &str) -> char {
-    let body = source.trim_start_matches('\'').trim_end_matches('\'');
+    // Exactly one delimiter comes off each end: `'\''` carries an escaped
+    // quote whose own `'` would otherwise be eaten as a repeated delimiter,
+    // leaving a lone backslash behind.
+    let body = source.strip_prefix('\'').unwrap_or(source);
+    let body = body.strip_suffix('\'').unwrap_or(body);
     let decoded = decode_string_escapes(body);
     decoded.chars().next().unwrap_or('\0')
 }

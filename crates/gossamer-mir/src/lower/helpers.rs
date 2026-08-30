@@ -51,7 +51,7 @@ use super::*;
 
 mod collect;
 mod drops;
-mod escape;
+pub mod escape;
 mod for_loop;
 mod index;
 mod misc;

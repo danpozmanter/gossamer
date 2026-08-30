@@ -4154,6 +4154,7 @@ impl Vm {
                     // borrow so the two register accesses don't overlap.
                     let idx_int = match &registers[index as usize] {
                         Value::Int(n) => Some(*n),
+                        Value::Uint(n) => Some(*n as i64),
                         _ => None,
                     };
                     let result = match idx_int {

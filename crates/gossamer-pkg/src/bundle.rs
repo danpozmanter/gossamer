@@ -325,7 +325,22 @@ pub fn bundle_sibling_modules_traced(entry: &Path, source: String) -> (String, V
         return (source, vec![span]);
     }
     let entry_stem = entry.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    let modules = collect_package_modules(dir, Some(entry_stem));
+    let mut modules = collect_package_modules(dir, Some(entry_stem));
+    // An integration test lives beside the package rather than inside it, so
+    // the crate's own modules are not its siblings. Bundle them too, which is
+    // what `use crate::<module>` in a `tests/` file names.
+    if let Some(src) = crate_src_dir_for_tests(dir) {
+        let existing: Vec<String> = modules.iter().map(|m| m.name.clone()).collect();
+        // The package entry is the program's own root, not a module an
+        // integration test reaches through `crate::`; inlining it would bring
+        // its imports into a scope that already has them.
+        for module in collect_package_modules(&src, Some("main")) {
+            if !existing.contains(&module.name) {
+                modules.push(module);
+            }
+        }
+        modules.sort_by(|a, b| a.name.cmp(&b.name));
+    }
     if modules.is_empty() {
         let span = whole_file_span(entry, &source);
         return (source, vec![span]);
@@ -480,6 +495,20 @@ fn neutralize_external_mod_decls(source: &str, sibling_stems: &[&str]) -> String
 /// `project.toml` lives in `dir` itself or in `dir`'s immediate
 /// parent. Used by [`bundle_sibling_modules`] to refuse bundling in
 /// loose-file invocations like `gos run /tmp/foo.gos`.
+/// The package's `src` directory when `dir` is a project's `tests` directory.
+/// A file there is compiled against the package, not against its own folder.
+fn crate_src_dir_for_tests(dir: &Path) -> Option<PathBuf> {
+    if dir.file_name().and_then(|n| n.to_str()) != Some("tests") {
+        return None;
+    }
+    let root = dir.parent()?;
+    if !root.join("project.toml").is_file() {
+        return None;
+    }
+    let src = root.join("src");
+    src.is_dir().then_some(src)
+}
+
 fn is_inside_project(dir: &Path) -> bool {
     if dir.join("project.toml").is_file() {
         return true;

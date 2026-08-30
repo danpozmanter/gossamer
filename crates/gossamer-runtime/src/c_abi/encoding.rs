@@ -673,23 +673,48 @@ get_u64!(gos_rt_bin_get_u64_le, from_le_bytes);
 
 /// Bytes `[offset, offset + width)` of `data`, or the diagnostic when
 /// that window is not entirely inside the buffer.
-unsafe fn window_of(
+unsafe fn read_window(
     data: *const super::vec::GosVec,
     offset: i64,
-    width: usize,
-) -> Result<Vec<u8>, i128> {
+    out: &mut [u8],
+) -> Result<(), i128> {
     if offset < 0 {
         return Err(err_result("binary: offset must be non-negative"));
     }
-    let bytes = unsafe { gosvec_u8(data) };
-    let start = offset as usize;
-    let end = start
-        .checked_add(width)
-        .ok_or_else(|| err_result("binary: offset overflows the buffer"))?;
-    if end > bytes.len() {
+    if data.is_null() {
         return Err(err_result("binary: read past the end of the buffer"));
     }
-    Ok(bytes[start..end].to_vec())
+    // The window is read straight out of the caller's buffer: materialising
+    // the whole buffer to take a few bytes from it would make every fixed
+    // width read cost the buffer's length.
+    let vref = unsafe { &*data };
+    let len = if vref.ptr.is_null() || vref.len <= 0 {
+        0
+    } else {
+        vref.len as usize
+    };
+    let start = offset as usize;
+    let end = start
+        .checked_add(out.len())
+        .ok_or_else(|| err_result("binary: offset overflows the buffer"))?;
+    if end > len {
+        return Err(err_result("binary: read past the end of the buffer"));
+    }
+    if vref.elem_bytes == 1 {
+        // SAFETY: `start + out.len() <= len`, so the window is inside the
+        // buffer's single-byte elements.
+        let bytes = unsafe { std::slice::from_raw_parts(vref.ptr.as_ptr().add(start), out.len()) };
+        out.copy_from_slice(bytes);
+    } else {
+        // SAFETY: same bound over the buffer's machine-word elements.
+        let words = unsafe {
+            std::slice::from_raw_parts(vref.ptr.as_ptr().cast::<i64>().add(start), out.len())
+        };
+        for (slot, &word) in out.iter_mut().zip(words) {
+            *slot = word as u8;
+        }
+    }
+    Ok(())
 }
 
 /// Writes `bytes` into `[offset, offset + bytes.len())` of a GosVec whose
@@ -731,12 +756,10 @@ macro_rules! get_fixed_at {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $name(data: *const super::vec::GosVec, offset: i64) -> i128 {
             ffi_entry!(0i128, {
-                let window = match unsafe { window_of(data, offset, $n) } {
-                    Ok(window) => window,
-                    Err(packed) => return packed,
-                };
                 let mut arr = [0u8; $n];
-                arr.copy_from_slice(&window);
+                if let Err(packed) = unsafe { read_window(data, offset, &mut arr) } {
+                    return packed;
+                }
                 unsafe { super::vec::gos_rt_result_new(0, <$ty>::$from(arr) as i64) }
             })
         }

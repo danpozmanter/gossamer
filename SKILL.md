@@ -82,10 +82,12 @@ ownership transfer, no borrow checker, and no lifetimes**. Reason about
 values, not moves.
 
 **Every parameter is by value, and by value means the caller is safe.**
-Passing a collection copies nothing - the callee reads the same storage -
-and the callee still cannot change what the caller holds. Declaring the
-parameter `mut` lets the callee write it; the write lands on the
-callee's own value, never on the caller's variable.
+Passing a collection costs no copy where none is observable - a callee
+that only reads reads the caller's own storage - and the callee still
+cannot change what the caller holds. Declaring the parameter `mut` lets
+the callee write it; the write lands on the callee's own value, never on
+the caller's variable, so a `mut` parameter (and one whose value outlives
+the call) is the case that takes storage of its own.
 
 ```gossamer
 fn tally(mut xs: Vec<i64>) -> i64 { xs.push(1); xs.len() }   // no copy on the way in

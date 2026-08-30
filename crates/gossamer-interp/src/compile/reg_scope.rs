@@ -224,6 +224,16 @@ impl<'tcx> FnBuilder<'tcx> {
         None
     }
 
+    /// Whether `reg` is the home of a binding that is still in scope.
+    /// An initializer that folds to an existing binding's register - an
+    /// inlined identity call, say - aliases it exactly as `let y = x` does,
+    /// so the new binding needs storage of its own.
+    pub(crate) fn reg_is_bound_local(&self, reg: Reg) -> bool {
+        self.scopes
+            .iter()
+            .any(|scope| scope.locals.values().any(|typed| typed.reg == reg))
+    }
+
     /// Coerces a typed-reg into the `Value` register file,
     /// emitting `BoxF64` / `BoxI64` as required.
     pub(crate) fn as_value(&mut self, tr: TypedReg) -> Reg {

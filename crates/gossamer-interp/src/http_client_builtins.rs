@@ -115,6 +115,7 @@ fn int_field(inner: &crate::value::StructInner, name: &str) -> Option<i64> {
         .find(|(ident, _)| (**ident) == name)
         .and_then(|(_, v)| match v {
             Value::Int(n) => Some(*n),
+            Value::Uint(n) => Some(*n as i64),
             _ => None,
         })
 }

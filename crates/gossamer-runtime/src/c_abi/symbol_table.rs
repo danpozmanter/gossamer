@@ -4451,6 +4451,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_result_unwrap_or as *const u8,
         ),
         (
+            "gos_rt_result_unwrap_or_vec",
+            crate::c_abi::vec::gos_rt_result_unwrap_or_vec as *const u8,
+        ),
+        (
             "gos_rt_result_unwrap_or_carrier",
             crate::c_abi::vec::gos_rt_result_unwrap_or_carrier as *const u8,
         ),

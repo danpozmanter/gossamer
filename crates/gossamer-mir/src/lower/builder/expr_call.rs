@@ -980,6 +980,13 @@ impl<'a> Builder<'a> {
         // to wrap `bare_fn`'s code address into the env+code
         // shape; the call site of `apply(f, ...)` with `f` already
         // a closure (env-shaped) is a no-op.
+        // Which parameters the callee only reads, and lets nothing outlive
+        // the call through. A callee that is not a resolved name states
+        // nothing, so none of its parameters is assumed read-only.
+        let callee_param_shareable: Option<Vec<bool>> = match &callee.kind {
+            HirExprKind::Path { def: Some(def), .. } => self.fn_param_shareable.get(def).cloned(),
+            _ => None,
+        };
         let callee_param_tys: Option<Vec<Ty>> = match &callee.kind {
             HirExprKind::Path { def: Some(def), .. } => self.fn_inputs.get(def).cloned(),
             _ => None,
@@ -1160,26 +1167,32 @@ impl<'a> Builder<'a> {
                     local
                 }
             };
-            // Gossamer has value semantics for owned arguments. The VM already
-            // clones its Value at this boundary; compiled tiers must likewise
-            // give the callee independent growable storage, including Vec
-            // fields nested in a by-value struct or tuple. A reference
-            // parameter keeps the original storage and preserves write-through
+            // Gossamer has value semantics for owned arguments, so the callee
+            // gets independent growable storage - including Vec fields nested
+            // in a by-value struct or tuple - whenever it could write the
+            // parameter or let it outlive the call. A callee that provably
+            // does neither reads the caller's storage instead, and the
+            // argument crosses as the handle. A reference parameter keeps the
+            // original storage either way and preserves write-through
             // behavior.
             let local = {
                 use gossamer_types::TyKind;
                 let source_ty = self.locals[local.0 as usize].ty;
                 let expected_ty = callee_param_tys.as_ref().and_then(|p| p.get(idx).copied());
-                let owned_clone_parameter = expected_ty.is_some_and(|expected| {
-                    matches!(
-                        self.tcx.kind_of(expected),
-                        TyKind::Vec(_)
-                            | TyKind::Adt { .. }
-                            | TyKind::Tuple(_)
-                            | TyKind::Array { .. }
-                            | TyKind::HashMap { .. }
-                    )
-                });
+                let callee_shares_storage = callee_param_shareable
+                    .as_ref()
+                    .is_some_and(|flags| flags.get(idx).copied().unwrap_or(false));
+                let owned_clone_parameter = !callee_shares_storage
+                    && expected_ty.is_some_and(|expected| {
+                        matches!(
+                            self.tcx.kind_of(expected),
+                            TyKind::Vec(_)
+                                | TyKind::Adt { .. }
+                                | TyKind::Tuple(_)
+                                | TyKind::Array { .. }
+                                | TyKind::HashMap { .. }
+                        )
+                    });
                 let caller_visible_place = matches!(
                     &arg.kind,
                     HirExprKind::Path { .. }

@@ -2578,6 +2578,24 @@ pub extern "C" fn gos_rt_result_unwrap_or(r: i128, default: i64) -> i64 {
     }
 }
 
+/// `unwrap_or` where the value is a `Vec` / `[T]`.
+///
+/// The caller holds one share of the fallback and releases it where the
+/// fallback's own binding ends, and one share of the answer. When the fallback
+/// IS the answer those are the same Vec, so it needs the second share the
+/// caller is going to give back; the word-returning form above cannot tell the
+/// two apart and left the caller releasing one Vec twice.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_result_unwrap_or_vec(r: i128, default: i64) -> i64 {
+    if result_disc_of(r) == 0 {
+        return result_payload_of(r);
+    }
+    if default != 0 {
+        unsafe { crate::c_abi::vec::gos_rt_vec_retain(default as usize as *mut GosVec) };
+    }
+    default
+}
+
 /// `unwrap_or` where the payload is itself a `Result` / `Option` carrier -
 /// `spawn(f).join().unwrap_or(Ok(v))` is the shape that reaches it.
 ///
@@ -2892,5 +2910,53 @@ mod packed_row_tests {
             );
             crate::c_abi::map::gos_rt_vec_free(bytes);
         }
+    }
+}
+
+#[cfg(test)]
+mod unwrap_or_vec_tests {
+    use super::*;
+
+    /// A `Vec` with one reference, as the compiler's ownership lowering hands
+    /// one to a call.
+    fn one_share() -> *mut GosVec {
+        unsafe { gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::PRIMITIVE) }
+    }
+
+    fn shares(v: *mut GosVec) -> u16 {
+        vec_rc_atomic(unsafe { &*v }).load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[test]
+    fn a_returned_fallback_carries_a_share_for_every_release_the_caller_owes() {
+        let fallback = one_share();
+        let before = shares(fallback);
+        // Err: the fallback becomes the answer, so the caller now holds it
+        // twice - once as the fallback binding, once as the answer.
+        let answered = gos_rt_result_unwrap_or_vec(
+            crate::c_abi::vec::gos_rt_result_new(1, 0),
+            fallback as i64,
+        );
+        assert_eq!(answered, fallback as i64);
+        assert_eq!(shares(fallback), before + 1);
+        unsafe { crate::c_abi::map::gos_rt_vec_free(fallback) };
+        unsafe { crate::c_abi::map::gos_rt_vec_free(fallback) };
+    }
+
+    #[test]
+    fn an_unused_fallback_keeps_the_one_share_its_caller_releases() {
+        let fallback = one_share();
+        let payload = one_share();
+        let before = shares(fallback);
+        // Ok: the payload is the answer and the fallback is untouched, so the
+        // caller's single release of it stays correct.
+        let answered = gos_rt_result_unwrap_or_vec(
+            crate::c_abi::vec::gos_rt_result_new(0, payload as i64),
+            fallback as i64,
+        );
+        assert_eq!(answered, payload as i64);
+        assert_eq!(shares(fallback), before);
+        unsafe { crate::c_abi::map::gos_rt_vec_free(fallback) };
+        unsafe { crate::c_abi::map::gos_rt_vec_free(payload) };
     }
 }

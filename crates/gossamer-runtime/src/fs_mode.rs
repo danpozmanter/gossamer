@@ -153,6 +153,7 @@ mod fs_mode_tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // sets real permission bits; Miri cannot call chmod(2)
     fn a_directory_is_created_with_the_mode_it_asked_for() {
         let dir = scratch("create");
         let made = dir.join("shared");
@@ -163,6 +164,7 @@ mod fs_mode_tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // sets real permission bits; Miri cannot call chmod(2)
     fn every_directory_a_recursive_create_makes_gets_the_mode() {
         let dir = scratch("create-all");
         let leaf = dir.join("a").join("b");
@@ -182,6 +184,7 @@ mod fs_mode_tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // sets real permission bits; Miri cannot call chmod(2)
     fn a_write_leaves_the_file_at_the_mode_whatever_it_was_before() {
         let dir = scratch("write");
         let path = dir.join("f.txt");

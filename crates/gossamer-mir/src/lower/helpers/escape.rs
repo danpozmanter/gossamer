@@ -53,7 +53,7 @@ pub(crate) fn is_copy_ty(tcx: &TyCtxt, ty: Ty) -> bool {
 /// they spawn goroutines, touch channels, write a static, or stash a
 /// value through a parameter. Calling one inside an auto-region is unsound.
 /// Computed as a transitive closure over the static call graph.
-pub(crate) fn collect_region_unsafe_fns(program: &HirProgram, tcx: &TyCtxt) -> HashSet<DefId> {
+pub fn collect_region_unsafe_fns(program: &HirProgram, tcx: &TyCtxt) -> HashSet<DefId> {
     let mut static_tys: HashMap<DefId, Ty> = HashMap::new();
     for item in &program.items {
         if let HirItemKind::Static(s) = &item.kind {
@@ -740,6 +740,222 @@ impl<'a> LoopEligibility<'a> {
                 }
             }
             HirExprKind::Literal(_) | HirExprKind::Path { .. } | HirExprKind::Placeholder => {}
+        }
+    }
+}
+
+/// Per-parameter "the callee only reads this, and nothing derived from it
+/// outlives the call" summary, keyed by callee.
+///
+/// A by-value container argument is cloned at the call site so the callee's
+/// value is its own. That clone is observable only when the callee can write
+/// the parameter or let it escape; when it can do neither, the argument may
+/// cross as the handle and the copy is pure cost - which is quadratic when the
+/// caller passes a large collection inside a loop.
+///
+/// Conservative on every axis: the parameter must be an immutable binding of a
+/// container type, the callee must answer a value that cannot carry it, and
+/// every mention of the name in the body must sit in a read-only place
+/// position. Anything else - a mention as an argument, in the tail expression,
+/// on either side of an assignment, inside a literal - keeps the clone.
+pub fn collect_shareable_params<S: std::hash::BuildHasher>(
+    program: &HirProgram,
+    tcx: &TyCtxt,
+    region_unsafe: &HashSet<DefId, S>,
+) -> HashMap<DefId, Vec<bool>> {
+    let mut out = HashMap::new();
+    for item in &program.items {
+        let HirItemKind::Fn(f) = &item.kind else {
+            continue;
+        };
+        let (Some(def), Some(body)) = (item.def, &f.body) else {
+            continue;
+        };
+        // A callee that can put a value somewhere outliving its own frame -
+        // a static, a channel, a goroutine, a store through a parameter -
+        // could put this one there, whatever its own return says.
+        if region_unsafe.contains(&def) {
+            out.insert(def, vec![false; f.params.len()]);
+            continue;
+        }
+        // A return that cannot carry the parameter: a scalar or a String.
+        // Anything else could hand back the parameter's own storage, or a
+        // cursor over it.
+        let returns_opaque_value = f.ret.is_none_or(|ret| {
+            matches!(
+                tcx.kind_of(ret),
+                TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::Unit
+            ) || matches!(tcx.kind_of(ret), TyKind::String)
+        });
+        let flags: Vec<bool> = f
+            .params
+            .iter()
+            .map(|p| {
+                if !returns_opaque_value {
+                    return false;
+                }
+                let gossamer_hir::HirPatKind::Binding {
+                    name,
+                    mutable: false,
+                } = &p.pattern.kind
+                else {
+                    return false;
+                };
+                if !matches!(
+                    tcx.kind_of(p.ty),
+                    TyKind::Vec(_)
+                        | TyKind::Slice(_)
+                        | TyKind::Array { .. }
+                        | TyKind::HashMap { .. }
+                ) {
+                    return false;
+                }
+                let mut scan = ShareScan {
+                    name: name.name.as_str(),
+                    escaped: false,
+                };
+                scan.block(&body.block, false);
+                !scan.escaped
+            })
+            .collect();
+        out.insert(def, flags);
+    }
+    out
+}
+
+/// Walks a body looking for any mention of one parameter outside a read-only
+/// place position.
+struct ShareScan<'a> {
+    name: &'a str,
+    escaped: bool,
+}
+
+impl ShareScan<'_> {
+    fn block(&mut self, b: &HirBlock, place: bool) {
+        for s in &b.stmts {
+            match &s.kind {
+                HirStmtKind::Let { init, .. } => {
+                    if let Some(e) = init {
+                        self.expr(e, false);
+                    }
+                }
+                HirStmtKind::Expr { expr, .. } | HirStmtKind::Defer(expr) => self.expr(expr, false),
+                HirStmtKind::Item(_) => {}
+            }
+        }
+        if let Some(t) = &b.tail {
+            // A tail expression is the returned value.
+            self.expr(t, place);
+        }
+    }
+
+    fn expr(&mut self, e: &HirExpr, place: bool) {
+        if self.escaped {
+            return;
+        }
+        match &e.kind {
+            HirExprKind::Path { segments, .. } => {
+                if !place && segments.len() == 1 && segments[0].name.as_str() == self.name {
+                    self.escaped = true;
+                }
+            }
+            // Reading through the parameter keeps its storage inside the call.
+            HirExprKind::MethodCall { receiver, args, .. } => {
+                self.expr(receiver, true);
+                for a in args {
+                    self.expr(a, false);
+                }
+            }
+            HirExprKind::Index { base, index } => {
+                self.expr(base, true);
+                self.expr(index, false);
+            }
+            HirExprKind::Call { callee, args } => {
+                self.expr(callee, false);
+                for a in args {
+                    self.expr(a, false);
+                }
+            }
+            HirExprKind::Assign { place: lhs, value } => {
+                self.expr(lhs, false);
+                self.expr(value, false);
+            }
+            HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
+                self.expr(receiver, false);
+            }
+            HirExprKind::Unary { operand, .. } => self.expr(operand, false),
+            HirExprKind::Binary { lhs, rhs, .. } => {
+                self.expr(lhs, false);
+                self.expr(rhs, false);
+            }
+            HirExprKind::Cast { value, .. } => self.expr(value, false),
+            HirExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expr(condition, false);
+                self.expr(then_branch, place);
+                if let Some(e) = else_branch {
+                    self.expr(e, place);
+                }
+            }
+            HirExprKind::Match { scrutinee, arms } => {
+                self.expr(scrutinee, false);
+                for arm in arms {
+                    if let Some(g) = &arm.guard {
+                        self.expr(g, false);
+                    }
+                    self.expr(&arm.body, place);
+                }
+            }
+            HirExprKind::Loop { body, .. } => self.expr(body, false),
+            HirExprKind::While {
+                condition, body, ..
+            } => {
+                self.expr(condition, false);
+                self.expr(body, false);
+            }
+            HirExprKind::Block(b) => self.block(b, place),
+            HirExprKind::Range { start, end, .. } => {
+                if let Some(s) = start {
+                    self.expr(s, false);
+                }
+                if let Some(t) = end {
+                    self.expr(t, false);
+                }
+            }
+            HirExprKind::Tuple(items) => {
+                for i in items {
+                    self.expr(i, false);
+                }
+            }
+            HirExprKind::Return(Some(e)) | HirExprKind::Break { value: Some(e), .. } => {
+                self.expr(e, false);
+            }
+            // Everything not named above may carry the value somewhere this
+            // walk does not model, so any mention inside it is an escape.
+            _ => {
+                let mut deep = ShareScan {
+                    name: self.name,
+                    escaped: false,
+                };
+                deep.any_mention(e);
+                if deep.escaped {
+                    self.escaped = true;
+                }
+            }
+        }
+    }
+
+    /// Whether the name is mentioned anywhere in a subtree this walk does not
+    /// model precisely.
+    fn any_mention(&mut self, e: &HirExpr) {
+        if let HirExprKind::Path { segments, .. } = &e.kind
+            && segments.len() == 1
+            && segments[0].name.as_str() == self.name
+        {
+            self.escaped = true;
         }
     }
 }

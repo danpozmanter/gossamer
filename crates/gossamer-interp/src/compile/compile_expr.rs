@@ -3700,6 +3700,25 @@ impl<'tcx> FnBuilder<'tcx> {
     /// `HashMap<i64, i64>` construction can route to
     /// `Op::BuildIntMap` instead of the generic `builtin_map_new`
     /// path.
+    /// Whether `callee` names a function whose parameter `idx` it only reads,
+    /// per the summary the compiled tiers lower against.
+    fn callee_only_reads_param(&self, callee: &HirExpr, idx: usize) -> bool {
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return false;
+        };
+        let joined = segments
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        let bare = segments.last().map(|s| s.name.as_str()).unwrap_or_default();
+        self.fn_param_shareable
+            .get(&joined)
+            .or_else(|| self.fn_param_shareable.get(bare))
+            .and_then(|flags| flags.get(idx).copied())
+            .unwrap_or(false)
+    }
+
     pub(crate) fn compile_call_ex(
         &mut self,
         callee: &HirExpr,
@@ -4140,6 +4159,11 @@ impl<'tcx> FnBuilder<'tcx> {
                 && (self.expr_is_map(&args[i])
                     || self.expr_is_hashset(&args[i])
                     || self.expr_is_slot_container(&args[i]))
+                // A callee that only reads the container, and lets nothing
+                // derived from it outlive the call, sees the caller's storage:
+                // copying it would be unobservable, and its cost is the
+                // container's size on every call.
+                && !self.callee_only_reads_param(callee, i)
                 // A reference is an alias by construction: forwarding an
                 // existing `&mut Map` / `&mut Set` parameter must reach the
                 // callee as the same container, or the callee's `insert` /

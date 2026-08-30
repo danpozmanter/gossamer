@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.58.4 - Heap corruption, retention, u64 arguments, handler lowering
+
+- `unwrap_or` on a `Result<Vec<T>, E>` or `Option<Vec<T>>` releases its
+  fallback once. The fallback becomes the answer on the empty arm, so the frame
+  then held the same `Vec` under two bindings and released it under each: the
+  block went back to the allocator twice and every later allocation drew from a
+  corrupted heap. A concurrent server reached that state in seconds and died
+  inside the allocator, which is what made it look like a scheduler fault.
+- A `u64` value reaches a builtin as the value it carries. `as u64` and
+  `as usize` answer an unsigned shape, and the argument reader treated one as
+  no integer at all and substituted zero, so `put_u64_le_at(&mut buf, 0, x as
+  u64)` wrote eight zero bytes with no diagnostic. Every builtin that reads an
+  integer argument was affected; the `u32` path was not, since it never leaves
+  the signed shape.
+- A `Vec` bound out of a `Result` or `Option` by `match`, `if let`, or `?` is
+  released. The carrier frees nothing and a `GosVec` carries no reference-count
+  header, so the binding is the payload's only owner and nothing was reclaiming
+  it: a loop that read a file or sliced a buffer through a fallible call grew by
+  the payload's size every iteration.
+- A capturing closure and a `router` handler lower under `gos build`. A handler
+  answering a bare `Response` reaches its slot through a synthesized
+  `::__ok_wrap`, and only the one-argument shape was scanned, so the
+  two-argument shapes - `fn(Request, Params)`, and a capturing closure lifted to
+  `__closure_N(env, req)` - referenced a thunk nothing emitted and refused to
+  link.
+- A fixed-width read on a byte buffer costs its width on the bytecode VM too;
+  the compiled tiers already did. `binary::get_u16/u32/u64_*_at` converted the
+  whole buffer to take the few bytes they answer.
+- A by-value `Map` argument the callee only reads is not copied on the bytecode
+  VM, matching the compiled tiers. A 10 000-entry map cost 613 us to pass and
+  now costs the same as reaching it through a struct field.
+- A file under `tests/` reaches the package's modules. An integration test lives
+  beside the package rather than inside it, so its own directory declares no
+  modules: `use crate::<module>` passed the front end and then the name was
+  unbound at run time.
+- A by-value container argument crosses as the handle when the callee only
+  reads it. Value semantics were kept by cloning the argument at every call
+  site, which made passing a collection cost its length: a 200 000-element
+  `Vec` read inside a loop spent 506 ms on copies where the same reads through
+  a reference took 1 ms, so a caller that passed a large buffer per iteration
+  paid quadratically. The clone now happens where it is observable - the
+  callee may write the parameter, or something derived from it may outlive the
+  call - and a callee that provably does neither reads the caller's storage.
+- `unwrap_or_else` on a `Result` or an `Option` receiver compiles under
+  `gos build`. Only the data-last free form was lowered, so the method form
+  reached the native backend as a call to an undefined `@unwrap_or_else` and
+  refused to link; it appears mostly in test code, which `--release` does not
+  compile, so a project could carry it a long way before finding out.
+- `'\''` is the quote character. A char literal came off its delimiters with a
+  repeated-character trim, so the escape's own quote was eaten with them and
+  `'\''` decoded as a lone backslash - matching `'\\'`, and silently, since
+  both spellings then compared equal.
+- A fixed-width read on a byte buffer costs its width, not the buffer's
+  length. `binary::get_u16/u32/u64_be_at` and their little-endian twins
+  materialised the whole buffer to take the few bytes they answer, so reading
+  one integer out of a 400 000-byte buffer walked all of it.
+- A binding whose initializer folds to an existing binding's storage takes a
+  copy. Only a bare `let y = x` was treated as aliasing, so a call the
+  compiler reduced to one of its arguments - `fn id(xs: Vec<i64>) -> Vec<i64>
+  { xs }` - left both names on one value, and a later write through either was
+  visible through the other on the bytecode VM and the JIT while the native
+  build disagreed.
+
 ## 0.58.3 - Critical testing fixes, container impls, empty map literals, array map values
 
 - A `#[test]` that records no assertion fails. Passing was conditioned only on

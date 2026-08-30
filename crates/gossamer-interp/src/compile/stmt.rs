@@ -169,6 +169,11 @@ impl<'tcx> FnBuilder<'tcx> {
                                 .consumable_path(init)
                                 .and_then(|name| self.lookup_local(name))
                                 .is_some_and(|home| home.reg == tr.reg);
+                        // A bare path aliases its source register, and so does
+                        // any initializer the compiler folded down to one - an
+                        // inlined call that answers its own argument, say.
+                        let aliases_live_binding = is_path_expr(init)
+                            || (tr.kind == RegKind::Value && self.reg_is_bound_local(tr.reg));
                         let typed = if consume_init {
                             let dst = self.alloc_reg();
                             self.emit(Op::MoveConsume { dst, src: tr.reg });
@@ -176,7 +181,7 @@ impl<'tcx> FnBuilder<'tcx> {
                                 reg: dst,
                                 kind: RegKind::Value,
                             }
-                        } else if is_path_expr(init)
+                        } else if aliases_live_binding
                             && (self.expr_is_map(init)
                                 || self.expr_is_hashset(init)
                                 || self.expr_is_slot_container(init))
@@ -194,7 +199,7 @@ impl<'tcx> FnBuilder<'tcx> {
                                 reg: dst,
                                 kind: RegKind::Value,
                             }
-                        } else if is_path_expr(init) {
+                        } else if aliases_live_binding {
                             self.bind_to_fresh(tr)
                         } else {
                             tr

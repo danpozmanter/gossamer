@@ -512,7 +512,7 @@ impl<'a> Builder<'a> {
         // would pass the raw closure local - cannot carry them.
         if matches!(
             method.name.as_str(),
-            "and_then" | "or_else" | "filter" | "ok_or_else"
+            "and_then" | "or_else" | "filter" | "ok_or_else" | "unwrap_or_else"
         ) && args.len() == 1
             && matches!(receiver_kind_flat, TyKind::Adt { .. })
             && self.is_result_or_option_adt(receiver_ty)
@@ -2349,6 +2349,8 @@ impl<'a> Builder<'a> {
                     // handed over as the address the word helper returns.
                     if self.carrier_payload_is_carrier(receiver_ty) {
                         Some("gos_rt_result_unwrap_or_carrier")
+                    } else if self.carrier_payload_is_sequence(receiver_ty) {
+                        Some("gos_rt_result_unwrap_or_vec")
                     } else {
                         Some("gos_rt_result_unwrap_or")
                     }
@@ -5074,6 +5076,8 @@ impl<'a> Builder<'a> {
                     // loaded back rather than handed over as an address.
                     runtime_symbol = Some(if self.carrier_payload_is_carrier(lowered_recv_ty) {
                         "gos_rt_result_unwrap_or_carrier"
+                    } else if self.carrier_payload_is_sequence(lowered_recv_ty) {
+                        "gos_rt_result_unwrap_or_vec"
                     } else {
                         "gos_rt_result_unwrap_or"
                     });

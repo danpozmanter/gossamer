@@ -360,6 +360,7 @@ pub(crate) fn heap_extract_i64s(v: &Value) -> Vec<i64> {
             .iter()
             .filter_map(|e| match e {
                 Value::Int(n) => Some(*n),
+                Value::Uint(n) => Some(*n as i64),
                 _ => None,
             })
             .collect(),

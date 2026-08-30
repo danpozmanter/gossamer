@@ -204,11 +204,80 @@ pub(crate) fn bytes_from_value(v: &Value) -> Vec<u8> {
     }
 }
 
+/// Byte length of a buffer value, without building the buffer. `None` for a
+/// shape whose length only the general conversion can answer.
+fn byte_len_of(v: &Value) -> Option<usize> {
+    match v {
+        Value::ByteArray(arr) => Some(arr.len()),
+        Value::InlineByteArray(arr) => Some(arr.len()),
+        Value::ByteVec(arr) => Some(arr.len()),
+        Value::String(s) => Some(s.as_str().len()),
+        Value::IntArray(arr) => Some(arr.len()),
+        Value::Array(arr) => Some(arr.len()),
+        _ => None,
+    }
+}
+
+/// Copies `width` bytes from `start` out of a buffer value. `None` when an
+/// element is not a byte, leaving the general conversion to decide.
+fn read_byte_window(v: &Value, start: usize, width: usize) -> Option<Vec<u8>> {
+    match v {
+        Value::ByteArray(arr) => arr.get(start..start + width).map(<[u8]>::to_vec),
+        Value::InlineByteArray(arr) => arr.get(start..start + width).map(<[u8]>::to_vec),
+        Value::ByteVec(arr) => arr.get(start..start + width).map(<[u8]>::to_vec),
+        Value::String(s) => s
+            .as_str()
+            .as_bytes()
+            .get(start..start + width)
+            .map(<[u8]>::to_vec),
+        Value::IntArray(arr) => arr
+            .get(start..start + width)?
+            .iter()
+            .map(|&n| u8::try_from(n).ok())
+            .collect(),
+        Value::Array(arr) => arr
+            .get(start..start + width)?
+            .iter()
+            .map(|elem| match elem {
+                Value::Int(n) => u8::try_from(*n).ok(),
+                Value::Uint(n) => u8::try_from(*n).ok(),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
 /// Reads the `width`-byte window at `offset`, or the diagnostic when it
 /// is not entirely inside the buffer.
 fn window_at(args: &[Value], width: usize) -> Result<Vec<u8>, Value> {
-    let bytes = bytes_from_value(args.first().unwrap_or(&Value::Unit));
+    let source = args.first().unwrap_or(&Value::Unit);
     let offset = args.get(1).and_then(value_to_int).unwrap_or(0);
+    // Reading a few bytes must not cost the buffer's length: take the window
+    // straight out of the value when its shape allows, and fall back to the
+    // general conversion only for a buffer whose elements are not plain bytes.
+    if let Some(len) = byte_len_of(source) {
+        if offset < 0 {
+            return Err(err_variant(
+                "binary: offset must be non-negative".to_string(),
+            ));
+        }
+        let start = offset as usize;
+        let Some(end) = start.checked_add(width) else {
+            return Err(err_variant(
+                "binary: offset overflows the buffer".to_string(),
+            ));
+        };
+        if end > len {
+            return Err(err_variant(
+                "binary: read past the end of the buffer".to_string(),
+            ));
+        }
+        if let Some(window) = read_byte_window(source, start, width) {
+            return Ok(window);
+        }
+    }
+    let bytes = bytes_from_value(source);
     if offset < 0 {
         return Err(err_variant(
             "binary: offset must be non-negative".to_string(),

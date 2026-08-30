@@ -3005,6 +3005,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_option_unwrap"       => rt::gos_rt_option_unwrap,
         "gos_rt_result_unwrap"       => rt::gos_rt_result_unwrap,
         "gos_rt_result_unwrap_or"    => rt::gos_rt_result_unwrap_or,
+        "gos_rt_result_unwrap_or_vec" => rt::vec::gos_rt_result_unwrap_or_vec,
         "gos_rt_result_unwrap_or_carrier" => rt::vec::gos_rt_result_unwrap_or_carrier,
         "gos_rt_result_payload_i128" => rt::gos_rt_result_payload_i128,
         "gos_rt_result_ok"           => rt::gos_rt_result_ok,

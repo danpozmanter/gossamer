@@ -41,6 +41,7 @@ fn rebuild_sequence(receiver: &Value, values: Vec<Value>) -> Value {
                 .iter()
                 .map(|v| match v {
                     Value::Int(n) => Some(*n),
+                    Value::Uint(n) => Some(*n as i64),
                     _ => None,
                 })
                 .collect();

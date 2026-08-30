@@ -519,7 +519,11 @@ Unicode scalars, so do not mix the two spellings on non-ASCII text.
 - `T` is a value. Primitive values copy directly. Owned arrays and Vec values
   remain usable after assignment or a by-value call. Each writable Vec copy
   has independent storage, including recursively nested Vec elements. There
-  is no source-level ownership transfer or `move` keyword.
+  is no source-level ownership transfer or `move` keyword. A by-value
+  container argument is given that storage where the callee could write it or
+  let something derived from it outlive the call; a callee that provably does
+  neither reads the caller's storage, so the call costs nothing the value's
+  length.
 - `&T` is a shared, non-owning lexical view. It cannot be null. It permits
   reads but not writes to the source place. It is not a **parameter** type:
   an argument is passed without copying whatever its type, so the sigil

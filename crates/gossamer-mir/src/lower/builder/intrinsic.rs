@@ -2701,6 +2701,39 @@ impl<'a> Builder<'a> {
         use gossamer_types::{IntTy, TyKind};
         let i64_ty = self.tcx.int_ty(IntTy::I64);
         let is_option = self.is_option_adt(receiver_ty);
+        // `unwrap_or_else` answers the payload rather than another carrier, so
+        // it takes its own destination type instead of the carrier repr the
+        // chain combinators below share.
+        if method.name.as_str() == "unwrap_or_else" {
+            let helper = if is_option {
+                "gos_rt_option_default_with"
+            } else {
+                "gos_rt_result_default_with"
+            };
+            // Option's fallback is a nullary thunk; Result's receives the
+            // `Err` payload word.
+            let inputs: &[Ty] = if is_option { &[] } else { &[i64_ty] };
+            let payload_ty = self.enum_payload_ty(receiver_ty, 0).unwrap_or(i64_ty);
+            let dest_ty = if matches!(
+                self.tcx.kind_of(ty),
+                TyKind::Var(_) | TyKind::Error | TyKind::Never
+            ) {
+                payload_ty
+            } else {
+                ty
+            };
+            let recv = self.lower_expr(receiver)?;
+            let closure = self.lower_iter_closure(closure_arg, inputs, payload_ty, span)?;
+            return Some(self.emit_combinator_call(
+                helper,
+                vec![
+                    Operand::Copy(Place::local(recv)),
+                    Operand::Copy(Place::local(closure)),
+                ],
+                dest_ty,
+                span,
+            ));
+        }
         let helper = match (method.name.as_str(), is_option) {
             ("and_then", true) => "gos_rt_option_and_then",
             ("and_then", false) => "gos_rt_result_and_then",

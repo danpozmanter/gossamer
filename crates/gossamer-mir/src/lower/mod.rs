@@ -179,6 +179,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     let const_inits = collect_const_init_exprs(program);
     // Conservative escape summary driving automatic arena regions.
     let region_unsafe = collect_region_unsafe_fns(program, tcx);
+    let fn_param_shareable = collect_shareable_params(program, tcx, &region_unsafe);
     let mut bodies = Vec::new();
     for item in &program.items {
         collect_item(
@@ -193,6 +194,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
             &fn_ret_names,
             &fn_returns,
             &fn_inputs,
+            &fn_param_shareable,
             &consts,
             &mut_statics,
             &const_inits,

@@ -3600,6 +3600,19 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         // in flight.
         let old_rc = crate::c_abi::vec::vec_rc_atomic(unsafe { &*v })
             .fetch_sub(1, std::sync::atomic::Ordering::Release);
+        // A count that was already zero means this reference was handed back
+        // twice. Reclaiming again would return the block to the allocator a
+        // second time, so the release stops here; `GOS_RC_DEBUG` names the
+        // site so the ownership lowering that produced it can be found.
+        if old_rc == 0 {
+            if std::env::var_os("GOS_RC_DEBUG").is_some() {
+                eprintln!(
+                    "gos_rt_vec_free: released a Vec whose count was already zero ({v:p})\n{}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+            return;
+        }
         if old_rc > 1 {
             return;
         }

@@ -1927,3 +1927,125 @@ fn read_map(m: Map<String, i64>) -> String {
         "the option-returning traversal must lower to a copy the drop pass accounts for"
     );
 }
+
+const READ_ONLY_PARAM_SOURCE: &str = r#"
+fn read_at(xs: Vec<i64>, i: i64) -> i64 { xs[i] }
+fn hand_back(xs: Vec<i64>) -> Vec<i64> { xs }
+fn grow(mut xs: Vec<i64>) -> i64 { xs.push(1); xs.len() }
+
+fn main() {
+    let items = #[1, 2, 3]
+    println("{}", read_at(items, 1))
+    println("{}", grow(items))
+    let same = hand_back(items)
+    println("{}", same.len())
+}
+"#;
+
+/// Names of the intrinsics `body` calls, in order.
+fn intrinsic_calls(body: &gossamer_mir::Body) -> Vec<String> {
+    body.blocks
+        .iter()
+        .flat_map(|b| b.stmts.iter())
+        .filter_map(|stmt| match &stmt.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, .. },
+                ..
+            } => Some((*name).to_string()),
+            _ => None,
+        })
+        .chain(body.blocks.iter().filter_map(|b| match &b.terminator {
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(s)),
+                ..
+            } => Some(s.clone()),
+            _ => None,
+        }))
+        .collect()
+}
+
+#[test]
+fn a_read_only_container_argument_crosses_without_a_copy() {
+    // Value semantics only need independent storage where the callee can
+    // write the parameter or let something derived from it outlive the call.
+    // Copying unconditionally made passing a collection cost its length.
+    let (bodies, _) = build(READ_ONLY_PARAM_SOURCE);
+    let main = bodies
+        .iter()
+        .find(|b| b.name == "main")
+        .expect("main body");
+    let clones = intrinsic_calls(main)
+        .iter()
+        .filter(|name| name.as_str() == "gos_rt_vec_clone")
+        .count();
+    assert_eq!(
+        clones, 2,
+        "one copy for the `mut` parameter and one for the callee that hands \
+         the value back; the read-only call needs none",
+    );
+}
+
+const CARRIER_PAYLOAD_SOURCE: &str = r#"
+fn make(n: i64) -> Result<Vec<i64>, String> {
+    if n > 0 { Ok(#[n, n + 1]) } else { Err("empty") }
+}
+
+fn main() {
+    let mut total = 0
+    let mut i = 0
+    while i < 4 {
+        match make(i) {
+            Ok(v) => total += v.len()
+            Err(_e) => total += 0
+        }
+        i += 1
+    }
+    println("{}", total)
+}
+"#;
+
+#[test]
+fn a_sequence_payload_bound_out_of_a_carrier_is_released() {
+    // The carrier itself frees nothing and a GosVec carries no RC header, so
+    // the binding the payload is matched into is its only owner. Without a
+    // release there, every fallible call in a loop kept its result.
+    let (bodies, _) = build(CARRIER_PAYLOAD_SOURCE);
+    let main = bodies
+        .iter()
+        .find(|b| b.name == "main")
+        .expect("main body");
+    let calls = intrinsic_calls(main);
+    assert!(
+        calls.iter().any(|name| name == "gos_rt_result_payload"),
+        "the match arm reads the payload out of the carrier: {calls:?}",
+    );
+    // The binding is reclaimed either by its own release or, when the loop
+    // body is regioned, wholesale at the arena pop.
+    assert!(
+        calls
+            .iter()
+            .any(|name| name == "gos_rt_vec_free" || name == "gos_rt_arena_pop"),
+        "the payload binding must be reclaimed: {calls:?}",
+    );
+}
+
+#[test]
+fn a_sequence_wrapped_into_a_returned_carrier_mints_no_extra_share() {
+    // The wrap hands the payload's share to the caller with the carrier. A
+    // retain there is a share the frame never gets back, since the local's own
+    // release is suppressed for the same reason.
+    let (bodies, _) = build(CARRIER_PAYLOAD_SOURCE);
+    let make = bodies
+        .iter()
+        .find(|b| b.name == "make")
+        .expect("make body");
+    let calls = intrinsic_calls(make);
+    assert!(
+        calls.iter().any(|name| name == "gos_rt_result_new"),
+        "make wraps its sequence in a carrier: {calls:?}",
+    );
+    assert!(
+        !calls.iter().any(|name| name == "gos_rt_vec_retain"),
+        "no share is minted for a payload the caller takes over: {calls:?}",
+    );
+}

@@ -66,6 +66,7 @@ fn builtin_json_at(args: &[Value]) -> RuntimeResult<Value> {
     };
     let idx = args.get(1).and_then(|v| match v {
         Value::Int(n) => Some(*n),
+        Value::Uint(n) => Some(*n as i64),
         _ => None,
     });
     let Some(idx) = idx else {

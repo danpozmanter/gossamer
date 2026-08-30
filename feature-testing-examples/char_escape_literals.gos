@@ -1,0 +1,29 @@
+// Every escape a char literal accepts, as a value, in a pattern, and as a byte.
+fn kind(c: char) -> String {
+    match c {
+        '\'' => "quote"
+        '\\' => "backslash"
+        '\n' => "newline"
+        '\t' => "tab"
+        '"' => "dquote"
+        '\0' => "nul"
+        _ => "other"
+    }
+}
+
+fn main() {
+    println("{} {} {} {} {}", '\'' as i64, '\\' as i64, '\n' as i64, '\t' as i64, '"' as i64)
+    println("{} {} {}", kind('\''), kind('\\'), kind('\n'))
+    println("{} {} {}", kind('\t'), kind('"'), kind('\0'))
+    println("{} {}", b'\'' as i64, b'\\' as i64)
+    println("{}", '\'')
+
+    let text = "don't \"quote\" me"
+    let mut quotes = 0
+    let mut doubles = 0
+    for c in text {
+        if c == '\'' { quotes += 1 }
+        if c == '"' { doubles += 1 }
+    }
+    println("{} {}", quotes, doubles)
+}

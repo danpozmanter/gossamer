@@ -74,6 +74,8 @@ pub(crate) struct Builder<'a> {
     pub(crate) fn_ret_names: &'a HashMap<String, Ty>,
     pub(crate) fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
     pub(crate) fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+    /// Per-parameter read-only summary by callee; see `collect_shareable_params`.
+    pub(crate) fn_param_shareable: &'a HashMap<gossamer_resolve::DefId, Vec<bool>>,
     pub(crate) consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
     /// Scalar `static mut` items promoted to real mutable module globals,
     /// keyed by `DefId`. A path reading one lowers to a [`Rvalue::StaticLoad`]

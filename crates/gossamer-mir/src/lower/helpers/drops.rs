@@ -556,6 +556,30 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         }
     }
 
+    // Locals this body already releases. `insert_drops_at_returns` runs before
+    // this pass, so its frees are the record of which locals the frame still
+    // owns a share of.
+    let vec_released: std::collections::HashSet<u32> = body
+        .blocks
+        .iter()
+        .flat_map(|b| b.stmts.iter())
+        .filter_map(|stmt| {
+            let StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, args },
+                ..
+            } = &stmt.kind
+            else {
+                return None;
+            };
+            if *name != "gos_rt_vec_free" {
+                return None;
+            }
+            match args.first() {
+                Some(Operand::Copy(p)) if p.projection.is_empty() => Some(p.local.0),
+                _ => None,
+            }
+        })
+        .collect();
     let mut retain_sites: Vec<(usize, usize, Local, usize)> = Vec::new();
     // Retains to emit at the end of a block (just before a consuming
     // terminator call), `(block, local)`.
@@ -1086,11 +1110,18 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 // unwrapped into, so the second release freed storage the
                 // first had already returned.
                 Rvalue::CallIntrinsic { name, args } if *name == "gos_rt_result_new" => {
-                    if let Some(l) = args
-                        .get(1)
-                        .and_then(|a| rc_operand(a).or_else(|| vec_operand(a)))
-                    {
+                    if let Some(l) = args.get(1).and_then(rc_operand) {
                         retain_sites.push((block_idx, stmt_idx, l, 1));
+                    } else if let Some(l) = args.get(1).and_then(vec_operand) {
+                        // The carrier's share is only the frame's to mint when
+                        // the frame still holds one to balance it. A payload
+                        // built for the carrier and handed to the caller with it
+                        // has no release scheduled (the drop pass, which has
+                        // already run, moved it into the return), so minting
+                        // here would leave a share nothing returns.
+                        if vec_released.contains(&l.0) {
+                            retain_sites.push((block_idx, stmt_idx, l, 1));
+                        }
                     }
                 }
                 // Aggregate fields / repeated elements - the
@@ -1197,6 +1228,36 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             }
         }
     }
+    // Payload locals read out of a carrier this frame consumed by value, and
+    // how many bindings copy each one. `let v = f()?` lowers to an extraction
+    // followed by a copy, so the binding - not the extraction - is the owner;
+    // a payload copied more than once has no single owner and is left alone.
+    let mut payload_src = vec![false; n_locals];
+    let mut payload_copies = vec![0usize; n_locals];
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::CallIntrinsic { name, args },
+                } if *name == "gos_rt_result_payload"
+                    && place.projection.is_empty()
+                    && (place.local.0 as usize) < n_locals
+                    && !enum_arg_is_borrowed(args) =>
+                {
+                    payload_src[place.local.0 as usize] = true;
+                }
+                StatementKind::Assign {
+                    rvalue: Rvalue::Use(Operand::Copy(p)),
+                    ..
+                } if p.projection.is_empty() && (p.local.0 as usize) < n_locals => {
+                    payload_copies[p.local.0 as usize] += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+
     // A `String` payload extracted out of a BORROWED container slot
     // (see `borrowed_enum_src`) into a binding this frame will own and
     // release (the `owned` `gos_rt_result_payload` arm below) needs its
@@ -1293,6 +1354,49 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     // binding (`let x = to_json()?`), that binding owns it (the
                     // `Use(Copy)` arm below) - so this arm excludes
                     // `copy_sourced` to avoid double-freeing the autoderive path.
+                    // `let v = f()?` / `let v = match r { Ok(v) => v, .. }` with a
+                    // `Vec` payload: the extraction is copied into this binding,
+                    // which becomes the payload's only owner. A GosVec carries no
+                    // RC header, so it is released through the vec path.
+                    Rvalue::Use(Operand::Copy(p))
+                        if p.projection.is_empty()
+                            && (p.local.0 as usize) < n_locals
+                            && payload_src[p.local.0 as usize]
+                            && payload_copies[p.local.0 as usize] == 1
+                            && !copy_target[p.local.0 as usize]
+                            && matches!(
+                                tcx.kind_of(body.locals[i].ty),
+                                gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
+                            ) =>
+                    {
+                        owned[i] = true;
+                        vec_field_extract[i] = true;
+                    }
+                    // A `Vec` / `[T]` payload moved out of a consumed by-value
+                    // `Result`/`Option`/inline enum (`match r { Ok(v) => … }`,
+                    // `if let`, `?`). The carrier frees nothing, and a GosVec
+                    // carries no RC header, so this local is the only owner and
+                    // is released through the same `gos_rt_vec_free` path an
+                    // aggregate-field extract uses.
+                    Rvalue::CallIntrinsic { name, args }
+                        if *name == "gos_rt_result_payload"
+                            && !copy_sourced[i]
+                            && matches!(
+                                tcx.kind_of(body.locals[i].ty),
+                                gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
+                            )
+                            && !enum_arg_is_borrowed(args)
+                            && match args.first() {
+                                Some(Operand::Copy(p)) if p.projection.is_empty() => {
+                                    let e = p.local.0 as usize;
+                                    e >= n_locals || (!copy_sourced[e] && !copy_target[e])
+                                }
+                                _ => true,
+                            } =>
+                    {
+                        owned[i] = true;
+                        vec_field_extract[i] = true;
+                    }
                     Rvalue::CallIntrinsic { name, args }
                         if *name == "gos_rt_result_payload"
                             && !copy_sourced[i]

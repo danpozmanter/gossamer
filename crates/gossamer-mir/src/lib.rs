@@ -32,6 +32,7 @@ pub use ir::{
     Projection, RawIntrinsic, RawIntrinsicArity, Rvalue, Statement, StatementKind, StaticRef,
     Terminator, UnOp, local_is_uint_cast,
 };
+pub use lower::helpers::escape::{collect_region_unsafe_fns, collect_shareable_params};
 pub use lower::{lower_program, mangle_callable_shape};
 pub use monomorph::{check_generic_layouts, mangled_name, monomorphise};
 pub use opt::{

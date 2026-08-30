@@ -1,0 +1,40 @@
+// A by-value container argument is the callee's own value: a callee that
+// writes it does not touch the caller's, and a callee that hands it back
+// does not alias the caller's binding either.
+struct Holder { items: Vec<i64> }
+
+fn read_len(xs: Vec<i64>) -> i64 { xs.len() }
+fn read_at(xs: Vec<i64>, i: i64) -> i64 { xs[i] }
+fn grow(mut xs: Vec<i64>) -> i64 { xs.push(99); xs.len() }
+fn hand_back(xs: Vec<i64>) -> Vec<i64> { xs }
+fn write_through(xs: &mut Vec<i64>) { xs.push(7) }
+fn grow_holder(mut h: Holder) -> i64 { h.items.push(5); h.items.len() }
+fn read_holder(h: Holder) -> i64 { h.items.len() }
+fn grow_map(mut m: Map<i64, i64>) -> i64 { m.insert(9, 9); m.len() }
+fn read_map(m: Map<i64, i64>) -> i64 { m.len() }
+
+fn main() {
+    let mut items = #[1, 2]
+    println("{} {}", read_len(items), items)
+    println("{} {}", read_at(items, 1), items)
+    println("{} {}", grow(items), items)
+    println("{} {}", read_len(items), read_len(items))
+
+    let handed = hand_back(items)
+    items.push(3)
+    println("{} {}", items, handed)
+
+    let mut more = #[4, 5]
+    write_through(&mut more)
+    println("{}", more)
+
+    let holder = Holder { items: #[1, 2, 3] }
+    println("{} {} {}", grow_holder(holder), read_holder(holder), holder.items)
+
+    let counts = { 1: 1 }
+    println("{} {} {}", grow_map(counts), read_map(counts), counts)
+
+    let plain = #[6, 7]
+    let alias = plain
+    println("{} {}", plain, alias)
+}

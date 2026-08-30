@@ -1,0 +1,42 @@
+// `unwrap_or_else` on a Result and an Option, in method and free form, across
+// the payload shapes that cross the ABI differently.
+use std::errors
+
+struct Point { x: i64, y: i64 }
+
+fn scalar(ok: bool) -> Result<i64, errors::Error> {
+    if ok { Ok(7) } else { Err(errors::new("scalar")) }
+}
+
+fn text(ok: bool) -> Result<String, errors::Error> {
+    if ok { Ok("payload") } else { Err(errors::new("text")) }
+}
+
+fn point(ok: bool) -> Result<Point, errors::Error> {
+    if ok { Ok(Point { x: 1, y: 2 }) } else { Err(errors::new("point")) }
+}
+
+fn seq(ok: bool) -> Result<Vec<i64>, errors::Error> {
+    if ok { Ok(#[1, 2, 3]) } else { Err(errors::new("seq")) }
+}
+
+fn main() {
+    println("{}", scalar(true).unwrap_or_else(|_e| -1))
+    println("{}", scalar(false).unwrap_or_else(|_e| -1))
+    println("{}", text(true).unwrap_or_else(|e| e.message()))
+    println("{}", text(false).unwrap_or_else(|e| e.message()))
+
+    let p = point(false).unwrap_or_else(|_e| Point { x: 9, y: 9 })
+    println("{} {}", p.x, p.y)
+    println("{}", seq(false).unwrap_or_else(|_e| #[8, 9]))
+
+    let none: Option<i64> = None
+    let some: Option<i64> = Some(4)
+    let base = 100
+    println("{}", none.unwrap_or_else(|| base + 5))
+    println("{}", some.unwrap_or_else(|| base + 5))
+
+    let missing: Option<String> = None
+    println("{}", missing.unwrap_or_else(|| "fallback"))
+    println("{}", text(false).map(|s| s + "!").unwrap_or_else(|_e| "chained"))
+}

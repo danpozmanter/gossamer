@@ -62,6 +62,7 @@ impl<'a> Builder<'a> {
         fn_ret_names: &'a HashMap<String, Ty>,
         fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
         fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+        fn_param_shareable: &'a HashMap<gossamer_resolve::DefId, Vec<bool>>,
         consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
         mut_statics: &'a HashMap<gossamer_resolve::DefId, crate::ir::StaticRef>,
         const_inits: &'a HashMap<gossamer_resolve::DefId, HirExpr>,
@@ -85,6 +86,7 @@ impl<'a> Builder<'a> {
             fn_ret_names,
             fn_returns,
             fn_inputs,
+            fn_param_shareable,
             consts,
             mut_statics,
             const_inits,
@@ -1466,6 +1468,30 @@ impl<'a> Builder<'a> {
     /// nested one is boxed and the payload holds its address. A reader
     /// that hands the payload back as a value must load it rather than
     /// treat the address as the carrier.
+    /// Whether the carrier's payload is a `Vec` / `[T]` - the case where
+    /// `unwrap_or`'s fallback is itself a heap value and only one of the two
+    /// becomes the answer.
+    pub(crate) fn carrier_payload_is_sequence(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Adt { def, substs }
+                    if def.local == u32::MAX || def.local == u32::MAX - 1 =>
+                {
+                    return substs.types().first().is_some_and(|payload| {
+                        matches!(
+                            self.tcx.kind_of(*payload),
+                            TyKind::Vec(_) | TyKind::Slice(_)
+                        )
+                    });
+                }
+                _ => return false,
+            }
+        }
+    }
+
     pub(crate) fn carrier_payload_is_carrier(&self, ty: Ty) -> bool {
         use gossamer_types::TyKind;
         let mut cur = ty;

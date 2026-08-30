@@ -728,10 +728,8 @@ fn handler_ok_wrap_body(
 /// Pushes the Ok-packing handler thunk for `decl` when its declared
 /// return is a bare `http::Response` and its arity matches a handler
 /// shape (`fn(Request)` free fn or `fn(&self, Request)` serve method).
-/// Limitation: only named `fn` items are scanned, so a closure
-/// registered as a handler with a bare-`Response` body is NOT
-/// wrapped - closure handlers must return `Result<Response, Error>`
-/// themselves until closure declarations flow through this pass.
+/// A capturing closure reaches this as its lifted `__closure_N(env, req)`
+/// item, so it is scanned on the two-argument arity a `serve` method uses.
 fn maybe_push_handler_ok_wrap(
     decl: &HirFn,
     expected_arity: usize,
@@ -1108,6 +1106,7 @@ pub(crate) fn collect_item(
     fn_ret_names: &HashMap<String, Ty>,
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+    fn_param_shareable: &HashMap<gossamer_resolve::DefId, Vec<bool>>,
     consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
     mut_statics: &HashMap<gossamer_resolve::DefId, crate::ir::StaticRef>,
     const_inits: &HashMap<gossamer_resolve::DefId, HirExpr>,
@@ -1148,6 +1147,7 @@ pub(crate) fn collect_item(
                 fn_ret_names,
                 fn_returns,
                 fn_inputs,
+                fn_param_shareable,
                 consts,
                 mut_statics,
                 const_inits,
@@ -1155,6 +1155,13 @@ pub(crate) fn collect_item(
             ) {
                 out.push(body);
                 maybe_push_handler_ok_wrap(&mangled, 1, tcx, item.span, out);
+                // The other handler shapes are two-word: a router handler
+                // `fn(Request, Params)`, and a capturing closure lifted to
+                // `__closure_N(env, req)`. A declaration has one arity, so at
+                // most one of these fires; a thunk nothing references is
+                // dropped with the rest of the unreachable code, while a
+                // missing one is an undefined symbol at link time.
+                maybe_push_handler_ok_wrap(&mangled, 2, tcx, item.span, out);
                 maybe_push_handler_env_wrap(&mangled, tcx, item.span, out);
             }
         }
@@ -1186,6 +1193,7 @@ pub(crate) fn collect_item(
                     fn_ret_names,
                     fn_returns,
                     fn_inputs,
+                    fn_param_shareable,
                     consts,
                     mut_statics,
                     const_inits,
@@ -1215,6 +1223,7 @@ pub(crate) fn collect_item(
                         fn_ret_names,
                         fn_returns,
                         fn_inputs,
+                        fn_param_shareable,
                         consts,
                         mut_statics,
                         const_inits,
@@ -1247,6 +1256,7 @@ pub(crate) fn lower_fn(
     fn_ret_names: &HashMap<String, Ty>,
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+    fn_param_shareable: &HashMap<gossamer_resolve::DefId, Vec<bool>>,
     consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
     mut_statics: &HashMap<gossamer_resolve::DefId, crate::ir::StaticRef>,
     const_inits: &HashMap<gossamer_resolve::DefId, HirExpr>,
@@ -1266,6 +1276,7 @@ pub(crate) fn lower_fn(
         fn_ret_names,
         fn_returns,
         fn_inputs,
+        fn_param_shareable,
         consts,
         mut_statics,
         const_inits,

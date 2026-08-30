@@ -221,6 +221,11 @@ pub(crate) struct InlinableFn {
 /// the `HirProgram` borrow.
 pub(crate) type InlinableFns = std::collections::HashMap<String, InlinableFn>;
 
+/// Per-parameter "the callee only reads this" flags by callable name. Shared
+/// with the compiled tiers so a by-value container argument is copied on the
+/// same rule everywhere.
+pub(crate) type FnParamShareable = std::collections::HashMap<String, Vec<bool>>;
+
 /// User-function parameter types keyed by the source path used at call sites.
 /// The bytecode compiler uses these to select the explicit mutable-reference
 /// write-back protocol consistently with the callee signature.
@@ -351,6 +356,7 @@ pub fn compile_fn(
     layouts: &StructLayouts,
     wrappers: &InlinableWrappers,
     inline_fns: &InlinableFns,
+    fn_param_shareable: &FnParamShareable,
     fn_param_tys: &FnParamTypes,
     consts: &ConstValues,
     method_muts: &MutSelfMethods,
@@ -390,6 +396,7 @@ pub fn compile_fn(
         layouts,
         wrappers,
         inline_fns,
+        fn_param_shareable,
         fn_param_tys,
         consts,
         method_muts,
@@ -504,6 +511,7 @@ pub fn compile_initializer(
     layouts: &StructLayouts,
     wrappers: &InlinableWrappers,
     inline_fns: &InlinableFns,
+    fn_param_shareable: &FnParamShareable,
     fn_param_tys: &FnParamTypes,
     consts: &ConstValues,
     method_muts: &MutSelfMethods,
@@ -519,6 +527,7 @@ pub fn compile_initializer(
         layouts,
         wrappers,
         inline_fns,
+        fn_param_shareable,
         fn_param_tys,
         consts,
         method_muts,
@@ -548,6 +557,8 @@ pub(crate) struct FnBuilder<'tcx> {
     /// [`InlinableFns`]). Borrowed from the VM load frame for the
     /// duration of the compile, like `wrappers`.
     pub(crate) inline_fns: &'tcx InlinableFns,
+    /// See [`FnParamShareable`].
+    pub(crate) fn_param_shareable: &'tcx FnParamShareable,
     /// Parameter types for user functions, used to lower explicit `&mut`
     /// call arguments through the write-back protocol.
     pub(crate) fn_param_tys: &'tcx FnParamTypes,

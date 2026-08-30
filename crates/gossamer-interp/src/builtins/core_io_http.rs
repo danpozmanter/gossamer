@@ -663,6 +663,10 @@ fn response_struct(status: i64, body: String, content_type: &str) -> Value {
 pub(crate) fn value_to_int(value: &Value) -> Option<i64> {
     match value {
         Value::Int(n) => Some(*n),
+        // `as u64` / `as usize` answer an unsigned shape carrying the same
+        // 64 bits. Every caller wants those bits, and a `None` here reaches
+        // an `unwrap_or(0)` that would silently substitute zero.
+        Value::Uint(n) => Some(*n as i64),
         _ => None,
     }
 }
@@ -1540,5 +1544,19 @@ mod http_shutdown_tests {
 
         assert!(first.load(Ordering::Acquire));
         assert!(second.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn an_unsigned_value_reads_as_the_integer_it_carries() {
+        // `as u64` / `as usize` answer an unsigned shape. A builtin that took
+        // `None` here substituted a zero for whatever the caller passed.
+        assert_eq!(super::value_to_int(&Value::Int(7)), Some(7));
+        assert_eq!(super::value_to_int(&Value::Uint(7)), Some(7));
+        assert_eq!(
+            super::value_to_int(&Value::Uint(u64::MAX)),
+            Some(-1),
+            "a u64 carries the same 64 bits an i64 does"
+        );
+        assert_eq!(super::value_to_int(&Value::Unit), None);
     }
 }

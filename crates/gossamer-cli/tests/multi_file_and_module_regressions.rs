@@ -1021,6 +1021,193 @@ fn main() {}
 }
 
 #[test]
+fn a_file_under_tests_reaches_the_packages_modules() {
+    // An integration test lives beside the package, so its own folder holds no
+    // modules; `use crate::<module>` typechecked and then found no such name.
+    let dir = fresh_dir("tests-dir-module");
+    fs::create_dir_all(dir.join("src")).expect("src");
+    fs::create_dir_all(dir.join("tests")).expect("tests");
+    fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/tests-dir\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        dir.join("src").join("main.gos"),
+        "use lib_thing\nfn main() { println(\"{}\", lib_thing::double(21)) }\n",
+    )
+    .expect("entry");
+    fs::write(
+        dir.join("src").join("lib_thing.gos"),
+        "pub fn double(n: i64) -> i64 { n * 2 }\n",
+    )
+    .expect("module");
+    fs::write(
+        dir.join("tests").join("integration.gos"),
+        "use crate::lib_thing\n\n#[test]\nfn reaches_a_src_module() { assert_eq(lib_thing::double(21), 42) }\n",
+    )
+    .expect("integration test");
+    let out = Command::new(gos_bin())
+        .arg("test")
+        .arg(dir.join("tests").join("integration.gos"))
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("gos test");
+    let _ = fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "a tests/ file could not reach src/:\nstdout: {stdout}\nstderr: {stderr}",
+    );
+    assert!(
+        stdout.contains("PASS reaches_a_src_module"),
+        "unexpected output: {stdout}",
+    );
+}
+
+#[test]
+fn a_capturing_closure_and_a_router_handler_both_lower_natively() {
+    // A handler that answers a bare `Response` reaches its slot through a
+    // synthesized `::__ok_wrap`. Only the one-argument shape was scanned, so a
+    // router handler `fn(Request, Params)` and a capturing closure lifted to
+    // `__closure_N(env, req)` referenced a thunk nothing emitted.
+    let src = r#"
+use std::errors
+use std::http
+use std::http::router
+
+fn health(_req: http::Request, _p: router::Params) -> http::Response {
+    http::Response::text(200, "ok")
+}
+
+fn with_router() -> router::Router {
+    router::Router::new().get("/health", health)
+}
+
+fn with_capturing_closure(greeting: String) -> Result<(), errors::Error> {
+    http::serve("127.0.0.1:0", |req| http::Response::text(200, greeting + req.path))
+}
+
+fn main() {
+    let _ = with_router()
+    println("built")
+}
+"#;
+    let dir = fresh_dir("handler-ok-wrap");
+    let path = write_source(&dir, "handler_ok_wrap", src);
+    let out = Command::new(gos_bin())
+        .arg("build")
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("gos build");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        out.status.success(),
+        "a handler shape did not lower:\nstdout: {stdout}\nstderr: {stderr}",
+    );
+    assert!(
+        !stderr.contains("__ok_wrap"),
+        "an Ok-packing thunk was referenced but not emitted: {stderr}",
+    );
+}
+
+#[test]
+fn an_as_u64_cast_reaches_a_builtin_as_the_value_it_carries() {
+    // A `u64` argument crossed into a builtin as a zero, so a value cast on
+    // the way into `put_u64_le_at` wrote eight zero bytes.
+    let src = r#"
+use std::encoding::binary
+use std::testing
+
+#[cfg(test)]
+#[test]
+fn a_cast_value_and_a_literal_write_the_same_bytes() {
+    let x: i64 = 1234567890123
+    let mut a: Vec<u8> = #[0u8; 8]
+    let mut b: Vec<u8> = #[0u8; 8]
+    let _ = binary::put_u64_le_at(&mut a, 0, x as u64)
+    let _ = binary::put_u64_le_at(&mut b, 0, 1234567890123u64)
+    let _ = testing::check_eq(a, b, "cast and literal agree")
+    let _ = testing::check_eq(binary::get_u64_le_at(a, 0).unwrap_or(0) as i64, x, "round trip")
+}
+
+fn main() {}
+"#;
+    let dir = fresh_dir("u64-call-boundary");
+    let path = write_source(&dir, "u64_boundary", src);
+    let out = Command::new(gos_bin())
+        .arg("test")
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("gos test");
+    let _ = fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "a u64 argument did not survive the call: {stdout}",
+    );
+}
+
+#[test]
+fn unwrap_or_over_a_sequence_releases_its_fallback_once() {
+    // The fallback becomes the answer on the `Err` arm, so the frame holds it
+    // twice; releasing it once per binding freed the same Vec twice and
+    // corrupted the heap under any workload that ran the arm repeatedly.
+    let src = r#"
+fn maybe(n: i64) -> Option<Vec<i64>> {
+    if n % 2 == 0 { Some(#[n, n + 1]) } else { None }
+}
+
+fn scan(n: i64) -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < n {
+        let bytes = maybe(i).unwrap_or(#[])
+        total += bytes.len()
+        i += 1
+    }
+    total
+}
+
+fn main() { println("{}", scan(64)) }
+"#;
+    let dir = fresh_dir("unwrap-or-fallback");
+    let path = write_source(&dir, "unwrap_or_fallback", src);
+    let out = Command::new(gos_bin())
+        .arg("run")
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("gos run");
+    let _ = fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "scan faulted:\nstdout: {stdout}\nstderr: {stderr}",
+    );
+    assert_eq!(stdout.trim(), "64", "unexpected total: {stdout}");
+    assert!(
+        !stderr.contains("already zero"),
+        "a Vec was released twice: {stderr}",
+    );
+}
+
+#[test]
 fn a_test_that_asserts_nothing_does_not_report_a_pass() {
     // A body that only prints has decided nothing, so it cannot carry the
     // suite green. A `-> Result<(), E>` test is the exemption: reaching `Ok`
