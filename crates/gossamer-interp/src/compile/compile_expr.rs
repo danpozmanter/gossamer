@@ -292,9 +292,20 @@ impl<'tcx> FnBuilder<'tcx> {
                             Some(TyKind::Int(gossamer_types::IntTy::U8)) => (56u8, false),
                             Some(TyKind::Int(gossamer_types::IntTy::U16)) => (48u8, false),
                             Some(TyKind::Int(gossamer_types::IntTy::U32)) => (32u8, false),
-                            // i64/isize: same bit width - identity.
+                            // i64/isize: same bit width, so the bits carry
+                            // over - but a source that reached here as a
+                            // `Uint` (from an earlier `as u64` / `as usize`)
+                            // must land in a typed i64 register, since that is
+                            // what makes the value render and compare signed.
+                            // Unboxing an i64-kinded register is already a
+                            // no-op, so the signed case costs nothing.
                             _ => {
-                                return self.compile_expr_ex(value);
+                                let src_tr = self.compile_expr_ex(value)?;
+                                let src_i = self.as_i64(src_tr);
+                                return Ok(TypedReg {
+                                    reg: src_i,
+                                    kind: RegKind::I64,
+                                });
                             }
                         };
                         let src_tr = self.compile_expr_ex(value)?;

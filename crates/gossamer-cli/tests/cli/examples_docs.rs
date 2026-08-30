@@ -153,7 +153,7 @@ fn doc_lists_items_defined_in_the_file() {
 fn test_subcommand_runs_hash_test_attributed_functions() {
     let fixture = write_fixture(
         "testharness",
-        "#[test]\nfn test_ok() { println(\"ran-test\") }\nfn main() { }\n",
+        "#[test]\nfn test_ok() { println(\"ran-test\"); assert(true, \"ran\") }\nfn main() { }\n",
     );
     let out = Command::new(gos_bin())
         .args(["test"])

@@ -224,6 +224,13 @@ pub fn err_payload_message(value: &value::Value) -> Option<String> {
     )
 }
 
+/// Whether `value` is an `Ok` variant - a test declared `-> Result<(), E>`
+/// reports its verdict through this arm rather than through an assertion.
+#[must_use]
+pub fn is_ok_variant(value: &value::Value) -> bool {
+    matches!(value, value::Value::Variant(inner) if inner.name == "Ok")
+}
+
 /// Whether `err` is the stack-overflow fault. Reported like a panic -
 /// the compiled tiers raise it through the same path and exit 101 - so
 /// the exit status does not depend on which tier ran the program.

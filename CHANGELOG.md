@@ -1,7 +1,24 @@
 # Changelog
 
-## 0.58.3 - Container impls, empty map literals, array map values
+## 0.58.3 - Critical testing fixes, container impls, empty map literals, array map values
 
+- A `#[test]` that records no assertion fails. Passing was conditioned only on
+  the absence of a panic, a returned `Err`, and a failed assertion, so a body
+  that merely printed certified itself green: a suite of six such tests
+  reported six passed, zero assertions, and exited zero. A test declared
+  `-> Result<(), E>` is exempt, since reaching `Ok` past every `?` is the
+  verdict it reports in place of an assertion.
+- A failing test run under isolation reports one result. Each test runs in a
+  worker that prints a whole harness run of its own, and the parent forwarded
+  that output verbatim on the failure path, so the worker's banner, tally, and
+  error line appeared beside the parent's as though the run had two contradictory
+  summaries. The parent now carries the worker's reason and whatever the test
+  itself wrote, and nothing else.
+- `x as i64` on a value that reached it as a `u64` or `usize` renders and
+  compares signed, on every tier. A cast between two 64-bit integers passes the
+  bits through unchanged, and the unsigned shape an earlier `as u64` produced
+  travelled with them, so `(-1 as u64) as i64` printed 18446744073709551615
+  while comparing equal to -1.
 - A user `impl Display` or `impl Debug` for a container answers for it, on
   every tier (#233). A `Vec` and a `Map` are their own type kinds rather than
   named types, so no tier ever found an `impl` written for one; a `Set`, a

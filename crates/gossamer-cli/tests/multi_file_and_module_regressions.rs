@@ -1021,6 +1021,122 @@ fn main() {}
 }
 
 #[test]
+fn a_test_that_asserts_nothing_does_not_report_a_pass() {
+    // A body that only prints has decided nothing, so it cannot carry the
+    // suite green. A `-> Result<(), E>` test is the exemption: reaching `Ok`
+    // past every `?` is the verdict it reports in place of an assertion.
+    let src = r#"
+use std::errors
+use std::testing
+
+fn ok_op() -> Result<i64, errors::Error> { Ok(1) }
+
+#[cfg(test)]
+#[test]
+fn prints_but_never_asserts() {
+    println("FAIL: something is wrong")
+}
+
+#[cfg(test)]
+#[test]
+fn result_ok_needs_no_assertion() -> Result<(), errors::Error> {
+    let _ = ok_op()?
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn asserts_and_passes() {
+    let _ = testing::check(true, "always true")
+}
+
+fn main() {}
+"#;
+    let dir = fresh_dir("test-runner-vacuous");
+    let path = write_source(&dir, "runner_vacuous", src);
+    let out = Command::new(gos_bin())
+        .arg("test")
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("gos test");
+    let _ = fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a suite whose test asserted nothing exited zero:\nstdout: {stdout}\nstderr: {stderr}",
+    );
+    assert!(
+        stdout.contains("FAIL prints_but_never_asserts") && stdout.contains("made no assertions"),
+        "assertion-free test was not reported as such: {stdout}",
+    );
+    assert!(
+        stdout.contains("PASS result_ok_needs_no_assertion"),
+        "a Result-returning test was not exempt: {stdout}",
+    );
+    assert!(
+        stdout.contains("PASS asserts_and_passes"),
+        "an asserting test did not pass: {stdout}",
+    );
+    assert!(
+        stdout.contains("2 passed, 1 failed"),
+        "unexpected tally: {stdout}",
+    );
+}
+
+#[test]
+fn a_failing_isolated_test_reports_one_result_not_the_workers_run() {
+    // Each isolated test runs in a worker that prints a harness run of its
+    // own. Forwarding that verbatim would show the worker's banner, tally,
+    // and error line beside the parent's, reading as two contradictory
+    // summaries for one run.
+    let src = r#"
+use std::testing
+
+#[cfg(test)]
+#[test]
+fn fails_with_a_reason() {
+    println("marker-from-the-test-body")
+    let _ = testing::check(false, "the reason")
+}
+
+fn main() {}
+"#;
+    let dir = fresh_dir("test-runner-worker-echo");
+    let path = write_source(&dir, "runner_worker_echo", src);
+    let out = Command::new(gos_bin())
+        .arg("test")
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("gos test");
+    let _ = fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout.matches("test: ").count(),
+        1,
+        "more than one run summary reached the user: {stdout}",
+    );
+    assert!(
+        stdout.contains("the reason"),
+        "the worker's failure reason was lost: {stdout}",
+    );
+    assert!(
+        stdout.contains("marker-from-the-test-body"),
+        "the test's own output was lost: {stdout}",
+    );
+    assert!(
+        stdout.contains("0 passed, 1 failed"),
+        "unexpected tally: {stdout}",
+    );
+}
+
+#[test]
 fn vec_double_free_does_not_segfault_in_native_release() {
     // The askq chat-streaming loop drops the same `*mut GosVec`
     // handle twice (the MIR drop pass emits a free for each

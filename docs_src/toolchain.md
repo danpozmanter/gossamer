@@ -27,7 +27,7 @@ the implementation by a rev.
 
 | Command | Purpose |
 |---------|---------|
-| `gos test PATH` | Run `#[test]` functions **and** doc-tests extracted from `` ``` ``-fenced code inside `//` doc comments. `` ```text `` and other language tags are skipped. Accepts a file or a directory. |
+| `gos test PATH` | Run `#[test]` functions **and** doc-tests extracted from `` ``` ``-fenced code inside `//` doc comments. `` ```text `` and other language tags are skipped. Accepts a file or a directory. A test that records no assertion fails: a body that only prints decides nothing. A test declared `-> Result<(), E>` is exempt, since reaching `Ok` past every `?` is its verdict. |
 | `gos bench [--parallel N] [PATH]` | Discover and time `#[bench]` functions; reports `ns/op` plus JIT tier-up, compile-time, native-code, peak-RSS, and bypassed-VM-work counters. Per-bench iteration counts auto-tune against a 50 ms calibration window (cap 2^20). `PATH` defaults to the project's `src/`. |
 
 ## Watch

@@ -53,7 +53,7 @@ mod tests {
          * depends on this one passing. */
         let expected = #[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
         for i in 0..10 {
-            let got = super::fibonacci(i)
+            let got = super::fibonacci(i as u64)
             let want = expected[i]
             let _ = testing::check_eq(got, want, format("fib({i})"))
         }

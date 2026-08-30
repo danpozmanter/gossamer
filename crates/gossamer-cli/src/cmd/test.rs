@@ -91,12 +91,38 @@ fn assertion_elapsed_summary(assertions: u32, elapsed_ms: u128) -> String {
     )
 }
 
+/// Reported for a `#[test]` body that records no assertion.
+const NO_ASSERTIONS_REASON: &str = "made no assertions - assert(cond), assert_eq(a, b), or testing::check(cond, msg) is what decides a test; a body that only prints cannot fail";
+
 fn is_worker_harness_line(line: &str) -> bool {
     let trimmed = line.trim_start();
     (trimmed.starts_with("===") && trimmed.ends_with("==="))
         || trimmed.starts_with("PASS ")
         || trimmed.starts_with("FAIL ")
         || trimmed.starts_with("test: ")
+        || (trimmed.starts_with("error: ") && trimmed.ends_with("test failure(s)"))
+}
+
+/// The reason carried by a worker's own `FAIL <name> (<n>ms): <reason>` line.
+/// A worker prints a whole harness run, so forwarding its output verbatim would
+/// show the child's tallies beside the parent's as if they were two results.
+fn worker_failure_reason(captured: &str) -> Option<String> {
+    captured.lines().find_map(|line| {
+        let rest = line.trim_start().strip_prefix("FAIL ")?;
+        let colon = rest.find(": ")?;
+        Some(rest[colon + 2..].trim().to_string())
+    })
+}
+
+/// Whatever the test itself wrote, with the worker's harness lines removed.
+fn worker_user_output(captured: &str) -> String {
+    captured
+        .lines()
+        .filter(|line| !is_worker_harness_line(line))
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn print_worker_user_output(captured: &str) {
@@ -1097,7 +1123,16 @@ fn run_tests_filtered_inner(
             .ok()
             .and_then(gossamer_interp::err_payload_message);
         let assertion_failure = tally.failures > 0;
-        let passed = panicked.is_none() && returned_err.is_none() && !assertion_failure;
+        // A body that records no assertion proves nothing, so it cannot certify
+        // itself green. A test declared `-> Result<(), E>` is exempt: reaching
+        // `Ok` past every `?` is the verdict it reports in place of an assertion.
+        let asserted_nothing = tally.assertions == 0
+            && panicked.is_none()
+            && returned_err.is_none()
+            && !assertion_failure
+            && !outcome.as_ref().is_ok_and(gossamer_interp::is_ok_variant);
+        let passed =
+            panicked.is_none() && returned_err.is_none() && !assertion_failure && !asserted_nothing;
         let status = if passed {
             TestStatus::Passed
         } else if panicked.is_some() {
@@ -1126,6 +1161,12 @@ fn run_tests_filtered_inner(
                     reason.push_str(" - ");
                     reason.push_str(first);
                 }
+            }
+            if asserted_nothing {
+                if !reason.is_empty() {
+                    reason.push_str(" · ");
+                }
+                reason.push_str(NO_ASSERTIONS_REASON);
             }
             failure_message = Some(reason);
         }
@@ -1278,8 +1319,11 @@ fn run_tests_isolated(
                 String::from_utf8_lossy(&stderr)
             );
             let passed = status.is_some_and(|status| status.success()) && !timed_out;
+            // The worker's own summary line is the authority on the tally;
+            // a per-test line reports the same count in a different shape.
             let assertions = captured
                 .lines()
+                .filter(|line| line.trim_start().starts_with("test: "))
                 .find_map(|line| {
                     let marker = line.find(" assertion")?;
                     line[..marker]
@@ -1295,10 +1339,14 @@ fn run_tests_isolated(
                         "timeout after {}ms",
                         timeout.expect("timed out only with deadline").as_millis()
                     )
-                } else if captured.trim().is_empty() {
-                    "isolated test failed".to_string()
                 } else {
-                    captured.trim().to_string()
+                    let output = worker_user_output(&captured);
+                    match (worker_failure_reason(&captured), output.is_empty()) {
+                        (Some(reason), true) => reason,
+                        (Some(reason), false) => format!("{reason}\n{output}"),
+                        (None, false) => output,
+                        (None, true) => "isolated test failed".to_string(),
+                    }
                 }
             });
             let status = if timed_out {

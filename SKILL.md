@@ -764,8 +764,12 @@ Unit tests live in the file they cover under `#[cfg(test)] mod tests
 { ... }`, reaching items via `super::`. A module belongs to the file
 that declares it, so every file in a project may write `mod tests`.
 `assert(cond[, msg])` / `assert_eq(a, b[, msg])` are prelude
-builtins; `std::testing::check*` record without panicking. `gos
-test` also compiles and runs fenced code in doc comments.
+builtins; `std::testing::check*` record without panicking. **A test
+that records no assertion FAILS** - a body that only prints decides
+nothing, so it cannot report a pass; a test declared
+`-> Result<(), E>` is the one exemption, since reaching `Ok` past
+every `?` is its verdict. `gos test` also compiles and runs fenced
+code in doc comments.
 
 ```gossamer
 #[cfg(test)]
