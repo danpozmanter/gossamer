@@ -114,6 +114,7 @@ feature-testing-examples/comptime_reflection.gos	entry shape
 feature-testing-examples/concurrency_stress_shapes.gos	cross-goroutine
 feature-testing-examples/concurrent_atomic.gos	cross-goroutine
 feature-testing-examples/container_display.gos	entry shape
+feature-testing-examples/container_impl_and_literals.gos	admission gate
 feature-testing-examples/container_in_aggregate_rendering.gos	no hot body
 feature-testing-examples/context_aware_waits.gos	cross-goroutine
 feature-testing-examples/context_cancel.gos	no hot body

@@ -4683,6 +4683,14 @@ impl<'tcx> FnBuilder<'tcx> {
         }
         let type_name = match self.tcx.kind(resolved) {
             Some(TyKind::Adt { def, .. }) => self.tcx.def_name(*def)?.to_string(),
+            // A sequence and a map are their own type kinds rather than named
+            // Adts, so their source name is the one an `impl` for them
+            // registers under - without this an `impl Display for Vec` was
+            // compiled and never called.
+            Some(TyKind::Vec(_) | TyKind::Slice(_)) => "Vec".to_string(),
+            Some(TyKind::HashMap { ordered, .. }) => {
+                if *ordered { "BTreeMap" } else { "Map" }.to_string()
+            }
             _ => return None,
         };
         let qualified = format!("{type_name}::{method}");

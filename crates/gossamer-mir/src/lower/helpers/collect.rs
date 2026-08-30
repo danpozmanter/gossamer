@@ -1320,6 +1320,20 @@ pub(crate) fn lower_fn(
                 "Router" => Some("http::Router"),
                 "Server" => Some("http::Server"),
                 "ResponseStream" => Some("http::ResponseStream"),
+                // A `Set`, a `Deque`, a `Queue`, a `Stack`, and a heap reach
+                // codegen as bare handles, so a parameter holding one - the
+                // `self` of an `impl` for it, most of all - has no
+                // construction to carry the kind and its type is the only
+                // record. Without this, `self.iter()` inside
+                // `impl Display for Set` dispatched on a handle whose shape
+                // nothing named.
+                "Set" | "HashSet" => Some("collections::HashSet"),
+                "BTreeSet" => Some("collections::BTreeSet"),
+                "Deque" | "VecDeque" => Some("collections::VecDeque"),
+                "Queue" | "VecQueue" => Some("collections::VecQueue"),
+                "Stack" | "VecStack" => Some("collections::VecStack"),
+                "MaxHeap" => Some("collections::MaxHeap"),
+                "MinHeap" => Some("collections::MinHeap"),
                 _ => None,
             };
             // Secondary fallback: parameters named with stdlib-

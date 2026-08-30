@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.58.3 - Container impls, empty map literals, array map values
+
+- A user `impl Display` or `impl Debug` for a container answers for it, on
+  every tier (#233). A `Vec` and a `Map` are their own type kinds rather than
+  named types, so no tier ever found an `impl` written for one; a `Set`, a
+  `Deque`, a `Queue`, and a `Stack` reach codegen as bare handles, so only the
+  interpreter, which carries a value's kind at run time, found theirs. All
+  five now name what an `impl` for them registers under.
+- A bare `Set` or `BTreeSet` annotation names a set whose element is inferred
+  rather than absent, so `impl Display for Set` can call `self.iter()` (#233).
+  An annotation with no element answered no element type at all, and every
+  method lookup that reads the receiver's element off its type then failed to
+  see a set: `self.len()` reported no such method on `Set`.
+- A `Set`, `Deque`, `Queue`, or `Stack` parameter carries what it is. Such a
+  value is a bare handle with no construction to tag, so the `self` of an
+  `impl` for one dispatched on a shape nothing named.
+- `join` on a sequence whose element the inference never grounded renders each
+  element the way `{}` does, rather than reading it as an integer. An unknown
+  element took the integer join, so a `Vec<String>` reached through such a
+  sequence joined its pointers as numbers.
+- `{}` is an empty map wherever it is written (#235). The preference for
+  reading it as a block belongs to the head of an expression statement, but it
+  was inherited by everything nested inside - and a `for` is an expression, so
+  `let m: Map<i64, i64> = {}` in a loop body resolved to `()` and reported
+  GT0001, where the same line at the top level was a map.
+- A fixed array is a `Map` value in its own right (#234). An array argument was
+  marshalled into a `GosVec` whatever the map's declared value type, so a
+  `Map<i64, [i64; 3]>` stored a vector and the read took its header words for
+  the array's first elements: `[10, 20, 30]` read back as `3`, `6`, and one
+  word of whatever followed. The coercion now applies only where the declared
+  value is a sequence.
+
 ## 0.58.2 - Container reclamation, language evidence
 
 - A `Set`, `Deque`, `Queue`, or `Stack` is released when the frame that built

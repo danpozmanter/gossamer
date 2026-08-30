@@ -238,6 +238,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/enum_tuple_payload_collections.gos"),
     spec("feature-testing-examples/enum_carrier_payload.gos"),
     spec("feature-testing-examples/lazy_iter_element_classes.gos"),
+    spec("feature-testing-examples/container_impl_and_literals.gos"),
     // An indexed carrier store hands the sequence its own share of the
     // payload, so a later allocation cannot land on a block an element
     // still names.

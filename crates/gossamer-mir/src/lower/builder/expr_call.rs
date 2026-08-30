@@ -61,6 +61,7 @@ impl Builder<'_> {
         let Some(sname) = self
             .adt_dispatch_name(arg_ty)
             .or_else(|| self.local_struct.get(&local).cloned())
+            .or_else(|| self.runtime_kind_dispatch_name(local))
         else {
             return local;
         };

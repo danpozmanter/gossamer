@@ -1,0 +1,66 @@
+// A user `Display` / `Debug` impl on a builtin container, an empty map
+// literal in a nested position, and a fixed array stored as a map value.
+
+struct Tagged {
+    id: i64
+}
+
+impl Display for Tagged {
+    fn fmt(&self) -> String {
+        format("T<{}>", self.id)
+    }
+}
+
+impl Display for Set {
+    fn fmt(&self) -> String {
+        self.iter().collect().join("; ")
+    }
+}
+
+impl Debug for Deque {
+    fn fmt(&self) -> String {
+        format("D[{}]", self.len())
+    }
+}
+
+fn main() {
+    // A user impl answers for the container it names, on every tier.
+    println("{}", #{ "one" })
+    println("{:?}", Deque::from([1, 2, 3]))
+    // A container with no impl keeps the spelling that builds it.
+    println("{:?} {:?}", #[1, 2], { "a": 1 })
+    // A struct's impl reaches it at every depth.
+    println("{} {:?}", Tagged { id: 1 }, #[Tagged { id: 2 }])
+
+    // An empty map literal is a map wherever it is written, not only at the
+    // head of a statement.
+    let top: Map<i64, i64> = {}
+    println("{}", top.len())
+    for k in ..3 {
+        let mut nested: Map<i64, i64> = {}
+        nested.insert(k, k * 10)
+        println("{:?}", nested.get(k))
+    }
+
+    // A fixed array is a map value in its own right: the map keeps the
+    // array's slots, the way it keeps a struct's or a tuple's.
+    let mut arrays: Map<i64, [i64; 3]> = Map::new()
+    arrays.insert(0, [10, 20, 30])
+    if let Some(a) = arrays.get(0) {
+        println("{} {} {}", a[0], a[1], a[2])
+    }
+    let mut structs: Map<i64, Tagged> = Map::new()
+    structs.insert(0, Tagged { id: 7 })
+    if let Some(s) = structs.get(0) {
+        println("{}", s.id)
+    }
+    let mut tuples: Map<i64, (i64, i64)> = Map::new()
+    tuples.insert(0, (1, 2))
+    if let Some(t) = tuples.get(0) {
+        println("{} {}", t.0, t.1)
+    }
+
+    // An empty block is still a block.
+    if top.len() == 0 {}
+    println("done")
+}

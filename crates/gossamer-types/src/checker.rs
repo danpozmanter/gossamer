@@ -16302,6 +16302,19 @@ impl<'a> TypeChecker<'a> {
             // tag is gone.
             "Set" | "BTreeSet" => {
                 let substs = self.substs_from_ast(path);
+                // An annotation that names no element still names a set, so
+                // the element is inferred rather than absent - the same
+                // fallback the map arms below make. A set whose substs were
+                // empty answered no element type, and every method lookup
+                // that reads the receiver's element off its type then failed
+                // to see a set at all: `impl Display for Set` could not call
+                // `self.len()`.
+                let substs = if substs.types().is_empty() {
+                    let elem = self.fresh();
+                    crate::Substs::from_types([elem])
+                } else {
+                    substs
+                };
                 let (local, name) = if path
                     .segments
                     .last()

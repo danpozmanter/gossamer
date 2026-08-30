@@ -315,9 +315,35 @@ impl<'a> Builder<'a> {
                     return Some(bare.to_string());
                 }
                 TyKind::Ref { inner, .. } => cur = *inner,
+                // A sequence and a map are their own type kinds rather than
+                // named Adts, so their source name is the one an `impl` for
+                // them registers under.
+                TyKind::Vec(_) | TyKind::Slice(_) => return Some("Vec".to_string()),
+                TyKind::HashMap { ordered, .. } => {
+                    return Some(if *ordered { "BTreeMap" } else { "Map" }.to_string());
+                }
                 _ => return None,
             }
         }
+    }
+
+    /// The name an `impl` for the container this local holds registers under.
+    ///
+    /// A `Set`, a `Deque`, a `Queue`, a `Stack`, and a heap reach codegen as
+    /// bare `i64` handles, so their type says nothing about what they are and
+    /// the construction tag is the only record.
+    pub(crate) fn runtime_kind_dispatch_name(&self, local: Local) -> Option<String> {
+        let name = match *self.local_runtime_kind.get(&local)? {
+            "collections::HashSet" => "Set",
+            "collections::BTreeSet" => "BTreeSet",
+            "collections::VecDeque" => "Deque",
+            "collections::VecQueue" => "Queue",
+            "collections::VecStack" => "Stack",
+            "collections::MaxHeap" => "MaxHeap",
+            "collections::MinHeap" => "MinHeap",
+            _ => return None,
+        };
+        Some(name.to_string())
     }
 
     /// Handler dispatch symbol for `fn_name`: the synthesized
@@ -437,6 +463,19 @@ impl<'a> Builder<'a> {
                 TyKind::JsonValue => return true,
                 TyKind::Ref { inner, .. } => cur = *inner,
                 _ => return false,
+            }
+        }
+    }
+
+    /// The declared value type of a map, seeing through a leading `&`.
+    pub(crate) fn hash_map_value_ty(&self, ty: Ty) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::HashMap { value, .. } => return Some(*value),
+                _ => return None,
             }
         }
     }

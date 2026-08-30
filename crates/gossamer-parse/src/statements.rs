@@ -201,7 +201,10 @@ impl Parser<'_> {
             if refutable {
                 self.enter_no_struct();
             }
-            let expr = self.parse_comma_value_list();
+            // A `let` initialiser is not a place a block may begin, so `{}`
+            // here is the empty map it spells whatever the enclosing
+            // statement preferred.
+            let expr = self.with_empty_braces_as_maps(Self::parse_comma_value_list);
             if refutable {
                 self.leave_no_struct();
             }

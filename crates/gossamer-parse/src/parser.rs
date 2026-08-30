@@ -415,6 +415,21 @@ impl<'src> Parser<'src> {
         out
     }
 
+    /// Parses `f` with empty `{}` read as a map literal again.
+    ///
+    /// The block preference belongs to the brace-leading expression position
+    /// it was entered for, not to everything nested inside it: an expression
+    /// statement raises it, and a `for` or `while` is an expression, so its
+    /// whole body would otherwise inherit a preference that only made sense
+    /// at the statement's own head. A position where a block is not one of
+    /// the alternatives - the initialiser of a `let`, an argument - clears it.
+    pub(crate) fn with_empty_braces_as_maps<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let saved = std::mem::take(&mut self.empty_brace_block_depth);
+        let out = f(self);
+        self.empty_brace_block_depth = saved;
+        out
+    }
+
     /// `true` when `{}` should parse as an empty block in the current context.
     #[must_use]
     pub(crate) const fn prefer_empty_brace_block(&self) -> bool {

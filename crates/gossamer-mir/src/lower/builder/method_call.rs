@@ -5281,19 +5281,31 @@ impl<'a> Builder<'a> {
         // later `.len()` / index reads depend on), not the header-less
         // stack `[T; N]` buffer the literal lowers to. The key arg is a
         // String / i64 (never an Array) so it is left untouched.
-        let coerce_map_value = matches!(
-            runtime_symbol,
-            Some(
-                "gos_rt_map_insert_i64_i64"
-                    | "gos_rt_map_insert_str_i64"
-                    | "gos_rt_map_insert_i64_i64_opt"
-                    | "gos_rt_map_insert_str_i64_opt"
-                    | "gos_rt_map_insert_typed_str_i64_opt"
-                    | "gos_rt_map_or_insert_i64_i64"
-                    | "gos_rt_map_or_insert_str_i64"
-                    | "gos_rt_map_or_insert_typed_str_i64"
-            )
-        );
+        // Only when the map's declared value is a SEQUENCE. A map whose
+        // value is the fixed array itself stores the array's own slots, the
+        // way it stores a struct's or a tuple's; marshalling it into a
+        // `GosVec` would have the read side take the vec's header words for
+        // the array's first elements.
+        let map_value_is_sequence = self
+            .hash_map_value_ty(self.locals[receiver_local.0 as usize].ty)
+            .or_else(|| self.hash_map_value_ty(receiver.ty))
+            .is_some_and(|value| {
+                matches!(self.tcx.kind_of(value), TyKind::Vec(_) | TyKind::Slice(_))
+            });
+        let coerce_map_value = map_value_is_sequence
+            && matches!(
+                runtime_symbol,
+                Some(
+                    "gos_rt_map_insert_i64_i64"
+                        | "gos_rt_map_insert_str_i64"
+                        | "gos_rt_map_insert_i64_i64_opt"
+                        | "gos_rt_map_insert_str_i64_opt"
+                        | "gos_rt_map_insert_typed_str_i64_opt"
+                        | "gos_rt_map_or_insert_i64_i64"
+                        | "gos_rt_map_or_insert_str_i64"
+                        | "gos_rt_map_or_insert_typed_str_i64"
+                )
+            );
         let coerce_vec_extend_arg = matches!(runtime_symbol, Some("gos_rt_vec_extend"));
         // String methods whose needle / pattern argument is a `&str`
         // the runtime helper reads as a `*const c_char`. A `char`
@@ -5986,7 +5998,12 @@ impl<'a> Builder<'a> {
             TyKind::Float(_) => Some("gos_rt_vec_join_f64"),
             TyKind::Bool => Some("gos_rt_vec_join_bool"),
             TyKind::Char => Some("gos_rt_vec_join_char"),
-            TyKind::Int(_) | TyKind::Var(_) => Some("gos_rt_vec_join_i64"),
+            TyKind::Int(_) => Some("gos_rt_vec_join_i64"),
+            // An element the inference never grounded - the sequence a bare
+            // `impl Display for Set` reaches through `self` - is not an
+            // integer, it is unknown. Answering the integer join renders a
+            // String element's pointer as a number, so an unknown element
+            // takes the Display join, which reads whatever `{}` reads.
             _ => None,
         }
     }
