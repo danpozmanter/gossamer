@@ -313,8 +313,49 @@ pub(crate) fn native_router_serve(
             let method_name = format!("{}::serve", inner.name);
             dispatch.call_fn(&method_name, vec![handler.clone(), request])
         }
-        _ => dispatch.call_value(&handler, vec![request]),
+        // A route handler is declared `Fn(Request, Params)`, so a closure that
+        // spells both parameters is called with both. The captures already ride
+        // on the request - `r.path_value(name)` is how a handler reads them, on
+        // this tier and the compiled one - so the second argument carries them
+        // for the signature's sake. A handler that declares only the request
+        // (a `serve`-shaped one) still gets one argument.
+        _ => {
+            let args = if handler_wants_params(&handler) {
+                vec![request, params_value(&captures)]
+            } else {
+                vec![request]
+            };
+            dispatch.call_value(&handler, args)
+        }
     }
+}
+
+/// Whether a route handler declares the `Params` parameter beside the request.
+///
+/// A closure's chunk counts its captured upvalues among its registers, so the
+/// declared parameters are what is left once the captures are taken off.
+fn handler_wants_params(handler: &Value) -> bool {
+    match handler {
+        Value::Closure(c) => usize::from(c.chunk.arity).saturating_sub(c.capture_values.len()) >= 2,
+        _ => false,
+    }
+}
+
+/// The captured path parameters, as the `Params` value a handler declares.
+fn params_value(captures: &[(String, String)]) -> Value {
+    let entries: Vec<Value> = captures
+        .iter()
+        .map(|(k, v)| {
+            Value::Array(Arc::new(vec![
+                Value::String(k.clone().into()),
+                Value::String(v.clone().into()),
+            ]))
+        })
+        .collect();
+    Value::struct_(
+        "Params",
+        vec![("captures", Value::Array(Arc::new(entries)))],
+    )
 }
 
 pub(crate) fn http_404_response() -> Value {

@@ -1070,6 +1070,163 @@ fn a_file_under_tests_reaches_the_packages_modules() {
 }
 
 #[test]
+fn a_router_handler_closure_is_called_with_both_of_its_parameters() {
+    // A route handler is declared `Fn(Request, Params)`. The interpreter's
+    // router dispatch called every handler with the request alone, so a closure
+    // that spelled both parameters failed with "wrong number of arguments:
+    // expected 2, found 1" - on the VM only, since the compiled tier does not
+    // check its handler arity. The program serves itself one request so both
+    // tiers are asked the same question.
+    let dir = fresh_dir("router-handler-arity");
+    fs::create_dir_all(dir.join("src")).expect("src");
+    fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/router-arity\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        dir.join("src").join("main.gos"),
+        "use std::{http, time}\nuse std::http::router\n\n         fn main() {\n         \x20   let server = http::Server::new()\n         \x20   match server.listen(\"127.0.0.1:0\") {\n         \x20       Ok(()) => ()\n         \x20       Err(e) => {\n         \x20           println(\"listen: {}\", e.message())\n         \x20           return\n         \x20       }\n         \x20   }\n         \x20   let addr = server.addr()\n         \x20   let routes = router::Router::new()\n         \x20       .get(\"/user/{id}\", |req, _p| http::Response::text(200, \"id=\" + req.path_value(\"id\")))\n         \x20   let done = cohort {\n         \x20       spawn(|| { let _ = server.serve(routes) }, reason: \"server\")\n         \x20       time::sleep(300)\n         \x20       match http::get(\"http://\" + addr + \"/user/42\", #[]) {\n         \x20           Ok(resp) => println(\"GOT {}\", resp.body)\n         \x20           Err(e) => println(\"ERR {}\", e.message())\n         \x20       }\n         \x20       let _ = server.shutdown(1000)\n         \x20   }\n         \x20   match done {\n         \x20       Ok(()) => ()\n         \x20       Err(e) => println(\"cohort: {}\", e.message())\n         \x20   }\n         }\n",
+    )
+    .expect("entry");
+    for args in [vec!["run", "."], vec!["build", "--release"]] {
+        let out = Command::new(gos_bin())
+            .args(&args)
+            .current_dir(&dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("gos");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success(),
+            "gos {args:?} failed:\nstdout: {stdout}\nstderr: {stderr}",
+        );
+        if args[0] == "run" {
+            assert!(
+                stdout.contains("GOT id=42"),
+                "the VM did not call the handler with both parameters: {stdout}",
+            );
+        }
+    }
+    let native = Command::new(dir.join("target").join("release").join("router-arity"))
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("native binary");
+    let native_out = String::from_utf8_lossy(&native.stdout);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        native_out.contains("GOT id=42"),
+        "the compiled tier answered differently: {native_out}",
+    );
+}
+
+#[test]
+fn a_capturing_closure_on_a_router_route_lowers_natively() {
+    // A capturing closure registered as a router route lifts to
+    // `__closure_N(env, req, params)`. Only the one- and two-argument handler
+    // shapes were scanned for the `::__ok_wrap` thunk, so this one referenced a
+    // thunk nothing emitted and the build failed in the LLVM symbol audit.
+    let dir = fresh_dir("router-capturing-closure");
+    fs::create_dir_all(dir.join("src")).expect("src");
+    fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/router-capture\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("manifest");
+    fs::write(
+        dir.join("src").join("db.gos"),
+        "pub struct Handle { pub hits: Map<String, i64> }\n\n         pub fn lookup(h: &mut Handle, id: i64) -> String {\n         \x20   h.hits.insert(\"n\", id)\n         \x20   \"row-\" + id.to_string()\n}\n",
+    )
+    .expect("module");
+    fs::write(
+        dir.join("src").join("main.gos"),
+        "use std::http\nuse std::http::router\nuse db\n\n         fn main() {\n         \x20   let mut handle = db::Handle { hits: Map::new() }\n         \x20   let routes = router::Router::new()\n         \x20       .get(\"/user/{id}\", |req, _p| answer(&mut handle, req.path_int(\"id\").unwrap_or(-1)))\n         \x20   match http::serve(\"127.0.0.1:0\", routes) {\n         \x20       Ok(()) => ()\n         \x20       Err(e) => eprintln(\"{}\", e.message())\n         \x20   }\n         }\n\n         fn answer(h: &mut db::Handle, id: i64) -> http::Response {\n         \x20   http::Response::text(200, db::lookup(h, id))\n}\n",
+    )
+    .expect("entry");
+    let out = Command::new(gos_bin())
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("gos build");
+    let _ = fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "a capturing router closure did not lower:\nstdout: {stdout}\nstderr: {stderr}",
+    );
+}
+
+#[test]
+fn a_callback_parameter_is_not_typed_by_a_global_of_the_same_name() {
+    // Calling a function-typed parameter is an indirect call: the value the
+    // binding holds decides the parameters. The argument lowering looked the
+    // callee's name up among the program's functions anyway, so a parameter
+    // named after a global picked up that global's types - and because the
+    // global's first parameter was `&mut`, the argument was wrapped in a cell.
+    // The callback then received a reference where it declared a String: it
+    // rendered correctly and answered 0 from `byte_len`.
+    let dir = fresh_dir("callback-param-shadowing");
+    fs::create_dir_all(dir.join("src")).expect("src");
+    fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/callback-shadow\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("manifest");
+    // A global `respond` whose first parameter is `&mut`, in its own module.
+    fs::write(
+        dir.join("src").join("store.gos"),
+        "pub struct Bag { pub items: Vec<i64> }\n\n         pub fn respond(bag: &mut Bag, n: i64) -> i64 {\n    bag.items.push(n)\n    bag.items.len()\n}\n",
+    )
+    .expect("module");
+    // A parameter with the same name, called indirectly.
+    fs::write(
+        dir.join("src").join("front.gos"),
+        "pub fn serve(path: String, respond: Fn(String) -> (i64, String)) -> (i64, String) {\n         \x20   respond(path)\n}\n",
+    )
+    .expect("front");
+    fs::write(
+        dir.join("src").join("main.gos"),
+        "use front\nuse store\n\n         fn main() {\n         \x20   let status, body = front::serve(\"/health\", |p| (200, \"saw:\" + p))\n         \x20   println(\"{} {} {}\", status, body, body.byte_len())\n         \x20   let mut bag = store::Bag { items: #[] }\n         \x20   println(\"{}\", store::respond(&mut bag, 7))\n         }\n",
+    )
+    .expect("entry");
+    let out = Command::new(gos_bin())
+        .arg("run")
+        .arg(".")
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("gos run");
+    let _ = fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "the callback call failed:\nstdout: {stdout}\nstderr: {stderr}",
+    );
+    assert!(
+        stdout.contains("200 saw:/health 11"),
+        "the callback did not receive its argument as a String: {stdout}",
+    );
+    assert!(
+        stdout.contains("\n1\n") || stdout.trim_end().ends_with("1"),
+        "the global with the same name still works: {stdout}",
+    );
+}
+
+#[test]
 fn a_capturing_closure_and_a_router_handler_both_lower_natively() {
     // A handler that answers a bare `Response` reaches its slot through a
     // synthesized `::__ok_wrap`. Only the one-argument shape was scanned, so a

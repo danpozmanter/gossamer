@@ -4962,6 +4962,15 @@ impl<'tcx> FnBuilder<'tcx> {
         let HirExprKind::Path { segments, .. } = &callee.kind else {
             return None;
         };
+        // A call through a function-typed local is indirect: the value the
+        // binding holds decides the parameters, and a global that happens to
+        // share the binding's name says nothing about them. Reading that
+        // global's types here lowers the argument for a parameter the callee
+        // does not have - a `&mut` one wraps it in a cell, and the callback
+        // then receives a reference where it declared a value.
+        if segments.len() == 1 && self.lookup_local(&segments[0].name).is_some() {
+            return None;
+        }
         let key = segments
             .iter()
             .map(|seg| seg.name.as_str())

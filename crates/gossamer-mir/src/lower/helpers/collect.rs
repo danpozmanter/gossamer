@@ -729,7 +729,9 @@ fn handler_ok_wrap_body(
 /// return is a bare `http::Response` and its arity matches a handler
 /// shape (`fn(Request)` free fn or `fn(&self, Request)` serve method).
 /// A capturing closure reaches this as its lifted `__closure_N(env, req)`
-/// item, so it is scanned on the two-argument arity a `serve` method uses.
+/// item, so it is scanned on the two-argument arity a `serve` method uses,
+/// and a capturing closure on a router route as `__closure_N(env, req,
+/// params)` on the three-argument one.
 fn maybe_push_handler_ok_wrap(
     decl: &HirFn,
     expected_arity: usize,
@@ -1162,6 +1164,10 @@ pub(crate) fn collect_item(
                 // dropped with the rest of the unreachable code, while a
                 // missing one is an undefined symbol at link time.
                 maybe_push_handler_ok_wrap(&mangled, 2, tcx, item.span, out);
+                // A capturing closure registered as a router route carries
+                // both: it lifts to `__closure_N(env, req, params)`, which is
+                // neither of the two-word shapes above.
+                maybe_push_handler_ok_wrap(&mangled, 3, tcx, item.span, out);
                 maybe_push_handler_env_wrap(&mangled, tcx, item.span, out);
             }
         }
