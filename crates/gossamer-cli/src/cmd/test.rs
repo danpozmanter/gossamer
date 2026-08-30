@@ -92,7 +92,12 @@ fn assertion_elapsed_summary(assertions: u32, elapsed_ms: u128) -> String {
 }
 
 /// Reported for a `#[test]` body that records no assertion.
-const NO_ASSERTIONS_REASON: &str = "made no assertions - assert(cond), assert_eq(a, b), or testing::check(cond, msg) is what decides a test; a body that only prints cannot fail";
+const NO_ASSERTIONS_REASON: &str = "made no assertions";
+
+/// Printed once per run, after the summary, when any test failed for
+/// [`NO_ASSERTIONS_REASON`]. The guidance is the same for every such test, so
+/// repeating it per test buries the failures it is meant to explain.
+const NO_ASSERTIONS_HINT: &str = "note: a test decides its result with assert(cond), assert_eq(a, b), or testing::check(cond, msg) - a body that only prints cannot fail";
 
 fn is_worker_harness_line(line: &str) -> bool {
     let trimmed = line.trim_start();
@@ -101,6 +106,7 @@ fn is_worker_harness_line(line: &str) -> bool {
         || trimmed.starts_with("FAIL ")
         || trimmed.starts_with("test: ")
         || (trimmed.starts_with("error: ") && trimmed.ends_with("test failure(s)"))
+        || trimmed.contains(NO_ASSERTIONS_HINT)
 }
 
 /// The reason carried by a worker's own `FAIL <name> (<n>ms): <reason>` line.
@@ -646,6 +652,14 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
             "test: {pass_styled}, {fail_styled}, {}",
             style.dim(&trailing)
         );
+        if records.iter().any(|record| {
+            record
+                .failure_message
+                .as_deref()
+                .is_some_and(|message| message.contains(NO_ASSERTIONS_REASON))
+        }) {
+            println!("{}", style.dim(NO_ASSERTIONS_HINT));
+        }
     }
     let total_failures = total_failures + u32::try_from(fuzz_regressions).unwrap_or(u32::MAX);
     if total_failures > 0 {

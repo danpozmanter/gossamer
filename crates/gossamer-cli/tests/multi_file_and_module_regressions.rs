@@ -1085,6 +1085,12 @@ fn main() {}
         stdout.contains("2 passed, 1 failed"),
         "unexpected tally: {stdout}",
     );
+    // The guidance is identical for every such test, so it belongs to the run.
+    assert_eq!(
+        stdout.matches("note: a test decides its result").count(),
+        1,
+        "the assertion guidance was not printed exactly once: {stdout}",
+    );
 }
 
 #[test]
