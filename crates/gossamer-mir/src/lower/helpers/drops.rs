@@ -2032,8 +2032,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             let hands_over = match callee {
                 Operand::FnRef { .. } => true,
                 Operand::Const(ConstValue::Str(name)) => {
-                    name.starts_with("gos_rt_chan_recv")
-                        || name.starts_with("gos_rt_chan_try_recv")
+                    name.starts_with("gos_rt_chan_recv") || name.starts_with("gos_rt_chan_try_recv")
                 }
                 _ => false,
             };
@@ -4828,23 +4827,25 @@ fn confined_channel_handle(body: &Body, pair: Local, n: usize) -> Option<Local> 
 
     // Drop through the local a send or a recv named: that one holds the handle
     // itself rather than the pair it was projected out of.
-    body.blocks.iter().find_map(|block| match &block.terminator {
-        Terminator::Call {
-            callee: Operand::Const(ConstValue::Str(name)),
-            args,
-            ..
-        } if name.starts_with("gos_rt_chan_") => match args.first() {
-            Some(Operand::Copy(p))
-                if p.projection.is_empty()
-                    && (p.local.0 as usize) < n
-                    && derived[p.local.0 as usize] =>
-            {
-                Some(p.local)
-            }
+    body.blocks
+        .iter()
+        .find_map(|block| match &block.terminator {
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                ..
+            } if name.starts_with("gos_rt_chan_") => match args.first() {
+                Some(Operand::Copy(p))
+                    if p.projection.is_empty()
+                        && (p.local.0 as usize) < n
+                        && derived[p.local.0 as usize] =>
+                {
+                    Some(p.local)
+                }
+                _ => None,
+            },
             _ => None,
-        },
-        _ => None,
-    })
+        })
 }
 
 /// One drop per channel: wherever the handle is reassigned, and again at every
@@ -4853,7 +4854,7 @@ fn confined_channel_handle(body: &Body, pair: Local, n: usize) -> Option<Local> 
 /// drop is the no-op a null handle answers.
 fn emit_channel_drops(body: &mut Body, handle: Local) {
     let unit_ty = body.locals[0].ty;
-    let mut drop_stmt = |body: &mut Body, span: Span| -> Statement {
+    let drop_stmt = |body: &mut Body, span: Span| -> Statement {
         let sink = Local(u32::try_from(body.locals.len()).expect("local overflow"));
         body.locals.push(crate::ir::LocalDecl {
             ty: unit_ty,
@@ -4969,7 +4970,9 @@ pub(crate) fn record_channel_elem_kind(body: &mut Body, tcx: &gossamer_types::Ty
                 len > 0 && (0..len).all(|_| slot_desc(tcx, elem, out))
             }
             TyKind::Adt { def, substs } if def.local < u32::MAX - 16 => {
-                let fields = tcx.adt_field_tys(*def, substs).map(<[gossamer_types::Ty]>::to_vec);
+                let fields = tcx
+                    .adt_field_tys(*def, substs)
+                    .map(<[gossamer_types::Ty]>::to_vec);
                 match fields {
                     Some(fields) if !fields.is_empty() => {
                         fields.iter().all(|f| slot_desc(tcx, *f, out))
@@ -5018,7 +5021,7 @@ pub(crate) fn record_channel_elem_kind(body: &mut Body, tcx: &gossamer_types::Ty
     }
     let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
     for (bi, chan, kind, desc) in sites {
-        let mut record = |name: &'static str, arg: Operand, body: &mut Body| {
+        let record = |name: &'static str, arg: Operand, body: &mut Body| {
             let sink = Local(u32::try_from(body.locals.len()).expect("local overflow"));
             body.locals.push(crate::ir::LocalDecl {
                 ty: unit_ty,
@@ -5064,15 +5067,16 @@ pub(crate) fn release_mapped_payloads(body: &mut Body, tcx: &gossamer_types::TyC
         loop {
             match tcx.kind_of(cur) {
                 TyKind::Ref { inner, .. } => cur = *inner,
-                TyKind::Adt { def, substs } if def.local == u32::MAX || def.local == u32::MAX - 1 => {
-                    return substs
-                        .types()
-                        .first()
-                        .and_then(|payload| match tcx.kind_of(*payload) {
+                TyKind::Adt { def, substs }
+                    if def.local == u32::MAX || def.local == u32::MAX - 1 =>
+                {
+                    return substs.types().first().and_then(|payload| {
+                        match tcx.kind_of(*payload) {
                             TyKind::String => Some(1),
                             TyKind::Vec(_) | TyKind::Slice(_) => Some(2),
                             _ => None,
-                        });
+                        }
+                    });
                 }
                 _ => return None,
             }
@@ -5090,7 +5094,10 @@ pub(crate) fn release_mapped_payloads(body: &mut Body, tcx: &gossamer_types::TyC
         else {
             continue;
         };
-        if !matches!(name.as_str(), "gos_rt_result_map" | "gos_rt_result_map_bare") {
+        if !matches!(
+            name.as_str(),
+            "gos_rt_result_map" | "gos_rt_result_map_bare"
+        ) {
             continue;
         }
         let Some(Operand::Copy(recv)) = args.first() else {
@@ -5202,9 +5209,8 @@ pub(crate) fn free_overwritten_ctor_values(
         return;
     }
 
-    let mentions = |op: &Operand, local: u32| -> bool {
-        matches!(op, Operand::Copy(p) if p.local.0 == local)
-    };
+    let mentions =
+        |op: &Operand, local: u32| -> bool { matches!(op, Operand::Copy(p) if p.local.0 == local) };
     let stmt_mentions = |stmt: &Statement, local: u32| -> bool {
         match &stmt.kind {
             StatementKind::Assign { place, rvalue } => {
@@ -5219,9 +5225,7 @@ pub(crate) fn free_overwritten_ctor_values(
                     Rvalue::Aggregate { operands, .. } => {
                         operands.iter().any(|op| mentions(op, local))
                     }
-                    Rvalue::CallIntrinsic { args, .. } => {
-                        args.iter().any(|op| mentions(op, local))
-                    }
+                    Rvalue::CallIntrinsic { args, .. } => args.iter().any(|op| mentions(op, local)),
                     Rvalue::Ref { place, .. } | Rvalue::Len(place) => place.local.0 == local,
                     Rvalue::StaticLoad(_) => false,
                 };
@@ -5272,7 +5276,8 @@ pub(crate) fn free_overwritten_ctor_values(
             // Every path back from here must reach a construction of `local`
             // with no mention of it in between.
             let mut ok = true;
-            let mut seen_blocks: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            let mut seen_blocks: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
             // (block, index one past the last statement to examine)
             let mut work: Vec<(usize, usize)> = vec![(bi, si)];
             while let Some((wb, upto)) = work.pop() {
@@ -5296,7 +5301,8 @@ pub(crate) fn free_overwritten_ctor_values(
                 if !ok {
                     break;
                 }
-                if upto == body.blocks[wb].stmts.len() && term_mentions(&body.blocks[wb].terminator, local)
+                if upto == body.blocks[wb].stmts.len()
+                    && term_mentions(&body.blocks[wb].terminator, local)
                 {
                     // The terminator reads it - unless it is the construction
                     // that defines it.
@@ -5306,7 +5312,8 @@ pub(crate) fn free_overwritten_ctor_values(
                         ok = false;
                         break;
                     }
-                } else if ctor_blocks.contains(&(wb, local)) && upto == body.blocks[wb].stmts.len() {
+                } else if ctor_blocks.contains(&(wb, local)) && upto == body.blocks[wb].stmts.len()
+                {
                     reached_ctor = true;
                 }
                 if reached_ctor {

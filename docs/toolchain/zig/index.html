@@ -2275,7 +2275,7 @@ call:</p>
 <tr>
 <td><code>gos build --release</code></td>
 <td>LLVM <code>-O3</code></td>
-<td><code>llc</code> + <code>opt</code> (LLVM 22 preferred, 20 accepted), via <code>PATH</code> or <code>GOS_LLC</code> / <code>GOS_LLVM_OPT</code></td>
+<td><code>llc</code> + <code>opt</code> (LLVM 18 and newer; 22 preferred), via <code>PATH</code> or <code>GOS_LLC</code> / <code>GOS_LLVM_OPT</code></td>
 </tr>
 </tbody>
 </table>
@@ -2317,20 +2317,18 @@ is what makes it convenient in a CI job or a clean container.</p>
 <li><strong><code>gos build --release</code> (LLVM).</strong> <code>llc</code> / <code>opt</code> from a system LLVM,
   or pointed at with <code>GOS_LLC</code> / <code>GOS_LLVM_OPT</code>.</li>
 </ul>
-<p>The version this toolchain prefers is the major <code>rustc</code> bundles, which
-  is <strong>LLVM 22</strong>: the prebuilt <code>libgossamer_runtime.a</code> carries that
-  major's bitcode, and an older LLVM cannot read it, so matching is what
-  makes linking across the two possible at all. Most distributions stop
-  a major or two short, so 22 usually comes from
+<p><strong>LLVM 18 and newer build the same program.</strong> The emitter writes IR
+  every one of those majors parses, and every fixture produces
+  bit-identical output across them, so any of them is a supported build.</p>
+<p>The version this toolchain <em>prefers</em> is the major <code>rustc</code> bundles,
+  which is <strong>LLVM 22</strong>, and an older major is accepted with a one-line
+  warning naming what it gives up: cross-language optimisation with the
+  Rust runtime, which needs the majors to match. That is a difference in
+  optimisation, not in whether the build works. Most distributions stop a
+  major or two short, so 22 usually comes from
   <a href="https://apt.llvm.org">apt.llvm.org</a> on Linux (<code>wget -qO- \
   https://apt.llvm.org/llvm.sh | sudo bash -s -- 22</code>) or from
   <code>brew install llvm@22</code> on macOS.</p>
-<p><strong>LLVM 20 still builds the same program.</strong> Every fixture that compiles
-  under 18 produces bit-identical output under 20, so an older major is
-  accepted with a one-line warning naming what it gives up rather than
-  refused. What it gives up is cross-language optimisation with the Rust
-  runtime, which needs the majors to match. Below 20 is an error: the IR
-  this emitter writes is not known to parse there.</p>
 <h2 id="why-gossamer-uses-zig-and-how-narrowly">Why Gossamer uses zig, and how narrowly<a class="headerlink" href="#why-gossamer-uses-zig-and-how-narrowly" title="Permanent link">&para;</a></h2>
 <p>In this repository zig appears in exactly one place: cross-compiling the
 static-musl <strong>aarch64</strong> runtime archive in the release workflow. Bare

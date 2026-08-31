@@ -98,7 +98,7 @@ pub const ARCHIVE_TAR: StdModule = StdModule {
         StdItem {
             name: "TarEntry",
             kind: StdItemKind::Type,
-            doc: "name + data + size + mode.",
+            doc: "name + data + is_dir flag.",
         },
         StdItem {
             name: "read",

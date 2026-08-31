@@ -5401,7 +5401,7 @@ fn line_matches(line: &str, mark: &LangMark) -> bool {
 }
 
 /// The `lang::` items a fixture exercises, by the spelling each construct
-/// has in source. See [`LANG_MARKS`] for why the set is conservative.
+/// has in source. See `LANG_MARKS` for why the set is conservative.
 #[must_use]
 pub fn lang_features_used(source: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();

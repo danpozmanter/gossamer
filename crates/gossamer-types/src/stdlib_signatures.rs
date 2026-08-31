@@ -41,7 +41,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::archive::tar",
         name: "read",
-        signature: "fn read(path: String) -> Result<Vec<(String, Vec<u8>)>, errors::Error>",
+        signature: "fn read(data: Vec<u8>) -> Result<Vec<tar::TarEntry>, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::archive::tar",
@@ -51,7 +51,7 @@ pub const STD_FUNCTION_SIGNATURES: &[StdFunctionSignature] = &[
     StdFunctionSignature {
         module_path: "std::archive::zip",
         name: "read",
-        signature: "fn read(path: String) -> Result<Vec<(String, Vec<u8>)>, errors::Error>",
+        signature: "fn read(data: Vec<u8>) -> Result<Vec<zip::ZipEntry>, errors::Error>",
     },
     StdFunctionSignature {
         module_path: "std::archive::zip",

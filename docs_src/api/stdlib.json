@@ -6,7 +6,7 @@
       "name": "std::archive::tar::TarEntry",
       "kind": "type",
       "signature": null,
-      "description": "name + data + size + mode.",
+      "description": "name + data + is_dir flag.",
       "lifecycle": "experimental",
       "tier_support": [
         "not_audited",
@@ -24,7 +24,7 @@
       "id": "std-archive-tar-read",
       "name": "std::archive::tar::read",
       "kind": "function",
-      "signature": "fn read(path: String) -> Result<Vec<(String, Vec<u8>)>, errors::Error>",
+      "signature": "fn read(data: Vec<u8>) -> Result<Vec<tar::TarEntry>, errors::Error>",
       "description": "Reads all entries from a tar archive.",
       "lifecycle": "experimental",
       "tier_support": [
@@ -81,7 +81,7 @@
       "id": "std-archive-zip-read",
       "name": "std::archive::zip::read",
       "kind": "function",
-      "signature": "fn read(path: String) -> Result<Vec<(String, Vec<u8>)>, errors::Error>",
+      "signature": "fn read(data: Vec<u8>) -> Result<Vec<zip::ZipEntry>, errors::Error>",
       "description": "Reads all file entries from a zip stored in `data`.",
       "lifecycle": "experimental",
       "tier_support": [

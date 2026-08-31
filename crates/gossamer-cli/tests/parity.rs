@@ -147,7 +147,7 @@ fn minimal_parity_native_matches_interpreter_for_hello_world() {
 /// exercises a meaningfully distinct lowering path (recursion,
 /// iteration, arrays, integer arithmetic, control flow, string
 /// formatting). Together with `hello_world` the default
-/// `cargo test` parity gate covers eight examples at a
+/// `cargo test` parity gate covers nine examples at a
 /// wall-time cost of around twelve seconds - small enough that
 /// a regression in the compiled tier surfaces in CI without
 /// requiring `--features exhaustive_tests`.
@@ -159,12 +159,7 @@ const DEFAULT_PARITY_EXAMPLES: &[&str] = &[
     "range_sum.gos",
     "prime_check.gos",
     "binary_search.gos",
-    // `control_flow.gos` is intentionally NOT here - it carries a
-    // known native-tier divergence on `first square > 100` (loop
-    // returns 0 instead of 121). The full exhaustive walk catches
-    // it; gating the always-on suite on the divergence would block
-    // unrelated work. Re-enable once the loop-break-value lowering
-    // lands in the native tier.
+    "control_flow.gos",
 ];
 
 #[test]
@@ -172,7 +167,7 @@ fn default_parity_native_matches_interpreter_on_curated_examples() {
     // Bumps the default parity matrix beyond `hello_world` - the
     // single-program smoke test (above) was missing regressions
     // in lowering paths used by mainstream user code (recursion,
-    // arrays, integer arithmetic). 7 + 1 examples keep CI under
+    // arrays, integer arithmetic). 8 + 1 examples keep CI under
     // ~12 s while exercising the dominant compiled-tier shapes.
     let mut failures = Vec::new();
     for name in DEFAULT_PARITY_EXAMPLES {

@@ -1,0 +1,6 @@
+images.zip: 247 bytes
+notes.zip: 124 bytes
+reports.zip: 228 bytes
+images.zip holds:
+  banner.txt (14 bytes)
+  icons/mark.svg (7 bytes)

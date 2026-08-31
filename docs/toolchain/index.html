@@ -2488,7 +2488,7 @@ the implementation by a rev.</p>
 <tbody>
 <tr>
 <td><code>gos test PATH</code></td>
-<td>Run <code>#[test]</code> functions <strong>and</strong> doc-tests extracted from <code>```</code>-fenced code inside <code>//</code> doc comments. <code>```text</code> and other language tags are skipped. Accepts a file or a directory.</td>
+<td>Run <code>#[test]</code> functions <strong>and</strong> doc-tests extracted from <code>```</code>-fenced code inside <code>//</code> doc comments. <code>```text</code> and other language tags are skipped. Accepts a file or a directory. A test that records no assertion fails: a body that only prints decides nothing. A test declared <code>-&gt; Result&lt;(), E&gt;</code> is exempt, since reaching <code>Ok</code> past every <code>?</code> is its verdict.</td>
 </tr>
 <tr>
 <td><code>gos bench [--parallel N] [PATH]</code></td>

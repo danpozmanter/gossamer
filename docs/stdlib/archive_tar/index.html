@@ -2116,11 +2116,11 @@
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/archive/tar.rs"><code>TarEntry</code></a></td>
 <td><code>type TarEntry</code></td>
-<td>name + data + size + mode.</td>
+<td>name + data + is_dir flag.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/archive/tar.rs"><code>read</code></a></td>
-<td><code>fn read(path: String) -&gt; Result&lt;Vec&lt;(String, Vec&lt;u8&gt;)&gt;, errors::Error&gt;</code></td>
+<td><code>fn read(data: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;tar::TarEntry&gt;, errors::Error&gt;</code></td>
 <td>Reads all entries from a tar archive.</td>
 </tr>
 <tr>

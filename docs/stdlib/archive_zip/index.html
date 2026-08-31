@@ -2120,7 +2120,7 @@
 </tr>
 <tr>
 <td><a href="https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/archive/zip.rs"><code>read</code></a></td>
-<td><code>fn read(path: String) -&gt; Result&lt;Vec&lt;(String, Vec&lt;u8&gt;)&gt;, errors::Error&gt;</code></td>
+<td><code>fn read(data: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;zip::ZipEntry&gt;, errors::Error&gt;</code></td>
 <td>Reads all file entries from a zip stored in <code>data</code>.</td>
 </tr>
 <tr>

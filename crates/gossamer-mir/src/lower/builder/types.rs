@@ -1504,10 +1504,9 @@ impl<'a> Builder<'a> {
                 TyKind::Adt { def, substs }
                     if def.local == u32::MAX || def.local == u32::MAX - 1 =>
                 {
-                    return substs
-                        .types()
-                        .first()
-                        .is_some_and(|payload| matches!(self.tcx.kind_of(*payload), TyKind::String));
+                    return substs.types().first().is_some_and(|payload| {
+                        matches!(self.tcx.kind_of(*payload), TyKind::String)
+                    });
                 }
                 _ => return false,
             }

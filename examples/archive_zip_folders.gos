@@ -1,0 +1,97 @@
+/*
+ * One zip file per folder, with std::archive::zip.
+ *
+ * Every immediate subdirectory of a parent directory becomes its own
+ * archive: `reports/` is written out as `reports.zip`, holding that
+ * folder's files under paths relative to the folder root, nested
+ * directories included.
+ *
+ * `archive::zip::write` builds the archive in memory from (name, data)
+ * pairs, so the entry names are chosen here rather than taken from the
+ * filesystem. They are sorted and forward-slashed, which keeps an
+ * archive identical across runs and across platforms.
+ *
+ * Run:
+ *     gos run examples/archive_zip_folders.gos
+ */
+
+use std::archive
+use std::env
+use std::errors
+use std::fs
+use std::path
+
+/// Archive entry name for `entry`: relative to `root`, forward-slashed.
+fn archive_name(root: String, entry: String) -> String {
+    entry.substring(root.byte_len() + 1, entry.byte_len()).replace("\\", "/")
+}
+
+/// Every file below `folder`, sorted, nested directories included.
+fn files_under(folder: String) -> Result<Vec<String>, errors::Error> {
+    let mut found = #[]
+    fs::walk_dir(folder, |entry| {
+        if entry.is_file {
+            found.push(entry.path)
+        }
+        Ok(())
+    }).map_err(|e| errors::wrap(e, format("walking {}", folder)))?
+    found.sort()
+    Ok(found)
+}
+
+/// Compresses `folder` into the archive `dest`, answering its byte size.
+fn zip_folder(folder: String, dest: String) -> Result<i64, errors::Error> {
+    let mut entries = #[]
+    for file in files_under(folder)? {
+        let data = fs::read(file).map_err(|e| errors::wrap(e, format("reading {}", file)))?
+        entries.push((archive_name(folder, file), data))
+    }
+    let bytes = archive::zip::write(entries)?
+    fs::write(dest, bytes).map_err(|e| errors::wrap(e, format("writing {}", dest)))?
+    Ok(bytes.len())
+}
+
+/// Writes one zip per immediate subdirectory of `root`, beside it.
+fn zip_each_folder(root: String) -> Result<Vec<String>, errors::Error> {
+    let mut made = #[]
+    let children = fs::read_dir(root).map_err(|e| errors::wrap(e, format("listing {}", root)))?
+    for child in children {
+        if child.is_dir {
+            let dest = path::join(root, child.name + ".zip")
+            let size = zip_folder(child.path, dest)?
+            made.push(format("{}.zip: {} bytes", child.name, size))
+        }
+    }
+    made.sort()
+    Ok(made)
+}
+
+let root = path::join(env::temp_dir(), "gossamer-zip-folders")
+let _ = fs::remove_dir_all(root)
+
+let tree = #[
+    ("reports/q1.txt", "revenue: 120\n")
+    ("reports/q2.txt", "revenue: 155\n")
+    ("images/banner.txt", "wide and blue\n")
+    ("images/icons/mark.svg", "<svg/>\n")
+    ("notes/todo.md", "- ship it\n")
+]
+for (name, body) in tree {
+    let full = path::join(root, name)
+    let dir, _ = path::split(full)
+    fs::create_dir_all(dir).map_err(|e| errors::wrap(e, format("mkdir {}", dir)))?
+    fs::write(full, body.as_bytes()).map_err(|e| errors::wrap(e, format("write {}", full)))?
+}
+
+for line in zip_each_folder(root)? {
+    println("{}", line)
+}
+
+let packed = fs::read(path::join(root, "images.zip"))
+    .map_err(|e| errors::wrap(e, "reading images.zip"))?
+println("images.zip holds:")
+for entry in archive::zip::read(packed)? {
+    println("  {} ({} bytes)", entry.name, entry.data.len())
+}
+
+fs::remove_dir_all(root).map_err(|e| errors::wrap(e, "cleanup"))?
