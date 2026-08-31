@@ -67,6 +67,16 @@ pub struct GosChan {
     /// Whether this channel is currently counted among those holding a
     /// waiter that could proceed. Kept in step by [`GosChan::sync_ready`].
     counted_ready: std::sync::atomic::AtomicBool,
+    /// What the element word owns, so a value the channel still holds at
+    /// teardown can be given back: 0 nothing, 1 a `String`, 2 a `Vec`, 3 a
+    /// reference-counted node. Recorded by the send site, which is where the
+    /// element's type is known.
+    elem_kind: AtomicI64,
+    /// One character per 8-byte slot of an aggregate element, saying what that
+    /// slot owns: `s` nothing, `S` a `String`, `V` a `Vec`, `R` a counted node.
+    /// This is the ownership descriptor a value nobody received is given back
+    /// through. Empty until a send records it.
+    elem_desc: PlMutex<Vec<u8>>,
     /// How many parties still reach this channel. A channel a single
     /// binding owns starts at one and is reclaimed by the drop the
     /// codegen emits at its last use; a spawn handle is shared with the
@@ -157,6 +167,8 @@ pub unsafe extern "C" fn gos_rt_chan_new(elem_bytes: u32, cap: i64) -> *mut GosC
             recv_waiters: AtomicUsize::new(0),
             send_waiters: AtomicUsize::new(0),
             counted_ready: std::sync::atomic::AtomicBool::new(false),
+            elem_kind: AtomicI64::new(0),
+            elem_desc: PlMutex::new(Vec::new()),
             refs: AtomicUsize::new(1),
         }))
     })
@@ -893,6 +905,80 @@ pub unsafe extern "C" fn gos_rt_chan_drop(c: *mut GosChan) {
     });
 }
 
+/// Records what a queued element word owns, so the channel can give the share
+/// back for a value nobody receives. Emitted at each send, where the element's
+/// type is known; writing the same kind again is the common case.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_chan_set_elem_kind(c: *mut GosChan, kind: i64) {
+    ffi_entry!((), {
+        if c.is_null() {
+            return;
+        }
+        unsafe { &*c }.elem_kind.store(kind, Ordering::Relaxed);
+    });
+}
+
+/// Records the ownership descriptor of an aggregate element's slots.
+///
+/// The channel carries a heap copy of the aggregate, so a value nobody
+/// receives holds a share of every heap field in it. The descriptor is what
+/// the teardown walks to give those back.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_chan_set_elem_desc(c: *mut GosChan, desc: *const std::ffi::c_char) {
+    ffi_entry!((), {
+        if c.is_null() || desc.is_null() {
+            return;
+        }
+        // SAFETY: `desc` is the descriptor string the compiler emitted for this
+        // element type; read through the length header like any other string
+        // argument.
+        let bytes = unsafe { crate::c_abi::string::gos_str_arg_bytes(desc) }.to_vec();
+        *unsafe { &*c }.elem_desc.lock() = bytes;
+    });
+}
+
+/// Gives back the shares an aggregate element's slots hold, then the copy the
+/// channel carries.
+fn release_aggregate(base: i64, desc: &[u8]) {
+    if base == 0 {
+        return;
+    }
+    for (slot, kind) in desc.iter().enumerate() {
+        let word_at = (base as usize).wrapping_add(slot * 8) as *const i64;
+        // SAFETY: the descriptor has one character per slot of the heap copy
+        // the send made, so every offset it names is inside that allocation.
+        let word = unsafe { std::ptr::read_unaligned(word_at) };
+        match kind {
+            b'S' => release_elem(1, word),
+            b'V' => release_elem(2, word),
+            b'R' => release_elem(3, word),
+            _ => {}
+        }
+    }
+    release_elem(3, base);
+}
+
+/// Gives back the share the send minted for one queued element word.
+fn release_elem(kind: i64, word: i64) {
+    if word == 0 {
+        return;
+    }
+    match kind {
+        // SAFETY: the kind is the static type of what the send put in the
+        // queue, so the word is a body of exactly that shape.
+        1 => unsafe {
+            crate::c_abi::string::gos_rt_str_free_typed(word as usize as *mut std::ffi::c_char);
+        },
+        2 => unsafe {
+            crate::c_abi::gos_rt_vec_free(word as usize as *mut crate::c_abi::vec::GosVec);
+        },
+        3 => unsafe {
+            crate::c_abi::rc::gos_rt_rc_release(word as usize as *mut u8);
+        },
+        _ => {}
+    }
+}
+
 /// Records one more party reaching `chan`.
 pub(crate) fn chan_retain(chan: &GosChan) {
     chan.refs.fetch_add(1, Ordering::Relaxed);
@@ -923,6 +1009,32 @@ pub(crate) unsafe fn chan_release(chan: *mut GosChan) {
         // already closed this channel explicitly (the user-facing
         // `gos_rt_chan_close` panics on double-close).
         chan_close_idempotent(&*chan);
+        // A value nobody received still holds the share its send minted. The
+        // last party out is who gives it back, so an abandoned producer costs
+        // the queue's storage and nothing more.
+        let kind = (*chan).elem_kind.load(Ordering::Relaxed);
+        if kind != 0 {
+            let queued: Vec<i64> = match &*(*chan).buf.lock() {
+                ChanStorage::I64(deque) => deque.iter().map(|(_, word)| *word).collect(),
+                ChanStorage::Bytes(deque) => deque
+                    .iter()
+                    .filter(|(_, bytes)| bytes.len() >= 8)
+                    .map(|(_, bytes)| {
+                        let mut tmp = [0u8; 8];
+                        tmp.copy_from_slice(&bytes[..8]);
+                        i64::from_ne_bytes(tmp)
+                    })
+                    .collect(),
+            };
+            let desc = (*chan).elem_desc.lock().clone();
+            for word in queued {
+                if kind == 3 && !desc.is_empty() {
+                    release_aggregate(word, &desc);
+                } else {
+                    release_elem(kind, word);
+                }
+            }
+        }
         drop(Box::from_raw(chan));
     }
 }

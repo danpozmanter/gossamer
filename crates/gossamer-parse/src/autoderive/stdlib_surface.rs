@@ -1,3 +1,50 @@
+/// Module names the stdlib rewrite table keys on. A path headed by one of
+/// these is stdlib surface only where the file imported that module from
+/// `std`, so a project that declares its own `sql` module keeps its own
+/// `sql::Stmt`. A head outside this set is not a module key at all
+/// (`Http2Config::default`) and passes through unguarded.
+const REWRITTEN_STDLIB_MODULES: &[&str] = &[
+    "csrf", "form", "fs", "http", "path", "pem", "sql", "tar", "time", "x509", "zip",
+];
+
+/// Stdlib modules this compilation unit reached through `use std::...`, under
+/// the name each is spelled by. `use` decls inside `mod` bodies are hoisted to
+/// the source file, so a bundle answers for every one of its files.
+fn stdlib_modules_in_scope(sf: &SourceFile) -> std::collections::HashSet<String> {
+    use gossamer_ast::UseTarget;
+
+    let mut out: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for decl in &sf.uses {
+        let UseTarget::Module(path) = &decl.target else {
+            continue;
+        };
+        if path.segments.first().map(|s| s.name.as_str()) != Some("std") {
+            continue;
+        }
+        if let Some(entries) = &decl.list {
+            out.extend(entries.iter().map(|entry| entry.name.name.clone()));
+        }
+        if let Some(last) = path.segments.last() {
+            out.insert(last.name.clone());
+        }
+    }
+    out
+}
+
+/// The rewrite-table module key `head` names, or `None` where `head` spells a
+/// stdlib module this unit never imported. A path rooted at `std` names the
+/// stdlib outright, whatever is in scope.
+fn stdlib_module_key<'a>(
+    scope: &std::collections::HashSet<String>,
+    head: &'a str,
+    rooted_std: bool,
+) -> Option<&'a str> {
+    if rooted_std || scope.contains(head) || !REWRITTEN_STDLIB_MODULES.contains(&head) {
+        return Some(head);
+    }
+    None
+}
+
 /// Bare names a `use std::<module>::<item>` brought into scope that reach an
 /// injected wrapper, mapped to that wrapper's mangled name. An item the file
 /// declares itself keeps its own meaning, so a program with its own `shield`
@@ -21,6 +68,11 @@ fn imported_wrapper_names(sf: &SourceFile) -> std::collections::HashMap<String, 
             continue;
         };
         let base: Vec<String> = path.segments.iter().map(|s| s.name.clone()).collect();
+        // Only `std` reaches an injected wrapper; `use sql::Stmt` over a
+        // project's own `sql` module binds that module's `Stmt`.
+        if base.first().map(String::as_str) != Some("std") {
+            continue;
+        }
         let mut candidates: Vec<(Vec<String>, String)> = Vec::new();
         if let Some(entries) = &decl.list {
             for entry in entries {
@@ -72,16 +124,31 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
     use gossamer_ast::ty::{Type, TypeKind};
     use gossamer_ast::visitor::{walk_expr_mut, walk_type_mut};
 
-    fn collapse_expr(path: &mut gossamer_ast::PathExpr) {
+    fn collapse_expr(
+        path: &mut gossamer_ast::PathExpr,
+        scope: &std::collections::HashSet<String>,
+    ) {
         let n = path.segments.len();
         if n < 2 {
             return;
         }
+        // A path rooted at `std`, or at a module this unit imported from it,
+        // names the stdlib the whole way down: `archive::tar::read` is the
+        // stdlib's `read` wherever `archive` came from `std`.
+        let root = path.segments[0].name.name.as_str();
+        let rooted = root == "std" || scope.contains(root);
+        let key = |i: usize| {
+            stdlib_module_key(scope, path.segments[i].name.name.as_str(), rooted).map(str::to_owned)
+        };
+        let head3 = if n >= 3 { key(n - 3) } else { None };
+        let head2 = key(n - 2);
+        let head3 = head3.as_deref();
+        let head2 = head2.as_deref();
         // Enum-variant paths: `sql::Value::Int(..)` /
         // `sql::IsolationLevel::Serializable` collapse to the
         // injected enum + variant, guarded on the `sql` segment so
         // a user's own `Value::Int` is untouched.
-        if n >= 3 && path.segments[n - 3].name.name.as_str() == "sql" {
+        if n >= 3 && head3 == Some("sql") {
             let enum_name = path.segments[n - 2].name.name.as_str();
             if let Some(mangled) = match enum_name {
                 "Value" => Some("__gos_sql_Value"),
@@ -111,7 +178,7 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
             }
         }
         if n >= 3
-            && path.segments[n - 3].name.name.as_str() == "path"
+            && head3 == Some("path")
             && path.segments[n - 2].name.name.as_str() == "Path"
         {
             let method = std::mem::replace(
@@ -121,7 +188,7 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
             path.segments = vec![gossamer_ast::PathSegment::new("__gos_path_Path"), method];
             return;
         }
-        if n >= 3 && path.segments[n - 3].name.name.as_str() == "time" {
+        if n >= 3 && head3 == Some("time") {
             let public_type = path.segments[n - 2].name.name.as_str();
             if let Some(mangled) = match public_type {
                 "Location" => Some("__gos_time_Location"),
@@ -136,39 +203,46 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
                 return;
             }
         }
-        if collapse_http_security_path(path) {
+        if n >= 3
+            && matches!(head3, Some("csrf" | "form"))
+            && collapse_http_security_path(path)
+        {
             return;
         }
-        if let Some(name) = mangled_stdlib_name(
-            path.segments[n - 2].name.name.as_str(),
-            path.segments[n - 1].name.name.as_str(),
-        ) {
+        if let Some(name) = head2
+            .and_then(|parent| mangled_stdlib_name(parent, path.segments[n - 1].name.name.as_str()))
+        {
             let mut seg = gossamer_ast::PathSegment::new(name);
             seg.generics = std::mem::take(&mut path.segments[n - 1].generics);
             path.segments = vec![seg];
         }
     }
 
-    fn collapse_type(path: &mut gossamer_ast::ty::TypePath) {
+    fn collapse_type(
+        path: &mut gossamer_ast::ty::TypePath,
+        scope: &std::collections::HashSet<String>,
+    ) {
         let n = path.segments.len();
         if n < 2 {
             return;
         }
+        let root = path.segments[0].name.name.as_str();
+        let rooted = root == "std" || scope.contains(root);
+        let parent =
+            stdlib_module_key(scope, path.segments[n - 2].name.name.as_str(), rooted).map(str::to_owned);
+        let parent = parent.as_deref();
         // `sql::Error` is the standard error type at the language
         // level - redirect to `errors::Error`.
-        if path.segments[n - 2].name.name.as_str() == "sql"
-            && path.segments[n - 1].name.name.as_str() == "Error"
-        {
+        if parent == Some("sql") && path.segments[n - 1].name.name.as_str() == "Error" {
             path.segments = vec![
                 gossamer_ast::ty::TypePathSegment::new("errors"),
                 gossamer_ast::ty::TypePathSegment::new("Error"),
             ];
             return;
         }
-        if let Some(name) = mangled_stdlib_name(
-            path.segments[n - 2].name.name.as_str(),
-            path.segments[n - 1].name.name.as_str(),
-        ) {
+        if let Some(name) = parent
+            .and_then(|parent| mangled_stdlib_name(parent, path.segments[n - 1].name.name.as_str()))
+        {
             let mut seg = gossamer_ast::ty::TypePathSegment::new(name);
             seg.generics = std::mem::take(&mut path.segments[n - 1].generics);
             path.segments = vec![seg];
@@ -209,7 +283,9 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
         }
     }
 
-    struct Rewriter;
+    struct Rewriter {
+        scope: std::collections::HashSet<String>,
+    }
     impl VisitorMut for Rewriter {
         fn visit_expr(&mut self, expr: &mut Expr) {
             walk_expr_mut(self, expr);
@@ -227,23 +303,24 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
             match &mut expr.kind {
                 ExprKind::Call { callee, .. } => {
                     if let ExprKind::Path(path) = &mut callee.kind {
-                        collapse_expr(path);
+                        collapse_expr(path, &self.scope);
                     }
                 }
-                ExprKind::Path(path) => collapse_expr(path),
-                ExprKind::Struct { path, .. } => collapse_expr(path),
+                ExprKind::Path(path) => collapse_expr(path, &self.scope),
+                ExprKind::Struct { path, .. } => collapse_expr(path, &self.scope),
                 _ => {}
             }
         }
         fn visit_type(&mut self, ty: &mut Type) {
             walk_type_mut(self, ty);
             if let TypeKind::Path(tp) = &mut ty.kind {
-                collapse_type(tp);
+                collapse_type(tp, &self.scope);
             }
         }
     }
     let imported = imported_wrapper_names(sf);
-    Rewriter.visit_source_file(sf);
+    let scope = stdlib_modules_in_scope(sf);
+    Rewriter { scope }.visit_source_file(sf);
     if !imported.is_empty() {
         BareImportRewriter { imported }.visit_source_file(sf);
     }

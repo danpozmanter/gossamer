@@ -1356,6 +1356,10 @@ struct RegionSlabs {
     /// Objects committed to this region before it was suspended (the live
     /// innermost region's uncommitted count is in `BUMP_OBJS`).
     objs: usize,
+    /// Heap allocations this region owns: a copy of region-backed bytes goes
+    /// to the heap so a recycled slab cannot land on its own source, and the
+    /// slab sweep at pop cannot reclaim it. Freed one by one at pop.
+    promoted: Vec<*mut std::ffi::c_char>,
 }
 
 /// Arena state owned by one running goroutine.
@@ -1676,10 +1680,21 @@ pub extern "C" fn gos_rt_arena_push() {
             slabs: Vec::new(),
             saved: BumpState::EMPTY,
             objs: 0,
+            promoted: Vec::new(),
         });
     });
     BUMP.with(|b| b.set(BumpState::EMPTY));
     REGION_DEPTH.with(|d| d.set(d.get() + 1));
+}
+
+/// Records `body` as a heap allocation the innermost region owns and frees at
+/// pop. A promotion made with no region open is an ordinary heap string.
+pub(crate) fn region_track_promoted(body: *mut std::ffi::c_char) {
+    REGIONS.with(|r| {
+        if let Some(top) = r.borrow_mut().last_mut() {
+            top.promoted.push(body);
+        }
+    });
 }
 
 /// Close the innermost region: free/recycle every slab in O(slabs). No
@@ -1688,6 +1703,20 @@ pub extern "C" fn gos_rt_arena_push() {
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_arena_pop() {
     let pending_objs = BUMP_OBJS.with(|o| o.replace(0));
+    // Free the heap allocations this region owns before its slabs go back, and
+    // outside the `REGIONS` borrow so a free is free to open a region of its own.
+    let promoted = REGIONS.with(|r| {
+        r.borrow_mut()
+            .last_mut()
+            .map(|top| std::mem::take(&mut top.promoted))
+            .unwrap_or_default()
+    });
+    for body in promoted {
+        // SAFETY: each body was recorded by `region_track_promoted` while this
+        // region was open, is reachable from nothing after the pop (the escape
+        // analysis is what licenses the region), and is freed once, here.
+        unsafe { crate::c_abi::string::free_promoted_string(body) };
+    }
     let restored = REGIONS.with(|r| {
         let mut regions = r.borrow_mut();
         let region = regions.pop()?;

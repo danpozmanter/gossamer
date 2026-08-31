@@ -8869,18 +8869,6 @@ impl<'a> TypeChecker<'a> {
                             arg.span,
                         );
                     }
-                    if !matches!(self.tcx.kind_of(v), TyKind::Vec(_))
-                        && self.ty_contains_nested_vec(v)
-                    {
-                        let ty = self.render_public_ty(v);
-                        self.emit(
-                            TypeError::ConcurrentAggregateUnsupported {
-                                ty,
-                                boundary: "be stored in a channel",
-                            },
-                            arg.span,
-                        );
-                    }
                 }
                 Some(self.tcx.unit())
             }

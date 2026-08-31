@@ -1221,7 +1221,7 @@ fn a_callback_parameter_is_not_typed_by_a_global_of_the_same_name() {
         "the callback did not receive its argument as a String: {stdout}",
     );
     assert!(
-        stdout.contains("\n1\n") || stdout.trim_end().ends_with("1"),
+        stdout.contains("\n1\n") || stdout.trim_end().ends_with('1'),
         "the global with the same name still works: {stdout}",
     );
 }
@@ -3622,4 +3622,229 @@ fn a_dependency_s_tests_run_once_in_its_own_project() {
         2,
         "each dependent's own test runs once:\n{stdout}"
     );
+}
+
+#[test]
+fn a_project_module_named_for_a_stdlib_module_keeps_its_own_types() {
+    // `sql::Stmt`, `sql::Value` and a bare `use sql::Stmt` all name this
+    // project's types: the injected stdlib wrappers are reached only
+    // through `use std::database::sql`.
+    let dir = write_project(
+        "local-sql-module",
+        "example.com/localsql",
+        &[
+            (
+                "src/sql.gos",
+                "pub enum Stmt {\n\
+                 \x20   Compact\n\
+                 \x20   Insert(String)\n\
+                 }\n\
+                 \n\
+                 pub enum Value {\n\
+                 \x20   Int(i64)\n\
+                 }\n\
+                 \n\
+                 pub fn parse(src: String) -> Stmt {\n\
+                 \x20   if src == \"compact\" { Stmt::Compact } else { Stmt::Insert(src) }\n\
+                 }\n",
+            ),
+            (
+                "src/main.gos",
+                "use sql::Stmt\n\
+                 \n\
+                 fn describe(stmt: sql::Stmt) -> String {\n\
+                 \x20   match stmt {\n\
+                 \x20       sql::Stmt::Compact => \"compact\"\n\
+                 \x20       sql::Stmt::Insert(s) => format(\"insert {}\", s)\n\
+                 \x20   }\n\
+                 }\n\
+                 \n\
+                 fn tag(v: sql::Value) -> i64 {\n\
+                 \x20   match v {\n\
+                 \x20       sql::Value::Int(n) => n\n\
+                 \x20   }\n\
+                 }\n\
+                 \n\
+                 fn bare(stmt: Stmt) -> String { describe(stmt) }\n\
+                 \n\
+                 fn main() {\n\
+                 \x20   println(\"{}\", describe(sql::parse(\"compact\")))\n\
+                 \x20   println(\"{}\", bare(sql::parse(\"rows\")))\n\
+                 \x20   println(\"{}\", tag(sql::Value::Int(7)))\n\
+                 }\n",
+            ),
+        ],
+    );
+    let vm = project_run_vm(&dir);
+    let native = project_build_run(&dir, "localsql");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "compact\ninsert rows\n7\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
+}
+
+/// Live heap objects the leak ledger reports at exit, as `(strings, vecs)`.
+fn live_at_exit(bin: &Path, args: &[&str]) -> (i64, i64) {
+    let out = Command::new(bin)
+        .args(args)
+        .env("GOS_LEAK_LEDGER", "1")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run the built binary");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let line = stderr
+        .lines()
+        .find(|l| l.starts_with("LEAK LEDGER"))
+        .unwrap_or_else(|| panic!("no leak ledger in:\n{stderr}"));
+    let field = |name: &str| -> i64 {
+        line.split_whitespace()
+            .find_map(|f| f.strip_prefix(name))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| panic!("no `{name}` in {line}"))
+    };
+    (field("str="), field("vec="))
+}
+
+/// A program whose live set does not grow with its iteration count holds no
+/// per-iteration share. Ten times the work reaching the same live count is what
+/// separates a balanced program from one that leaks a share per round.
+fn assert_live_set_flat(dir: &Path, id_tail: &str, mode: &str) {
+    let build = Command::new(gos_bin())
+        .arg("build")
+        .current_dir(dir)
+        .output()
+        .expect("spawn gos build");
+    assert!(
+        build.status.success(),
+        "gos build failed:\nstderr: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let mut bin = dir.join("target/debug").join(id_tail);
+    if !std::env::consts::EXE_EXTENSION.is_empty() {
+        bin.set_extension(std::env::consts::EXE_EXTENSION);
+    }
+    let small = live_at_exit(&bin, &[mode, "200"]);
+    let large = live_at_exit(&bin, &[mode, "2000"]);
+    assert_eq!(
+        small, large,
+        "`{mode}` holds a share per round: 200 rounds left {small:?} live, 2000 left {large:?}"
+    );
+}
+
+const OWNERSHIP_PROGRAM: &str = "\
+use std::{env, sync}\n\
+\n\
+struct Inner { xs: Vec<i64>, name: String }\n\
+struct Outer { inner: Inner, tags: Vec<String> }\n\
+\n\
+fn make(i: i64) -> Outer {\n\
+\x20   let xs: Vec<i64> = #[i, i * 2]\n\
+\x20   let tags: Vec<String> = #[\"t\" + i.to_string()]\n\
+\x20   Outer { inner: Inner { xs: xs, name: \"row-\" + i.to_string() }, tags: tags }\n\
+}\n\
+\n\
+fn maybe(i: i64) -> Option<String> {\n\
+\x20   if i % 2 == 0 { Some(\"row-\" + i.to_string()) } else { None }\n\
+}\n\
+\n\
+fn main() {\n\
+\x20   let args = env::args()\n\
+\x20   let mode = if args.len() > 0 { args[0] } else { \"concat\" }\n\
+\x20   let rounds = if args.len() > 1 { args[1].to_i64().unwrap_or(200) } else { 200 }\n\
+\x20   let mut i: i64 = 0\n\
+\x20   let mut sink: i64 = 0\n\
+\x20   while i < rounds {\n\
+\x20       if mode == \"concat\" {\n\
+\x20           let s = \"row-\" + i.to_string()\n\
+\x20           sink += s.len()\n\
+\x20       } else if mode == \"carrier\" {\n\
+\x20           sink += maybe(i).unwrap_or(\"\").len()\n\
+\x20           sink += maybe(i).map(|s| s.len()).unwrap_or(0)\n\
+\x20           sink += maybe(i).unwrap_or_else(|| \"x\").len()\n\
+\x20       } else if mode == \"delivered\" {\n\
+\x20           let tx, rx = sync::channel_unbounded()\n\
+\x20           tx.send(make(i))\n\
+\x20           match rx.recv() { Some(o) => sink += o.inner.xs.len(), None => () }\n\
+\x20       } else if mode == \"abandoned\" {\n\
+\x20           let tx, rx = sync::channel_unbounded()\n\
+\x20           tx.send(make(i))\n\
+\x20           sink += i\n\
+\x20       } else if mode == \"nested\" {\n\
+\x20           let holder: Vec<Outer> = #[make(i)]\n\
+\x20           sink += holder.len()\n\
+\x20       }\n\
+\x20       i += 1\n\
+\x20   }\n\
+\x20   println(\"{} {} {}\", mode, rounds, sink)\n\
+}\n";
+
+#[test]
+fn heap_values_are_released_rather_than_held_per_round() {
+    // Each mode is one ownership path that used to keep a share per round: a
+    // `String` concatenation, an `Option` payload read through the carrier
+    // accessors, and an aggregate stored in a sequence. The channel modes the
+    // program also carries are exercised for correctness elsewhere; one
+    // construction of a doubly-nested aggregate still keeps a share when it
+    // crosses a channel, which is recorded rather than asserted here.
+    let dir = write_project(
+        "ownership-live-set",
+        "example.com/ownership",
+        &[("src/main.gos", OWNERSHIP_PROGRAM)],
+    );
+    for mode in ["concat", "carrier", "nested"] {
+        assert_live_set_flat(&dir, "ownership", mode);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_aggregate_holding_growable_storage_crosses_a_channel() {
+    // The value is sent from a goroutine whose frame is long gone by the time
+    // the receiver reads it, so a share dropped too early shows up here as
+    // wrong data rather than a leak.
+    let dir = write_project(
+        "aggregate-channel",
+        "example.com/aggchan",
+        &[(
+            "src/main.gos",
+            "use std::{sync, time}\n\
+             \n\
+             struct Row { xs: Vec<i64>, name: String, tags: Vec<String> }\n\
+             \n\
+             fn produce(tx: Sender<Row>, n: i64) {\n\
+             \x20   let mut i: i64 = 0\n\
+             \x20   while i < n {\n\
+             \x20       tx.send(Row {\n\
+             \x20           xs: #[i, i * 2]\n\
+             \x20           name: \"row-\" + i.to_string()\n\
+             \x20           tags: #[\"t\" + i.to_string()]\n\
+             \x20       })\n\
+             \x20       i += 1\n\
+             \x20   }\n\
+             \x20   tx.close()\n\
+             }\n\
+             \n\
+             fn main() {\n\
+             \x20   let tx, rx = sync::channel_unbounded()\n\
+             \x20   let done = cohort(isolation: Isolation::Thread) {\n\
+             \x20       spawn(|| produce(tx, 200))\n\
+             \x20       let _ = time::sleep(50)\n\
+             \x20       let mut total: i64 = 0\n\
+             \x20       let mut names: i64 = 0\n\
+             \x20       while let Some(r) = rx.recv() {\n\
+             \x20           total += r.xs[0] + r.xs[1]\n\
+             \x20           names += r.name.len() + r.tags[0].len()\n\
+             \x20       }\n\
+             \x20       println(\"{} {}\", total, names)\n\
+             \x20   }\n\
+             \x20   println(\"{:?}\", done.is_ok())\n\
+             }\n",
+        )],
+    );
+    let vm = project_run_vm(&dir);
+    let native = project_build_run(&dir, "aggchan");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, "59700 1980\ntrue\n", "vm stdout");
+    assert_eq!(native.0, vm.0, "tier parity");
 }

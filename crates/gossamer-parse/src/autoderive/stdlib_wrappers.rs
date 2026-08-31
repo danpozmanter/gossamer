@@ -38,46 +38,78 @@ pub fn stdlib_wrapper_source(source: &str) -> String {
     synthesize_stdlib_wrappers(source)
 }
 
+/// Stdlib modules `source` reached through `use std::...`, or `None` where the
+/// source does not parse cleanly - a tree built by error recovery answers for
+/// no import, and the parse diagnostics are that program's report.
+fn imported_std_modules(source: &str) -> Option<std::collections::HashSet<String>> {
+    let mut probe = SourceMap::new();
+    let file = probe.add_file("<stdlib-wrapper-probe>", source.to_string());
+    let (parsed, diags) = crate::parse_source_file(source, file);
+    if !diags.is_empty() {
+        return None;
+    }
+    Some(stdlib_modules_in_scope(&parsed))
+}
+
 fn synthesize_stdlib_wrappers(source: &str) -> String {
+    // A wrapper set declares top-level items, so it is injected only for a
+    // module the source reached through `use std::...`: a project with its
+    // own `sql` module keeps its own `Value` and its own `Int`.
+    let mut imported: Option<Option<std::collections::HashSet<String>>> = None;
+    let mut from_std = |module: &str| {
+        imported
+            .get_or_insert_with(|| imported_std_modules(source))
+            .as_ref()
+            .is_none_or(|in_scope| {
+                // The module itself was imported, or it is reached through one
+                // that was: `use std::archive` then `archive::tar::read`.
+                in_scope.contains(module)
+                    || in_scope
+                        .iter()
+                        .any(|outer| mentions_path(source, &format!("{outer}::{module}::")))
+            })
+    };
+
     let mut stdlib_wrappers = String::new();
-    if mentions_path(source, "pem::") {
+    if mentions_path(source, "pem::") && from_std("pem") {
         stdlib_wrappers.push_str(PEM_WRAPPERS);
     }
-    if mentions_path(source, "x509::") {
+    if mentions_path(source, "x509::") && from_std("x509") {
         stdlib_wrappers.push_str(X509_WRAPPERS);
     }
-    if source.contains("fs::metadata") {
+    if source.contains("fs::metadata") && from_std("fs") {
         stdlib_wrappers.push_str(FS_METADATA_WRAPPERS);
     }
-    if source.contains("path::Path") {
+    if source.contains("path::Path") && from_std("path") {
         stdlib_wrappers.push_str(PATH_WRAPPERS);
     }
     if source.contains("Http2Config") {
         stdlib_wrappers.push_str(HTTP2_CONFIG_WRAPPERS);
     }
-    if mentions_path(source, "tar::") {
+    if mentions_path(source, "tar::") && from_std("tar") {
         stdlib_wrappers.push_str(TAR_WRAPPERS);
     }
-    if mentions_path(source, "zip::") {
+    if mentions_path(source, "zip::") && from_std("zip") {
         stdlib_wrappers.push_str(ZIP_WRAPPERS);
     }
-    if mentions_path(source, "sql::") {
+    if mentions_path(source, "sql::") && from_std("sql") {
         stdlib_wrappers.push_str(SQL_WRAPPERS);
     }
     if HTTP_SECURITY_MARKERS.iter().any(|m| source.contains(m)) {
         stdlib_wrappers.push_str(HTTP_SECURITY_WRAPPERS);
     }
-    if mentions_module_item(source, "time", "after") {
+    if mentions_module_item(source, "time", "after") && from_std("time") {
         stdlib_wrappers.push_str(TIME_TIMER_WRAPPERS);
     }
-    if mentions_module_item(source, "sync", "shield") {
+    if mentions_module_item(source, "sync", "shield") && from_std("sync") {
         stdlib_wrappers.push_str(SYNC_SHIELD_WRAPPERS);
     }
-    if mentions_module_item(source, "sync", "with_timeout") {
+    if mentions_module_item(source, "sync", "with_timeout") && from_std("sync") {
         stdlib_wrappers.push_str(SYNC_TIMEOUT_WRAPPERS);
     }
     if ["time::Location", "time::CivilTime", "time::CivilResolution", "time::format_in", "time::add_date"]
         .iter().any(|marker| source.contains(marker))
+        && from_std("time")
     {
         stdlib_wrappers.push_str(TIME_CIVIL_WRAPPERS);
     }

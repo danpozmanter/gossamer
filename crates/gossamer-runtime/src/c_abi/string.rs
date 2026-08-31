@@ -55,6 +55,12 @@ const STRING_OWNER_KIND: u16 = 2;
 const STRING_DTOR_HEAP: u32 = 1;
 const STRING_DTOR_REGION: u32 = 2;
 const STRING_DTOR_STATIC: u32 = 3;
+/// Heap bytes whose lifetime belongs to the region that was open when they
+/// were allocated. A copy of region-backed bytes cannot be bump-allocated -
+/// a recycled slab could land on its own source - so it goes to the heap,
+/// but the region remains its owner and frees it at pop. Retain and release
+/// therefore leave it alone, exactly as they do region-backed bytes.
+const STRING_DTOR_REGION_HEAP: u32 = 4;
 const STRING_OWNER_BYTES: usize = std::mem::size_of::<StringOwner>();
 const STRING_LEGACY_HEADER_BYTES: usize = 13;
 const STRING_BODY_OFFSET: usize = STRING_OWNER_BYTES + STRING_LEGACY_HEADER_BYTES;
@@ -146,7 +152,7 @@ unsafe fn typed_str_owner(s: *const c_char) -> Option<&'static StringOwner> {
         && owner.kind == STRING_OWNER_KIND
         && matches!(
             owner.destructor,
-            STRING_DTOR_HEAP | STRING_DTOR_REGION | STRING_DTOR_STATIC
+            STRING_DTOR_HEAP | STRING_DTOR_REGION | STRING_DTOR_REGION_HEAP | STRING_DTOR_STATIC
         ))
     .then_some(owner)
 }
@@ -626,6 +632,10 @@ where
     } else {
         crate::c_abi::rc::region_alloc_bytes(total)
     };
+    // A promotion is a heap allocation the open region still owns: the slab
+    // sweep at pop cannot reclaim it, so the region records it and frees it
+    // there instead.
+    let promoted = force_heap && crate::c_abi::rc::region_is_active();
     let (base, tag, zero_tail) = if region_base.is_null() {
         let layout = Layout::from_size_align(total, 8).expect("string layout is valid");
         // SAFETY: `layout` has non-zero size and a power-of-two alignment. The
@@ -648,6 +658,8 @@ where
             kind: STRING_OWNER_KIND,
             destructor: if tag == STR_REGION_TAG {
                 STRING_DTOR_REGION
+            } else if promoted {
+                STRING_DTOR_REGION_HEAP
             } else {
                 STRING_DTOR_HEAP
             },
@@ -669,9 +681,35 @@ where
         if tag != STR_REGION_TAG {
             register_heap_string_body(content.cast::<c_char>());
             crate::c_abi::ledger::str_inc();
+            if promoted {
+                crate::c_abi::rc::region_track_promoted(content.cast::<c_char>());
+            }
         }
         content.cast::<c_char>()
     }
+}
+
+/// Frees a promoted heap string at the pop of the region that owns it.
+///
+/// Retain and release never reach a promoted string, so its reference count is
+/// not consulted here: the region is its one owner, and pop is its one free.
+///
+/// SAFETY: `body` was recorded by `region_track_promoted` while this region was
+/// open, and is freed exactly once, here.
+pub(crate) unsafe fn free_promoted_string(body: *mut c_char) {
+    if body.is_null() {
+        return;
+    }
+    let hdr = unsafe { body.cast::<u8>().sub(STRING_LEGACY_HEADER_BYTES) };
+    let cap = u32::from_le_bytes(unsafe { [*hdr.add(4), *hdr.add(5), *hdr.add(6), *hdr.add(7)] })
+        as usize;
+    let total = STRING_BODY_OFFSET + cap + 1 + str_index_bytes(cap);
+    let layout = Layout::from_size_align(total, 8).expect("string layout is valid");
+    unregister_heap_string_body(body);
+    // SAFETY: the allocation base is `STRING_BODY_OFFSET` below the body, and
+    // `layout` reconstructs the one `alloc_growable_with_fill` used.
+    unsafe { dealloc(body.cast::<u8>().sub(STRING_BODY_OFFSET), layout) };
+    crate::c_abi::ledger::str_dec();
 }
 
 /// Reclaims a live heap c-string previously returned by [`alloc_cstring`].

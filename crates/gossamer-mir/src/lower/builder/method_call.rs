@@ -2351,6 +2351,8 @@ impl<'a> Builder<'a> {
                         Some("gos_rt_result_unwrap_or_carrier")
                     } else if self.carrier_payload_is_sequence(receiver_ty) {
                         Some("gos_rt_result_unwrap_or_vec")
+                    } else if self.carrier_payload_is_string(receiver_ty) {
+                        Some("gos_rt_result_unwrap_or_str")
                     } else {
                         Some("gos_rt_result_unwrap_or")
                     }
@@ -5078,6 +5080,8 @@ impl<'a> Builder<'a> {
                         "gos_rt_result_unwrap_or_carrier"
                     } else if self.carrier_payload_is_sequence(lowered_recv_ty) {
                         "gos_rt_result_unwrap_or_vec"
+                    } else if self.carrier_payload_is_string(lowered_recv_ty) {
+                        "gos_rt_result_unwrap_or_str"
                     } else {
                         "gos_rt_result_unwrap_or"
                     });

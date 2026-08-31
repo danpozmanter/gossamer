@@ -266,14 +266,22 @@ fn aggregates_minting_their_own_share(body: &Body, tcx: &TyCtxt) -> Vec<bool> {
             _ => {}
         }
     }
+    // An aggregate takes a reference per slot, unconditionally: the retain for
+    // a `Vec` operand of an `Rvalue::Aggregate` is minted whatever becomes of
+    // the aggregate afterwards (see the `Rvalue::Aggregate` arm of the
+    // retain-site walk). So a container written into one keeps a share of its
+    // own, and the frame is who gives that back - whether the aggregate is
+    // returned, pushed into a container, or dropped where it stands.
+    //
+    // `returned` still decides nothing here, but it stays computed: the caller
+    // pairs this with `moved_into_return`, which is the case where the local's
+    // own share does leave with the value.
+    let _ = &returned;
     (0..n)
         .map(|i| {
             container(Local(u32::try_from(i).unwrap_or(0)))
                 && !escapes_elsewhere[i]
                 && !carriers[i].is_empty()
-                && carriers[i]
-                    .iter()
-                    .all(|carrier| returned[carrier.0 as usize])
         })
         .collect()
 }
@@ -1604,6 +1612,37 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             _ => {}
         }
     }
+    // `let xs = f()` binds the callee's value to a name: the call result is
+    // read exactly once, by this copy, so its share transfers to the binding
+    // and the binding is what owes the release. Without this the binding is
+    // not an owner, so the share it took from the temporary is never given
+    // back - a leak that only shows once the value is stored somewhere that
+    // counts shares.
+    {
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for block in &body.blocks {
+                for stmt in &block.stmts {
+                    if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                        && place.projection.is_empty()
+                        && (place.local.0 as usize) < n_locals
+                        && !owned[place.local.0 as usize]
+                        && let Rvalue::Use(Operand::Copy(src)) = rvalue
+                        && src.projection.is_empty()
+                        && (src.local.0 as usize) < n_locals
+                        && owned[src.local.0 as usize]
+                        && total_reads[src.local.0 as usize] == 1
+                        && !body.locals[place.local.0 as usize].region
+                    {
+                        owned[place.local.0 as usize] = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
     // A local has a consuming read iff it sources a retain site.
     let mut consuming_read = vec![false; n_locals];
     for (_, _, l, _) in &retain_sites {
@@ -1970,6 +2009,47 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // read one variant's words as another's.
     let mut extraction_seed = vec![false; n_locals];
     {
+        // A carrier the frame was handed hands its payload over with it: a
+        // callee's `Result` is the caller's value, and a channel `send` mints
+        // the element's share (see `stores_aggregate_by_pointer`) for the
+        // receiver to give back. So an aggregate payload taken out of one of
+        // those is OWNED, not a view of a carrier something else still holds,
+        // and its fields are released when it dies. A carrier the frame built
+        // itself, or one reached through a reference, keeps the borrow rule.
+        let mut from_owned_carrier = vec![false; n_locals];
+        for block in &body.blocks {
+            let Terminator::Call {
+                callee,
+                destination,
+                ..
+            } = &block.terminator
+            else {
+                continue;
+            };
+            if !destination.projection.is_empty() || (destination.local.0 as usize) >= n_locals {
+                continue;
+            }
+            let hands_over = match callee {
+                Operand::FnRef { .. } => true,
+                Operand::Const(ConstValue::Str(name)) => {
+                    name.starts_with("gos_rt_chan_recv")
+                        || name.starts_with("gos_rt_chan_try_recv")
+                }
+                _ => false,
+            };
+            if hands_over {
+                from_owned_carrier[destination.local.0 as usize] = true;
+            }
+        }
+        let extracts_owned = |args: &[Operand]| -> bool {
+            matches!(
+                args.first(),
+                Some(Operand::Copy(p))
+                    if p.projection.is_empty()
+                        && (p.local.0 as usize) < n_locals
+                        && from_owned_carrier[p.local.0 as usize]
+            )
+        };
         let mut non_extraction = vec![false; n_locals];
         for block in &body.blocks {
             for stmt in &block.stmts {
@@ -1977,14 +2057,17 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     && place.projection.is_empty()
                     && (place.local.0 as usize) < n_locals
                 {
-                    if matches!(
-                        rvalue,
-                        Rvalue::CallIntrinsic { name, .. }
-                            if matches!(*name, "gos_rt_result_payload" | "gos_enum_load")
-                    ) {
-                        extraction_seed[place.local.0 as usize] = true;
-                    } else {
-                        non_extraction[place.local.0 as usize] = true;
+                    match rvalue {
+                        Rvalue::CallIntrinsic { name, args }
+                            if matches!(*name, "gos_rt_result_payload" | "gos_enum_load") =>
+                        {
+                            if extracts_owned(args) {
+                                non_extraction[place.local.0 as usize] = true;
+                            } else {
+                                extraction_seed[place.local.0 as usize] = true;
+                            }
+                        }
+                        _ => non_extraction[place.local.0 as usize] = true,
                     }
                 }
             }
@@ -2629,14 +2712,30 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
 /// extra one only leaks. Keep this list complete for RC-managed payloads.
 /// Runtime calls that return a freshly ALLOCATED, owned `String` (no aliasing
 /// of any argument). The caller owns the result and must release it at scope
-/// unless it is moved out. Deliberately EXCLUDES `__concat` /
-/// `gos_rt_str_concat*` (handled by the binding `Copy` and prone to in-place
-/// aliasing in `s += …`) and `gos_rt_result_payload` (the payload may already be
-/// owned by its binding). A missing entry only leaks; a wrong one double-frees.
+/// unless it is moved out. Deliberately EXCLUDES `gos_rt_str_concat_drop_a`,
+/// which answers `a` itself for an empty or in-place append, and
+/// `gos_rt_result_payload` (the payload may already be owned by its binding).
+/// A missing entry only leaks; a wrong one double-frees.
+///
+/// `gos_rt_str_concat` belongs here: it always allocates its result. The
+/// accumulator shape `s += frag` is renamed to `gos_rt_str_concat_drop_a` by
+/// [`rewrite_str_concat_consuming`], which runs before the drop passes, so a
+/// call still spelled `gos_rt_str_concat` is a fresh allocation the frame owns.
 fn mints_owned_string(name: &str) -> bool {
     matches!(
         name,
-        "gos_rt_i64_to_str"
+        "gos_rt_str_concat"
+            // The payload-answering carrier accessors hand the carrier's share
+            // to the caller: the carrier itself never releases a `String`
+            // payload, so the frame that takes the value is the one that gives
+            // it back. `unwrap_or` / `unwrap_or_else` retain a fallback that
+            // becomes the answer, so both arms answer one owned share.
+            | "gos_rt_result_unwrap_or_str"
+            | "gos_rt_option_unwrap"
+            | "gos_rt_result_unwrap"
+            | "gos_rt_option_default_with"
+            | "gos_rt_result_default_with"
+            | "gos_rt_i64_to_str"
             | "gos_rt_u64_to_str"
             | "gos_rt_f64_to_str"
             | "gos_rt_str_with_capacity"
@@ -4560,6 +4659,735 @@ pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtx
             mutable: false,
             region: false,
         });
+    }
+}
+
+/// Clears the region flag on every call result.
+///
+/// A local created while a region is open is region storage only where the
+/// allocation came from the region's bump. A call result does not: a user
+/// function allocates under its own frame's rules, and the string helpers
+/// promote a copy of region-backed bytes to the heap so a recycled slab cannot
+/// land on its own source. Neither is reclaimed by the slab sweep at pop, so
+/// the frame has to release it.
+///
+/// Clearing the flag only lets the ownership rules apply; it never makes a
+/// borrowed result owned. Where a result really is region storage, every free
+/// path (`gos_rt_rc_release`, `gos_rt_vec_free`, `str_free_impl`) answers an
+/// address-range test and returns without touching the memory, so a release
+/// the region already reclaimed is a no-op.
+/// Emits the give-back for `carrier.map(f)`.
+///
+/// `map` hands the payload to the closure, which answers a value of its own (a
+/// parameter it returns unchanged mints the caller's share), so the receiver's
+/// payload has no holder left. A carrier never releases a `String` or `Vec`
+/// payload of its own accord, so the release is emitted at the call. The
+/// helper answers the arm: an `Err` / `None` payload word belongs to the value
+/// the mapped carrier still carries.
+/// Tells a channel what its element word owns, at each send.
+///
+/// The send mints the channel's share of the element's heap storage (see
+/// `stores_aggregate_by_pointer`); a receiver gives it back, and a value nobody
+/// receives is given back by the channel's teardown - which needs to know the
+/// shape of the word it is holding, and learns it here, where the element's
+/// static type is in hand.
+/// Reclaims a channel that never leaves the function that made it.
+///
+/// A channel is shared: the sender end, the receiver end, and any goroutine
+/// that captured one all reach the same handle, and only a party that took a
+/// reference of its own may give one back. So the drop is emitted only where
+/// every local derived from the pair is confined to this body - read by the
+/// channel's own runtime helpers and nothing else. A channel that is returned,
+/// stored, captured, or handed to any other callee is left alone.
+///
+/// The drop is what runs the channel's teardown, which gives back the share
+/// each send minted for a value nobody received.
+pub(crate) fn drop_confined_channels(body: &mut Body) {
+    const CREATORS: &[&str] = &[
+        "channel",
+        "channel::new",
+        "channel::unbounded",
+        "sync::channel",
+        "sync::channel_unbounded",
+        "std::sync::channel",
+        "std::sync::channel_unbounded",
+        "sync::Channel::new",
+        "Channel::new",
+    ];
+
+    let n = body.locals.len();
+    let creations: Vec<Local> = body
+        .blocks
+        .iter()
+        .filter_map(|block| match &block.terminator {
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                destination,
+                ..
+            } if destination.projection.is_empty()
+                && (destination.local.0 as usize) < n
+                && CREATORS.contains(&name.as_str()) =>
+            {
+                Some(destination.local)
+            }
+            _ => None,
+        })
+        .collect();
+    if creations.is_empty() {
+        return;
+    }
+
+    // Each channel is judged on its own: one that escapes leaves the others
+    // alone, and a body that opens several reclaims each of them.
+    let mut handles: Vec<Local> = Vec::new();
+    for pair in creations {
+        if let Some(handle) = confined_channel_handle(body, pair, n) {
+            handles.push(handle);
+        }
+    }
+    handles.sort_unstable_by_key(|l| l.0);
+    handles.dedup();
+    for handle in handles {
+        emit_channel_drops(body, handle);
+    }
+}
+
+/// The local holding a channel's handle, when every local derived from the pair
+/// `pair` names is confined to this body - read by the channel's own runtime
+/// helpers and nothing else. A channel that is returned, stored, captured, or
+/// handed to any other callee answers `None`.
+fn confined_channel_handle(body: &Body, pair: Local, n: usize) -> Option<Local> {
+    let mut derived = vec![false; n];
+    derived[pair.0 as usize] = true;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                    && place.projection.is_empty()
+                    && (place.local.0 as usize) < n
+                    && !derived[place.local.0 as usize]
+                    && let Rvalue::Use(Operand::Copy(src)) = rvalue
+                    && (src.local.0 as usize) < n
+                    && derived[src.local.0 as usize]
+                {
+                    derived[place.local.0 as usize] = true;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    let reads = |op: &Operand| -> bool {
+        matches!(op, Operand::Copy(p) if (p.local.0 as usize) < n && derived[p.local.0 as usize])
+    };
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            let confined_target = place.projection.is_empty()
+                && (place.local.0 as usize) < n
+                && derived[place.local.0 as usize];
+            match rvalue {
+                // Splitting the pair, or aliasing an end, stays inside.
+                Rvalue::Use(op) if reads(op) && !confined_target => return None,
+                Rvalue::CallIntrinsic { name, args }
+                    if args.iter().any(&reads) && !name.starts_with("gos_rt_chan_") =>
+                {
+                    return None;
+                }
+                Rvalue::Aggregate { operands, .. }
+                    if operands.iter().any(&reads) && !confined_target =>
+                {
+                    return None;
+                }
+                Rvalue::BinaryOp { lhs, rhs, .. } if reads(lhs) || reads(rhs) => return None,
+                _ => {}
+            }
+        }
+        match &block.terminator {
+            Terminator::Call { callee, args, .. } if args.iter().any(&reads) => {
+                let confined_callee = matches!(
+                    callee,
+                    Operand::Const(ConstValue::Str(name)) if name.starts_with("gos_rt_chan_")
+                );
+                if !confined_callee {
+                    return None;
+                }
+            }
+            Terminator::SwitchInt { discriminant, .. } if reads(discriminant) => return None,
+            _ => {}
+        }
+    }
+    // The return slot is derived exactly when an end is returned.
+    if derived[Local::RETURN.0 as usize] {
+        return None;
+    }
+
+    // Drop through the local a send or a recv named: that one holds the handle
+    // itself rather than the pair it was projected out of.
+    body.blocks.iter().find_map(|block| match &block.terminator {
+        Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            ..
+        } if name.starts_with("gos_rt_chan_") => match args.first() {
+            Some(Operand::Copy(p))
+                if p.projection.is_empty()
+                    && (p.local.0 as usize) < n
+                    && derived[p.local.0 as usize] =>
+            {
+                Some(p.local)
+            }
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+/// One drop per channel: wherever the handle is reassigned, and again at every
+/// exit. A loop that opens a channel per iteration reclaims each one as the
+/// next takes its place, and the handle starts null so the first iteration's
+/// drop is the no-op a null handle answers.
+fn emit_channel_drops(body: &mut Body, handle: Local) {
+    let unit_ty = body.locals[0].ty;
+    let mut drop_stmt = |body: &mut Body, span: Span| -> Statement {
+        let sink = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+        body.locals.push(crate::ir::LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+        Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(sink),
+                rvalue: Rvalue::CallIntrinsic {
+                    name: "gos_rt_chan_drop",
+                    args: vec![Operand::Copy(Place::local(handle))],
+                },
+            },
+            span,
+        }
+    };
+
+    let mut reassignments: Vec<(usize, usize)> = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        for (si, stmt) in block.stmts.iter().enumerate() {
+            if let StatementKind::Assign { place, .. } = &stmt.kind
+                && place.projection.is_empty()
+                && place.local == handle
+            {
+                reassignments.push((bi, si));
+            }
+        }
+    }
+    reassignments.sort_unstable();
+    for (bi, si) in reassignments.into_iter().rev() {
+        let span = body.blocks[bi].span;
+        let stmt = drop_stmt(body, span);
+        body.blocks[bi].stmts.insert(si, stmt);
+    }
+
+    let returns: Vec<usize> = body
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| matches!(b.terminator, Terminator::Return))
+        .map(|(i, _)| i)
+        .collect();
+    for bi in returns {
+        let span = body.blocks[bi].span;
+        let stmt = drop_stmt(body, span);
+        body.blocks[bi].stmts.push(stmt);
+    }
+
+    let span = body.blocks[0].span;
+    body.blocks[0].stmts.insert(
+        0,
+        Statement {
+            kind: StatementKind::Assign {
+                place: Place::local(handle),
+                rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            },
+            span,
+        },
+    );
+}
+
+pub(crate) fn record_channel_elem_kind(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
+    use gossamer_types::TyKind;
+
+    let kind_of = |ty: gossamer_types::Ty| -> Option<i64> {
+        let mut cur = ty;
+        loop {
+            match tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::String => return Some(1),
+                TyKind::Vec(_) | TyKind::Slice(_) => return Some(2),
+                // A struct or tuple travels as one counted node whose own
+                // teardown reaches its fields.
+                TyKind::Adt { def, .. } if def.local < u32::MAX - 16 => {
+                    return tcx.struct_field_tys(*def).map(|_| 3);
+                }
+                TyKind::Tuple(_) => return Some(3),
+                _ => return None,
+            }
+        }
+    };
+
+    // One character per 8-byte slot of an aggregate element, saying what that
+    // slot owns. The channel carries a heap copy of the aggregate, so this is
+    // what its teardown walks to give a value nobody received back.
+    fn slot_desc(tcx: &gossamer_types::TyCtxt, ty: gossamer_types::Ty, out: &mut String) -> bool {
+        use gossamer_types::TyKind;
+        match tcx.kind_of(ty) {
+            TyKind::Ref { inner, .. } => slot_desc(tcx, *inner, out),
+            TyKind::String => {
+                out.push('S');
+                true
+            }
+            TyKind::Vec(_) | TyKind::Slice(_) => {
+                out.push('V');
+                true
+            }
+            TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::Float(_) => {
+                out.push('s');
+                true
+            }
+            TyKind::Tuple(items) => {
+                let items = items.clone();
+                !items.is_empty() && items.iter().all(|item| slot_desc(tcx, *item, out))
+            }
+            TyKind::Array { elem, len } => {
+                let elem = *elem;
+                let gossamer_types::ArrayLen::Concrete(len) = *len else {
+                    return false;
+                };
+                len > 0 && (0..len).all(|_| slot_desc(tcx, elem, out))
+            }
+            TyKind::Adt { def, substs } if def.local < u32::MAX - 16 => {
+                let fields = tcx.adt_field_tys(*def, substs).map(<[gossamer_types::Ty]>::to_vec);
+                match fields {
+                    Some(fields) if !fields.is_empty() => {
+                        fields.iter().all(|f| slot_desc(tcx, *f, out))
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+    let descriptor = |ty: gossamer_types::Ty| -> Option<String> {
+        let mut out = String::new();
+        // A descriptor earns its place only where a slot owns storage; an
+        // all-scalar aggregate has nothing to give back.
+        (slot_desc(tcx, ty, &mut out) && out.bytes().any(|b| b != b's')).then_some(out)
+    };
+
+    let mut sites: Vec<(usize, Local, i64, Option<String>)> = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if !matches!(name.as_str(), "gos_rt_chan_send" | "gos_rt_chan_try_send") {
+            continue;
+        }
+        let (Some(Operand::Copy(chan)), Some(Operand::Copy(val))) = (args.first(), args.get(1))
+        else {
+            continue;
+        };
+        if !chan.projection.is_empty() || (val.local.0 as usize) >= body.locals.len() {
+            continue;
+        }
+        let val_ty = body.locals[val.local.0 as usize].ty;
+        if let Some(kind) = kind_of(val_ty) {
+            let desc = if kind == 3 { descriptor(val_ty) } else { None };
+            sites.push((bi, chan.local, kind, desc));
+        }
+    }
+    if sites.is_empty() {
+        return;
+    }
+    let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
+    for (bi, chan, kind, desc) in sites {
+        let mut record = |name: &'static str, arg: Operand, body: &mut Body| {
+            let sink = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+            body.locals.push(crate::ir::LocalDecl {
+                ty: unit_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            });
+            let Some(block) = body.blocks.get_mut(bi) else {
+                return;
+            };
+            let span = block.span;
+            block.stmts.push(Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(sink),
+                    rvalue: Rvalue::CallIntrinsic {
+                        name,
+                        args: vec![Operand::Copy(Place::local(chan)), arg],
+                    },
+                },
+                span,
+            });
+        };
+        record(
+            "gos_rt_chan_set_elem_kind",
+            Operand::Const(ConstValue::Int(i128::from(kind))),
+            body,
+        );
+        if let Some(desc) = desc {
+            record(
+                "gos_rt_chan_set_elem_desc",
+                Operand::Const(ConstValue::Str(desc)),
+                body,
+            );
+        }
+    }
+}
+
+pub(crate) fn release_mapped_payloads(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
+    use gossamer_types::TyKind;
+
+    let payload_kind = |ty: gossamer_types::Ty| -> Option<i64> {
+        let mut cur = ty;
+        loop {
+            match tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Adt { def, substs } if def.local == u32::MAX || def.local == u32::MAX - 1 => {
+                    return substs
+                        .types()
+                        .first()
+                        .and_then(|payload| match tcx.kind_of(*payload) {
+                            TyKind::String => Some(1),
+                            TyKind::Vec(_) | TyKind::Slice(_) => Some(2),
+                            _ => None,
+                        });
+                }
+                _ => return None,
+            }
+        }
+    };
+
+    let mut sites: Vec<(usize, Local, i64)> = Vec::new();
+    for block in &body.blocks {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            target: Some(target),
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if !matches!(name.as_str(), "gos_rt_result_map" | "gos_rt_result_map_bare") {
+            continue;
+        }
+        let Some(Operand::Copy(recv)) = args.first() else {
+            continue;
+        };
+        if !recv.projection.is_empty() || (recv.local.0 as usize) >= body.locals.len() {
+            continue;
+        }
+        if let Some(kind) = payload_kind(body.locals[recv.local.0 as usize].ty) {
+            sites.push((target.0 as usize, recv.local, kind));
+        }
+    }
+    if sites.is_empty() {
+        return;
+    }
+    let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
+    for (target, recv, kind) in sites {
+        let sink = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+        body.locals.push(crate::ir::LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+        let Some(block) = body.blocks.get_mut(target) else {
+            continue;
+        };
+        let span = block.span;
+        block.stmts.insert(
+            0,
+            Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(sink),
+                    rvalue: Rvalue::CallIntrinsic {
+                        name: "gos_rt_result_ok_payload_release",
+                        args: vec![
+                            Operand::Copy(Place::local(recv)),
+                            Operand::Const(ConstValue::Int(i128::from(kind))),
+                        ],
+                    },
+                },
+                span,
+            },
+        );
+    }
+}
+
+/// Reclaims a constructed container that is overwritten before it is ever read.
+///
+/// `let mut vals: Vec<T> = #[]` followed by `vals = f(..)?` builds an empty
+/// container and then replaces it. The replacement disqualifies the local from
+/// the per-site reuse machinery, so the construction it replaced was reaching
+/// no free at all - one buffer per iteration of whatever loop it sits in.
+///
+/// The free is emitted only where every path back from the overwrite reaches a
+/// construction of that same local with no mention of it in between. A value no
+/// one read cannot have been aliased or stored, so nothing else can be holding
+/// it, and the construction on every incoming path is what makes the free
+/// well-defined rather than a free of an uninitialised slot.
+/// The reclamation helper for a container constructor, or `None` when the name
+/// is not one. Shared with [`free_overwritten_ctor_values`] so the two agree on
+/// what the frame owns.
+pub(crate) fn container_ctor_free(name: &str) -> Option<&'static str> {
+    match name {
+        "gos_rt_map_new" | "gos_rt_map_new_with_capacity" | "Map::new" | "HashMap::new" => {
+            Some("gos_rt_map_free")
+        }
+        "gos_rt_vec_new" | "gos_rt_vec_with_capacity" | "Vec::new" => Some("gos_rt_vec_free"),
+        "gos_rt_set_new" | "gos_rt_btree_set_new" | "Set::new" => Some("gos_rt_set_free"),
+        _ => None,
+    }
+}
+
+/// Releases a constructed container whose only use is being built into an
+/// aggregate that mints its own share of it.
+///
+/// `rows.push(Row { vals: v })` gives the `Row` a share of `v` and the
+/// container another, so `v` holds three: its own, the aggregate's, and the
+/// container's. The aggregate and the container each give theirs back; nothing
+/// gives back the frame's, and a loop building one row per iteration keeps
+/// every `v` it ever made.
+///
+/// Emitted only where the local is read exactly once - by that aggregate - so
+/// the value is dead the moment the aggregate has taken its share.
+pub(crate) fn free_overwritten_ctor_values(
+    body: &mut Body,
+    ctor_free: &dyn Fn(&str) -> Option<&'static str>,
+) {
+    let n = body.locals.len();
+    // Constructions, by local.
+    let mut ctor_at: std::collections::HashMap<u32, &'static str> =
+        std::collections::HashMap::new();
+    let mut ctor_blocks: std::collections::HashSet<(usize, u32)> = std::collections::HashSet::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        if let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            destination,
+            ..
+        } = &block.terminator
+            && destination.projection.is_empty()
+            && (destination.local.0 as usize) < n
+            && let Some(free) = ctor_free(name.as_str())
+        {
+            ctor_at.insert(destination.local.0, free);
+            ctor_blocks.insert((bi, destination.local.0));
+        }
+    }
+    if ctor_at.is_empty() {
+        return;
+    }
+
+    let mentions = |op: &Operand, local: u32| -> bool {
+        matches!(op, Operand::Copy(p) if p.local.0 == local)
+    };
+    let stmt_mentions = |stmt: &Statement, local: u32| -> bool {
+        match &stmt.kind {
+            StatementKind::Assign { place, rvalue } => {
+                let read = match rvalue {
+                    Rvalue::Use(op)
+                    | Rvalue::UnaryOp { operand: op, .. }
+                    | Rvalue::Cast { operand: op, .. }
+                    | Rvalue::Repeat { value: op, .. } => mentions(op, local),
+                    Rvalue::BinaryOp { lhs, rhs, .. } => {
+                        mentions(lhs, local) || mentions(rhs, local)
+                    }
+                    Rvalue::Aggregate { operands, .. } => {
+                        operands.iter().any(|op| mentions(op, local))
+                    }
+                    Rvalue::CallIntrinsic { args, .. } => {
+                        args.iter().any(|op| mentions(op, local))
+                    }
+                    Rvalue::Ref { place, .. } | Rvalue::Len(place) => place.local.0 == local,
+                    Rvalue::StaticLoad(_) => false,
+                };
+                // A projected write reads the local to reach the field.
+                read || (!place.projection.is_empty() && place.local.0 == local)
+            }
+            _ => false,
+        }
+    };
+    let term_mentions = |t: &Terminator, local: u32| -> bool {
+        match t {
+            Terminator::Call { callee, args, .. } => {
+                mentions(callee, local) || args.iter().any(|op| mentions(op, local))
+            }
+            Terminator::SwitchInt { discriminant, .. } => mentions(discriminant, local),
+            Terminator::Assert { cond, .. } => mentions(cond, local),
+            Terminator::Drop { place, .. } => place.local.0 == local,
+            _ => false,
+        }
+    };
+
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); body.blocks.len()];
+    for (bi, block) in body.blocks.iter().enumerate() {
+        for succ in successors_of(&block.terminator) {
+            if succ < preds.len() {
+                preds[succ].push(bi);
+            }
+        }
+    }
+
+    // Overwrite sites: a whole-local assignment that does not read the local.
+    let mut sites: Vec<(usize, usize, Local, &'static str)> = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        for (si, stmt) in block.stmts.iter().enumerate() {
+            let StatementKind::Assign { place, .. } = &stmt.kind else {
+                continue;
+            };
+            if !place.projection.is_empty() {
+                continue;
+            }
+            let local = place.local.0;
+            let Some(&free) = ctor_at.get(&local) else {
+                continue;
+            };
+            if stmt_mentions(stmt, local) {
+                continue;
+            }
+            // Every path back from here must reach a construction of `local`
+            // with no mention of it in between.
+            let mut ok = true;
+            let mut seen_blocks: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            // (block, index one past the last statement to examine)
+            let mut work: Vec<(usize, usize)> = vec![(bi, si)];
+            while let Some((wb, upto)) = work.pop() {
+                let mut reached_ctor = false;
+                for stmt in body.blocks[wb].stmts[..upto].iter().rev() {
+                    if stmt_mentions(stmt, local) {
+                        ok = false;
+                        break;
+                    }
+                    if let StatementKind::Assign { place, .. } = &stmt.kind
+                        && place.projection.is_empty()
+                        && place.local.0 == local
+                    {
+                        // An earlier whole-local write that is not the
+                        // construction: its value is what this site would free,
+                        // and it is not known to be owned.
+                        ok = false;
+                        break;
+                    }
+                }
+                if !ok {
+                    break;
+                }
+                if upto == body.blocks[wb].stmts.len() && term_mentions(&body.blocks[wb].terminator, local)
+                {
+                    // The terminator reads it - unless it is the construction
+                    // that defines it.
+                    if ctor_blocks.contains(&(wb, local)) {
+                        reached_ctor = true;
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                } else if ctor_blocks.contains(&(wb, local)) && upto == body.blocks[wb].stmts.len() {
+                    reached_ctor = true;
+                }
+                if reached_ctor {
+                    continue;
+                }
+                if wb == 0 || preds[wb].is_empty() {
+                    // Entry reached with no construction on this path.
+                    ok = false;
+                    break;
+                }
+                for &pred in &preds[wb] {
+                    if seen_blocks.insert(pred) {
+                        work.push((pred, body.blocks[pred].stmts.len()));
+                    }
+                }
+            }
+            if ok {
+                sites.push((bi, si, place.local, free));
+            }
+        }
+    }
+    if sites.is_empty() {
+        return;
+    }
+
+    let unit_ty = body.locals[0].ty;
+    sites.sort_by_key(|&(bi, si, _, _)| (bi, si));
+    for (bi, si, local, free) in sites.into_iter().rev() {
+        let dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+        body.locals.push(crate::ir::LocalDecl {
+            ty: unit_ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        });
+        let span = body.blocks[bi].stmts[si].span;
+        body.blocks[bi].stmts.insert(
+            si,
+            Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(dest),
+                    rvalue: Rvalue::CallIntrinsic {
+                        name: free,
+                        args: vec![Operand::Copy(Place::local(local))],
+                    },
+                },
+                span,
+            },
+        );
+    }
+}
+
+/// Blocks control can reach from `t`.
+fn successors_of(t: &Terminator) -> Vec<usize> {
+    match t {
+        Terminator::Goto { target } => vec![target.0 as usize],
+        Terminator::SwitchInt { arms, default, .. } => {
+            let mut v: Vec<usize> = arms.iter().map(|(_, t)| t.0 as usize).collect();
+            v.push(default.0 as usize);
+            v
+        }
+        Terminator::Call { target, .. } => target.iter().map(|t| t.0 as usize).collect(),
+        Terminator::Assert { target, .. } => vec![target.0 as usize],
+        Terminator::Drop { target, .. } => vec![target.0 as usize],
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn clear_region_on_call_results(body: &mut Body) {
+    let mut results: Vec<Local> = Vec::new();
+    for block in &body.blocks {
+        if let Terminator::Call { destination, .. } = &block.terminator
+            && destination.projection.is_empty()
+        {
+            results.push(destination.local);
+        }
+    }
+    for local in results {
+        if let Some(decl) = body.locals.get_mut(local.0 as usize) {
+            decl.region = false;
+        }
     }
 }
 

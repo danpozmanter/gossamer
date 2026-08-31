@@ -797,11 +797,27 @@ fn concurrency_rejects_unmarshalable_inline_aggregates() {
             "tuple containing Vec argument",
             "fn work(value: (Vec<i64>, i64)) {}\nfn main() { let value = (Vec::from([1, 2]), 2)\n spawn(|| work(value)) }",
         ),
-        (
-            "channel struct containing Vec",
-            "struct Wrapped { values: Vec<i64> }\nfn main() { let value = Wrapped { values: Vec::from([1, 2]) }\n let tx, rx = channel::<Wrapped>(1)\n tx.send(value) }",
-        ),
     ] {
         assert_rejected(name, source, ExpectedError::ConcurrentInlineAggregate);
+    }
+}
+
+#[test]
+fn a_channel_takes_an_aggregate_carrying_growable_storage() {
+    // The send mints the channel's share of the element's growable storage, a
+    // receiver gives it back, and a value nobody receives is reclaimed at
+    // teardown through the element's ownership descriptor - so the element
+    // needs no restriction on its shape.
+    for (name, source) in [
+        (
+            "struct containing Vec",
+            "struct Wrapped { values: Vec<i64> }\nfn main() { let value = Wrapped { values: Vec::from([1, 2]) }\n let tx, rx = channel::<Wrapped>(1)\n tx.send(value) }",
+        ),
+        (
+            "struct containing String",
+            "struct Named { name: String }\nfn main() { let value = Named { name: \"a\" }\n let tx, rx = channel::<Named>(1)\n tx.send(value) }",
+        ),
+    ] {
+        assert_accepted(name, source);
     }
 }

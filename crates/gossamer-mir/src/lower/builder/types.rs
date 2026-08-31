@@ -1492,6 +1492,52 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Whether the carrier's payload is a `String` - the case where
+    /// `unwrap_or`'s fallback is itself a heap value and only one of the two
+    /// becomes the answer.
+    pub(crate) fn carrier_payload_is_string(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Adt { def, substs }
+                    if def.local == u32::MAX || def.local == u32::MAX - 1 =>
+                {
+                    return substs
+                        .types()
+                        .first()
+                        .is_some_and(|payload| matches!(self.tcx.kind_of(*payload), TyKind::String));
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// The release helper for a carrier's heap payload, or `None` when the
+    /// payload owns no storage of its own.
+    pub(crate) fn carrier_payload_free_helper(&self, ty: Ty) -> Option<&'static str> {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Adt { def, substs }
+                    if def.local == u32::MAX || def.local == u32::MAX - 1 =>
+                {
+                    return substs.types().first().and_then(|payload| {
+                        match self.tcx.kind_of(*payload) {
+                            TyKind::String => Some("gos_rt_str_free_typed"),
+                            TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_free"),
+                            _ => None,
+                        }
+                    });
+                }
+                _ => return None,
+            }
+        }
+    }
+
     pub(crate) fn carrier_payload_is_carrier(&self, ty: Ty) -> bool {
         use gossamer_types::TyKind;
         let mut cur = ty;

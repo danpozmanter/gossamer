@@ -2596,6 +2596,60 @@ pub extern "C" fn gos_rt_result_unwrap_or_vec(r: i128, default: i64) -> i64 {
     default
 }
 
+/// `unwrap_or` where the value is a `String`.
+///
+/// The caller holds one share of the fallback and releases it where the
+/// fallback's own binding ends, and one share of the answer. When the fallback
+/// IS the answer those are the same string, so it needs the second share the
+/// caller is going to give back; the word-returning form above cannot tell the
+/// two apart and left the caller releasing one string twice.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_result_unwrap_or_str(r: i128, default: i64) -> i64 {
+    if result_disc_of(r) == 0 {
+        return result_payload_of(r);
+    }
+    if default != 0 {
+        // SAFETY: a non-zero `String` word is a runtime string body; the
+        // retain answers a range test and ignores anything else.
+        unsafe {
+            crate::c_abi::string::gos_rt_str_retain_typed(
+                default as usize as *const std::ffi::c_char,
+            );
+        }
+    }
+    default
+}
+
+/// Releases the heap payload of a carrier's `Ok` / `Some` arm, and nothing on
+/// the other arm, whose payload word belongs to the error value.
+///
+/// `kind` names the payload's storage: 1 a `String`, 2 a `Vec` / slice. This is
+/// the give-back for `map`, which hands the payload to a closure that answers a
+/// value of its own; the carrier itself never releases a payload of either
+/// kind.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_result_ok_payload_release(r: i128, kind: i64) {
+    if result_disc_of(r) != 0 {
+        return;
+    }
+    let payload = result_payload_of(r);
+    if payload == 0 {
+        return;
+    }
+    match kind {
+        // SAFETY: the payload word of an `Ok`/`Some` arm whose static type is
+        // a `String` is a runtime string body.
+        1 => unsafe {
+            crate::c_abi::string::gos_rt_str_free_typed(payload as usize as *mut std::ffi::c_char);
+        },
+        // SAFETY: as above, for a `Vec` header.
+        2 => unsafe {
+            crate::c_abi::gos_rt_vec_free(payload as usize as *mut GosVec);
+        },
+        _ => {}
+    }
+}
+
 /// `unwrap_or` where the payload is itself a `Result` / `Option` carrier -
 /// `spawn(f).join().unwrap_or(Ok(v))` is the shape that reaches it.
 ///

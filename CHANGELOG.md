@@ -1,7 +1,32 @@
 # Changelog
 
-## 0.58.4 - Heap corruption, retention, u64 arguments, handler lowering
+## 0.58.4 - Heap corruption, retention, ownership, module shadowing, u64 arguments, handler lowering
 
+- A container built into an aggregate is released. A struct or tuple takes a
+  reference per slot, so a `Vec` written into one owes a share back; the frame
+  was excused from it unless the aggregate was returned, so
+  `rows.push(Row { vals: v })` in a loop kept every `v` it ever built.
+- A module the project declares keeps its own types where the standard library
+  has a module of the same name. Any `sql::Stmt` was rewritten to the
+  `std::database::sql` wrapper whether or not that module was imported. The
+  rewrite and the wrapper injection now require the import, as the language does.
+- `String` `+` releases its result. Only the `s += frag` shape reclaimed one, so
+  every other concatenation leaked its answer.
+- A value obtained through `?` is released. The payload was read as a view of a
+  carrier the frame no longer owned, so `let q = f()?` leaked the whole return.
+- `unwrap`, `expect`, `unwrap_or`, `unwrap_or_else`, and `map` release the
+  payload they answer; `map` also releases the one it hands its closure.
+- A channel releases what it holds: a receiver gives back the share the send
+  minted, a value nobody receives is reclaimed at teardown through a per-slot
+  ownership descriptor, and a channel that stays inside its function is dropped
+  there. An aggregate carrying growable storage may now cross one, which the
+  type checker refused (`GT0055`).
+- A call result made inside an automatic arena region is released. A callee
+  allocates under its own rules, and a copy of region-backed bytes is promoted
+  to the heap, so neither is reclaimed by the region's slab sweep.
+- A container overwritten before it is ever read is reclaimed. `let mut v:
+  Vec<i64> = #[]` followed by `v = f(..)?` left the construction it replaced
+  with no free at all.
 - `unwrap_or` on a `Result<Vec<T>, E>` or `Option<Vec<T>>` releases its
   fallback once. The fallback becomes the answer on the empty arm, so the frame
   then held the same `Vec` under two bindings and released it under each: the
@@ -29,18 +54,16 @@
   the compiled tiers already did. `binary::get_u16/u32/u64_*_at` converted the
   whole buffer to take the few bytes they answer.
 - A by-value `Map` argument the callee only reads is not copied on the bytecode
-  VM, matching the compiled tiers. A 10 000-entry map cost 613 us to pass and
-  now costs the same as reaching it through a struct field.
+  VM, matching the compiled tiers. Passing a large map now costs the same as
+  reaching it through a struct field.
 - A file under `tests/` reaches the package's modules. An integration test lives
   beside the package rather than inside it, so its own directory declares no
   modules: `use crate::<module>` passed the front end and then the name was
   unbound at run time.
 - A by-value container argument crosses as the handle when the callee only
   reads it. Value semantics were kept by cloning the argument at every call
-  site, which made passing a collection cost its length: a 200 000-element
-  `Vec` read inside a loop spent 506 ms on copies where the same reads through
-  a reference took 1 ms, so a caller that passed a large buffer per iteration
-  paid quadratically. The clone now happens where it is observable - the
+  site, which made passing a collection cost its length, so a caller that
+  passed a large buffer per iteration paid quadratically. The clone now happens where it is observable - the
   callee may write the parameter, or something derived from it may outlive the
   call - and a callee that provably does neither reads the caller's storage.
 - `unwrap_or_else` on a `Result` or an `Option` receiver compiles under
@@ -55,7 +78,7 @@
 - A fixed-width read on a byte buffer costs its width, not the buffer's
   length. `binary::get_u16/u32/u64_be_at` and their little-endian twins
   materialised the whole buffer to take the few bytes they answer, so reading
-  one integer out of a 400 000-byte buffer walked all of it.
+  one integer out of a large buffer walked all of it.
 - A binding whose initializer folds to an existing binding's storage takes a
   copy. Only a bare `let y = x` was treated as aliasing, so a call the
   compiler reduced to one of its arguments - `fn id(xs: Vec<i64>) -> Vec<i64>

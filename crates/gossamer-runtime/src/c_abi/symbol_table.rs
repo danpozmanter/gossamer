@@ -938,6 +938,22 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_chan_send as *const u8,
         ),
         (
+            "gos_rt_chan_set_elem_kind",
+            crate::c_abi::gos_rt_chan_set_elem_kind as *const u8,
+        ),
+        (
+            "gos_rt_chan_set_elem_desc",
+            crate::c_abi::gos_rt_chan_set_elem_desc as *const u8,
+        ),
+        (
+            "gos_rt_result_unwrap_or_str",
+            crate::c_abi::vec::gos_rt_result_unwrap_or_str as *const u8,
+        ),
+        (
+            "gos_rt_result_ok_payload_release",
+            crate::c_abi::vec::gos_rt_result_ok_payload_release as *const u8,
+        ),
+        (
             "gos_rt_chan_try_recv",
             crate::c_abi::gos_rt_chan_try_recv as *const u8,
         ),

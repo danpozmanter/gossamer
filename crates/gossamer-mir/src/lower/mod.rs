@@ -224,6 +224,11 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         // probe before the RC passes, so the eliminated scratch String gets no
         // retain/release.
         fuse_substring_map_inc(body);
+        release_mapped_payloads(body, tcx);
+        record_channel_elem_kind(body, tcx);
+        drop_confined_channels(body);
+        clear_region_on_call_results(body);
+        free_overwritten_ctor_values(body, &container_ctor_free);
         insert_drops_at_returns(body, tcx);
         insert_rc_releases(body, tcx);
         insert_aggr_copy_drops(body, tcx);
