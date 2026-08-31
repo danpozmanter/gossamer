@@ -606,7 +606,10 @@ fn substitute_rvalue(rvalue: &mut Rvalue, bindings: &HashMap<Local, Operand>) {
                 substitute_operand(op, bindings);
             }
         }
-        Rvalue::CallIntrinsic { args, .. } => {
+        Rvalue::CallIntrinsic { name, args } => {
+            if reads_arg_as_slot(name) {
+                return;
+            }
             for op in args {
                 substitute_operand(op, bindings);
             }
@@ -614,6 +617,20 @@ fn substitute_rvalue(rvalue: &mut Rvalue, bindings: &HashMap<Local, Operand>) {
         Rvalue::Repeat { value, .. } => substitute_operand(value, bindings),
         Rvalue::Len(_) | Rvalue::Ref { .. } | Rvalue::StaticLoad(_) => {}
     }
+}
+
+/// Intrinsics whose argument names a STORAGE SLOT rather than a value: each
+/// takes the place's address and writes the slot through it. An operand
+/// carrying the same value names different storage, so these arguments stay
+/// exactly as the drop pass wrote them.
+fn reads_arg_as_slot(name: &str) -> bool {
+    matches!(
+        name,
+        "gos_rt_map_field_clone"
+            | "gos_rt_map_field_release"
+            | "gos_rt_option_slot_retain"
+            | "gos_rt_option_slot_release"
+    )
 }
 
 fn substitute_operand(operand: &mut Operand, bindings: &HashMap<Local, Operand>) {

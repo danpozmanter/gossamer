@@ -5178,6 +5178,12 @@ impl<'a> Builder<'a> {
                 // value with no owning children.
                 let value = *value;
                 let _ = self.ensure_aggr_struct_meta(value);
+                // An aggregate value with no owning children still needs a
+                // copy meta: it is what tags the map as holding blob values,
+                // so the entry takes the share the inserting frame gives back.
+                if self.is_inline_aggregate_ty(value) {
+                    let _ = self.ensure_aggr_copy_meta(value);
+                }
             }
         }
 

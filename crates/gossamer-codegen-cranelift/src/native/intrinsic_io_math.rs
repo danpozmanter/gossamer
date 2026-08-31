@@ -1100,16 +1100,68 @@ pub(super) fn lower_intrinsic_call_io_math(
             builder.ins().call(fref, &[v, meta_val]);
             Ok(true)
         }
+        // A map a by-value aggregate field owns: the copy takes a table of
+        // its own and the field's death frees it. Both helpers read the
+        // FIELD's address, so the place is lowered to an address rather than
+        // to its word - a local holds the carrier itself, and a reference
+        // holds the address of one.
+        "gos_rt_map_field_release" | "gos_rt_map_field_clone" => {
+            let Some(Operand::Copy(place)) = args.first() else {
+                return Ok(true);
+            };
+            let addr = lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?;
+            let slot = if place.projection.is_empty()
+                && matches!(
+                    tcx.kind_of(body.locals[place.local.0 as usize].ty),
+                    TyKind::Ref { .. }
+                ) {
+                builder.ins().load(ptr_ty, MemFlagsData::trusted(), addr, 0)
+            } else {
+                addr
+            };
+            let sym: &'static str = if name == "gos_rt_map_field_clone" {
+                "gos_rt_map_field_clone"
+            } else {
+                "gos_rt_map_field_release"
+            };
+            let f = intrinsics.extern_fn(module, sym, &[ptr_ty], &[])?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            builder.ins().call(fref, &[slot]);
+            Ok(true)
+        }
+        // The map's own handle, not a field address: the tag says the entries
+        // own their values, so an insert takes a share and a removal or the
+        // map's death gives it back.
+        "gos_rt_map_set_blob_values" | "gos_rt_map_set_vec_values" => {
+            let m = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => return Ok(true),
+            };
+            let sym: &'static str = if name == "gos_rt_map_set_blob_values" {
+                "gos_rt_map_set_blob_values"
+            } else {
+                "gos_rt_map_set_vec_values"
+            };
+            let f = intrinsics.extern_fn(module, sym, &[ptr_ty], &[])?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            builder.ins().call(fref, &[m]);
+            Ok(true)
+        }
         "gos_rt_aggr_release_children"
         | "gos_rt_aggr_retain_children"
         | "gos_rt_aggr_zero_guarded"
         | "gos_rt_option_slot_retain"
         | "gos_rt_option_slot_release"
-        | "gos_rt_vec_set_elem_meta"
-        | "gos_rt_map_set_blob_values"
-        | "gos_rt_map_set_vec_values"
-        | "gos_rt_map_field_release"
-        | "gos_rt_map_field_clone" => {
+        | "gos_rt_vec_set_elem_meta" => {
             // Guarded copy-blob accounting is emitted by the LLVM
             // lowering, which compiles every body of both build profiles
             // (debug is LLVM at -O0); this backend only sees the rare

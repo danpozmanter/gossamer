@@ -31,6 +31,39 @@
   cost about 40 ms per exchange.
 - `net::TcpStream::set_nodelay(on)` turns coalescing back on for a caller that
   wants it.
+- A `Map` reached through a struct field no longer disturbs the object beside
+  it. A `GosMap` carries no reference count, so the retain a field read minted
+  incremented a word 16 bytes ahead of the table - in practice the previous
+  map's ownership tag - and a later insert read that tag as a licence to
+  dereference a stored `i64` as a pointer.
+- A closure that captures a struct observes the value the enclosing scope
+  holds. The capture prologue read the environment slot as an owned aggregate,
+  so every call took a deep copy of the struct's maps and freed them again on
+  the way out: a server whose handler captured its store copied the whole index
+  per request, answered from a table another request was freeing, and faulted
+  under load.
+- A `Map` field that leaves a frame by value hands back a table of its own.
+  Every map-returning call books a free on its destination, so the field and
+  the caller's answer named one table under two owners.
+- `unwrap` on a carrier the frame does not own answers a view of it. The
+  aggregate that landed in the binding released fields nothing had minted for
+  it, so a struct read out of a map freed the map's own copy.
+- A struct with a `Map` field survives being stored as a map value. The entry's
+  copy takes a table of its own and frees it when the entry dies, where before
+  the entry shared the inserting frame's table and outlived it.
+- An aggregate value inserted under a content-hashed key is owned by the entry:
+  `Map<(i64, i64), (i64, i64)>` kept the values it was given rather than
+  freeing each one at the call that stored it.
+- A `Map` reached through a `let` binding takes a value of its own on the
+  bytecode VM, as it already did on the compiled tiers, whether the source is a
+  binding or a struct's field.
+- The Cranelift tier accounts for a struct's `Map` field. Its slot helpers were
+  no-ops on the assumption that only fallback bodies reach that backend, which
+  left the in-process JIT sharing one table between a struct and its copy.
+- A method no receiver of a closed-surface handle answers is named where it is
+  written. `req.body_string()` on an `http::Request` type-checked and then
+  failed as `GX0007` on the VM and an undefined symbol at the end of a native
+  build; it is now `GT0002` at the call site, with the receiver's own surface.
 
 ## 0.58.4 - Heap corruption, retention, ownership, module shadowing, u64 arguments, handler lowering
 

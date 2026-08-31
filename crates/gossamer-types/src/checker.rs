@@ -159,6 +159,12 @@ const OPTION_DEF_LOCAL: u32 = u32::MAX - 1;
 const PURE_HANDLE_LO_OFFSET: u32 = 34;
 const PURE_HANDLE_HI_OFFSET: u32 = 49;
 
+/// Widest sentinel offset any stdlib handle occupies, pure band and the
+/// pre-band handles alike. A receiver inside this span whose display name is
+/// module-qualified answers a closed method table, which is what lets an
+/// unknown name on one be named at the call site.
+const HANDLE_SENTINEL_SPAN: u32 = PURE_HANDLE_HI_OFFSET;
+
 /// One constructor of a runtime handle: the module path it is written
 /// under, and the associated function's name.
 type HandleCtor = (&'static [&'static str], &'static str);
@@ -9299,7 +9305,55 @@ impl<'a> TypeChecker<'a> {
         if self.reject_unknown_scalar_method(resolved, method, span) {
             return self.tcx.error_ty();
         }
+        if self.reject_unknown_stdlib_handle_method(resolved, method, span) {
+            return self.tcx.error_ty();
+        }
         self.fresh()
+    }
+
+    /// Rejects `req.nowhere()` on a handle whose method surface the checker
+    /// owns in full. Most runtime handles resolve their methods in the tier
+    /// lowerings, so an unknown name on one has to stay open; the handles
+    /// listed here answer a closed table in [`Self::http_client_method_ret`],
+    /// and a name that table does not claim has no binding on any tier. The
+    /// VM refuses such a call and the native build ends with an undefined
+    /// `@name` symbol once the whole program has compiled, so naming it at
+    /// the call site is what shows the reader the receiver's own surface.
+    fn reject_unknown_stdlib_handle_method(
+        &mut self,
+        resolved: Ty,
+        method: &str,
+        span: Span,
+    ) -> bool {
+        const CLOSED_HANDLE_SURFACES: &[&str] = &[
+            "http::Client",
+            "http::ClientBuilder",
+            "http::Request",
+            "http::ResponseStream",
+        ];
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return false;
+        };
+        let def = *def;
+        if def.local < u32::MAX - HANDLE_SENTINEL_SPAN {
+            return false;
+        }
+        let Some(name) = self.tcx.def_name(def).map(str::to_string) else {
+            return false;
+        };
+        if !CLOSED_HANDLE_SURFACES.contains(&name.as_str()) {
+            return false;
+        }
+        // The conversions every value answers, and any name a user impl or
+        // trait declares for this receiver, keep their own resolution.
+        if matches!(method, "clone" | "into" | "try_into" | "to_string")
+            || self.user_method_owners.contains_key(method)
+        {
+            return false;
+        }
+        let error = self.unresolved_method(name, method, resolved);
+        self.emit(error, span);
+        true
     }
 
     /// Rejects `x.nowhere()` on a scalar receiver. A scalar declares no

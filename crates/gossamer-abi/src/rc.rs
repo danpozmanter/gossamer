@@ -70,3 +70,8 @@ pub const RC_CHILD_RC: i64 = 0;
 /// through `gos_rt_vec_free`, so a Vec payload survives its constructing
 /// frame however the node escapes (return, call argument, container).
 pub const RC_CHILD_VEC: i64 = 1;
+/// Child kind: `*mut GosMap` the node owns outright. A `GosMap` carries no
+/// reference count, so a copy takes a table of its own (`gos_rt_map_clone`,
+/// written back into the copy's word) and the node's release frees it through
+/// `gos_rt_map_free`.
+pub const RC_CHILD_MAP: i64 = 2;

@@ -172,7 +172,7 @@ impl<'tcx> FnBuilder<'tcx> {
                         // A bare path aliases its source register, and so does
                         // any initializer the compiler folded down to one - an
                         // inlined call that answers its own argument, say.
-                        let aliases_live_binding = is_path_expr(init)
+                        let aliases_live_binding = is_place_expr(init)
                             || (tr.kind == RegKind::Value && self.reg_is_bound_local(tr.reg));
                         let typed = if consume_init {
                             let dst = self.alloc_reg();

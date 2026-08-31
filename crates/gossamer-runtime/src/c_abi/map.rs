@@ -967,10 +967,17 @@ pub unsafe extern "C" fn gos_rt_map_insert_skey(
         if prev.is_none() {
             map.len_cache += 1;
         }
-        if map_has_owned_values(map)
-            && let Some(old) = prev
-            && old != val
-        {
+        // The entry keeps this word, so the map takes a share of it here -
+        // the same exchange the scalar- and string-keyed inserts make. The
+        // inserting frame gives its own share back at the call site, and the
+        // entry's death (an overwrite, a removal, or the map's own free)
+        // gives back the one taken here.
+        let owns_values = map_has_owned_values(map);
+        let replaced = prev.filter(|old| *old != val);
+        if owns_values && (replaced.is_some() || prev.is_none()) {
+            unsafe { retain_owned_value(map, val) };
+        }
+        if owns_values && let Some(old) = replaced {
             unsafe { release_owned_value(map, old) };
         }
     });

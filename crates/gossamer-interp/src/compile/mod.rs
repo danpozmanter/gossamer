@@ -817,6 +817,20 @@ fn is_path_expr(expr: &HirExpr) -> bool {
     matches!(&expr.kind, HirExprKind::Path { .. })
 }
 
+/// Whether `expr` names storage the program still reaches by another route -
+/// a local, or a field of one. The value such an expression answers is an
+/// `Arc` share of that storage, so a binding taken from it copies the way a
+/// binding from a bare local does.
+fn is_place_expr(expr: &HirExpr) -> bool {
+    match &expr.kind {
+        HirExprKind::Path { .. } => true,
+        HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
+            is_place_expr(receiver)
+        }
+        _ => false,
+    }
+}
+
 fn reference_operand_local_name(expr: &HirExpr) -> Option<&str> {
     let HirExprKind::Path { segments, .. } = &expr.kind else {
         return None;

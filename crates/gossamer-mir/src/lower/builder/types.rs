@@ -1757,6 +1757,14 @@ impl<'a> Builder<'a> {
                     (gossamer_abi::rc::RC_CHILD_VEC << gossamer_abi::rc::RC_CHILD_KIND_SHIFT)
                         | word,
                 );
+            } else if matches!(self.tcx.kind_of(fty), TyKind::HashMap { .. }) {
+                // A `GosMap` has no reference count, so a copy of this
+                // aggregate cannot share the field's table: the blob takes a
+                // clone of its own and frees it at its death.
+                out.push(
+                    (gossamer_abi::rc::RC_CHILD_MAP << gossamer_abi::rc::RC_CHILD_KIND_SHIFT)
+                        | word,
+                );
             } else if self.tcx.is_rc_managed(fty) {
                 out.push(
                     (gossamer_abi::rc::RC_CHILD_RC << gossamer_abi::rc::RC_CHILD_KIND_SHIFT) | word,

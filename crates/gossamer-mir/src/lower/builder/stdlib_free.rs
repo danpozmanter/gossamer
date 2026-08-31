@@ -620,6 +620,17 @@ impl<'a> Builder<'a> {
             Some(_) => "gos_rt_map_insert_skey_opt",
             None => self.map_insert_helper(map_ty),
         };
+        // An aggregate value crosses as one handle word: the backend copies
+        // its slots into a reference-counted blob, and the blob owns each
+        // heap child the copy names. The structural meta is what tells the
+        // copy which children those are, so register it here exactly as the
+        // `insert` method dispatch does.
+        if let Some(value_ty) = self.hash_map_value_ty(map_ty) {
+            let _ = self.ensure_aggr_struct_meta(value_ty);
+            if self.is_inline_aggregate_ty(value_ty) {
+                let _ = self.ensure_aggr_copy_meta(value_ty);
+            }
+        }
 
         let ctor = if ordered { "BTreeMap::new" } else { "Map::new" };
         let map = self.emit_stdlib_free_call(ctor, map_ty, &[], span)?;

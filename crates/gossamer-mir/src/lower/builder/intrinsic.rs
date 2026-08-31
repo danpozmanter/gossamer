@@ -912,6 +912,15 @@ impl<'a> Builder<'a> {
             return None;
         }
         let descriptor = self.key_descriptor(key_ty)?;
+        // A multi-slot value crosses as one handle word, so the backend copies
+        // its slots onto the heap. The copy meta is what tags the map as
+        // holding blob values - the entry then takes the share the inserting
+        // frame gives back - and the structural meta names the heap children
+        // that copy owns.
+        let _ = self.ensure_aggr_struct_meta(val_ty);
+        if self.is_inline_aggregate_ty(val_ty) {
+            let _ = self.ensure_aggr_copy_meta(val_ty);
+        }
         let recv_local = self.lower_expr(receiver)?;
         let key_local = self.lower_expr(args.first()?)?;
         let desc_op = Operand::Const(ConstValue::Str(descriptor));

@@ -2332,6 +2332,7 @@ unsafe fn release_rc_children(payload: *mut u8) {
         visit_vec_children(payload, |v| {
             crate::c_abi::map::gos_rt_vec_free(v.cast());
         });
+        visit_map_children(payload, queue_map_child);
     }
 }
 
@@ -2510,6 +2511,7 @@ unsafe fn rc_release_impl(root: *mut u8) {
                 }
             });
             visit_vec_children(root, queue_vec_child);
+            visit_map_children(root, queue_map_child);
         }
         let _ = meta;
         unsafe { try_reclaim_zero(root) };
@@ -2555,6 +2557,7 @@ unsafe fn visit_children_raw_buffered(payload: *mut u8, worklist: &mut Vec<*mut 
             }
         });
         visit_vec_children(payload, queue_vec_child);
+        visit_map_children(payload, queue_map_child);
     }
 }
 
@@ -2570,6 +2573,11 @@ thread_local! {
     /// release worklist is borrowed or the collector is mid-phase.
     static PENDING_VEC_FREES: std::cell::RefCell<Vec<*mut u8>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Owned `Map` children of dead nodes, queued on the same terms as
+    /// [`PENDING_VEC_FREES`]: freeing a map releases every entry it holds,
+    /// which re-enters the release path.
+    static PENDING_MAP_FREES: std::cell::RefCell<Vec<*mut u8>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// Nesting depth of teardown frames (release walks / collection
     /// slices) on this thread; pending Vec frees drain when it reaches 0.
     static TEARDOWN_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
@@ -2579,6 +2587,12 @@ thread_local! {
 /// teardown exit.
 fn queue_vec_child(v: *mut u8) {
     PENDING_VEC_FREES.with(|q| q.borrow_mut().push(v));
+}
+
+/// Queue a dead node's owned `Map` child for release at the outermost
+/// teardown exit.
+fn queue_map_child(m: *mut u8) {
+    PENDING_MAP_FREES.with(|q| q.borrow_mut().push(m));
 }
 
 /// Enter a teardown frame (release walk or collection slice).
@@ -2602,6 +2616,11 @@ unsafe fn teardown_exit() {
         let next = PENDING_VEC_FREES.with(|q| q.borrow_mut().pop());
         let Some(v) = next else { break };
         unsafe { crate::c_abi::map::gos_rt_vec_free(v.cast()) };
+    }
+    loop {
+        let next = PENDING_MAP_FREES.with(|q| q.borrow_mut().pop());
+        let Some(m) = next else { break };
+        unsafe { crate::c_abi::map::gos_rt_map_free(m.cast()) };
     }
 }
 
@@ -2651,6 +2670,34 @@ unsafe fn visit_children_raw(payload: *mut u8, mut raw_f: impl FnMut(*mut u8)) {
 /// `*mut GosVec` the node owns (the constructor retained the node's
 /// share). Teardown frees these through `gos_rt_vec_free`; co-owning
 /// paths (copy, match-binding materialisation) retain them.
+/// Call `f` for each non-null [`gossamer_abi::rc::RC_CHILD_MAP`] child of
+/// `payload` - a `*mut GosMap` the node owns outright. Teardown frees these
+/// through `gos_rt_map_free`.
+unsafe fn visit_map_children(payload: *mut u8, mut f: impl FnMut(*mut u8)) {
+    unsafe {
+        visit_entries(payload, |kind, child| {
+            if kind == gossamer_abi::rc::RC_CHILD_MAP {
+                f(child);
+            }
+        });
+    }
+}
+
+/// Replaces every owned `Map` child of `payload` with a table of its own.
+/// A `GosMap` carries no reference count, so a copy that kept the source's
+/// handle would leave one table under two owners.
+unsafe fn clone_map_children(payload: *mut u8) {
+    unsafe {
+        visit_entry_slots(payload, |kind, slot, child| {
+            if kind != gossamer_abi::rc::RC_CHILD_MAP || slot.is_null() {
+                return;
+            }
+            let cloned = crate::c_abi::gos_rt_map_clone(child.cast());
+            slot.write_unaligned((cloned as *mut u8).expose_provenance());
+        });
+    }
+}
+
 unsafe fn visit_vec_children(payload: *mut u8, mut f: impl FnMut(*mut u8)) {
     unsafe {
         visit_entries(payload, |kind, child| {
@@ -2666,6 +2713,14 @@ unsafe fn visit_vec_children(payload: *mut u8, mut f: impl FnMut(*mut u8)) {
 /// low 32 bits and the child kind above (`gossamer_abi::rc`); guarded
 /// metas keep their dedicated pair walk and yield kind 0.
 unsafe fn visit_entries(payload: *mut u8, mut f: impl FnMut(i64, *mut u8)) {
+    unsafe { visit_entry_slots(payload, |kind, _slot, child| f(kind, child)) };
+}
+
+/// Same walk as [`visit_entries`], but the callback also receives the address
+/// of the payload word holding the child. A kind whose copy takes a value of
+/// its own - [`gossamer_abi::rc::RC_CHILD_MAP`] - writes the new handle back
+/// through that address.
+unsafe fn visit_entry_slots(payload: *mut u8, mut f: impl FnMut(i64, *mut usize, *mut u8)) {
     use gossamer_abi::rc::{RC_CHILD_KIND_SHIFT, RC_CHILD_WORD_MASK};
     let meta = unsafe { meta_of(header_ptr(payload)) };
     if meta.is_null() {
@@ -2674,7 +2729,11 @@ unsafe fn visit_entries(payload: *mut u8, mut f: impl FnMut(i64, *mut u8)) {
     let kind = unsafe { *meta };
     let variant_count = unsafe { *meta.add(1) };
     if kind == RC_KIND_STRUCT_GUARDED {
-        unsafe { visit_guarded_children(payload, meta, |c| f(gossamer_abi::rc::RC_CHILD_RC, c)) };
+        unsafe {
+            visit_guarded_children(payload, meta, |c| {
+                f(gossamer_abi::rc::RC_CHILD_RC, std::ptr::null_mut(), c);
+            });
+        };
         return;
     }
     // Only Enum and Struct carry child layouts today. String / Vec / Map
@@ -2704,7 +2763,7 @@ unsafe fn visit_entries(payload: *mut u8, mut f: impl FnMut(i64, *mut u8)) {
                 let raw = unsafe { slot.read_unaligned() };
                 let child: *mut u8 = std::ptr::with_exposed_provenance_mut(raw);
                 if !child.is_null() {
-                    f(child_kind, child);
+                    f(child_kind, slot, child);
                 }
             }
             return;
@@ -2921,10 +2980,11 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_copy(
             visit_entries(payload, |kind, child| {
                 if kind == gossamer_abi::rc::RC_CHILD_VEC {
                     crate::c_abi::gos_rt_vec_retain(child.cast());
-                } else {
+                } else if kind != gossamer_abi::rc::RC_CHILD_MAP {
                     gos_rt_rc_retain(child);
                 }
             });
+            clone_map_children(payload);
         }
     }
     payload
@@ -2992,6 +3052,7 @@ pub unsafe extern "C" fn gos_rt_enum_box_aggr(
         visit_vec_children(payload, |v| {
             crate::c_abi::vec::vec_retain_header(v.cast());
         });
+        clone_map_children(payload);
     }
     payload
 }
@@ -3046,6 +3107,7 @@ pub unsafe extern "C" fn gos_rt_rc_weak_cell(
         visit_vec_children(payload, |v| {
             crate::c_abi::vec::vec_retain_header(v.cast());
         });
+        clone_map_children(payload);
     }
     payload
 }

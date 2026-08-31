@@ -2130,11 +2130,31 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     }
                 }
             }
-            if let Terminator::Call { destination, .. } = &block.terminator
+            if let Terminator::Call {
+                callee,
+                args,
+                destination,
+                ..
+            } = &block.terminator
                 && destination.projection.is_empty()
                 && (destination.local.0 as usize) < n_locals
             {
-                non_extraction[destination.local.0 as usize] = true;
+                // `unwrap` on a carrier the frame does not own answers the
+                // payload the carrier still holds - a `Map` entry's blob, say -
+                // exactly as the statement-position payload reads do. The
+                // aggregate that lands in the destination is a view of those
+                // slots: nothing was minted for it, so nothing is released
+                // when it dies.
+                let payload_read = matches!(
+                    callee,
+                    Operand::Const(ConstValue::Str(name))
+                        if matches!(name.as_str(), "gos_rt_option_unwrap" | "gos_rt_result_unwrap")
+                );
+                if payload_read && !extracts_owned(args) {
+                    extraction_seed[destination.local.0 as usize] = true;
+                } else {
+                    non_extraction[destination.local.0 as usize] = true;
+                }
             }
         }
         for i in 0..n_locals {
@@ -2151,6 +2171,13 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // value the caller receives is a share of the referent's field just as it
     // is when the base is owned. The referent keeps its own, so the fields
     // are read through the pointee type.
+    //
+    // A [`FieldRcKind::Map`] field is not one of them: a `GosMap` carries no
+    // reference count, so the extract is a borrow of the owner's map and the
+    // whole ownership story is the owner's own `gos_rt_map_field_clone` /
+    // `gos_rt_map_field_release` schedule. Routing one through `rc_helper`
+    // would reach `gos_rt_rc_retain`, which reads a header the allocation
+    // does not carry.
     for (block_idx, block) in body.blocks.iter().enumerate() {
         for (stmt_idx, stmt) in block.stmts.iter().enumerate() {
             if let StatementKind::Assign { place, rvalue } = &stmt.kind
@@ -2162,12 +2189,82 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 && (src.local.0 as usize) < n_locals
                 && agg_rc_fields(pointee_of(tcx, body.locals[src.local.0 as usize].ty))
                     .iter()
-                    .any(|(path, _)| path.as_slice() == [fidx])
+                    .any(|(path, kind)| path.as_slice() == [fidx] && *kind != FieldRcKind::Map)
             {
                 retain_sites.push((block_idx, stmt_idx, place.local, 1));
             }
         }
     }
+
+    // A `Map` word that leaves through the return slot is the caller's to
+    // free: every map-returning call books a `gos_rt_map_free` on its
+    // destination. A `GosMap` carries no reference count, so when that word
+    // came out of an aggregate's field the aggregate and the return slot
+    // would name one table under two owners. The return slot takes a table of
+    // its own instead - `gos_rt_map_field_clone` reads the slot's address and
+    // writes the clone back, so the aggregate keeps the map its own release
+    // schedule frees.
+    let returned_map_field_sites: Vec<(usize, usize)> = {
+        let mut from_map_field: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let is_map_local = |l: Local| {
+            (l.0 as usize) < n_locals
+                && matches!(
+                    tcx.kind_of(body.locals[l.0 as usize].ty),
+                    gossamer_types::TyKind::HashMap { .. }
+                )
+        };
+        // A copy chain can cross blocks in either order, so iterate to a
+        // fixpoint rather than assuming the definition comes first.
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for block in &body.blocks {
+                for stmt in &block.stmts {
+                    let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                        continue;
+                    };
+                    let Rvalue::Use(Operand::Copy(src)) = rvalue else {
+                        continue;
+                    };
+                    if !place.projection.is_empty()
+                        || !is_map_local(place.local)
+                        || from_map_field.contains(&place.local.0)
+                    {
+                        continue;
+                    }
+                    let carries = if src.projection.is_empty() {
+                        from_map_field.contains(&src.local.0)
+                    } else {
+                        src.projection
+                            .iter()
+                            .all(|p| matches!(p, crate::ir::Projection::Field(_)))
+                    };
+                    if carries {
+                        from_map_field.insert(place.local.0);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        let mut sites = Vec::new();
+        for (block_idx, block) in body.blocks.iter().enumerate() {
+            for (stmt_idx, stmt) in block.stmts.iter().enumerate() {
+                if let StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::Use(Operand::Copy(src)),
+                } = &stmt.kind
+                    && place.local == Local::RETURN
+                    && place.projection.is_empty()
+                    && is_map_local(place.local)
+                    && src.projection.is_empty()
+                    && from_map_field.contains(&src.local.0)
+                {
+                    sites.push((block_idx, stmt_idx));
+                }
+            }
+        }
+        sites
+    };
 
     // Aggregate locals that are BORROWS of a container element: the
     // `for p in &v` loop variable, whose value is `Copy`-ed from a
@@ -2179,9 +2276,45 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // never minted a balancing retain; treat the whole local as a
     // non-owning view. Mirrors `extraction_seed`, but propagates through
     // the `loopvar = Copy(get_ptr_result)` edge the loop lowering emits.
+    // A lifted closure's capture prologue projects each captured value out of
+    // its environment (`gos_load(__env, offset)`, `__env` being the lifted
+    // body's first parameter). A closure observes the value the enclosing
+    // scope holds - a struct is captured by managed reference - so the local
+    // it lands in is a view of that storage, exactly as a container element
+    // pointer is. Seeding it here gives it the whole non-owning treatment: no
+    // share of the captured aggregate's heap fields, and no release of them.
+    let capture_env_load = |block: &BasicBlock| -> Option<usize> {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            destination,
+            ..
+        } = &block.terminator
+        else {
+            return None;
+        };
+        if name != "gos_load"
+            || !body.name.starts_with("__closure_")
+            || body.arity == 0
+            || !destination.projection.is_empty()
+            || (destination.local.0 as usize) >= n_locals
+        {
+            return None;
+        }
+        match args.first() {
+            Some(Operand::Copy(base)) if base.projection.is_empty() && base.local == Local(1) => {
+                Some(destination.local.0 as usize)
+            }
+            _ => None,
+        }
+    };
+
     let vec_borrow_agg = {
         let mut get_ptr_dest = vec![false; n_locals];
         for block in &body.blocks {
+            if let Some(dest) = capture_env_load(block) {
+                get_ptr_dest[dest] = true;
+            }
             if let Terminator::Call {
                 callee: Operand::Const(ConstValue::Str(name)),
                 destination,
@@ -2373,6 +2506,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         && agg_locals.is_empty()
         && param_agg_locals.is_empty()
         && ref_agg_locals.is_empty()
+        && returned_map_field_sites.is_empty()
     {
         return;
     }
@@ -2399,6 +2533,10 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         .iter()
         .map(|b| vec![Vec::new(); b.stmts.len() + 1])
         .collect();
+
+    for (bi, si) in &returned_map_field_sites {
+        field_gaps[*bi][si + 1].push((true, Local::RETURN, Vec::new(), FieldRcKind::Map));
+    }
 
     for bi in 0..n_blocks {
         let len = body.blocks[bi].stmts.len();
@@ -2487,6 +2625,25 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         let len = body.blocks[*bi].stmts.len();
         field_gaps[*bi][len].push((true, *local, path.clone(), *kind));
     }
+
+    // Locals a call answers into. A container constructor's own answer is
+    // freed by `insert_container_frees`, so an aggregate handed one as a
+    // `Map` field operand would name the table its source frees. The field
+    // takes a table of its own instead - a map cannot be co-owned. Keyed on
+    // the destination FIELD's kind rather than the source local's type: a
+    // collection constructor normalises its destination to the handle word.
+    let call_dest: Vec<bool> = {
+        let mut out = vec![false; n_locals];
+        for block in &body.blocks {
+            if let Terminator::Call { destination, .. } = &block.terminator
+                && destination.projection.is_empty()
+                && (destination.local.0 as usize) < n_locals
+            {
+                out[destination.local.0 as usize] = true;
+            }
+        }
+        out
+    };
 
     // Field-level retain/release for by-value aggregate locals: release the
     // previous value's RC fields before any reassignment (null-safe on the
@@ -2637,6 +2794,39 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         {
                             for (f, w) in agg_rc_fields(body.locals[src.local.0 as usize].ty) {
                                 field_gaps[bi][si + 1].push((true, src.local, f, w));
+                            }
+                        }
+                    }
+                    // A bare `Map` operand whose source is a call's own answer:
+                    // that source frees the table it holds, so the field takes
+                    // one of its own rather than a second owner of the same.
+                    if place.projection.is_empty() {
+                        for (idx, op) in operands.iter().enumerate() {
+                            let Operand::Copy(src) = op else { continue };
+                            if !src.projection.is_empty()
+                                || (src.local.0 as usize) >= n_locals
+                                || !call_dest[src.local.0 as usize]
+                            {
+                                continue;
+                            }
+                            let path = vec![u32::try_from(idx).unwrap_or(0)];
+                            let owns = agg_locals
+                                .iter()
+                                .chain(param_agg_locals.iter())
+                                .chain(borrow_copy_agg_locals.iter())
+                                .find(|(l, _)| *l == place.local.0 as usize)
+                                .is_some_and(|(_, fields)| {
+                                    fields
+                                        .iter()
+                                        .any(|(p, k)| *p == path && *k == FieldRcKind::Map)
+                                });
+                            if owns {
+                                field_gaps[bi][si + 1].push((
+                                    true,
+                                    place.local,
+                                    path,
+                                    FieldRcKind::Map,
+                                ));
                             }
                         }
                     }
