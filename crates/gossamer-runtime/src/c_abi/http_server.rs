@@ -176,10 +176,17 @@ impl ConnScratch {
 static HTTP_ACTIVE_CONNS: AtomicUsize = AtomicUsize::new(0);
 
 /// RAII guard that decrements [`HTTP_ACTIVE_CONNS`] when the
-/// connection thread's body unwinds or returns. Created inside
-/// the thread closure so the decrement runs even if
+/// connection thread's body unwinds or returns, and counts the thread among
+/// the actors that can still reach a channel for as long as it serves.
+/// Created inside the thread closure so both run even if
 /// `handle_http_conn` panics.
-struct HttpConnGuard;
+struct HttpConnGuard(crate::sched_global::ExternalActor);
+
+impl HttpConnGuard {
+    fn enter() -> Self {
+        Self(crate::sched_global::ExternalActor::enter())
+    }
+}
 
 impl Drop for HttpConnGuard {
     fn drop(&mut self) {
@@ -336,6 +343,9 @@ where
         .local_addr()
         .ok()
         .map(register_http_shutdown_wake_addr);
+    // The loop itself can still admit a connection whose handler reaches a
+    // channel, so it counts as an actor while it runs.
+    let _actor = crate::sched_global::ExternalActor::enter();
     loop {
         if crate::sched_global::is_shutdown_requested() {
             break;
@@ -375,7 +385,7 @@ where
                 let Some(stream) = task_slot.lock().take() else {
                     return;
                 };
-                let _guard = HttpConnGuard;
+                let _guard = HttpConnGuard::enter();
                 // One connection is one fault domain: a handler panic ends
                 // that request, not the server.
                 let _faults = crate::c_abi::panic::IsolatedFaults::enter();
@@ -413,6 +423,9 @@ pub(crate) fn accept_serve_with<F>(
         .ok()
         .map(register_http_shutdown_wake_addr);
     let live = std::sync::Arc::new(AtomicUsize::new(0));
+    // The loop itself can still admit a connection whose handler reaches a
+    // channel, so it counts as an actor while it runs.
+    let _actor = crate::sched_global::ExternalActor::enter();
     loop {
         if shutdown.load(Ordering::Acquire) || crate::sched_global::is_shutdown_requested() {
             break;
@@ -452,6 +465,7 @@ pub(crate) fn accept_serve_with<F>(
                 let _counts = ConnCounts {
                     live: live_for_thread,
                     in_flight: in_flight_for_thread,
+                    _actor: crate::sched_global::ExternalActor::enter(),
                 };
                 let Some(stream) = task_slot.lock().take() else {
                     return;
@@ -479,6 +493,8 @@ pub(crate) fn accept_serve_with<F>(
 struct ConnCounts {
     live: std::sync::Arc<AtomicUsize>,
     in_flight: std::sync::Arc<AtomicUsize>,
+    /// Counts this handler among the actors that can still reach a channel.
+    _actor: crate::sched_global::ExternalActor,
 }
 
 impl Drop for ConnCounts {

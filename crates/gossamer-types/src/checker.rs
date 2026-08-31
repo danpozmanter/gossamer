@@ -7173,6 +7173,7 @@ impl<'a> TypeChecker<'a> {
                 "net::TcpStream",
                 "set_read_timeout_ms"
                 | "set_write_timeout_ms"
+                | "set_nodelay"
                 | "clear_read_timeout"
                 | "clear_write_timeout",
             ) => Some(unit),

@@ -1113,3 +1113,126 @@ fn forced_jit_matches_bytecode_on_unlowerable_shapes() {
         );
     }
 }
+
+// ----------------------------------------------------------------
+// A server whose handlers share a pool of tokens through a channel.
+//
+// The runtime serves each connection on an OS thread rather than a
+// goroutine, so with more requests in flight than the pool has
+// tokens, a handler parks on a channel while no goroutine exists at
+// all. That is ordinary backpressure - the peers that will return a
+// token are the other connections - and the deadlock report must not
+// fire on it, on any tier.
+// ----------------------------------------------------------------
+
+const POOL_ADDR: &str = "127.0.0.1:8099";
+/// More than `http_channel_pool.gos` has tokens, so some handlers must wait.
+const POOL_CLIENTS: usize = 8;
+
+#[test]
+fn http_channel_pool_vm() {
+    channel_pool_smoke(Tier::Vm);
+}
+
+#[test]
+fn http_channel_pool_cranelift() {
+    channel_pool_smoke(Tier::Cranelift);
+}
+
+#[test]
+fn http_channel_pool_llvm() {
+    channel_pool_smoke(Tier::Llvm);
+}
+
+fn channel_pool_smoke(tier: Tier) {
+    let _port_guard = SERVER_PORT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _server_window = common::ServerPortLock::acquire();
+    let deadline = Instant::now() + PER_RUN_TIMEOUT;
+    let src = workspace_root().join("feature-testing-examples/http_channel_pool.gos");
+
+    if let Err(e) = std::net::TcpListener::bind(POOL_ADDR) {
+        panic!("{} channel pool: cannot bind {POOL_ADDR} ({e})", tier.label());
+    }
+
+    let (mut child, scratch) = match tier {
+        Tier::Vm => {
+            let child = Command::new(gos_bin())
+                .arg("run")
+                .arg(&src)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn gos http_channel_pool");
+            (child, None)
+        }
+        compiled => {
+            let release = matches!(compiled, Tier::Llvm);
+            let scratch = fresh_dir(&format!("chanpool-{}", compiled.label()));
+            let bin = match build_native(&src, release, &scratch) {
+                Ok(p) => p,
+                Err(e) => panic!("{} build of http_channel_pool.gos failed: {e}", compiled.label()),
+            };
+            let child = Command::new(&bin)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn http_channel_pool binary");
+            (child, Some(scratch))
+        }
+    };
+
+    std::thread::sleep(Duration::from_millis(1500));
+
+    // Every client is in flight at once, so the pool is emptied and the
+    // handlers that find it empty park on the channel.
+    let results: Vec<Result<(u16, String), String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..POOL_CLIENTS)
+            .map(|_| scope.spawn(move || http_probe(POOL_ADDR, "/pool", deadline)))
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("probe")).collect()
+    });
+
+    let _ = child.kill();
+    let captured = read_child_streams(&mut child);
+    let _ = child.wait();
+    if let Some(s) = scratch {
+        let _ = fs::remove_dir_all(s);
+    }
+
+    assert!(
+        !captured.stderr.contains("deadlock"),
+        "{} channel pool: reported a deadlock while its handlers waited on the pool\n\
+         --- child stdout ---\n{}\n--- child stderr ---\n{}",
+        tier.label(),
+        captured.stdout,
+        captured.stderr,
+    );
+    for (i, result) in results.iter().enumerate() {
+        let (status, body) = result.as_ref().unwrap_or_else(|e| {
+            panic!(
+                "{} channel pool: client {i} failed: {e}\n--- child stdout ---\n{}\n\
+                 --- child stderr ---\n{}",
+                tier.label(),
+                captured.stdout,
+                captured.stderr,
+            )
+        });
+        assert_eq!(
+            *status,
+            200,
+            "{} channel pool: client {i} got {status}, body={body:?}",
+            tier.label(),
+        );
+        // `http_probe` answers the headers and the body together, so the
+        // payload is what the reply ends with.
+        assert!(
+            body.ends_with("served"),
+            "{} channel pool: client {i} body {body:?}",
+            tier.label(),
+        );
+    }
+}

@@ -1041,6 +1041,22 @@ pub const ITEM_FIXTURES: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "lang::callback_shorthand",
+        &["feature-testing-examples/callback_shorthands.gos"],
+    ),
+    (
+        "lang::doctest",
+        &["feature-testing-examples/doctest_fences.gos"],
+    ),
+    (
+        "lang::keyword_arguments",
+        &["feature-testing-examples/keyword_and_default_arguments.gos"],
+    ),
+    (
+        "lang::unicode_identifiers",
+        &["feature-testing-examples/unicode_full.gos"],
+    ),
+    (
         "lang::cfg",
         &[
             "examples/defer_cleanup.gos",
@@ -5310,12 +5326,15 @@ enum LangMark {
 /// Every `lang::` item a line of source can be read as exercising.
 ///
 /// A construct with no rule that names it uniquely is deliberately absent
-/// and stays `unproven`: `callback_shorthand`, `doctest`,
+/// from the line scan: `callback_shorthand`, `doctest`,
 /// `keyword_arguments`, and `unicode_identifiers` have no spelling a line
 /// scan can claim without also matching something else - a callback
 /// shorthand is a bare path in argument position, a doctest is a fence
 /// inside a comment, a named argument is an `=` inside a call, and a
-/// non-ASCII identifier is indistinguishable from non-ASCII text.
+/// non-ASCII identifier is indistinguishable from non-ASCII text. Each of
+/// those four is pinned to the one fixture written to exercise it instead
+/// ([`LANG_PINNED_FIXTURES`]), so its evidence is exactly that dedicated
+/// fixture having run on every tier.
 const LANG_MARKS: &[(&str, LangMark)] = &[
     ("attribute", LangMark::Has("#[")),
     ("generics", LangMark::GenericFn),
@@ -5398,6 +5417,31 @@ fn line_matches(line: &str, mark: &LangMark) -> bool {
                 .is_some_and(|close| rest[..close].contains(".."))
         }),
     }
+}
+
+/// The four `lang::` rows a line scan cannot claim without over-matching,
+/// each keyed to the one fixture written to exercise it. The tie is by file
+/// name rather than by content, so the row's evidence is exactly "this
+/// dedicated fixture ran on every tier".
+const LANG_PINNED_FIXTURES: &[(&str, &str)] = &[
+    ("callback_shorthands.gos", "callback_shorthand"),
+    ("doctest_fences.gos", "doctest"),
+    ("keyword_and_default_arguments.gos", "keyword_arguments"),
+    ("unicode_full.gos", "unicode_identifiers"),
+];
+
+/// The `lang::` rows pinned to the fixture at `path`, by file name. Empty for
+/// every file that is not one of the four dedicated fixtures.
+#[must_use]
+pub fn lang_features_pinned(path: &std::path::Path) -> Vec<String> {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return Vec::new();
+    };
+    LANG_PINNED_FIXTURES
+        .iter()
+        .filter(|(fixture, _)| *fixture == name)
+        .map(|(_, row)| format!("lang::{row}"))
+        .collect()
 }
 
 /// The `lang::` items a fixture exercises, by the spelling each construct

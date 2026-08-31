@@ -1,0 +1,43 @@
+use std::env
+
+// A `Map` held in a struct field. A `GosMap` has no reference count, so the
+// field owns its map outright: an aggregate copy takes a clone of its own, a
+// projected overwrite frees the map it replaces, and the field's death frees
+// the last one. Every arm here pins the observable half of that contract -
+// the copy's independence and the value's reachability through moves, calls,
+// and returns - identically on all three tiers.
+
+struct C { pages: Map<i64, i64> }
+
+fn fill(c: &mut C, i: i64) { c.pages = Map::from([(i, i + 1), (i + 2, i + 3)]) }
+
+fn total(c: C) -> i64 { c.pages.len() }
+
+fn make(n: i64) -> C { C { pages: Map::from([(n, n)]) } }
+
+fn main() {
+    // Replacement through a `&mut` receiver, in a loop.
+    let mut c = C { pages: Map::new() }
+    let mut i = 0
+    while i < 50 { fill(&mut c, i); i += 1 }
+    println("replaced: {}", c.pages.len())
+
+    // A copy is a value of its own.
+    let mut d = C { pages: Map::from([(1, 1)]) }
+    let d2 = d
+    d.pages.insert(2, 2)
+    println("copy: d={} d2={}", d.pages.len(), d2.pages.len())
+
+    // By-value pass and return.
+    let e = make(7)
+    let a = total(e)
+    let b = total(e)
+    println("byval: {} {} {}", a, b, e.pages.len())
+
+    // The map a moved-in temp handed over stays readable.
+    let mut f = C { pages: Map::new() }
+    f.pages = Map::from([(9, 90)])
+    println("moved: {:?}", f.pages.get(9))
+
+    let _ = env::args()
+}

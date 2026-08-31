@@ -963,6 +963,11 @@ pub const HANDLE_SIGNATURES: &[(&str, &str, &str)] = &[
     ),
     (
         "TcpStream",
+        "set_nodelay",
+        "fn set_nodelay(self: net::TcpStream, on: bool) -> ()",
+    ),
+    (
+        "TcpStream",
         "set_read_timeout_ms",
         "fn set_read_timeout_ms(self: net::TcpStream, timeout_ms: i64) -> ()",
     ),

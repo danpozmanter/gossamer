@@ -4107,6 +4107,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::map::gos_rt_map_set_blob_values as *const u8,
         ),
         (
+            "gos_rt_map_field_release",
+            crate::c_abi::map::gos_rt_map_field_release as *const u8,
+        ),
+        (
+            "gos_rt_map_field_clone",
+            crate::c_abi::map::gos_rt_map_field_clone as *const u8,
+        ),
+        (
             "gos_rt_map_set_vec_values",
             crate::c_abi::map::gos_rt_map_set_vec_values as *const u8,
         ),
@@ -6041,6 +6049,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_tcp_stream_set_write_timeout_ms",
             crate::c_abi::gos_rt_tcp_stream_set_write_timeout_ms as *const u8,
+        ),
+        (
+            "gos_rt_tcp_stream_set_nodelay",
+            crate::c_abi::gos_rt_tcp_stream_set_nodelay as *const u8,
         ),
         (
             "gos_rt_tcp_stream_write",

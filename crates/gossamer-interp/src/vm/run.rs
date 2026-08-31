@@ -42,7 +42,40 @@ fn map_like_deep_clone(v: &Value) -> Value {
             "MinHeap" | "MaxHeap" => {
                 crate::stdlib_builtins::container_heap::binary_heap_deep_clone(v)
             }
-            _ => crate::stdlib_builtins::set::set_deep_clone(v),
+            "Set" | "BTreeSet" => crate::stdlib_builtins::set::set_deep_clone(v),
+            // A user struct: rebuild it with every `Map` field deep-cloned,
+            // any depth of plain structs down, so a struct binding never
+            // shares an `Arc<Mutex<_>>` table with its source. Other fields
+            // stay cheap clones, container handles included - their copy
+            // discipline is their own and matches the compiled tier's.
+            _ => {
+                let wants_clone = |f: &Value| -> bool {
+                    match f {
+                        Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_) => true,
+                        Value::Struct(inner) => !matches!(
+                            inner.name.as_str(),
+                            "Set"
+                                | "BTreeSet"
+                                | "Deque"
+                                | "Queue"
+                                | "Stack"
+                                | "MinHeap"
+                                | "MaxHeap"
+                        ),
+                        _ => false,
+                    }
+                };
+                if inner.fields.iter().any(|(_, f)| wants_clone(f)) {
+                    let mut rebuilt = (**inner).clone();
+                    for (_, f) in rebuilt.fields.iter_mut() {
+                        if wants_clone(f) {
+                            *f = map_like_deep_clone(f);
+                        }
+                    }
+                    return Value::Struct(std::sync::Arc::new(rebuilt));
+                }
+                v.clone()
+            }
         },
         other => other.clone(),
     }

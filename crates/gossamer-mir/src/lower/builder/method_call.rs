@@ -3576,6 +3576,7 @@ impl<'a> Builder<'a> {
             (Some("net::TcpStream"), "set_write_timeout_ms") => {
                 Some("gos_rt_tcp_stream_set_write_timeout_ms")
             }
+            (Some("net::TcpStream"), "set_nodelay") => Some("gos_rt_tcp_stream_set_nodelay"),
             (Some("net::TcpStream"), "clear_read_timeout") => {
                 Some("gos_rt_tcp_stream_clear_read_timeout")
             }
@@ -4297,6 +4298,7 @@ impl<'a> Builder<'a> {
             "gos_rt_tcp_stream_write"
             | "gos_rt_tcp_stream_set_read_timeout_ms"
             | "gos_rt_tcp_stream_set_write_timeout_ms"
+            | "gos_rt_tcp_stream_set_nodelay"
             | "gos_rt_tcp_stream_clear_read_timeout"
             | "gos_rt_tcp_stream_clear_write_timeout"
             | "gos_rt_fs_file_create"
@@ -4754,6 +4756,7 @@ impl<'a> Builder<'a> {
             (Some("net::TcpStream"), "set_write_timeout_ms") => {
                 Some("gos_rt_tcp_stream_set_write_timeout_ms")
             }
+            (Some("net::TcpStream"), "set_nodelay") => Some("gos_rt_tcp_stream_set_nodelay"),
             (Some("net::TcpStream"), "clear_read_timeout") => {
                 Some("gos_rt_tcp_stream_clear_read_timeout")
             }
@@ -5159,15 +5162,23 @@ impl<'a> Builder<'a> {
         // it only describes conditional Option/Result copy-blob payloads.
         if matches!(
             runtime_symbol,
-            Some(
-                "gos_rt_map_insert_i64_i64_opt"
-                    | "gos_rt_map_insert_str_i64_opt"
-                    | "gos_rt_map_insert_typed_str_i64_opt"
-            )
-        ) && let TyKind::HashMap { value, .. } = self.tcx.kind_of(lowered_recv_ty)
-            && self.type_slot_bytes(*value) > 8
-        {
-            let _ = self.ensure_aggr_struct_meta(*value);
+            Some(s) if s.starts_with("gos_rt_map_insert") || s.starts_with("gos_rt_map_or_insert")
+        ) {
+            // The receiver may be reached through `&mut`; the map type is
+            // what carries the value type either way.
+            let mut recv = lowered_recv_ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(recv) {
+                recv = *inner;
+            }
+            if let TyKind::HashMap { value, .. } = self.tcx.kind_of(recv) {
+                // Any aggregate value takes the copy-blob path, a one-field
+                // struct included: its blob owns the field the copy retains,
+                // and the map's drop releases the blob.
+                // `ensure_aggr_struct_meta` answers `None` on its own for a
+                // value with no owning children.
+                let value = *value;
+                let _ = self.ensure_aggr_struct_meta(value);
+            }
         }
 
         if let Some(sym) = runtime_symbol {

@@ -916,6 +916,14 @@ pub unsafe extern "C" fn gos_rt_vec_set_slots(v: *mut GosVec, idx: i64, slots: *
 /// closing the early-`break` leak: slots the consumer never walked
 /// still drop their strings / nested vecs here.
 pub(crate) unsafe fn vec_release_owned_children(v: &GosVec) {
+    if rc_trace_enabled() {
+        eprintln!(
+            "VDEEPF  v={:p} children={} kind={}",
+            std::ptr::from_ref(v),
+            vec_slot_children(v).map_or(0, <[_]>::len),
+            v.elem_kind
+        );
+    }
     let Some(children) = vec_slot_children(v) else {
         return;
     };
@@ -1007,9 +1015,20 @@ pub unsafe extern "C" fn gos_rt_vec_mark_shared(v: *mut GosVec) {
 
 /// Bump a non-region `GosVec`'s strong count by one (the header-RC
 /// counterpart of `gos_rt_str_retain` for nested-vec children).
+/// Whether `GOS_RC_TRACE` was set at first use: prints one line per vec
+/// retain and release so a leak's per-pointer balance can be read off a run.
+/// Read once, so the hot paths pay a relaxed load and nothing else.
+pub(crate) fn rc_trace_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("GOS_RC_TRACE").is_some())
+}
+
 pub(crate) unsafe fn vec_retain_header(v: *mut GosVec) {
     if v.is_null() {
         return;
+    }
+    if rc_trace_enabled() {
+        eprintln!("VRETAIN v={v:p}");
     }
     let vec = unsafe { &*v };
     if vec_is_region(vec) {
@@ -1103,6 +1122,12 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
             }
         }
         vec_elem_kind::AGGR_OWNED => {
+            if rc_trace_enabled() {
+                eprintln!(
+                    "VSHARE  src={src:p} out={out:p} children={}",
+                    vec_slot_children(s).map_or(0, <[_]>::len)
+                );
+            }
             if let Some(children) = vec_slot_children(s) {
                 // `vec_set_slot_children` takes its own exclusive header
                 // borrow to create the lazy metadata carrier. Do not retain a

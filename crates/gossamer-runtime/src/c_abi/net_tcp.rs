@@ -380,6 +380,12 @@ pub unsafe extern "C" fn gos_rt_tcp_listener_accept(h: i64) -> i128 {
         };
         match listener.accept() {
             Ok((stream, peer)) => {
+                // Nagle off, as Go leaves a `TCPConn`: a request/response
+                // protocol writes a reply as a few small writes, and holding
+                // the later ones until the peer acknowledges the first pairs
+                // with the peer's delayed acknowledgement to cost a ~40 ms
+                // stall per exchange. `set_nodelay` turns it back on.
+                let _ = stream.set_nodelay(true);
                 let sh = insert_stream(stream);
                 let addr_cs = super::string::alloc_cstring(peer.to_string().as_bytes());
                 #[repr(C)]
@@ -432,7 +438,12 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_connect(addr: *const c_char) -> i128 
         let a = cstr_to_str(addr);
         let dialed = a.clone();
         match crate::sched_global::run_blocking("tcp-connect", move || TcpStream::connect(&a)) {
-            Ok(Ok(s)) => super::vec::gos_rt_result_new(0, insert_stream(s)),
+            Ok(Ok(s)) => {
+                // Nagle off by default, matching an accepted stream and Go's
+                // own `TCPConn`; see `gos_rt_tcp_listener_accept`.
+                let _ = s.set_nodelay(true);
+                super::vec::gos_rt_result_new(0, insert_stream(s))
+            }
             Ok(Err(e)) => tcp_err(&socket_error(&e, &dialed)),
             Err(e) => tcp_err(&e),
         }
@@ -606,6 +617,31 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_set_write_timeout_ms(h: i64, ms: i64)
             }
         } else {
             tcp_err("TcpStream::set_write_timeout_ms: stale handle")
+        }
+    })
+}
+
+/// `net::TcpStream::set_nodelay(handle, on) -> Result<(), Error>`.
+///
+/// A stream arrives with Nagle already off, so this is for the caller that
+/// wants it back on: a bulk writer sending many small pieces of one payload,
+/// where coalescing them costs nothing and saves packets.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tcp_stream_set_nodelay(h: i64, on: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let on = on != 0;
+        if let Some(tls) = tls_clone(h) {
+            match tls.lock().sock.set_nodelay(on) {
+                Ok(()) => super::vec::gos_rt_result_new(0, 0),
+                Err(e) => tcp_err(&socket_error(&e, "TlsStream::set_nodelay")),
+            }
+        } else if let Some(stream) = stream_clone(h) {
+            match stream.set_nodelay(on) {
+                Ok(()) => super::vec::gos_rt_result_new(0, 0),
+                Err(e) => tcp_err(&socket_error(&e, "TcpStream::set_nodelay")),
+            }
+        } else {
+            tcp_err("TcpStream::set_nodelay: stale handle")
         }
     })
 }

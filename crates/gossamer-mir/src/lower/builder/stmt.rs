@@ -346,6 +346,9 @@ impl<'a> Builder<'a> {
         );
 
         for (path, kind) in crate::lower::aggregate_rc_field_paths(self.tcx, ty) {
+            // A map field is not cloned here: the drop pass books one
+            // `gos_rt_map_field_clone` per aggregate copy, and a second swap
+            // would orphan the first clone.
             if kind != crate::lower::FieldRcKind::Vec {
                 continue;
             }
@@ -710,6 +713,15 @@ impl<'a> Builder<'a> {
                                 );
                             } else if gossamer_hir::is_capture_env_load(init)
                                 || self.is_fresh_user_call_result(value)
+                                // A `.clone()` result already took its deep
+                                // per-field copy at the dispatch, so the
+                                // binding takes the handles as they are - a
+                                // second walk would clone once per hop.
+                                || matches!(
+                                    &init.kind,
+                                    gossamer_hir::HirExprKind::MethodCall { name, .. }
+                                        if name.name.as_str() == "clone"
+                                )
                             {
                                 // Neither shape owns a fresh value. A closure's
                                 // capture prologue reads the environment slot,

@@ -92,6 +92,32 @@ fn probes() -> Vec<(String, String)> {
             println("{}", acc)
         }
         """)
+        ("clone_then_walk_tree", """
+        struct Node { name: String, kids: Vec<Node> }
+        fn build(d: i64) -> Node {
+            if d == 0 { return Node { name: "leaf", kids: #[] } }
+            Node { name: format("n{}", d), kids: #[build(d - 1), build(d - 1)] }
+        }
+        fn count(n: Node) -> i64 { let mut c = 1; for k in n.kids { c += count(k) }; c }
+        fn main() {
+            let mut acc = 0
+            for _ in 0..(COUNT / 5000) {
+                let t = build(8)
+                let u = t.clone()
+                acc += count(u)
+            }
+            println("{}", acc)
+        }
+        """)
+        ("map_in_struct_field", """
+        struct C { pages: Map<i64, i64> }
+        fn fill(c: &mut C, i: i64) { c.pages = Map::from([(i, i + 1)]) }
+        fn main() {
+            let mut c = C { pages: Map::new() }
+            for i in 0..COUNT { fill(&mut c, i) }
+            println("{}", c.pages.len())
+        }
+        """)
         ("closure_over_vec", """
         fn main() {
             let mut total = 0

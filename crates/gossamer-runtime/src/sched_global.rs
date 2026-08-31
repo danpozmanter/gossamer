@@ -596,6 +596,12 @@ pub fn report_deadlock_if_stuck(op: &str) {
     if PENDING_HANDOFFS.load(Ordering::Acquire) > 0 {
         return;
     }
+    // A live non-goroutine actor can send, receive, or close, whether or not a
+    // scheduler was ever built: an HTTP server holds one per connection in
+    // flight and one for its accept loop, and none of them is a goroutine.
+    if EXTERNAL_ACTORS.load(Ordering::Acquire) > 0 {
+        return;
+    }
     // No scheduler has ever been built, so no goroutine exists to send,
     // receive, or release: an OS thread blocking here waits on nobody.
     let Some(globals) = GLOBALS.get() else {
@@ -629,6 +635,45 @@ pub fn report_deadlock_if_stuck(op: &str) {
 
 /// Threads and goroutines currently suspended inside a channel wait.
 static CHANNEL_WAITERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Threads outside the goroutine set that can still run Gossamer code, and so
+/// can still send on, receive from, or close a channel.
+///
+/// The runtime serves an HTTP connection on an OS thread of its own rather
+/// than on a goroutine, and its accept loop waits for the next connection on
+/// another. Both run user code and reach channels, so a channel wait is not
+/// terminal while either is live, however few goroutines the scheduler holds.
+static EXTERNAL_ACTORS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Adds or removes the caller from the count of non-goroutine actors.
+///
+/// Prefer [`ExternalActor::enter`], which pairs the two halves.
+pub fn adjust_external_actors(entering: bool) {
+    if entering {
+        EXTERNAL_ACTORS.fetch_add(1, Ordering::AcqRel);
+    } else {
+        EXTERNAL_ACTORS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Counts the caller as an actor that can reach a channel for as long as it
+/// is held.
+pub struct ExternalActor;
+
+impl ExternalActor {
+    /// Registers the caller among the non-goroutine actors.
+    #[must_use]
+    pub fn enter() -> Self {
+        adjust_external_actors(true);
+        Self
+    }
+}
+
+impl Drop for ExternalActor {
+    fn drop(&mut self) {
+        adjust_external_actors(false);
+    }
+}
 
 /// Set once a compiled Gossamer program has entered `main`.
 ///

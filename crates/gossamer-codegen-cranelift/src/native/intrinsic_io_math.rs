@@ -1107,7 +1107,9 @@ pub(super) fn lower_intrinsic_call_io_math(
         | "gos_rt_option_slot_release"
         | "gos_rt_vec_set_elem_meta"
         | "gos_rt_map_set_blob_values"
-        | "gos_rt_map_set_vec_values" => {
+        | "gos_rt_map_set_vec_values"
+        | "gos_rt_map_field_release"
+        | "gos_rt_map_field_clone" => {
             // Guarded copy-blob accounting is emitted by the LLVM
             // lowering, which compiles every body of both build profiles
             // (debug is LLVM at -O0); this backend only sees the rare

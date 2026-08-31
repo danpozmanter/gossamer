@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.58.5 - Channel carriers, a false deadlock under a server, Nagle, and the container-field leaks
+
+- A struct stored as a map value releases every heap field it carries. The
+  entry's copy-blob owns the fields it retains and gives them back when the
+  entry dies; the insert site no longer mints a second share nothing returned,
+  and a one-field struct's blob now carries the same child layout a wider
+  one does. One heap field leaked per insert per field before, whatever the
+  field count.
+- A `Map` held in a struct field is released: a projected overwrite frees the
+  map it replaces, the field's death frees the last one, and an aggregate copy
+  takes a clone of its own on every tier - a copied struct used to share one
+  backing table with its source, so an insert through one showed through the
+  other.
+- `.clone()` of a by-value struct clones its growable fields. The identity
+  copy alone left the clone and its source naming one buffer per `Vec` field.
+- An `Option` or a `Result` crosses a channel. The element is a two-word
+  carrier and a channel slot holds one word, so `gos build` refused the program
+  outright and the JIT kept only the discriminant; both now box the carrier the
+  way a struct or tuple element is already boxed.
+- A server whose handlers share a pool through a channel keeps serving. The
+  runtime serves each connection on an OS thread rather than a goroutine, so a
+  handler waiting its turn on the pool read as a program with nothing left to
+  run and was killed with `all goroutines are asleep - deadlock!`. Connection
+  threads and the accept loop now count among the actors that can reach a
+  channel.
+- A `net::TcpStream` starts with Nagle's algorithm off, as Go leaves a
+  `TCPConn`. A request/response protocol writes its reply as a few small
+  writes, and coalescing them paired with the peer's delayed acknowledgement to
+  cost about 40 ms per exchange.
+- `net::TcpStream::set_nodelay(on)` turns coalescing back on for a caller that
+  wants it.
+
 ## 0.58.4 - Heap corruption, retention, ownership, module shadowing, u64 arguments, handler lowering
 
 - A container built into an aggregate is released. A struct or tuple takes a

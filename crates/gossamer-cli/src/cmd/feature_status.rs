@@ -933,12 +933,26 @@ mod tests {
         );
         assert!(!evidence.positive_tests.is_empty());
 
-        // A construct no line scan can name uniquely still claims nothing: a
-        // callback shorthand is a bare path in argument position, which
-        // nothing distinguishes from any other path.
-        let unproven = feature_status::item_evidence(
+        // A construct no line scan can name uniquely earns its tiers from the
+        // one fixture written to exercise it, pinned by name rather than by a
+        // pattern that would also match something else.
+        let pinned = feature_status::item_evidence(
             "lang::callback_shorthand",
             feature_status::derived_status("lang::callback_shorthand", Status::Shipped),
+        );
+        let mut pinned_out = String::new();
+        pinned_out.push_str(&json_string(pinned.status.tag()));
+        json_string_array(
+            &mut pinned_out,
+            pinned.supported_tiers.iter().map(|tier| tier.tag()),
+        );
+        assert_eq!(pinned_out, "\"shipped\"[\"vm\",\"cranelift\",\"llvm\"]");
+        assert!(!pinned.positive_tests.is_empty());
+
+        // A surface no fixture exercises still claims nothing.
+        let unproven = feature_status::item_evidence(
+            "std::compress::zstd",
+            feature_status::derived_status("std::compress::zstd", Status::Shipped),
         );
         let mut bare = String::new();
         bare.push_str(&json_string(unproven.status.tag()));

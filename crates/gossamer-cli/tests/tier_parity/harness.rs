@@ -910,6 +910,9 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/u64_unsigned.gos"),
     spec("feature-testing-examples/channel_close_drain.gos"),
     spec("feature-testing-examples/chan_struct_payload.gos"),
+    spec("feature-testing-examples/chan_carrier_elements.gos"),
+    spec("feature-testing-examples/doctest_fences.gos"),
+    spec("feature-testing-examples/map_struct_field_semantics.gos"),
     spec("feature-testing-examples/channel_timers.gos"),
     Spec {
         nondeterministic: true,
@@ -1502,6 +1505,9 @@ const SPECS: &[Spec] = &[
 ];
 
 const DEDICATED_FEATURE_TESTING_EXAMPLES: &[&str] = &[
+    // Driven by `http_channel_pool_{vm,cranelift,llvm}` in `server_parity.rs`:
+    // it needs concurrent clients, which the SPECS walk does not drive.
+    "http_channel_pool.gos",
     "http_bare_handler.gos",
     "http_plain_fn_handler.gos",
     "http_middleware_controls.gos",

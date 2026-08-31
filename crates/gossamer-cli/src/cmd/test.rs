@@ -1787,6 +1787,9 @@ pub(crate) mod tier_parity {
                     merge_module_status(&mut by_module, feature, &status);
                 }
             }
+            for feature in gossamer_std::manifest::feature_status::lang_features_pinned(file) {
+                merge_module_status(&mut by_module, feature, &status);
+            }
             records.push((name, status));
         }
         records.extend(by_module);
@@ -2411,6 +2414,9 @@ pub(crate) mod tier_parity {
                             &source,
                         ));
                     }
+                    used.extend(
+                        gossamer_std::manifest::feature_status::lang_features_pinned(&file),
+                    );
                 }
             }
             let recorded: BTreeSet<String> = crate::cmd::feature_status::release_evidence()

@@ -1,0 +1,45 @@
+use std::{http, sync, time}
+use std::http::router
+
+// An HTTP server whose handlers share a fixed pool of tokens through a channel,
+// which is how a front end bounds its use of a scarce downstream resource.
+//
+// The server runs no goroutines: the runtime serves each connection on an OS
+// thread, so with more requests in flight than tokens, a handler parks on the
+// channel while every other actor in the program is a thread the scheduler does
+// not own. The waiting handler is waiting for a peer that exists, so the wait is
+// ordinary backpressure and not a program with nothing left to run.
+//
+// Driven by `http_channel_pool_parity_across_tiers`, which holds more
+// connections open than the pool has tokens and expects every one to be served.
+
+const TOKENS: i64 = 2
+
+fn main() {
+    let addr = "127.0.0.1:8099"
+    let tx, rx = sync::channel_unbounded()
+    let mut i: i64 = 0
+    while i < TOKENS {
+        tx.send(i)
+        i += 1
+    }
+    println("pool of {} on {}", TOKENS, addr)
+    let routes = router::Router::new()
+        .get("/health", |_r, _p| http::Response::text(200, "ok"))
+        .get("/pool", |_r, _p| {
+            match rx.recv() {
+                Some(token) => {
+                    // Held across a wait so the pool is genuinely contended:
+                    // a request arriving now finds it empty and parks.
+                    time::sleep(20)
+                    tx.send(token)
+                    http::Response::text(200, "served")
+                }
+                None => http::Response::text(500, "pool closed")
+            }
+        })
+    match http::serve(addr, routes) {
+        Ok(()) => ()
+        Err(e) => println("serve error: {}", e)
+    }
+}

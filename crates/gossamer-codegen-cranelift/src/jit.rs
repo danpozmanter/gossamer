@@ -2832,6 +2832,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_tcp_stream_clear_write_timeout" => rt::gos_rt_tcp_stream_clear_write_timeout,
         "gos_rt_tcp_stream_set_read_timeout_ms" => rt::gos_rt_tcp_stream_set_read_timeout_ms,
         "gos_rt_tcp_stream_set_write_timeout_ms" => rt::gos_rt_tcp_stream_set_write_timeout_ms,
+        "gos_rt_tcp_stream_set_nodelay" => rt::gos_rt_tcp_stream_set_nodelay,
         "gos_rt_udp_close"           => rt::gos_rt_udp_close,
         "gos_rt_field_error_new" => rt::gos_rt_field_error_new,
         "gos_rt_field_error_path" => rt::gos_rt_field_error_path,

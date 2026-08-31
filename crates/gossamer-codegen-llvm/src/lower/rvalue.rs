@@ -467,6 +467,11 @@ impl<'a> Lowerer<'a> {
         );
 
         let mut arg_text = String::new();
+        // A map insert whose value is an aggregate copies it into a
+        // reference-counted blob at the call site, at strong 1 - the frame's
+        // own share, which the MIR passes cannot see to pair a release for.
+        // Recorded here so it is given back right after the call stores it.
+        let mut minted_map_blob: Option<String> = None;
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 arg_text.push_str(", ");
@@ -517,6 +522,7 @@ impl<'a> Lowerer<'a> {
                     .or_else(|| self.maybe_heap_copy_aggregate_for_map(arg))
             {
                 let _ = write!(arg_text, "i64 {heap_v}");
+                minted_map_blob = Some(heap_v);
                 continue;
             }
             if skey_insert_heap_copy
@@ -526,6 +532,7 @@ impl<'a> Lowerer<'a> {
                     .or_else(|| self.maybe_heap_copy_aggregate_for_map(arg))
             {
                 let _ = write!(arg_text, "i64 {heap_v}");
+                minted_map_blob = Some(heap_v);
                 continue;
             }
             if chan_send_spill && i == 1 {
@@ -536,7 +543,14 @@ impl<'a> Lowerer<'a> {
                 // sender's frame is reused. Heap-copy it (RC-aware) so the
                 // channel carries a stable pointer the receiver owns,
                 // matching the `gos_rt_result_new` Ok-payload path.
-                if let Some(heap_v) = self.maybe_heap_copy_aggregate(arg) {
+                // An `Option` or `Result` element is a two-word carrier, which
+                // no 8-byte channel slot holds. It boxes the way a value enum
+                // does everywhere else a single word must carry one, so the
+                // element word is the address of the carrier.
+                if let Some(heap_v) = self
+                    .maybe_heap_copy_aggregate(arg)
+                    .or_else(|| self.maybe_heap_copy_value_enum(arg))
+                {
                     let slot = self.entry_alloca("i64");
                     writeln!(self.out, "  store i64 {heap_v}, ptr {slot}").unwrap();
                     let _ = write!(arg_text, "ptr {slot}");
@@ -690,6 +704,7 @@ impl<'a> Lowerer<'a> {
         }
         if decl_ret == "void" {
             writeln!(self.out, "  call void @{name}({arg_text})").unwrap();
+            self.release_minted_map_blob(minted_map_blob.as_deref());
             // Rvalue-position void call: synthesise a sentinel value
             // matching the destination slot's type. Normally the dest
             // is unit-typed (a no-op store), but the drop pass may assign
@@ -704,6 +719,8 @@ impl<'a> Lowerer<'a> {
         } else {
             let tmp = self.fresh();
             writeln!(self.out, "  {tmp} = call {decl_ret} @{name}({arg_text})").unwrap();
+            self.release_minted_map_blob(minted_map_blob.as_deref());
+
             // Win64 Fat return: unwrap the `<16 x i8>` wire value back to the
             // `i128` the rest of the body manipulates.
             let tmp = if win_fat_ret {

@@ -1,0 +1,59 @@
+use std::sync
+
+// An `Option` or a `Result` element is a two-word carrier, which is wider than
+// the word a channel slot holds. Every arm of each goes through a channel here,
+// beside the shapes that already fit, so a tier that drops the second word is a
+// parity failure rather than a wrong number somewhere downstream.
+
+struct Pair { a: i64, b: i64 }
+
+fn drain_opts(rx: Receiver<Option<i64>>) -> String {
+    let mut out = ""
+    while let Some(slot) = rx.recv() {
+        out += match slot {
+            Some(v) => v.to_string()
+            None => "-"
+        }
+        out += " "
+    }
+    out.trim()
+}
+
+fn main() {
+    let to, ro = sync::channel_unbounded()
+    to.send(Some(1))
+    to.send(None)
+    to.send(Some(3))
+    to.close()
+    println("options: {}", drain_opts(ro))
+
+    let tr, rr = sync::channel_unbounded()
+    tr.send(Ok(7))
+    tr.send(Err("bad"))
+    tr.close()
+    while let Some(slot) = rr.recv() {
+        match slot {
+            Ok(v) => println("ok {}", v)
+            Err(e) => println("err {}", e)
+        }
+    }
+
+    // A carrier nested one deeper, and the shapes that already fit beside it.
+    let tn, rn = sync::channel_unbounded()
+    tn.send(Some(Ok(11)))
+    tn.close()
+    println("nested: {:?}", rn.recv())
+
+    let tp, rp = sync::channel_unbounded()
+    tp.send(Pair { a: 1, b: 2 })
+    tp.send(Pair { a: 3, b: 4 })
+    tp.close()
+    let mut total = 0
+    while let Some(p) = rp.recv() { total += p.a + p.b }
+    println("pairs: {}", total)
+
+    let ts, rs = sync::channel_unbounded()
+    ts.send(5)
+    ts.close()
+    println("scalar: {:?}", rs.recv())
+}

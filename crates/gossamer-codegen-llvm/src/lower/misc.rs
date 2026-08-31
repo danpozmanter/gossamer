@@ -322,6 +322,22 @@ impl<'a> Lowerer<'a> {
     /// Heap-copies an aggregate that becomes a `HashMap` entry. Structural
     /// metadata is preferred over the guarded copy-blob metadata because the
     /// map owns direct `String` / `Vec` fields as well as the outer blob.
+    /// Gives back the share a map insert's call-site copy was minted with.
+    ///
+    /// `gos_rt_rc_alloc_copy` hands the frame a blob at strong 1 and the entry
+    /// takes its own share inside the runtime, so the frame owes one release
+    /// once the call has stored the value; the blob's children are given back
+    /// by its destructor, which runs only when it reaches zero.
+    pub(crate) fn release_minted_map_blob(&mut self, blob: Option<&str>) {
+        let Some(blob) = blob else {
+            return;
+        };
+        declare_rt(&mut self.runtime_refs, "gos_rt_rc_release");
+        let as_ptr = self.fresh();
+        writeln!(self.out, "  {as_ptr} = inttoptr i64 {blob} to ptr").unwrap();
+        writeln!(self.out, "  call void @gos_rt_rc_release(ptr {as_ptr})").unwrap();
+    }
+
     pub(crate) fn maybe_heap_copy_aggregate_for_map(&mut self, arg: &Operand) -> Option<String> {
         self.maybe_heap_copy_aggregate_with(arg, /* leak */ false, /* map_owned */ true)
     }
@@ -421,7 +437,13 @@ impl<'a> Lowerer<'a> {
             self.lower_place_address(p)
         };
         declare_rt(&mut self.runtime_refs, name);
-        if name == "gos_rt_option_slot_retain" || name == "gos_rt_option_slot_release" {
+        if matches!(
+            name,
+            "gos_rt_option_slot_retain"
+                | "gos_rt_option_slot_release"
+                | "gos_rt_map_field_release"
+                | "gos_rt_map_field_clone"
+        ) {
             // The helpers read the payload word beside the discriminant, so
             // they take the carrier's address. A local holds the carrier
             // itself, so its own storage is that address; a reference holds

@@ -3518,6 +3518,47 @@ pub unsafe extern "C" fn gos_rt_map_free(m: *mut GosMap) {
     });
 }
 
+/// Frees the map a by-value aggregate field owns and nulls the slot.
+///
+/// `slot` is the field's storage address. Nulling makes the release
+/// idempotent, so the drop pass may book it at more than one exit edge of the
+/// same field without the second booking touching a freed map. Null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_field_release(slot: *mut *mut GosMap) {
+    ffi_entry!((), {
+        if slot.is_null() {
+            return;
+        }
+        let m = unsafe { slot.read_unaligned() };
+        if m.is_null() {
+            return;
+        }
+        unsafe { slot.write_unaligned(std::ptr::null_mut()) };
+        unsafe { gos_rt_map_free(m) };
+    });
+}
+
+/// Replaces the map a by-value aggregate field holds with its own clone.
+///
+/// `slot` is the field's storage address. Emitted after a copy that would
+/// otherwise leave two aggregates naming one map: a `GosMap` has no reference
+/// count, so a copied field takes a value of its own the way a map binding
+/// does. Null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_field_clone(slot: *mut *mut GosMap) {
+    ffi_entry!((), {
+        if slot.is_null() {
+            return;
+        }
+        let m = unsafe { slot.read_unaligned() };
+        if m.is_null() {
+            return;
+        }
+        let cloned = unsafe { crate::c_abi::gos_rt_map_clone(m) };
+        unsafe { slot.write_unaligned(cloned) };
+    });
+}
+
 /// Wire shape of `gossamer_binding::native::BindingGosMap`. Defined
 /// here (as a private type) so the dedicated free helper can box it
 /// back without the runtime depending on the binding crate. The two
@@ -3600,6 +3641,9 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         // in flight.
         let old_rc = crate::c_abi::vec::vec_rc_atomic(unsafe { &*v })
             .fetch_sub(1, std::sync::atomic::Ordering::Release);
+        if crate::c_abi::vec::rc_trace_enabled() {
+            eprintln!("VFREE   v={v:p} old_rc={old_rc}");
+        }
         // A count that was already zero means this reference was handed back
         // twice. Reclaiming again would return the block to the allocator a
         // second time, so the release stops here; `GOS_RC_DEBUG` names the

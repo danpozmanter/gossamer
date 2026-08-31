@@ -88,6 +88,13 @@ pub(crate) enum FieldRcKind {
     Weak,
     /// A `Vec<T>` / `[T]` field: `gos_rt_vec_retain` / `gos_rt_vec_free`.
     Vec,
+    /// A `Map` field. A `GosMap` has no reference count, so the field is its
+    /// map's sole owner: a copy takes a clone of its own
+    /// (`gos_rt_map_field_clone`), and a death or overwrite frees through
+    /// `gos_rt_map_field_release`, which nulls the slot so a release booked
+    /// on more than one exit edge stays a no-op. Both take the FIELD's
+    /// address rather than the map word.
+    Map,
 }
 
 /// One field-level retain/release in the by-value-aggregate teardown:
@@ -307,6 +314,8 @@ pub(crate) fn aggregate_rc_field_paths(tcx: &TyCtxt, ty: Ty) -> AggFieldPaths {
         // death free each hold their own share.
         if matches!(tcx.kind_of(t), TyKind::Vec(_) | TyKind::Slice(_)) {
             Some(FieldRcKind::Vec)
+        } else if matches!(tcx.kind_of(t), TyKind::HashMap { .. }) {
+            Some(FieldRcKind::Map)
         } else if tcx.is_rc_managed(t) {
             Some(if tcx.is_weak_ty(t) {
                 FieldRcKind::Weak
@@ -621,6 +630,34 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             )
         {
             borrowed_enum_src[destination.local.0 as usize] = true;
+        }
+    }
+    // A carrier read straight out of a container or aggregate slot - the
+    // `defs[i]` of a by-value `[Option<Vec<i64>>; N]`, a struct's carrier
+    // field - is the same borrow those helpers answer, but a fixed array and
+    // a by-value aggregate are indexed IN PLACE, so the read is a projected
+    // copy rather than a call and nothing above sees it. The payload
+    // extracted from such a carrier belongs to the container, whose own
+    // per-element release gives it back; classifying it as owned frees it
+    // under every other holder.
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Use(Operand::Copy(src)),
+            } = &stmt.kind
+                && place.projection.is_empty()
+                && !src.projection.is_empty()
+                && (place.local.0 as usize) < n_locals
+                && src.projection.iter().all(|p| {
+                    matches!(
+                        p,
+                        crate::ir::Projection::Field(_) | crate::ir::Projection::Index(_)
+                    )
+                })
+            {
+                borrowed_enum_src[place.local.0 as usize] = true;
+            }
         }
     }
     // Propagate forward through plain copies (`let opt = row[0]` then
@@ -1183,6 +1220,29 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 // caller's binding releases the fields where it ends, so the
                 // stored entry needs a share of each of them.
                 if !stores_aggregate_by_pointer(name) {
+                    continue;
+                }
+                // A keyed map copies an aggregate value into a
+                // reference-counted blob. When the value type's structural
+                // meta is registered, the blob's copy retains every heap
+                // field itself and its release at the entry's death gives
+                // each back - a share minted here would have no releaser. The
+                // check is the same fact the backend's copy site reads, so
+                // the two sides always agree; a route that never registered
+                // the meta keeps the mint and degrades to a bounded leak
+                // rather than an entry whose fields die under it.
+                if (name.starts_with("gos_rt_map_insert")
+                    || name.starts_with("gos_rt_map_or_insert"))
+                    && let Operand::Copy(vp) = arg
+                    && vp.projection.is_empty()
+                    && (vp.local.0 as usize) < body.locals.len()
+                    && tcx
+                        .rc_meta(&format!(
+                            "gos_rc_meta_boxaggr_{}",
+                            body.locals[vp.local.0 as usize].ty.as_u32()
+                        ))
+                        .is_some()
+                {
                     continue;
                 }
                 if let Operand::Copy(p) = arg
@@ -2246,6 +2306,53 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         })
         .collect();
 
+    // Dests of a bare `dest = Copy(src)` whose source is an aggregate carrying
+    // RC fields, but which the ownership sets exclude (a loop's by-value
+    // element extract, classified as a borrow of the container's storage).
+    // The struct-copy retain below mints each heap field's share on them
+    // exactly as on an owned local, so they take the RELEASE half of the
+    // schedule too - zero-init, a release before a reassignment or a
+    // projected overwrite, and a release at return - one release per mint.
+    // They stay outside the retain-only arms keyed to the owned sets.
+    let borrow_copy_agg_locals: Vec<(usize, AggFieldPaths)> = {
+        let owned: std::collections::HashSet<usize> = agg_locals
+            .iter()
+            .chain(param_agg_locals.iter())
+            .map(|(l, _)| *l)
+            .collect();
+        let mut minted: Vec<usize> = Vec::new();
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::Use(Operand::Copy(src)),
+                } = &stmt.kind
+                    && place.projection.is_empty()
+                    && src.projection.is_empty()
+                    // The return place hands its fields to the caller, whose
+                    // frame owns them from the copy on: a release here would
+                    // free what the caller was just given.
+                    && place.local.0 != 0
+                    && (place.local.0 as usize) < n_locals
+                    && (src.local.0 as usize) < n_locals
+                    && !owned.contains(&(place.local.0 as usize))
+                    && !body.locals[place.local.0 as usize].region
+                    && !agg_rc_fields(body.locals[src.local.0 as usize].ty).is_empty()
+                    && !minted.contains(&(place.local.0 as usize))
+                {
+                    minted.push(place.local.0 as usize);
+                }
+            }
+        }
+        minted
+            .into_iter()
+            .filter_map(|i| {
+                let fields = agg_rc_fields(body.locals[i].ty);
+                (!fields.is_empty()).then_some((i, fields))
+            })
+            .collect()
+    };
+
     let ref_agg_locals: Vec<(usize, AggFieldPaths)> = (0..n_locals)
         .filter(|&i| {
             !body.locals[i].region
@@ -2406,6 +2513,9 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         .any(|(l, _)| *l == place.local.0 as usize)
                     || ref_agg_locals
                         .iter()
+                        .any(|(l, _)| *l == place.local.0 as usize)
+                    || borrow_copy_agg_locals
+                        .iter()
                         .any(|(l, _)| *l == place.local.0 as usize))
             {
                 // A source whose single consuming read is this store hands
@@ -2420,6 +2530,17 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                             && (src.local.0 as usize) < moved.len()
                             && moved[src.local.0 as usize]
                 );
+                // A map cannot be co-owned, so the after-store "retain" is a
+                // clone of the field's own. It is owed only when the source
+                // local keeps a release of the original - a source with no
+                // booked release hands its map over, and a clone would strand
+                // the moved-in one with no owner.
+                let map_source_kept = matches!(
+                    rvalue,
+                    Rvalue::Use(Operand::Copy(src))
+                        if src.projection.is_empty()
+                            && releasable_set.contains(&src.local.0)
+                );
                 let path: Vec<u32> = place
                     .projection
                     .iter()
@@ -2432,12 +2553,18 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     .iter()
                     .chain(param_agg_locals.iter())
                     .chain(ref_agg_locals.iter())
+                    .chain(borrow_copy_agg_locals.iter())
                     .find(|(l, _)| *l == place.local.0 as usize)
                     .and_then(|(_, fields)| fields.iter().find(|(p, _)| *p == path))
                     .map(|(p, k)| (p.clone(), *k))
                 {
                     field_gaps[bi][si].push((false, place.local, path.clone(), kind));
-                    if !source_moved {
+                    let wants_retain = if kind == FieldRcKind::Map {
+                        map_source_kept
+                    } else {
+                        !source_moved
+                    };
+                    if wants_retain {
                         field_gaps[bi][si + 1].push((true, place.local, path, kind));
                     }
                 }
@@ -2449,6 +2576,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 // owned aggregate local (null-safe first time via zero-init).
                 if let Some((_, fields)) = agg_locals
                     .iter()
+                    .chain(borrow_copy_agg_locals.iter())
                     .find(|(l, _)| *l == place.local.0 as usize)
                 {
                     for (f, w) in fields {
@@ -2538,7 +2666,11 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             }
         }
         if matches!(block.terminator, Terminator::Return) {
-            for (li, fields) in agg_locals.iter().chain(param_agg_locals.iter()) {
+            for (li, fields) in agg_locals
+                .iter()
+                .chain(param_agg_locals.iter())
+                .chain(borrow_copy_agg_locals.iter())
+            {
                 for (f, w) in fields {
                     field_gaps[bi][len].push((
                         false,
@@ -2556,6 +2688,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             && destination.projection.is_empty()
             && let Some((_, fields)) = agg_locals
                 .iter()
+                .chain(borrow_copy_agg_locals.iter())
                 .find(|(l, _)| *l == destination.local.0 as usize)
         {
             for (f, w) in fields {
@@ -2635,7 +2768,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             // Zero-init each aggregate local's RC field slots so the
             // release-before-reassignment reads null (a no-op) on the first
             // assignment instead of dereferencing an uninitialised slot.
-            for (li, fields) in &agg_locals {
+            for (li, fields) in agg_locals.iter().chain(borrow_copy_agg_locals.iter()) {
                 for (f, _) in fields {
                     new_stmts.push(Statement {
                         kind: StatementKind::Assign {
@@ -2691,6 +2824,8 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         (false, FieldRcKind::Weak) => "gos_rt_rc_weak_release",
                         (true, FieldRcKind::Vec) => "gos_rt_vec_retain",
                         (false, FieldRcKind::Vec) => "gos_rt_vec_free",
+                        (true, FieldRcKind::Map) => "gos_rt_map_field_clone",
+                        (false, FieldRcKind::Map) => "gos_rt_map_field_release",
                     };
                     let dest = Local(u32::try_from(next_unit).expect("local overflow"));
                     next_unit += 1;
@@ -3729,7 +3864,15 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
         let TyKind::HashMap { value, .. } = tcx.kind_of(body.locals[i].ty) else {
             return None;
         };
-        if tcx.aggr_copy_meta(*value).is_some() {
+        // The backend copies an aggregate value into a blob whenever EITHER
+        // meta is registered - it reads the structural one first and falls
+        // back to the guarded copy meta - so the map has to be tagged as
+        // holding blob values under exactly the same condition. Tagging is
+        // what makes the entry take its own share and give it back at the
+        // entry's death; under-tagging leaves the stored blob owned by the
+        // inserting frame alone, which then frees it out from under the map.
+        let structural = format!("gos_rc_meta_boxaggr_{}", value.as_u32());
+        if tcx.aggr_copy_meta(*value).is_some() || tcx.rc_meta(&structural).is_some() {
             Some(VecMeta::MapBlob)
         } else if let TyKind::Vec(elem) | TyKind::Slice(elem) = tcx.kind_of(*value) {
             // A byte sequence is stored as the bytes themselves - the insert
@@ -5738,7 +5881,10 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 && body.locals.get(place.local.0 as usize).is_some_and(|decl| {
                     aggregate_rc_field_paths(tcx, decl.ty)
                         .iter()
-                        .any(|(path, kind)| *kind == FieldRcKind::Vec && path.as_slice() == [idx])
+                        .any(|(path, kind)| {
+                            matches!(kind, FieldRcKind::Vec | FieldRcKind::Map)
+                                && path.as_slice() == [idx]
+                        })
                 })
         };
         for block in &body.blocks {

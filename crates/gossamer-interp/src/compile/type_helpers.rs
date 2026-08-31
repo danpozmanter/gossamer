@@ -94,6 +94,37 @@ impl<'tcx> FnBuilder<'tcx> {
         )
     }
 
+    /// Whether `expr` is a by-value struct or tuple holding, at any nesting
+    /// depth, a field whose entries live behind `Arc<Mutex<_>>` (a `Map`). A
+    /// plain register copy of such a value would share that field's backing
+    /// table between the binding and its source, so the binding takes a deep
+    /// clone the way a bare `Map` binding does.
+    pub(crate) fn expr_is_aggregate_with_map(&self, expr: &HirExpr) -> bool {
+        self.ty_holds_map_like(self.unwrap_ref(expr.ty), 0)
+    }
+
+    fn ty_holds_map_like(&self, ty: gossamer_types::Ty, depth: u32) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        match self.tcx.kind(ty) {
+            Some(TyKind::HashMap { .. }) => true,
+            Some(TyKind::Adt { def, .. }) => {
+                self.tcx.struct_field_tys(*def).is_some_and(|fields| {
+                    fields
+                        .to_vec()
+                        .iter()
+                        .any(|f| self.ty_holds_map_like(*f, depth + 1))
+                })
+            }
+            Some(TyKind::Tuple(elems)) => elems
+                .clone()
+                .iter()
+                .any(|e| self.ty_holds_map_like(*e, depth + 1)),
+            _ => false,
+        }
+    }
+
     /// Bare type name to dispatch a struct `==` / `!=` through its
     /// derived `<Type>::eq` method, seeing through `&` / `&mut`. Returns
     /// `Some` only for a *struct* whose layout the compiler knows (an

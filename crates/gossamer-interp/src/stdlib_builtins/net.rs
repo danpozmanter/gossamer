@@ -155,6 +155,7 @@ pub(crate) fn install_net(globals: &mut Vec<(&'static str, Value)>) {
             "TcpStream::set_write_timeout_ms",
             builtin_tcp_stream_set_write_timeout_ms,
         ),
+        ("TcpStream::set_nodelay", builtin_tcp_stream_set_nodelay),
         (
             "TcpStream::clear_read_timeout",
             builtin_tcp_stream_clear_read_timeout,
@@ -248,6 +249,12 @@ pub(crate) fn builtin_tcp_listener_accept(args: &[Value]) -> RuntimeResult<Value
     let res = listener.lock().accept().map_err(|e| e.to_string());
     match res {
         Ok((stream, addr)) => {
+            // Nagle off, as Go leaves a `TCPConn`: a request/response protocol
+            // writes a reply as a few small writes, and holding the later ones
+            // until the peer acknowledges the first pairs with the peer's
+            // delayed acknowledgement to cost a ~40 ms stall per exchange.
+            // `set_nodelay` turns it back on.
+            let _ = stream.set_nodelay(true);
             let sid = next_net_id();
             TCP_STREAM_REGISTRY.with(|r| {
                 r.borrow_mut()
@@ -294,6 +301,9 @@ pub(crate) fn builtin_tcp_stream_connect(args: &[Value]) -> RuntimeResult<Value>
         net_std::TcpStream::connect(&addr)
     }) {
         Ok(Ok(stream)) => {
+            // Nagle off by default, matching an accepted stream and Go's own
+            // `TCPConn`; see `builtin_tcp_listener_accept`.
+            let _ = stream.set_nodelay(true);
             let id = next_net_id();
             TCP_STREAM_REGISTRY.with(|r| {
                 r.borrow_mut()
@@ -539,6 +549,35 @@ pub(crate) fn builtin_tcp_stream_set_read_timeout_ms(args: &[Value]) -> RuntimeR
 
 pub(crate) fn builtin_tcp_stream_set_write_timeout_ms(args: &[Value]) -> RuntimeResult<Value> {
     tcp_stream_timeout_builtin(args, false, false)
+}
+
+/// `net::TcpStream::set_nodelay(on)`. A stream arrives with Nagle already off,
+/// so this is for the caller that wants it back on.
+pub(crate) fn builtin_tcp_stream_set_nodelay(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("TcpStream::set_nodelay: missing handle"));
+    };
+    let on = matches!(args.get(1), Some(Value::Bool(true)));
+    match set_tcp_stream_nodelay(id, on) {
+        Ok(()) => Ok(ok_variant(Value::Unit)),
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+fn set_tcp_stream_nodelay(id: i64, on: bool) -> Result<(), String> {
+    if tls_has(id) {
+        return match fetch_socket(&TLS_STREAM_REGISTRY, id) {
+            Some(arc) => arc.lock().set_nodelay(on).map_err(|e| e.to_string()),
+            None => Err("TcpStream::set_nodelay: stale handle".to_string()),
+        };
+    }
+    match fetch_socket(&TCP_STREAM_REGISTRY, id) {
+        Some(arc) => match arc.lock().as_ref() {
+            Some(stream) => stream.set_nodelay(on).map_err(|e| e.to_string()),
+            None => Err("TcpStream::set_nodelay: closed handle".to_string()),
+        },
+        None => Err("TcpStream::set_nodelay: stale handle".to_string()),
+    }
 }
 
 pub(crate) fn builtin_tcp_stream_clear_read_timeout(args: &[Value]) -> RuntimeResult<Value> {

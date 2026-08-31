@@ -266,6 +266,9 @@ impl<'a> Builder<'a> {
                                 crate::lower::FieldRcKind::Vec => "gos_rt_vec_retain",
                                 crate::lower::FieldRcKind::Weak => "gos_rt_rc_weak_retain",
                                 crate::lower::FieldRcKind::Rc => "gos_rt_rc_retain",
+                                // Takes the field's address and swaps in a
+                                // clone: a map cannot be co-owned.
+                                crate::lower::FieldRcKind::Map => "gos_rt_map_field_clone",
                             };
                             let retain_dest = self.fresh(i64_ty);
                             self.emit_assign(

@@ -269,6 +269,16 @@ impl TcpStream {
         self.set_write_timeout((ms > 0).then(|| Duration::from_millis(ms as u64)))
     }
 
+    /// Sets whether small writes go out immediately rather than being coalesced.
+    ///
+    /// A stream arrives with this on, so passing `false` is what asks for
+    /// Nagle's algorithm back.
+    pub fn set_nodelay(&self, on: bool) -> Result<(), IoError> {
+        self.inner
+            .set_nodelay(on)
+            .map_err(|e| IoError::from_std(e, "TcpStream::set_nodelay"))
+    }
+
     /// Clears the read timeout.
     pub fn clear_read_timeout(&self) -> Result<(), IoError> {
         self.set_read_timeout(None)
@@ -562,6 +572,15 @@ impl TlsStream {
     /// Convenience wrapper for Gossamer code: non-positive values clear.
     pub fn set_write_timeout_ms(&self, ms: i64) -> Result<(), IoError> {
         self.set_write_timeout((ms > 0).then(|| Duration::from_millis(ms as u64)))
+    }
+
+    /// Sets whether small writes go out immediately; see
+    /// [`TcpStream::set_nodelay`].
+    pub fn set_nodelay(&self, on: bool) -> Result<(), IoError> {
+        self.inner
+            .sock
+            .set_nodelay(on)
+            .map_err(|e| IoError::from_std(e, "TlsStream::set_nodelay"))
     }
 
     /// Clears the read timeout.

@@ -280,11 +280,28 @@ impl<'a> Builder<'a> {
             if let Some(en) = self.local_elem_struct.get(&receiver_local).cloned() {
                 self.local_elem_struct.insert(dest, en);
             }
-            self.emit_assign(
-                Place::local(dest),
-                Rvalue::Use(Operand::Copy(Place::local(receiver_local))),
-                span,
-            );
+            // `clone` of a by-value struct or tuple answers a value of its
+            // own, growable field storage included. The identity copy stays -
+            // the deep per-field clone belongs to the one consumer that binds
+            // or stores the result, exactly as a binding copy takes it, so a
+            // chain of copies clones once rather than once per hop.
+            let clone_of_aggregate = method.name.as_str() == "clone"
+                && matches!(
+                    self.tcx.kind_of(dest_ty),
+                    TyKind::Adt { def, .. } if def.local < u32::MAX - 16
+                )
+                && !self.tcx.is_rc_managed(dest_ty)
+                && !self.tcx.is_inline_enum_ty(dest_ty);
+            if clone_of_aggregate {
+                self.emit_owned_clone_binding(receiver_local, dest, span);
+            }
+            if !clone_of_aggregate {
+                self.emit_assign(
+                    Place::local(dest),
+                    Rvalue::Use(Operand::Copy(Place::local(receiver_local))),
+                    span,
+                );
+            }
             // `clone` answers a value of its own. A `String` and a `Vec` say
             // so through their own helpers, and every other reference-counted
             // value reaches the identity copy above - a user enum's heap node,
