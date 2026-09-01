@@ -9,6 +9,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+mod common;
+
 static SERIAL: AtomicU64 = AtomicU64::new(0);
 
 fn fixture(name: &str, source: &str) -> (PathBuf, PathBuf) {
@@ -85,19 +87,6 @@ fn assert_bounded_live_vecs(binary: &Path) {
     );
 }
 
-/// CPU a server's process tree has spent, in clock ticks, or `None` off Linux.
-#[cfg(target_os = "linux")]
-fn proc_cpu_ticks(pid: u32) -> Option<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    // The comm field can hold spaces and parentheses, so fields are counted
-    // from the closing paren rather than from the start of the line.
-    let rest = stat.rsplit_once(')')?.1;
-    let cols: Vec<&str> = rest.split_whitespace().collect();
-    // utime and stime are fields 14 and 15 of the line, which are 11 and 12
-    // past the state field that opens `rest`.
-    Some(cols.get(11)?.parse::<u64>().ok()? + cols.get(12)?.parse::<u64>().ok()?)
-}
-
 /// A port nothing is listening on, learned by binding and letting go.
 #[cfg(target_os = "linux")]
 fn free_port() -> u16 {
@@ -108,33 +97,15 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// The CPU an HTTP server spends per request it answers.
-///
-/// Most of a request is two system calls - one read, one write - so this is
-/// mostly a floor rather than a figure to tune. The ceiling is set to catch a
-/// change that multiplies the work, not to police a few hundred nanoseconds:
-/// the fixture runs beside every other test in the workspace, on a machine
-/// whose other cores are busy.
-#[test]
+/// Runs the measured load against a server binary started with `arg` on
+/// `port`, and answers the CPU microseconds it spent per request.
 #[cfg(target_os = "linux")]
-fn http_server_cpu_per_request_stays_near_its_syscall_floor() {
+fn server_cpu_per_request(label: &str, binary: &Path, arg: String, port: u16) -> f64 {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
-    let port = free_port();
-    let binary = build_release(
-        "http_cpu_floor",
-        r#"
-use std::{env, http}
-use std::http::router
-let addr = env::args()[0]
-let routes = router::Router::new()
-    .get("/ping", |_req, _p| http::Response::text(200, "ok"))
-let _ = http::serve(addr, routes)
-"#,
-    );
-    let mut server = Command::new(&binary)
-        .arg(format!("127.0.0.1:{port}"))
+    let mut server = Command::new(binary)
+        .arg(arg)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -183,10 +154,10 @@ let _ = http::serve(addr, routes)
     let warmed: usize = warm.into_iter().map(|h| h.join().unwrap_or(0)).sum();
     assert!(warmed > 0, "no request was answered");
 
-    let before = proc_cpu_ticks(server.id()).expect("read the server's CPU");
+    let before = common::proc_cpu_ticks(server.id()).expect("read the server's CPU");
     let handles: Vec<_> = (0..workers).map(|_| drive(per_worker)).collect();
     let answered: usize = handles.into_iter().map(|h| h.join().unwrap_or(0)).sum();
-    let after = proc_cpu_ticks(server.id()).expect("read the server's CPU");
+    let after = common::proc_cpu_ticks(server.id()).expect("read the server's CPU");
     let _ = server.kill();
     let _ = server.wait();
 
@@ -195,13 +166,49 @@ let _ = http::serve(addr, routes)
         workers * per_worker,
         "every worker must finish its requests"
     );
-    let hz = 100u64; // CLK_TCK on every Linux this runs on
-    let micros_per_request = (after - before) as f64 * 1_000_000.0 / hz as f64 / answered as f64;
-    eprintln!("http floor: {answered} requests, {micros_per_request:.2} us of CPU each");
+    let micros = common::cpu_micros_per_request(after - before, answered);
+    eprintln!("{label}: {answered} requests, {micros:.2} us of CPU each");
+    micros
+}
+
+/// The CPU an HTTP server spends per request it answers.
+///
+/// Most of a request is two system calls - one read, one write - so the figure
+/// to hold is the ratio against a raw-socket server measured on the same
+/// machine, not a microsecond count: syscalls on a virtualised CI runner cost
+/// several times what they cost on a workstation. The bound catches a change
+/// that multiplies the HTTP layer's own work, not a few hundred nanoseconds.
+#[test]
+#[cfg(target_os = "linux")]
+fn http_server_cpu_per_request_stays_near_its_syscall_floor() {
+    let port = free_port();
+    let binary = build_release(
+        "http_cpu_floor",
+        r#"
+use std::{env, http}
+use std::http::router
+let addr = env::args()[0]
+let routes = router::Router::new()
+    .get("/ping", |_req, _p| http::Response::text(200, "ok"))
+let _ = http::serve(addr, routes)
+"#,
+    );
+    let served = server_cpu_per_request("http floor", &binary, format!("127.0.0.1:{port}"), port);
+
+    let raw_port = free_port();
+    let raw = build_release("tcp_response_floor", common::TCP_RESPONSE_FLOOR_SOURCE);
+    let floor = server_cpu_per_request(
+        "raw socket floor",
+        &raw,
+        format!("127.0.0.1:{raw_port}"),
+        raw_port,
+    );
+
     assert!(
-        micros_per_request <= 25.0,
-        "HTTP server spent {micros_per_request:.1} us of CPU per request; \
-         the floor is about two system calls, so this is a multiple of it"
+        served <= floor * 3.0,
+        "HTTP server spent {served:.1} us of CPU per request against a \
+         {floor:.1} us raw-socket floor on this machine, so the HTTP layer \
+         costs a multiple of the two system calls a request makes"
     );
 }
 
@@ -598,6 +605,42 @@ println("{}", total)
         "closure-capture-map-struct",
         small,
         large,
+        Duration::from_millis(800),
+    );
+}
+
+/// A struct passed by value to a callee that only reads it shares the caller's
+/// storage, so the call costs the same whatever its `Vec` field holds.
+///
+/// The clone that gives a by-value copy its own growable storage is observable
+/// only when the callee can write the parameter or let it outlive the call.
+/// When it can do neither, the clone is pure cost, and it is paid per call, so
+/// it scales with the field rather than with the work: the wide run below ran
+/// sixty times the narrow one when every call copied the column vector.
+#[test]
+fn struct_passed_by_value_to_a_reading_callee_shares_its_vec_field() {
+    let binary = build_release(
+        "struct_byvalue_field_share",
+        r#"
+use std::env
+struct Row { id: i64, cols: Vec<String> }
+fn width(r: Row) -> i64 { r.cols.len() }
+let w: i64 = env::args()[0].to_i64().unwrap_or(8)
+let mut cols: Vec<String> = #[]
+for i in 0..w { cols.push("column-" + i.to_string()) }
+let row = Row { id: 1, cols: cols }
+let mut total: i64 = 0
+for _i in 0..200000 { total += width(row) }
+println("{}", total)
+"#,
+    );
+    assert_output(&binary, 8, "1600000");
+    let narrow = timed(&binary, 8);
+    let wide = timed(&binary, 512);
+    assert_linear_and_fast(
+        "struct-by-value-vec-field",
+        narrow,
+        wide,
         Duration::from_millis(800),
     );
 }

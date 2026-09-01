@@ -30,3 +30,4 @@ pub use tree::{
     HirParam, HirPat, HirPatKind, HirProgram, HirSelectArm, HirSelectOp, HirStatic, HirStmt,
     HirStmtKind, HirTrait, HirUnaryOp,
 };
+pub use tree::{for_each_child_expr, for_each_child_expr_in_block};

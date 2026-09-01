@@ -35,6 +35,12 @@
   rather than a copy of it. A capture carrying a `Map` field cloned the whole
   table on every call, so a handler holding a 50 000-entry index ran three
   orders of magnitude slower than the same call written out.
+- A struct or tuple passed by value to a callee that only reads it reaches the
+  callee as the caller's own value, so the `Vec`, `Map`, or `Set` fields it
+  carries are no longer copied per call. A 40-column row cost about a
+  microsecond to hand over and now costs what a scalar does; the copy still
+  happens wherever the callee can write the parameter or let it outlive the
+  call.
 - `net::TcpStream::read_into(buf, max)` reads one chunk into a buffer the
   caller keeps and answers the byte count, so a connection loop pays no
   allocation per chunk. `Ok(0)` is the peer's clean close.

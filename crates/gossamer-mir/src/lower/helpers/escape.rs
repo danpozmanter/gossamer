@@ -747,17 +747,21 @@ impl<'a> LoopEligibility<'a> {
 /// Per-parameter "the callee only reads this, and nothing derived from it
 /// outlives the call" summary, keyed by callee.
 ///
-/// A by-value container argument is cloned at the call site so the callee's
-/// value is its own. That clone is observable only when the callee can write
-/// the parameter or let it escape; when it can do neither, the argument may
-/// cross as the handle and the copy is pure cost - which is quadratic when the
-/// caller passes a large collection inside a loop.
+/// A by-value container argument, and every growable field an aggregate one
+/// carries, is cloned at the call site so the callee's value is its own. That
+/// clone is observable only when the callee can write the parameter or let it
+/// escape; when it can do neither, the argument may cross as the handle and
+/// the copy is pure cost - which is quadratic when the caller passes a large
+/// collection inside a loop, and scales with the field rather than with the
+/// work when it passes a struct that holds one.
 ///
 /// Conservative on every axis: the parameter must be an immutable binding of a
-/// container type, the callee must answer a value that cannot carry it, and
-/// every mention of the name in the body must sit in a read-only place
-/// position. Anything else - a mention as an argument, in the tail expression,
-/// on either side of an assignment, inside a literal - keeps the clone.
+/// container or aggregate type, the callee must answer a value that cannot
+/// carry it, and every mention of the name in the body must sit in a read-only
+/// place position. Anything else - a mention as an argument, in the tail
+/// expression, on either side of an assignment, inside a literal - keeps the
+/// clone. A field read is the one projection that stays read-only: it reaches
+/// the parameter's storage only when the field's own type can carry it.
 pub fn collect_shareable_params<S: std::hash::BuildHasher>(
     program: &HirProgram,
     tcx: &TyCtxt,
@@ -807,10 +811,13 @@ pub fn collect_shareable_params<S: std::hash::BuildHasher>(
                         | TyKind::Slice(_)
                         | TyKind::Array { .. }
                         | TyKind::HashMap { .. }
+                        | TyKind::Adt { .. }
+                        | TyKind::Tuple(_)
                 ) {
                     return false;
                 }
                 let mut scan = ShareScan {
+                    tcx,
                     name: name.name.as_str(),
                     escaped: false,
                 };
@@ -826,6 +833,7 @@ pub fn collect_shareable_params<S: std::hash::BuildHasher>(
 /// Walks a body looking for any mention of one parameter outside a read-only
 /// place position.
 struct ShareScan<'a> {
+    tcx: &'a TyCtxt,
     name: &'a str,
     escaped: bool,
 }
@@ -881,7 +889,16 @@ impl ShareScan<'_> {
                 self.expr(value, false);
             }
             HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
-                self.expr(receiver, false);
+                // A scalar read out of the parameter is a copy, so the storage
+                // stays inside the call however the value is used. Any other
+                // field type yields something that still reaches the
+                // parameter's storage, and is read-only only where the whole
+                // projection already sits in a read-only place.
+                let scalar = matches!(
+                    self.tcx.kind_of(e.ty),
+                    TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::Unit
+                );
+                self.expr(receiver, place || scalar);
             }
             HirExprKind::Unary { operand, .. } => self.expr(operand, false),
             HirExprKind::Binary { lhs, rhs, .. } => {
@@ -935,27 +952,25 @@ impl ShareScan<'_> {
             }
             // Everything not named above may carry the value somewhere this
             // walk does not model, so any mention inside it is an escape.
-            _ => {
-                let mut deep = ShareScan {
-                    name: self.name,
-                    escaped: false,
-                };
-                deep.any_mention(e);
-                if deep.escaped {
-                    self.escaped = true;
-                }
-            }
+            _ => self.any_mention(e),
         }
     }
 
     /// Whether the name is mentioned anywhere in a subtree this walk does not
-    /// model precisely.
+    /// model precisely - a closure body it was lifted into, a `select` arm.
+    /// The whole subtree counts, not just its root: a capture list or an arm
+    /// body reaches the name several nodes down.
     fn any_mention(&mut self, e: &HirExpr) {
+        if self.escaped {
+            return;
+        }
         if let HirExprKind::Path { segments, .. } = &e.kind
             && segments.len() == 1
             && segments[0].name.as_str() == self.name
         {
             self.escaped = true;
+            return;
         }
+        gossamer_hir::for_each_child_expr(e, &mut |child| self.any_mention(child));
     }
 }

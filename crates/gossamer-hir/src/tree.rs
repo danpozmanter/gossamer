@@ -708,3 +708,137 @@ pub struct HirFieldPat {
     /// Sub-pattern, or shorthand binding if absent.
     pub pattern: Option<HirPat>,
 }
+
+/// Applies `f` to every expression directly under `expr`, in source order.
+///
+/// One arm per variant, so a new expression kind cannot silently acquire an
+/// unvisited child edge. A pass that only needs "is this name mentioned
+/// anywhere below" recurses through this rather than repeating the match.
+#[allow(clippy::too_many_lines)]
+pub fn for_each_child_expr(expr: &HirExpr, f: &mut impl FnMut(&HirExpr)) {
+    match &expr.kind {
+        HirExprKind::Literal(_)
+        | HirExprKind::Path { .. }
+        | HirExprKind::Continue { .. }
+        | HirExprKind::Return(None)
+        | HirExprKind::Break { value: None, .. }
+        | HirExprKind::Placeholder => {}
+        HirExprKind::Call { callee, args } => {
+            f(callee);
+            for a in args {
+                f(a);
+            }
+        }
+        HirExprKind::MethodCall { receiver, args, .. } => {
+            f(receiver);
+            for a in args {
+                f(a);
+            }
+        }
+        HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
+            f(receiver);
+        }
+        HirExprKind::Index { base, index } => {
+            f(base);
+            f(index);
+        }
+        HirExprKind::Unary { operand, .. } => f(operand),
+        HirExprKind::Binary { lhs, rhs, .. } => {
+            f(lhs);
+            f(rhs);
+        }
+        HirExprKind::Assign { place, value } => {
+            f(place);
+            f(value);
+        }
+        HirExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            f(condition);
+            f(then_branch);
+            if let Some(e) = else_branch {
+                f(e);
+            }
+        }
+        HirExprKind::Match { scrutinee, arms } => {
+            f(scrutinee);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    f(g);
+                }
+                f(&arm.body);
+            }
+        }
+        HirExprKind::Loop { body, .. } => f(body),
+        HirExprKind::While {
+            condition, body, ..
+        } => {
+            f(condition);
+            f(body);
+        }
+        HirExprKind::Block(block) => for_each_child_expr_in_block(block, f),
+        HirExprKind::Closure { body, .. } => f(body),
+        HirExprKind::LiftedClosure { captures, .. } => {
+            for c in captures {
+                f(c);
+            }
+        }
+        HirExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    HirSelectOp::Recv { channel, .. } => f(channel),
+                    HirSelectOp::Send { channel, value } => {
+                        f(channel);
+                        f(value);
+                    }
+                    HirSelectOp::Default => {}
+                }
+                f(&arm.body);
+            }
+        }
+        HirExprKind::Return(Some(e)) | HirExprKind::Break { value: Some(e), .. } => f(e),
+        HirExprKind::Tuple(items) => {
+            for e in items {
+                f(e);
+            }
+        }
+        HirExprKind::Array(HirArrayExpr::List(items)) => {
+            for e in items {
+                f(e);
+            }
+        }
+        HirExprKind::Array(HirArrayExpr::Repeat { value, count }) => {
+            f(value);
+            f(count);
+        }
+        HirExprKind::Cast { value, .. } => f(value),
+        HirExprKind::Range { start, end, .. } => {
+            if let Some(s) = start {
+                f(s);
+            }
+            if let Some(e) = end {
+                f(e);
+            }
+        }
+    }
+}
+
+/// Applies `f` to every expression directly under `block`, in source order.
+pub fn for_each_child_expr_in_block(block: &HirBlock, f: &mut impl FnMut(&HirExpr)) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            HirStmtKind::Let { init, .. } => {
+                if let Some(e) = init {
+                    f(e);
+                }
+            }
+            HirStmtKind::Expr { expr, .. } | HirStmtKind::Defer(expr) => f(expr),
+            HirStmtKind::Item(_) => {}
+        }
+    }
+    if let Some(tail) = &block.tail {
+        f(tail);
+    }
+}

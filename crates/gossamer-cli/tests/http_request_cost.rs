@@ -2,19 +2,24 @@
 //!
 //! The floor a handler cannot go below is what the server itself spends:
 //! accept, parse, route, dispatch, and write. This measures it against a
-//! constant handler over keep-alive connections and holds it to a ceiling, so
-//! a change that adds per-request work to the server path is caught here
-//! rather than in a downstream benchmark.
+//! constant handler over keep-alive connections and holds it to a multiple of
+//! the same machine's raw-socket floor, so a change that adds per-request work
+//! to the server path is caught here rather than in a downstream benchmark.
 
 #![allow(missing_docs)]
+// `/proc/<pid>/stat` is the only CPU-per-process source this measurement has,
+// so the whole fixture is Linux-only.
+#![cfg(target_os = "linux")]
 
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
-use std::path::PathBuf;
+use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
+
+mod common;
 
 const SOURCE: &str = r#"
 use std::{env, http}
@@ -49,19 +54,13 @@ fn build_release(name: &str, source: &str) -> PathBuf {
     dir.join(name)
 }
 
-/// `utime + stime` of `pid` in clock ticks, read from `/proc/<pid>/stat`.
-///
-/// Field 14 and 15 follow the executable name, which may itself contain
-/// spaces and parentheses, so the scan starts after the last `)`.
-#[cfg(target_os = "linux")]
-fn cpu_ticks(pid: u32) -> u64 {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).expect("read /proc/<pid>/stat");
-    let tail = &stat[stat.rfind(')').expect("stat comm field") + 1..];
-    let fields: Vec<&str> = tail.split_whitespace().collect();
-    // `tail` starts at field 3 (state), so utime is index 11 and stime 12.
-    let utime: u64 = fields[11].parse().expect("utime");
-    let stime: u64 = fields[12].parse().expect("stime");
-    utime + stime
+/// A port nothing is listening on, learned by binding and letting go.
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .expect("bind an ephemeral port")
+        .local_addr()
+        .expect("local_addr")
+        .port()
 }
 
 fn wait_ready(port: u16) -> bool {
@@ -117,49 +116,67 @@ impl Drop for ServerGuard {
     }
 }
 
-#[cfg(target_os = "linux")]
-#[test]
-fn release_http_server_holds_its_per_request_cpu_ceiling() {
-    const PORT: u16 = 23996;
-    const WORKERS: usize = 8;
-    const PER_WORKER: usize = 4_000;
-    const TOTAL: usize = WORKERS * PER_WORKER;
+const WORKERS: usize = 8;
+const PER_WORKER: usize = 4_000;
+const TOTAL: usize = WORKERS * PER_WORKER;
 
-    let binary = build_release("httpbase", SOURCE);
-    let child = Command::new(&binary)
-        .arg(PORT.to_string())
+/// Runs the measured load against `binary`, which is started with `arg` and
+/// listens on `port`, and answers the CPU microseconds it spent per request.
+fn measure_cpu_per_request(label: &str, binary: &Path, arg: String, port: u16) -> f64 {
+    let child = Command::new(binary)
+        .arg(arg)
         .spawn()
         .expect("start the server");
     let server = ServerGuard(child);
     let pid = server.0.id();
-    assert!(wait_ready(PORT), "server never accepted a connection");
+    assert!(wait_ready(port), "server never accepted a connection");
 
     // One warm pass so the measured window excludes first-connection setup.
-    drive(PORT, 200);
+    drive(port, 200);
 
-    let before = cpu_ticks(pid);
+    let before = common::proc_cpu_ticks(pid).expect("read the server's CPU");
     let start = Instant::now();
     std::thread::scope(|scope| {
         for _ in 0..WORKERS {
-            scope.spawn(|| drive(PORT, PER_WORKER));
+            scope.spawn(|| drive(port, PER_WORKER));
         }
     });
     let wall = start.elapsed();
-    let after = cpu_ticks(pid);
+    let after = common::proc_cpu_ticks(pid).expect("read the server's CPU");
 
-    // `/proc` reports CPU in clock ticks; every Linux target this runs on
-    // uses 100 per second.
-    let ticks = after - before;
-    let cpu_us_per_request = (ticks as f64 * 10_000.0) / TOTAL as f64;
-    println!(
-        "http constant handler: {cpu_us_per_request:.2} us cpu/request over {TOTAL} requests in {wall:?}"
+    let micros = common::cpu_micros_per_request(after - before, TOTAL);
+    println!("{label}: {micros:.2} us cpu/request over {TOTAL} requests in {wall:?}");
+    micros
+}
+
+#[test]
+fn release_http_server_holds_its_per_request_cpu_ceiling() {
+    let http_port = free_port();
+    let http = build_release("httpbase", SOURCE);
+    let served = measure_cpu_per_request(
+        "http constant handler",
+        &http,
+        http_port.to_string(),
+        http_port,
     );
-    // Measured at 4.4 us on a 24-core Linux box; the ceiling leaves room for
-    // a loaded runner while still catching a return to the 6.6 us floor the
-    // per-request peer-watch registration, the eager request context, and the
-    // per-response HTTP-date rendering used to cost.
+
+    let floor_port = free_port();
+    let floor_binary = build_release("tcpfloor", common::TCP_RESPONSE_FLOOR_SOURCE);
+    let floor = measure_cpu_per_request(
+        "raw socket floor",
+        &floor_binary,
+        format!("127.0.0.1:{floor_port}"),
+        floor_port,
+    );
+
+    // Most of a request is the read and the write the floor fixture also
+    // makes, so the two sit within about 1.5x of each other; the bound leaves
+    // room for a loaded runner while still catching a return to the per-request
+    // peer-watch registration, the eager request context, and the per-response
+    // HTTP-date rendering, which together cost half as much again.
     assert!(
-        cpu_us_per_request <= 6.0,
-        "HTTP server per-request CPU regressed: {cpu_us_per_request:.2} us > 6.00 us"
+        served <= floor * 3.0,
+        "HTTP server per-request CPU regressed: {served:.2} us against a \
+         {floor:.2} us raw-socket floor on this machine"
     );
 }

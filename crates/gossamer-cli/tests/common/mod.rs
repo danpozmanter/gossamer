@@ -161,6 +161,72 @@ impl Drop for ServerPortLock {
     }
 }
 
+/// A raw-TCP server that answers every read with one fixed HTTP response.
+///
+/// It shares the runtime, the scheduler, the goroutine-per-connection shape,
+/// and the socket ABI with `http::serve`, and does none of the parsing,
+/// routing, dispatch, or response building. Per request it costs one read and
+/// one write, so the CPU it spends is the floor an HTTP server on the same
+/// machine is measured against. That ratio is what a gate can hold to: the
+/// absolute figure is a property of the hardware, and a CI runner's syscalls
+/// cost several times a workstation's.
+pub const TCP_RESPONSE_FLOOR_SOURCE: &str = r#"
+use std::{env, net}
+
+fn serve(conn: net::TcpStream) {
+    let reply = "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n{\"ok\":true}"
+    let mut buf: Vec<u8> = Vec::with_capacity(4096)
+    let mut open = true
+    while open {
+        match conn.read_into(&mut buf, 4096) {
+            Ok(n) => {
+                if n == 0 { open = false } else { let _ = conn.write_all(reply.as_bytes()) }
+            }
+            Err(_) => open = false
+        }
+    }
+    let _ = conn.close()
+}
+
+fn main() {
+    let listener = match net::TcpListener::bind(env::args()[0]) {
+        Ok(l) => l
+        Err(e) => {
+            eprintln("bind failed: {e}")
+            return
+        }
+    }
+    println("listening")
+    loop {
+        match listener.accept() {
+            Ok((conn, _peer)) => spawn(|| serve(conn))
+            Err(_) => return
+        }
+    }
+}
+"#;
+
+/// `utime + stime` of `pid` in clock ticks, read from `/proc/<pid>/stat`.
+#[cfg(target_os = "linux")]
+pub fn proc_cpu_ticks(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // The comm field can hold spaces and parentheses, so fields are counted
+    // from the closing paren rather than from the start of the line.
+    let rest = stat.rsplit_once(')')?.1;
+    let cols: Vec<&str> = rest.split_whitespace().collect();
+    // utime and stime are fields 14 and 15 of the line, which are 11 and 12
+    // past the state field that opens `rest`.
+    Some(cols.get(11)?.parse::<u64>().ok()? + cols.get(12)?.parse::<u64>().ok()?)
+}
+
+/// Microseconds of CPU per request, from a tick delta over a request count.
+/// `/proc` reports CPU in clock ticks, 100 per second on every Linux target
+/// this runs on.
+#[cfg(target_os = "linux")]
+pub fn cpu_micros_per_request(ticks: u64, requests: usize) -> f64 {
+    ticks as f64 * 10_000.0 / requests as f64
+}
+
 #[cfg(test)]
 mod tests {
     use super::{native_executable_name, ntstatus_name, signal_name};
