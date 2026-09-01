@@ -3135,18 +3135,17 @@ pub unsafe extern "C" fn gos_rt_str_push_utf8(
         if buf.is_null() || start < 0 || end < start {
             return unchanged(false);
         }
-        let (ptr, len) = unsafe {
-            let v = &*buf;
-            (v.ptr.as_ptr().cast_const(), v.len.max(0) as usize)
-        };
         let (lo, hi) = (start as usize, end as usize);
-        if ptr.is_null() || hi > len {
+        // A packed buffer is read where it lies; a buffer whose slots are wider
+        // than a byte is gathered first, so the window is the same either way.
+        let bytes = unsafe { crate::c_abi::vec::vec_bytes_cow(buf) };
+        if hi > bytes.len() {
             return unchanged(false);
         }
         if lo == hi {
             return unchanged(true);
         }
-        let window = unsafe { std::slice::from_raw_parts(ptr.add(lo), hi - lo) };
+        let window = &bytes[lo..hi];
         if std::str::from_utf8(window).is_err() {
             return unchanged(false);
         }

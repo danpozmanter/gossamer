@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.58.7 - Byte buffers read the same everywhere
+
+- `String::push_utf8` appends the window it was given whatever the buffer is.
+  A `Vec<u8>` reaches a builtin in whichever representation the VM chose for
+  it, and the interpreter read only the boxed one, so appending a window of a
+  buffer built by `push` or `extend` answered `false` and appended nothing
+  while the compiled tiers appended it.
+- `utf8::is_valid`, `utf8::rune_count`, and `utf8::full_rune` take a byte
+  buffer, and the compiled tiers lowered each to the shim that takes a
+  `String`. The vector header was read as text, so `is_valid` answered `true`
+  for buffers that are not UTF-8 and `rune_count` counted the header.
+- `bytes::index_of`, `bytes::split`, and `bytes::replace` take and answer byte
+  vectors on every tier. They read their arguments as text and answered text,
+  so `index_of` reported 0 for every input, `replace` answered an empty value,
+  and a byte that is not UTF-8 did not survive either.
+- `TcpStream::read_into` refuses a buffer whose elements are wider than a byte
+  rather than writing bytes across its slots.
+- One accessor now reads a byte buffer on each side - `Value::byte_slice` in
+  the interpreter, `vec_bytes_cow` in the runtime - and the fourteen readers
+  that each had their own partial copy go through it, so a representation is
+  understood by all of them or by none. A test cross-checks every stdlib
+  lowering against the pointer its shim declares.
+
 ## 0.58.6 - String answers, field reads through a reference, enum payloads, and response reclaim
 
 - Every runtime call that answers a freshly allocated `String` releases it.

@@ -325,19 +325,9 @@ pub(crate) fn builtin_utf8_rune_len(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_utf8_is_valid(args: &[Value]) -> RuntimeResult<Value> {
-    match args.first() {
-        Some(Value::String(_)) => Ok(Value::Bool(true)),
-        Some(Value::Array(arr)) => {
-            let bytes: Vec<u8> = arr
-                .iter()
-                .filter_map(|v| match v {
-                    Value::Int(n) => u8::try_from(*n).ok(),
-                    _ => None,
-                })
-                .collect();
-            Ok(Value::Bool(std::str::from_utf8(&bytes).is_ok()))
-        }
-        _ => Ok(Value::Bool(false)),
+    match args.first().and_then(Value::byte_slice) {
+        Some(bytes) => Ok(Value::Bool(std::str::from_utf8(&bytes).is_ok())),
+        None => Ok(Value::Bool(false)),
     }
 }
 
@@ -379,17 +369,7 @@ pub(crate) fn builtin_utf8_rune_start(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn bytes_from_utf8_arg(v: Option<&Value>) -> Vec<u8> {
-    match v {
-        Some(Value::String(s)) => s.as_str().as_bytes().to_vec(),
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|e| match e {
-                Value::Int(n) => u8::try_from(*n).ok(),
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
+    v.map(Value::bytes_or_empty).unwrap_or_default()
 }
 
 pub(crate) fn decode_rune_result(ch: char, n: usize) -> Value {

@@ -448,6 +448,11 @@ const SPECS: &[Spec] = &[
     // Vec<u8> push, iteration, and high-bit zero-extension must be
     // bit-identical across tiers (the unbounded-cache memory fix).
     spec("feature-testing-examples/byte_vec_packed.gos"),
+    // A `Vec<u8>` reaches a builtin in whichever representation the VM chose
+    // for it, and the byte-taking APIs - push_utf8, the utf8 helpers, the
+    // bytes helpers, the encoders - have to read all of them and answer the
+    // same thing on every tier.
+    spec("feature-testing-examples/byte_buffer_representations.gos"),
     // In-place append fast paths: a tail-position `v.push(x)` inside an `if` /
     // `match` arm, `s += x` / `*out += x`, and the `&mut`-arg write-back cell
     // move (with its clone fallback when a sibling argument reads the same

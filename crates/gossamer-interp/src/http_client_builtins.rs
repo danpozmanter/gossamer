@@ -673,23 +673,9 @@ pub(crate) fn builtin_http_request_bytes(args: &[Value]) -> RuntimeResult<Value>
     };
     let url = args.get(1).and_then(as_str).unwrap_or("");
     // A byte body can arrive as `Value::Array` of Ints, or - when
-    // the VM specialises int vectors - as `Value::IntArray`. Both
-    // must decode or the VM tier silently
-    // uploads an empty body.
-    let body: Vec<u8> = match args.get(2) {
-        Some(Value::Array(items)) => items
-            .iter()
-            .filter_map(|b| match b {
-                Value::Int(n) => u8::try_from(*n).ok(),
-                _ => None,
-            })
-            .collect(),
-        Some(Value::IntArray(items)) => {
-            items.iter().filter_map(|n| u8::try_from(*n).ok()).collect()
-        }
-        Some(Value::String(s)) => s.as_bytes().to_vec(),
-        _ => Vec::new(),
-    };
+    // The body is whatever byte vector the caller built, in whichever
+    // representation the VM chose for it.
+    let body: Vec<u8> = args.get(2).map(Value::bytes_or_empty).unwrap_or_default();
     let header_pairs = extract_header_pairs(args.get(3));
     let headers = header_refs(&header_pairs);
     let body_opt: Option<&[u8]> = if body.is_empty() {
@@ -963,23 +949,9 @@ pub(crate) fn builtin_http_client_request_bytes(args: &[Value]) -> RuntimeResult
         )));
     };
     let url = args.get(2).and_then(as_str).unwrap_or("");
-    // Same dual Array/IntArray decode as `http::request_bytes`: a
-    // byte body can arrive as Value::Array of Ints or, when the VM
-    // specialises int vectors, as Value::IntArray.
-    let body: Vec<u8> = match args.get(3) {
-        Some(Value::Array(items)) => items
-            .iter()
-            .filter_map(|b| match b {
-                Value::Int(n) => u8::try_from(*n).ok(),
-                _ => None,
-            })
-            .collect(),
-        Some(Value::IntArray(items)) => {
-            items.iter().filter_map(|n| u8::try_from(*n).ok()).collect()
-        }
-        Some(Value::String(s)) => s.as_bytes().to_vec(),
-        _ => Vec::new(),
-    };
+    // The body is whatever byte vector the caller built, in whichever
+    // representation the VM chose for it.
+    let body: Vec<u8> = args.get(3).map(Value::bytes_or_empty).unwrap_or_default();
     let header_pairs = extract_header_pairs(args.get(4));
     let headers = header_refs(&header_pairs);
     let body_opt: Option<&[u8]> = if body.is_empty() {

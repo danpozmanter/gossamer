@@ -102,20 +102,7 @@ mod map_kind {
 /// Reads a runtime `GosVec`'s elements as bytes, whatever slot width
 /// the vector holds them in.
 unsafe fn vec_bytes(v: *const GosVec) -> Vec<u8> {
-    if v.is_null() {
-        return Vec::new();
-    }
-    let header = unsafe { &*v };
-    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
-    let data = header.ptr.as_ptr();
-    if len == 0 || data.is_null() {
-        return Vec::new();
-    }
-    if header.elem_bytes == 1 {
-        return unsafe { std::slice::from_raw_parts(data, len) }.to_vec();
-    }
-    let words = unsafe { std::slice::from_raw_parts(data.cast::<i64>(), len) };
-    words.iter().map(|w| (*w & 0xff) as u8).collect()
+    unsafe { crate::c_abi::vec::vec_bytes(v) }
 }
 
 /// Builds a `Bytes` wire header for a runtime byte vector. The

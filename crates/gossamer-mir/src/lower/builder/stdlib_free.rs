@@ -2207,8 +2207,11 @@ impl<'a> Builder<'a> {
                 "gos_rt_utf8_rune_count_in_string",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
+            // `rune_count`, `is_valid` and `full_rune` take `Vec<u8>`; their
+            // `*_in_string` twins take a `String`. Each has to reach the shim
+            // whose parameter is the pointer the call actually passes.
             "utf8::rune_count" => (
-                "gos_rt_utf8_rune_count_in_string",
+                "gos_rt_utf8_rune_count_bytes",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             "utf8::rune_len" => (
@@ -2217,9 +2220,9 @@ impl<'a> Builder<'a> {
             ),
             "utf8::valid_rune" => ("gos_rt_utf8_valid_rune", self.tcx.bool_ty()),
             "utf8::valid_string" => ("gos_rt_utf8_valid_string", self.tcx.bool_ty()),
-            "utf8::is_valid" => ("gos_rt_utf8_valid_string", self.tcx.bool_ty()),
+            "utf8::is_valid" => ("gos_rt_utf8_is_valid", self.tcx.bool_ty()),
             "utf8::full_rune_in_string" => ("gos_rt_utf8_full_rune_in_string", self.tcx.bool_ty()),
-            "utf8::full_rune" => ("gos_rt_utf8_full_rune_in_string", self.tcx.bool_ty()),
+            "utf8::full_rune" => ("gos_rt_utf8_full_rune", self.tcx.bool_ty()),
             "utf8::rune_start" => ("gos_rt_utf8_rune_start", self.tcx.bool_ty()),
             _ => return None,
         })
@@ -3572,14 +3575,23 @@ impl<'a> Builder<'a> {
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             "bytes::index_of" => ("gos_rt_bytes_index_of", self.option_i64_adt_ty()),
+            // These three take and answer byte vectors, not text: a byte a
+            // caller stored survives the round trip whether or not it is UTF-8.
             "bytes::split" => {
-                let s = self.tcx.string_ty();
+                let b = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                let chunk = self.tcx.intern(gossamer_types::TyKind::Vec(b));
                 (
                     "gos_rt_bytes_split",
-                    self.tcx.intern(gossamer_types::TyKind::Vec(s)),
+                    self.tcx.intern(gossamer_types::TyKind::Vec(chunk)),
                 )
             }
-            "bytes::replace" => ("gos_rt_bytes_replace", self.tcx.string_ty()),
+            "bytes::replace" => {
+                let b = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                (
+                    "gos_rt_bytes_replace",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(b)),
+                )
+            }
             _ => return None,
         })
     }

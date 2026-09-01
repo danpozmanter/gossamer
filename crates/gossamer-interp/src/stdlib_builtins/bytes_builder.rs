@@ -20,6 +20,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap as StdHashMap;
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -275,31 +276,40 @@ pub(crate) fn builtin_buffer_to_string(args: &[Value]) -> RuntimeResult<Value> {
 // Stateless helpers
 // ---------------------------------------------------------------
 
+/// The bytes of a byte-vector argument, empty where it is absent.
+fn arg_bytes(args: &[Value], i: usize) -> Vec<u8> {
+    args.get(i).map(Value::bytes_or_empty).unwrap_or_default()
+}
+
+/// A `Vec<u8>` answer, in the boxed shape the VM reads back as one.
+fn byte_vec(bytes: &[u8]) -> Value {
+    Value::Array(Arc::new(
+        bytes.iter().map(|&b| Value::Int(i64::from(b))).collect(),
+    ))
+}
+
 pub(crate) fn builtin_bytes_index_of(args: &[Value]) -> RuntimeResult<Value> {
-    let haystack = args.first().and_then(as_str).unwrap_or("");
-    let needle = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(match index_of(haystack.as_bytes(), needle.as_bytes()) {
+    let haystack = arg_bytes(args, 0);
+    let needle = arg_bytes(args, 1);
+    Ok(match index_of(&haystack, &needle) {
         Some(i) => some_variant(Value::Int(i as i64)),
         None => none_variant(),
     })
 }
 
 pub(crate) fn builtin_bytes_split(args: &[Value]) -> RuntimeResult<Value> {
-    let haystack = args.first().and_then(as_str).unwrap_or("");
-    let sep = args.get(1).and_then(as_str).unwrap_or("");
-    let parts: Vec<String> = split(haystack.as_bytes(), sep.as_bytes())
+    let haystack = arg_bytes(args, 0);
+    let sep = arg_bytes(args, 1);
+    let parts: Vec<Value> = split(&haystack, &sep)
         .into_iter()
-        .map(|chunk| String::from_utf8_lossy(&chunk).into_owned())
+        .map(|chunk| byte_vec(&chunk))
         .collect();
-    Ok(string_array(parts))
+    Ok(Value::Array(Arc::new(parts)))
 }
 
 pub(crate) fn builtin_bytes_replace(args: &[Value]) -> RuntimeResult<Value> {
-    let haystack = args.first().and_then(as_str).unwrap_or("");
-    let from = args.get(1).and_then(as_str).unwrap_or("");
-    let to = args.get(2).and_then(as_str).unwrap_or("");
-    let out = replace(haystack.as_bytes(), from.as_bytes(), to.as_bytes());
-    Ok(Value::String(
-        String::from_utf8_lossy(&out).into_owned().into(),
-    ))
+    let haystack = arg_bytes(args, 0);
+    let from = arg_bytes(args, 1);
+    let to = arg_bytes(args, 2);
+    Ok(byte_vec(&replace(&haystack, &from, &to)))
 }

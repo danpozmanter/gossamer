@@ -1,0 +1,89 @@
+// A `Vec<u8>` reaches a builtin in whichever representation the VM chose for
+// it - packed, flat integers, or boxed values - and which one it gets depends
+// on how the program built the buffer, not on its type. Every API that takes
+// `[u8]` has to read all of them, so the same bytes answer the same thing
+// however they were assembled, and identically on every tier.
+
+use std::bytes
+use std::encoding::{base64, hex}
+use std::hash::crc32
+use std::utf8
+
+fn built_by_push() -> Vec<u8> {
+    let mut v: Vec<u8> = #[]
+    for b in "user-1".as_bytes() { v.push(b) }
+    v
+}
+
+fn built_by_extend() -> Vec<u8> {
+    let mut v: Vec<u8> = #[]
+    v.extend("user-1".as_bytes())
+    v
+}
+
+fn window(label: String, buf: Vec<u8>, start: i64, end: i64) {
+    let mut s = String::new()
+    println("{:<10} push_utf8 {} {:?}", label, s.push_utf8(buf, start, end), s)
+}
+
+fn digest(label: String, buf: Vec<u8>) {
+    println("{:<10} hex {} base64 {} crc {} utf8 {}"
+        label, hex::encode(buf), base64::encode(buf), crc32::checksum(buf), utf8::is_valid(buf))
+}
+
+fn main() {
+    let literal: Vec<u8> = #[117u8, 115u8, 101u8, 114u8, 45u8, 49u8]
+    let from_str = "user-1".as_bytes()
+    let pushed = built_by_push()
+    let extended = built_by_extend()
+    let sliced = "xxuser-1xx".as_bytes().slice(2, 8).unwrap()
+
+    // The same six bytes, five ways of building them: every reader agrees.
+    digest("literal", literal)
+    digest("as_bytes", from_str)
+    digest("push", pushed)
+    digest("extend", extended)
+    digest("slice", sliced)
+
+    window("literal", literal, 0, 6)
+    window("as_bytes", from_str, 0, 6)
+    window("push", pushed, 0, 6)
+    window("extend", extended, 0, 6)
+    window("slice", sliced, 0, 6)
+
+    // A window of valid text inside a buffer that is not UTF-8 as a whole,
+    // which is the shape a record read out of a binary log has.
+    let mut record: Vec<u8> = #[8u8, 6u8, 0u8, 0u8, 0u8]
+    record.extend("user-1".as_bytes())
+    record.push(248u8)
+    window("record", record, 5, 11)
+    println("whole record valid utf8: {}", utf8::is_valid(record))
+
+    // The edges: an empty window appends nothing and succeeds; a window past
+    // the end and one that cuts a byte JSON cannot read are both refused.
+    window("empty", record, 5, 5)
+    window("past end", record, 5, 99)
+    window("not utf8", record, 10, 12)
+    window("reversed", record, 8, 5)
+
+    // The byte-taking `utf8` helpers answer about the buffer they were given,
+    // not about some text read out of it.
+    println("rune_count(user-1) = {}", utf8::rune_count(from_str))
+    println("rune_count(record) = {}", utf8::rune_count(record))
+    println("full_rune(user-1)  = {}", utf8::full_rune(from_str))
+    println("full_rune(record)  = {}", utf8::full_rune(record))
+
+    // `bytes` takes and answers byte vectors, so a byte that is not text
+    // survives the round trip.
+    let hay = built_by_push()
+    let needle: Vec<u8> = #[101u8, 114u8]
+    println("index_of = {:?}", bytes::index_of(hay, needle))
+    println("replace  = {}", hex::encode(bytes::replace(hay, needle, #[45u8])))
+    print("split    =")
+    for part in bytes::split(hay, needle) { print(" {}", hex::encode(part)) }
+    println("")
+    let mut binary: Vec<u8> = #[255u8]
+    binary.extend(needle)
+    binary.push(254u8)
+    println("binary   = {}", hex::encode(bytes::replace(binary, needle, #[45u8])))
+}

@@ -6496,6 +6496,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_utf8_full_rune_in_string as *const u8,
         ),
         (
+            "gos_rt_utf8_full_rune",
+            crate::c_abi::gos_rt_utf8_full_rune as *const u8,
+        ),
+        (
             "gos_rt_utf8_is_valid",
             crate::c_abi::gos_rt_utf8_is_valid as *const u8,
         ),

@@ -180,16 +180,7 @@ pub(crate) fn builtin_pem_decode_all_raw(args: &[Value]) -> RuntimeResult<Value>
 
 pub(crate) fn builtin_pem_encode_raw(args: &[Value]) -> RuntimeResult<Value> {
     let block_type = args.first().and_then(as_str).unwrap_or("").to_string();
-    let bytes: Vec<u8> = match args.get(1) {
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|e| match e {
-                Value::Int(n) => u8::try_from(*n).ok(),
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
+    let bytes: Vec<u8> = args.get(1).map(Value::bytes_or_empty).unwrap_or_default();
     let block = gossamer_std::encoding::pem::Block { block_type, bytes };
     Ok(Value::String(
         gossamer_std::encoding::pem::encode(&block).into(),
@@ -223,17 +214,7 @@ pub(crate) fn pem_block_from_value(v: &Value) -> gossamer_std::encoding::pem::Bl
                         block_type = s.as_str().to_string();
                     }
                 }
-                "bytes" => {
-                    if let Value::Array(arr) = val {
-                        bytes = arr
-                            .iter()
-                            .filter_map(|e| match e {
-                                Value::Int(n) => u8::try_from(*n).ok(),
-                                _ => None,
-                            })
-                            .collect();
-                    }
-                }
+                "bytes" => bytes = val.bytes_or_empty(),
                 _ => {}
             }
         }

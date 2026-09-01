@@ -173,22 +173,7 @@ pub(crate) fn bytes_to_value_array(b: &[u8]) -> Value {
 }
 
 pub(crate) fn value_to_bytes(v: &Value) -> Vec<u8> {
-    match v {
-        Value::Array(arr) => arr
-            .iter()
-            .filter_map(|x| value_to_int(x).map(|n| n as u8))
-            .collect(),
-        // An `[u8]` / `[i64]` byte-array literal lowers to the packed
-        // `IntArray` representation, not a boxed `Array`; without this
-        // arm `value_to_bytes` returned empty and every crypto helper
-        // taking `[u8]` (kdf / aead / ed25519) silently hashed nothing.
-        Value::IntArray(data) => data.iter().map(|n| *n as u8).collect(),
-        Value::ByteArray(data) => data.to_vec(),
-        Value::InlineByteArray(data) => data.to_vec(),
-        Value::ByteVec(data) => data.as_ref().clone(),
-        Value::String(s) => s.as_str().as_bytes().to_vec(),
-        _ => Vec::new(),
-    }
+    v.bytes_or_empty()
 }
 
 pub(crate) fn builtin_crypto_sha256_digest(args: &[Value]) -> RuntimeResult<Value> {

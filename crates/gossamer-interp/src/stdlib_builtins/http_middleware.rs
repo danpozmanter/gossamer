@@ -301,18 +301,7 @@ pub(crate) fn builtin_mw_tag(args: &[Value]) -> RuntimeResult<Value> {
 /// Body bytes of a Response field value, in either its String or its
 /// byte-array shape.
 fn body_bytes(body: &Value) -> Vec<u8> {
-    match body {
-        Value::String(s) => s.as_str().as_bytes().to_vec(),
-        Value::Array(items) => items
-            .iter()
-            .filter_map(|v| match v {
-                Value::Int(n) => u8::try_from(*n).ok(),
-                _ => None,
-            })
-            .collect(),
-        Value::IntArray(items) => items.iter().filter_map(|n| u8::try_from(*n).ok()).collect(),
-        _ => Vec::new(),
-    }
+    body.bytes_or_empty()
 }
 
 /// Rebuilds a body value in the shape the response already used, so a

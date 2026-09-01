@@ -170,16 +170,9 @@ pub(crate) fn builtin_ws_send_binary(args: &[Value]) -> RuntimeResult<Value> {
     let Some(conn) = conn_clone(h) else {
         return Ok(err_variant("websocket::send_binary: stale handle"));
     };
-    let bytes: Vec<u8> = match args.get(1) {
-        Some(Value::String(s)) => s.as_bytes().to_vec(),
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| match v {
-                Value::Int(n) => u8::try_from(*n).ok(),
-                _ => None,
-            })
-            .collect(),
-        _ => {
+    let bytes: Vec<u8> = match args.get(1).and_then(Value::byte_slice) {
+        Some(bytes) => bytes.into_owned(),
+        None => {
             return Ok(err_variant(
                 "websocket::send_binary: expected string or byte array",
             ));

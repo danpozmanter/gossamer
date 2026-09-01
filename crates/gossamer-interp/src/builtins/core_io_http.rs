@@ -1367,19 +1367,7 @@ fn value_to_response(value: &Value) -> Option<http_std::Response> {
                     _ => 200,
                 };
             }
-            "body" => match v {
-                Value::String(s) => body = s.as_bytes().to_vec(),
-                Value::Array(bytes) => {
-                    body = bytes
-                        .iter()
-                        .filter_map(|b| match b {
-                            Value::Int(n) => u8::try_from(*n).ok(),
-                            _ => None,
-                        })
-                        .collect();
-                }
-                _ => {}
-            },
+            "body" => body = v.bytes_or_empty(),
             "content_type" => {
                 if let Value::String(s) = v {
                     content_type.clear();

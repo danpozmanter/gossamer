@@ -509,8 +509,12 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_read_into(h: i64, buf: *mut GosVec, m
         if dst.is_null() {
             return tcp_err("TcpStream::read_into: buffer has no storage");
         }
-        // A `Vec<u8>` stores one byte per element, so the reserved element
-        // count is the byte window the read may fill.
+        // The read fills one byte per element, which is the packed layout a
+        // `Vec<u8>` has; a buffer whose slots are wider names a different
+        // element type than this read can fill.
+        if unsafe { (*buf).elem_bytes } != 1 {
+            return tcp_err("TcpStream::read_into: buffer must be a Vec<u8>");
+        }
         let slot = unsafe { std::slice::from_raw_parts_mut(dst, cap as usize) };
         let read = if let Some(tls) = tls_clone(h) {
             let window = cap as usize;

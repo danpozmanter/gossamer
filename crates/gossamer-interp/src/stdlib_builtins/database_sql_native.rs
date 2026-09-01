@@ -642,14 +642,7 @@ fn take_params(params_handle: i64) -> Vec<gossamer_runtime::sql::Value> {
 }
 
 fn arg_bytes(args: &[Value], i: usize) -> Vec<u8> {
-    match args.get(i) {
-        Some(Value::Array(items)) => items
-            .iter()
-            .map(|v| crate::builtins::value_to_int(v).unwrap_or(0) as u8)
-            .collect(),
-        Some(Value::IntArray(items)) => items.iter().map(|b| *b as u8).collect(),
-        _ => Vec::new(),
-    }
+    args.get(i).map(Value::bytes_or_empty).unwrap_or_default()
 }
 
 fn run_rust_copy_out(conn: i64, sql: &str) -> i64 {

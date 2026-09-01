@@ -17,6 +17,7 @@
 #![allow(unsafe_code)]
 
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
+use std::borrow::Cow;
 use std::cell::{Cell, UnsafeCell};
 use std::collections::VecDeque;
 use std::fmt;
@@ -411,6 +412,44 @@ impl Value {
             Self::Uint(n) => Some(*n as i64),
             _ => None,
         }
+    }
+
+    /// The bytes of a byte-vector value, borrowed where the representation is
+    /// already packed and materialised only where it is not.
+    ///
+    /// A `Vec<u8>` reaches a builtin in whichever representation the VM chose
+    /// for it - packed (`ByteArray`, `InlineByteArray`, `ByteVec`), flat
+    /// integers (`IntArray`), or boxed values (`Array`) - and which one it gets
+    /// depends on how the program built it, not on its type. A `String` stands
+    /// for its own UTF-8. Every builtin that takes `[u8]` reads it through
+    /// here, so a representation is understood by all of them or by none.
+    ///
+    /// `None` for a value that is not a byte vector, including an `Array`
+    /// holding anything but integers. Integers are taken at their low byte, as
+    /// `as u8` does.
+    #[must_use]
+    pub fn byte_slice(&self) -> Option<Cow<'_, [u8]>> {
+        match self {
+            Self::ByteArray(bytes) => Some(Cow::Borrowed(bytes.as_ref())),
+            Self::InlineByteArray(bytes) => Some(Cow::Borrowed(bytes.as_slice())),
+            Self::ByteVec(bytes) => Some(Cow::Borrowed(bytes.as_slice())),
+            Self::String(text) => Some(Cow::Borrowed(text.as_str().as_bytes())),
+            Self::IntArray(ns) => Some(Cow::Owned(ns.iter().map(|n| *n as u8).collect())),
+            Self::Array(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for item in items.iter() {
+                    out.push(item.as_i64()? as u8);
+                }
+                Some(Cow::Owned(out))
+            }
+            _ => None,
+        }
+    }
+
+    /// The bytes of a byte-vector value, empty where it is not one.
+    #[must_use]
+    pub fn bytes_or_empty(&self) -> Vec<u8> {
+        self.byte_slice().map_or_else(Vec::new, Cow::into_owned)
     }
 
     /// The bit pattern this value holds, whichever width it was written at.

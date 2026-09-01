@@ -65,13 +65,8 @@ pub unsafe extern "C" fn gos_rt_utf8_rune_count_bytes(
         if vec.is_null() {
             return 0;
         }
-        let header = unsafe { &*vec };
-        if header.ptr.is_null() || header.len <= 0 {
-            return 0;
-        }
-        let slice =
-            unsafe { std::slice::from_raw_parts(header.ptr.as_const_ptr(), header.len as usize) };
-        std::str::from_utf8(slice).map_or(0, |s| s.chars().count() as i64)
+        let bytes = unsafe { crate::c_abi::vec::vec_bytes_cow(vec) };
+        std::str::from_utf8(&bytes).map_or(0, |s| s.chars().count() as i64)
     })
 }
 
@@ -104,13 +99,8 @@ pub unsafe extern "C" fn gos_rt_utf8_is_valid(vec: *const crate::c_abi::vec::Gos
         if vec.is_null() {
             return 1;
         }
-        let header = unsafe { &*vec };
-        if header.ptr.is_null() || header.len <= 0 {
-            return 1;
-        }
-        let slice =
-            unsafe { std::slice::from_raw_parts(header.ptr.as_const_ptr(), header.len as usize) };
-        i64::from(std::str::from_utf8(slice).is_ok())
+        let bytes = unsafe { crate::c_abi::vec::vec_bytes_cow(vec) };
+        i64::from(std::str::from_utf8(&bytes).is_ok())
     })
 }
 
@@ -123,6 +113,31 @@ pub unsafe extern "C" fn gos_rt_utf8_full_rune_in_string(s: *const c_char) -> i6
             return 0;
         }
         let first = bytes[0];
+        let width = if first < 0x80 {
+            1
+        } else if first < 0xC0 {
+            return 0;
+        } else if first < 0xE0 {
+            2
+        } else if first < 0xF0 {
+            3
+        } else {
+            4
+        };
+        i64::from(bytes.len() >= width)
+    })
+}
+
+/// `utf8::full_rune(bytes) -> bool` - whether a byte buffer begins with a
+/// complete UTF-8 sequence. The string-taking twin is
+/// `gos_rt_utf8_full_rune_in_string`; this is the one a `Vec<u8>` reaches.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_utf8_full_rune(vec: *const crate::c_abi::vec::GosVec) -> i64 {
+    ffi_entry!(0, {
+        let bytes = unsafe { crate::c_abi::vec::vec_bytes(vec) };
+        let Some(&first) = bytes.first() else {
+            return 0;
+        };
         let width = if first < 0x80 {
             1
         } else if first < 0xC0 {
@@ -153,19 +168,7 @@ pub unsafe extern "C" fn gos_rt_utf8_rune_start(b: u32) -> i64 {
 const RUNE_ERROR: char = '\u{FFFD}';
 
 unsafe fn vec_bytes(v: *const super::vec::GosVec) -> Vec<u8> {
-    if v.is_null() {
-        return Vec::new();
-    }
-    let vref = unsafe { &*v };
-    if vref.ptr.is_null() || vref.len <= 0 {
-        return Vec::new();
-    }
-    let len = vref.len as usize;
-    if vref.elem_bytes == 1 {
-        return unsafe { std::slice::from_raw_parts(vref.ptr.as_ptr(), len) }.to_vec();
-    }
-    let words = unsafe { std::slice::from_raw_parts(vref.ptr.as_ptr().cast::<i64>(), len) };
-    words.iter().map(|&w| w as u8).collect()
+    unsafe { crate::c_abi::vec::vec_bytes(v) }
 }
 
 fn rune_pair(ch: char, n: usize) -> *mut u8 {

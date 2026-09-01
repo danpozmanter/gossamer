@@ -174,32 +174,10 @@ fn builtin_os_write_file(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
         return Ok(err_variant("write_file: path argument must be a string"));
     };
-    let bytes = match args.get(1) {
-        Some(Value::String(s)) => s.as_bytes().to_vec(),
-        Some(Value::Array(parts)) => parts
-            .iter()
-            .filter_map(|v| match v {
-                Value::Int(n) => u8::try_from(*n).ok(),
-                _ => None,
-            })
-            .collect(),
-        // Typed-primitive integer array literals (`[u8] = [..]`,
-        // `[i32] = [..]`) - the VM collapses these to `IntArray`,
-        // not `Array`, so the previous arm silently fell through
-        // to the error case and the binary write returned
-        // `Err("contents must be string or byte array")`.
-        Some(Value::IntArray(parts)) => {
-            parts.iter().filter_map(|n| u8::try_from(*n).ok()).collect()
-        }
-        Some(Value::ByteArray(parts)) => parts.to_vec(),
-        Some(Value::InlineByteArray(parts)) => parts.to_vec(),
-        Some(Value::ByteVec(parts)) => parts.as_ref().clone(),
-        _ => {
-            return Ok(err_variant(
-                "write_file: contents must be string or byte array",
-            ));
-        }
+    let Some(bytes) = args.get(1).and_then(Value::byte_slice) else {
+        return Ok(err_variant("write_file: contents must be string or byte array"));
     };
+    let bytes = bytes.into_owned();
     let path = path.to_string();
     match gossamer_runtime::sched_global::run_blocking("os-write-file", move || {
         os_std::write_file(&path, &bytes)

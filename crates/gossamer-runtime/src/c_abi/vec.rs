@@ -1904,6 +1904,72 @@ unsafe fn vec_reserve_to(vec: &mut GosVec, min_cap: i64, exact: bool) {
     vec.region_flag |= VEC_SPLIT_FLAG;
 }
 
+/// The packed bytes a `GosVec` holds, or `None` when its slots are wider than
+/// a byte.
+///
+/// A `Vec<u8>` reaches a shim either packed one byte per slot or widened to
+/// the eight-byte slot a view uses, and `elem_bytes` is what says which.
+///
+/// # Safety
+/// `v` must be null or point to a live `GosVec` whose buffer outlives the
+/// returned slice.
+#[must_use]
+pub unsafe fn vec_byte_slice<'a>(v: *const GosVec) -> Option<&'a [u8]> {
+    if v.is_null() {
+        return None;
+    }
+    let header = unsafe { &*v };
+    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    if header.ptr.is_null() || len == 0 {
+        return Some(&[]);
+    }
+    if header.elem_bytes != 1 {
+        return None;
+    }
+    Some(unsafe { std::slice::from_raw_parts(header.ptr.as_const_ptr(), len) })
+}
+
+/// The bytes a `GosVec` holds, borrowed where its slots are already bytes.
+///
+/// This is the form a reader wants: a packed buffer costs nothing to read and
+/// a wide one is gathered once, with no branch at the call site.
+///
+/// # Safety
+/// `v` must be null or point to a live `GosVec` whose buffer outlives the
+/// returned value.
+#[must_use]
+pub unsafe fn vec_bytes_cow<'a>(v: *const GosVec) -> std::borrow::Cow<'a, [u8]> {
+    match unsafe { vec_byte_slice(v) } {
+        Some(slice) => std::borrow::Cow::Borrowed(slice),
+        None => std::borrow::Cow::Owned(unsafe { vec_bytes(v) }),
+    }
+}
+
+/// The bytes a `GosVec` holds, whatever slot width it holds them in.
+///
+/// Every shim that reads a byte vector goes through here or through
+/// [`vec_byte_slice`], so a layout is understood by all of them or by none.
+/// A wide slot contributes its low byte, as `as u8` does.
+///
+/// # Safety
+/// `v` must be null or point to a live `GosVec`.
+#[must_use]
+pub unsafe fn vec_bytes(v: *const GosVec) -> Vec<u8> {
+    if v.is_null() {
+        return Vec::new();
+    }
+    let header = unsafe { &*v };
+    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    if header.ptr.is_null() || len == 0 {
+        return Vec::new();
+    }
+    if header.elem_bytes == 1 {
+        return unsafe { std::slice::from_raw_parts(header.ptr.as_const_ptr(), len) }.to_vec();
+    }
+    let words = unsafe { std::slice::from_raw_parts(header.ptr.as_const_ptr().cast::<i64>(), len) };
+    words.iter().map(|&w| w as u8).collect()
+}
+
 /// Ensures `v.capacity() >= min_cap`, growing geometrically when needed.
 /// The value is a total capacity, not an additional element count.
 #[unsafe(no_mangle)]

@@ -281,13 +281,13 @@ pub unsafe extern "C" fn gos_rt_bytes_buffer_to_string(buf: *mut GosBytesBuffer)
 /// occurrence as `Option<i64>` in the 2-word `i128` Result ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_bytes_index_of(
-    haystack: *const c_char,
-    needle: *const c_char,
+    haystack: *const crate::c_abi::vec::GosVec,
+    needle: *const crate::c_abi::vec::GosVec,
 ) -> i128 {
     ffi_entry!(0i128, {
-        let h = cstr_to_string(haystack);
-        let n = cstr_to_string(needle);
-        match bytes_index_of(h.as_bytes(), n.as_bytes()) {
+        let h = unsafe { crate::c_abi::vec::vec_bytes(haystack) };
+        let n = unsafe { crate::c_abi::vec::vec_bytes(needle) };
+        match bytes_index_of(&h, &n) {
             Some(i) => gos_rt_result_new(0, i as i64),
             None => gos_rt_result_new(1, 0),
         }
@@ -297,40 +297,48 @@ pub unsafe extern "C" fn gos_rt_bytes_index_of(
 /// `bytes::split(haystack, sep)` - chunks as a `Vec<String>`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_bytes_split(
-    haystack: *const c_char,
-    sep: *const c_char,
+    haystack: *const crate::c_abi::vec::GosVec,
+    sep: *const crate::c_abi::vec::GosVec,
 ) -> *mut crate::c_abi::vec::GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         let v = unsafe {
-            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::STRING)
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::VEC)
         };
-        let h = cstr_to_string(haystack);
-        let s = cstr_to_string(sep);
-        for chunk in bytes_split(h.as_bytes(), s.as_bytes()) {
-            let owned = String::from_utf8_lossy(&chunk).into_owned();
-            let cs_i64 = alloc_cstring(owned.as_bytes()) as i64;
+        let h = unsafe { crate::c_abi::vec::vec_bytes(haystack) };
+        let s = unsafe { crate::c_abi::vec::vec_bytes(sep) };
+        for chunk in bytes_split(&h, &s) {
+            let chunk_i64 = unsafe { byte_vec_new(&chunk) } as i64;
             unsafe {
-                crate::c_abi::vec::gos_rt_vec_push(v, std::ptr::addr_of!(cs_i64).cast::<u8>());
+                crate::c_abi::vec::gos_rt_vec_push(v, std::ptr::addr_of!(chunk_i64).cast::<u8>());
             }
         }
         v
     })
 }
 
+/// A fresh packed `Vec<u8>` runtime object holding `bytes`.
+unsafe fn byte_vec_new(bytes: &[u8]) -> *mut crate::c_abi::vec::GosVec {
+    let v = unsafe {
+        crate::c_abi::vec::gos_rt_vec_new_typed(1, crate::c_abi::vec::vec_elem_kind::PRIMITIVE)
+    };
+    for &b in bytes {
+        unsafe { crate::c_abi::vec::gos_rt_vec_push(v, std::ptr::addr_of!(b)) };
+    }
+    v
+}
+
 /// `bytes::replace(haystack, from, to)` - every occurrence rewritten;
 /// returns a fresh runtime c-string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_bytes_replace(
-    haystack: *const c_char,
-    from: *const c_char,
-    to: *const c_char,
-) -> *mut c_char {
+    haystack: *const crate::c_abi::vec::GosVec,
+    from: *const crate::c_abi::vec::GosVec,
+    to: *const crate::c_abi::vec::GosVec,
+) -> *mut crate::c_abi::vec::GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        let h = cstr_to_string(haystack);
-        let f = cstr_to_string(from);
-        let t = cstr_to_string(to);
-        let out = bytes_replace(h.as_bytes(), f.as_bytes(), t.as_bytes());
-        let owned = String::from_utf8_lossy(&out).into_owned();
-        alloc_cstring(owned.as_bytes())
+        let h = unsafe { crate::c_abi::vec::vec_bytes(haystack) };
+        let f = unsafe { crate::c_abi::vec::vec_bytes(from) };
+        let t = unsafe { crate::c_abi::vec::vec_bytes(to) };
+        unsafe { byte_vec_new(&bytes_replace(&h, &f, &t)) }
     })
 }
