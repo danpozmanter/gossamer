@@ -523,7 +523,7 @@ fn router_404_result() -> i128 {
         body: SyncRawPtr::new(alloc_cstring(b"not found")),
         headers: Vec::new(),
         body_bytes: None,
-        content_type: "text/plain; charset=utf-8".to_string(),
+        content_type: "text/plain; charset=utf-8".into(),
         stream_handle: -1,
     }));
     crate::c_abi::vec::pack_result(0, resp as i64)
@@ -812,7 +812,7 @@ pub unsafe extern "C" fn gos_rt_file_server_serve(
                         body: SyncRawPtr::new(alloc_cstring(b"forbidden")),
                         headers: Vec::new(),
                         body_bytes: None,
-                        content_type: "text/plain; charset=utf-8".to_string(),
+                        content_type: "text/plain; charset=utf-8".into(),
                         stream_handle: -1,
                     })) as i64,
                 );
@@ -825,7 +825,7 @@ pub unsafe extern "C" fn gos_rt_file_server_serve(
                         body: SyncRawPtr::new(alloc_cstring(b"")),
                         headers: vec![("location".to_string(), format!("{path}/"))],
                         body_bytes: None,
-                        content_type: "text/plain; charset=utf-8".to_string(),
+                        content_type: "text/plain; charset=utf-8".into(),
                         stream_handle: -1,
                     })) as i64,
                 );
@@ -889,7 +889,7 @@ pub unsafe extern "C" fn gos_rt_file_server_serve(
                         body: SyncRawPtr::new(body_cstr),
                         headers,
                         body_bytes: Some(body),
-                        content_type,
+                        content_type: content_type.into(),
                         stream_handle: -1,
                     })) as i64,
                 )
@@ -923,7 +923,7 @@ pub unsafe extern "C" fn gos_rt_static_serve_file(path: *const c_char) -> i128 {
                         body: SyncRawPtr::new(body_cstr),
                         headers: vec![("content-type".to_string(), mime.to_string())],
                         body_bytes: Some(bytes),
-                        content_type: mime.to_string(),
+                        content_type: mime.into(),
                         stream_handle: -1,
                     })) as i64,
                 )

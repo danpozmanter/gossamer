@@ -60,6 +60,8 @@ use rustls::{
     ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme, StreamOwned,
 };
 
+use super::vec::GosVec;
+
 // Process-global handle registries shared with every linked copy of the
 // runtime. `Option` so the `Mutex::new(None)` initialiser is const.
 static TCP_LISTENERS: Mutex<Option<HashMap<i64, Arc<TcpListener>>>> = Mutex::new(None);
@@ -483,6 +485,67 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_read(h: i64, max: i64) -> i128 {
             return tcp_err("TcpStream::read: stale handle");
         };
         super::vec::gos_rt_result_new(0, super::encoding::bytes_to_gosvec(&buf) as i64)
+    })
+}
+
+/// `net::TcpStream::read_into(handle, buf, max) -> Result<i64, Error>`.
+///
+/// Reads one chunk of at most `max` bytes into the buffer's own storage and
+/// sets its length to the byte count, so a connection loop reuses one buffer
+/// instead of paying an allocation per chunk. `Ok(0)` is the peer's clean
+/// close. The buffer grows only when it cannot already hold `max`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tcp_stream_read_into(h: i64, buf: *mut GosVec, max: i64) -> i128 {
+    ffi_entry!(0i128, {
+        if buf.is_null() {
+            return tcp_err("TcpStream::read_into: null buffer");
+        }
+        if max <= 0 {
+            return tcp_err("TcpStream::read_into: size must be positive");
+        }
+        let cap = max.min(1 << 24);
+        unsafe { super::vec::gos_rt_vec_reserve_at_least(buf, cap) };
+        let dst = unsafe { (*buf).ptr.as_ptr() };
+        if dst.is_null() {
+            return tcp_err("TcpStream::read_into: buffer has no storage");
+        }
+        // A `Vec<u8>` stores one byte per element, so the reserved element
+        // count is the byte window the read may fill.
+        let slot = unsafe { std::slice::from_raw_parts_mut(dst, cap as usize) };
+        let read = if let Some(tls) = tls_clone(h) {
+            let window = cap as usize;
+            match crate::sched_global::run_blocking("tls-stream-read-into", move || {
+                let mut owned = vec![0u8; window];
+                let mut guard = tls.lock();
+                guard.read(&mut owned).map(|n| {
+                    owned.truncate(n);
+                    owned
+                })
+            }) {
+                Ok(Ok(bytes)) => {
+                    slot[..bytes.len()].copy_from_slice(&bytes);
+                    bytes.len()
+                }
+                Ok(Err(e)) => return tcp_err(&socket_error(&e, "TlsStream::read_into")),
+                Err(e) => return tcp_err(&e),
+            }
+        } else if let Some(stream) = stream_clone(h) {
+            let mut reader: &TcpStream = &stream;
+            match reader.read(slot) {
+                Ok(n) => n,
+                Err(e) => {
+                    return tcp_err(&transfer_error(
+                        &e,
+                        "TcpStream::read_into",
+                        "read timed out",
+                    ));
+                }
+            }
+        } else {
+            return tcp_err("TcpStream::read_into: stale handle");
+        };
+        unsafe { (*buf).len = read as i64 };
+        super::vec::gos_rt_result_new(0, read as i64)
     })
 }
 

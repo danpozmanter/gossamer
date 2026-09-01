@@ -72,6 +72,7 @@ pub fn is_mutating_method_name(name: &str) -> bool {
             | "push_str"
             | "push_char"
             | "push_byte"
+            | "push_utf8"
             | "push_back"
             | "push_front"
             | "pop"

@@ -719,6 +719,34 @@ fn is_aggregate_copy_src(body: &Body, tcx: &TyCtxt, rvalue: &Rvalue) -> bool {
 /// whole-aggregate copy memcpies, a call argument is defensively cloned, a
 /// nested-aggregate operand is memcpied into its parent), so excluding only the
 /// return-flow set keeps stack construction sound.
+/// Whether a field of `local` is written through its ADDRESS rather than by an
+/// assignment to a projected place.
+///
+/// The map-field helpers take the address of the field they own and swap the
+/// table stored there, so a copy destination one of them names has storage of
+/// its own to keep: aliasing it to the source would let the source's own field
+/// teardown reach into the value the caller was handed.
+fn local_fields_written_through_address(body: &Body, local: Local) -> bool {
+    body.blocks.iter().any(|block| {
+        block.stmts.iter().any(|stmt| {
+            let StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, args },
+                ..
+            } = &stmt.kind
+            else {
+                return false;
+            };
+            if !matches!(*name, "gos_rt_map_field_clone" | "gos_rt_map_field_release") {
+                return false;
+            }
+            matches!(
+                args.first(),
+                Some(Operand::Copy(p)) if p.local == local && !p.projection.is_empty()
+            )
+        })
+    })
+}
+
 fn local_flows_to_return(body: &Body, local: Local) -> bool {
     let n = body.locals.len();
     let mut in_return = vec![false; n];
@@ -961,12 +989,12 @@ pub(super) fn lower_statement(
                 let heap_agg_copy = agg_copy_src
                     && !whole_agg_copy
                     && local_flows_to_return(body, place.local)
-                    && body.blocks.iter().any(|b| {
+                    && (body.blocks.iter().any(|b| {
                         b.stmts.iter().any(|s| {
                             matches!(&s.kind, StatementKind::Assign { place: p, .. }
                                 if p.local == place.local && !p.projection.is_empty())
                         })
-                    });
+                    }) || local_fields_written_through_address(body, place.local));
                 if whole_agg_copy {
                     let slots = type_slot_count(tcx, body.local_ty(place.local)).max(1);
                     let dst_var = ensure_var(

@@ -185,6 +185,16 @@ static LIVE_REQUESTS: LazyLock<Mutex<Vec<usize>>> = LazyLock::new(|| Mutex::new(
 #[must_use]
 pub fn open_request_context(timeout_ms: u64) -> usize {
     let deadline = (timeout_ms != 0).then(|| Instant::now() + Duration::from_millis(timeout_ms));
+    open_request_context_at(deadline)
+}
+
+/// Opens a request context that expires at an already-computed instant.
+///
+/// The deadline a request is served under starts when the request does, so a
+/// context created later in that request - the first time its handler asks
+/// for one - still expires when the request's own deadline says.
+#[must_use]
+pub fn open_request_context_at(deadline: Option<Instant>) -> usize {
     let addr = alloc_ctx(deadline, 0) as usize;
     LIVE_REQUESTS.lock().push(addr);
     addr

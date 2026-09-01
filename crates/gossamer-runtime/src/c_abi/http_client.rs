@@ -187,7 +187,10 @@ pub struct GosHttpResponse {
     pub body_bytes: Option<Vec<u8>>,
     /// Content type recorded by the constructor; used by the server
     /// writer only when `headers` carries no explicit content-type.
-    pub content_type: String,
+    ///
+    /// Borrowed for the constant kinds a handler answers with, so the two
+    /// constructors a request path runs through allocate nothing for it.
+    pub content_type: std::borrow::Cow<'static, str>,
     /// Stream-registry handle for streamed bodies; -1 = buffered.
     pub stream_handle: i64,
 }
@@ -549,18 +552,26 @@ pub unsafe extern "C" fn gos_rt_http_request_query(req: *const GosHttpRequest) -
 /// branch on its absence.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_request_context(
-    req: *const GosHttpRequest,
+    req: *mut GosHttpRequest,
 ) -> *mut crate::c_abi::context::GosCtx {
     ffi_entry!(std::ptr::null_mut(), {
-        let ctx = if req.is_null() {
-            0
-        } else {
-            unsafe { &*req }.context
-        };
-        if ctx == 0 {
+        if req.is_null() {
             return unsafe { crate::c_abi::context::gos_rt_ctx_background() };
         }
-        ctx as *mut crate::c_abi::context::GosCtx
+        let request = unsafe { &mut *req };
+        if request.context != 0 {
+            return request.context as *mut crate::c_abi::context::GosCtx;
+        }
+        // A served request opens its context here, the first time its handler
+        // asks for one: a handler that never does costs neither the allocation
+        // nor the two turns of the live-request registry it would take.
+        match crate::c_abi::http_server::open_current_request_context() {
+            Some(ctx) => {
+                request.context = ctx;
+                ctx as *mut crate::c_abi::context::GosCtx
+            }
+            None => unsafe { crate::c_abi::context::gos_rt_ctx_background() },
+        }
     })
 }
 
@@ -720,6 +731,24 @@ fn gos_response_own_body(body: *const c_char) -> *mut c_char {
     }
 }
 
+/// Reclaims a response box and the body copy it owns.
+///
+/// The unique reclaim site for a `http::Response` value: the server calls it
+/// through `drop_handler_result` once a handler's answer has been written, and
+/// compiled code calls it directly for a response that never leaves the frame
+/// that built it. Null is a no-op, so a response moved out is reclaimed once,
+/// by whoever ends up holding it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_response_free(response: *mut GosHttpResponse) {
+    ffi_entry!((), {
+        if response.is_null() {
+            return;
+        }
+        unsafe { crate::c_abi::string::gos_rt_str_free((*response).body.as_ptr()) };
+        drop(unsafe { Box::from_raw(response) });
+    });
+}
+
 /// Box-allocates a `text/plain` response with the given status and an owned
 /// copy of `body`; freed by `drop_handler_result`.
 #[unsafe(no_mangle)]
@@ -742,7 +771,7 @@ pub unsafe extern "C" fn gos_rt_http_response_text_new(
             body: SyncRawPtr::new(gos_response_own_body(body)),
             headers: Vec::new(),
             body_bytes: None,
-            content_type: "text/plain; charset=utf-8".to_string(),
+            content_type: std::borrow::Cow::Borrowed("text/plain; charset=utf-8"),
             stream_handle: -1,
         }))
     })
@@ -761,7 +790,7 @@ pub unsafe extern "C" fn gos_rt_http_response_json_new(
             body: SyncRawPtr::new(gos_response_own_body(body)),
             headers: Vec::new(),
             body_bytes: None,
-            content_type: "application/json".to_string(),
+            content_type: std::borrow::Cow::Borrowed("application/json"),
             stream_handle: -1,
         }))
     })
@@ -795,7 +824,7 @@ pub unsafe extern "C" fn gos_rt_http_response_stream_new(
             body: SyncRawPtr::new(std::ptr::null_mut()),
             headers: Vec::new(),
             body_bytes: None,
-            content_type: ct,
+            content_type: std::borrow::Cow::Owned(ct),
             stream_handle: handle,
         }))
     })
@@ -1078,7 +1107,7 @@ pub unsafe extern "C" fn gos_rt_http_response_set_content_type(
             return;
         }
         let ct = unsafe { crate::c_abi::gos_str_arg_string(content_type) };
-        unsafe { (*resp).content_type = ct };
+        unsafe { (*resp).content_type = ct.into() };
     });
 }
 
@@ -1391,7 +1420,7 @@ fn http_response_with_agent(
         body: SyncRawPtr::new(alloc_cstring(response.body.as_slice())),
         headers: response.headers,
         body_bytes: Some(response.body),
-        content_type: response.content_type,
+        content_type: response.content_type.into(),
         stream_handle: -1,
     })))
 }
@@ -2185,7 +2214,7 @@ mod tests {
                 ("x-request-id".to_string(), "abc123".to_string()),
             ],
             body_bytes: None,
-            content_type: "text/plain".to_string(),
+            content_type: "text/plain".into(),
             stream_handle: -1,
         }));
         let v = unsafe { gos_rt_http_response_headers(resp) };

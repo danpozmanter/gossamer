@@ -1,0 +1,53 @@
+// A struct carrying a `Map` field beside two `Vec` fields, built by a function
+// that returns it. The returned aggregate's map field is a table of its own:
+// the builder's own copy is released where it ends, and the caller reads back
+// exactly what was inserted.
+//
+// The return slot must be storage of its own rather than an alias of the
+// aggregate the builder assembled, or the builder's field teardown reaches
+// into the value the caller was handed. Bit-identical on the VM, Cranelift,
+// and LLVM tiers.
+
+struct C {
+    memory: Map<i64, i64>
+    _a: i64
+    _b: i64
+    v1: Vec<i64>
+    v2: Vec<i64>
+}
+
+impl C {
+    fn new(program: Vec<i64>) -> Self {
+        let mut m = Map::new()
+        for (addr, value) in program.enumerate() {
+            m.insert(addr, value)
+        }
+        C { memory: m, _a: 0, _b: 0, v1: #[], v2: #[] }
+    }
+
+    fn feed(&mut self, items: [i64]) {
+        self.v1.extend(items)
+    }
+}
+
+// The map field reached through a reference reads the same table.
+fn peek(c: &mut C, addr: i64) -> i64 {
+    c.memory.get_or(addr, -1)
+}
+
+fn main() {
+    let p: Vec<i64> = #[104, 5, 99]
+
+    for k in ..3 {
+        let mut c = C::new(p)
+        c.feed([7, 8])
+        println(
+            "iter {} len={} m0={} m2={} peek1={} v1={}"
+            k, c.memory.len(), c.memory.get_or(0, -1), c.memory.get_or(2, -1)
+            peek(&mut c, 1), c.v1.len()
+        )
+    }
+
+    // A builder whose map field is read straight out of the returned value.
+    println("direct m1={}", C::new(#[11, 22]).memory.get_or(1, -1))
+}

@@ -117,6 +117,14 @@ pub struct RuntimeEntry {
     /// other symbol. This is the half of a combinator's contract its C-ABI
     /// signature cannot express, and the compiler derives the symbol from it.
     pub combinator: Option<CombinatorAbi>,
+    /// When true the `Ptr` this symbol answers is a freshly allocated
+    /// `String` the caller owns and must release; when false the pointer
+    /// aliases storage the runtime or an argument still owns.
+    ///
+    /// A `Ptr` return says nothing about ownership on its own, so the drop
+    /// pass reads this instead of inferring one. The runtime spells the same
+    /// fact as `-> *mut c_char`, and a drift test holds the two together.
+    pub mints_string: bool,
 }
 
 impl AbiType {

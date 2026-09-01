@@ -141,7 +141,7 @@ pub const I128_HANDLER_REGISTRATIONS: &[(&str, usize)] = &[
 
 pub use registry::{
     REGISTRY, all_llvm_declarations, combinator_abi_of, combinator_crossings, combinator_symbol,
-    lookup,
+    lookup, mints_owned_string,
 };
 pub use types::{AbiSig, AbiType, CombinatorAbi, ElemClass, RuntimeEntry, Tier};
 

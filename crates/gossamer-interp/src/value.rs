@@ -398,6 +398,31 @@ impl Value {
     ///
     /// This deliberately hides VM storage variants such as `IntArray` and
     /// `FloatVec`: users wrote `Vec<i64>` and `Vec<f64>`, not those internal
+    /// The integer this value holds, whichever width it was written at.
+    ///
+    /// An unsigned expression carries a `Uint`, so a reader that matches only
+    /// `Int` sees nothing where a `u64` was passed - and a silent default then
+    /// answers for a value the program did supply. Every reader of an integer
+    /// argument goes through here so the two representations are one.
+    #[must_use]
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Self::Int(n) => Some(*n),
+            Self::Uint(n) => Some(*n as i64),
+            _ => None,
+        }
+    }
+
+    /// The bit pattern this value holds, whichever width it was written at.
+    #[must_use]
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            Self::Int(n) => Some(*n as u64),
+            Self::Uint(n) => Some(*n),
+            _ => None,
+        }
+    }
+
     /// representations.
     #[must_use]
     pub fn type_name(&self) -> String {

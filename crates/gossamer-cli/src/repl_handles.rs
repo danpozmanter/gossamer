@@ -958,6 +958,11 @@ pub const HANDLE_SIGNATURES: &[(&str, &str, &str)] = &[
     ),
     (
         "TcpStream",
+        "read_into",
+        "fn read_into(self: net::TcpStream, buf: &mut Vec<u8>, max: i64) -> Result<i64, errors::Error>",
+    ),
+    (
+        "TcpStream",
         "read_to_string",
         "fn read_to_string(self: net::TcpStream) -> Result<String, errors::Error>",
     ),

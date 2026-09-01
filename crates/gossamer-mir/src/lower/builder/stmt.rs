@@ -213,6 +213,71 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// `true` when `value` is the payload of a carrier one of this frame's own
+    /// calls answered - what `let x = f(..)?` leaves behind. The carrier hands
+    /// its payload over with it, so the value has no source-language identity
+    /// of its own any more than a call result has one: the binding takes the
+    /// handles as they are, and the RC schedule gives the caller's share back.
+    pub(crate) fn is_owned_carrier_payload(&self, value: Local) -> bool {
+        let Some(carrier) = self
+            .blocks
+            .iter()
+            .flat_map(|b| b.stmts.iter())
+            .find_map(|stmt| {
+                let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                    return None;
+                };
+                if place.local != value || !place.projection.is_empty() {
+                    return None;
+                }
+                let Rvalue::CallIntrinsic { name, args } = rvalue else {
+                    return None;
+                };
+                if !matches!(
+                    *name,
+                    "gos_rt_result_payload" | "gos_rt_result_payload_f64" | "gos_enum_load"
+                ) {
+                    return None;
+                }
+                match args.first() {
+                    Some(Operand::Copy(p)) if p.projection.is_empty() => Some(p.local),
+                    _ => None,
+                }
+            })
+        else {
+            return false;
+        };
+        self.blocks.iter().any(|block| {
+            matches!(
+                &block.terminator,
+                Terminator::Call {
+                    callee: Operand::FnRef { .. },
+                    destination,
+                    ..
+                } if destination.local == carrier && destination.projection.is_empty()
+            )
+        })
+    }
+
+    /// `true` when `local` is a binding that took a carrier payload this frame
+    /// owns. Such a binding holds the one reference the carrier handed over, so
+    /// a by-value use of it is a move exactly as a use of a fresh call result
+    /// is - copying it would leave the original with no owner.
+    pub(crate) fn holds_owned_carrier_payload(&self, local: Local) -> bool {
+        self.blocks.iter().flat_map(|b| b.stmts.iter()).any(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::Use(Operand::Copy(src)),
+                } if place.local == local
+                    && place.projection.is_empty()
+                    && src.projection.is_empty()
+                    && self.is_owned_carrier_payload(src.local)
+            )
+        })
+    }
+
     fn is_vec_like_ty(&self, ty: gossamer_types::Ty) -> bool {
         matches!(self.tcx.kind_of(ty), gossamer_types::TyKind::Vec(_))
     }
@@ -713,6 +778,8 @@ impl<'a> Builder<'a> {
                                 );
                             } else if gossamer_hir::is_capture_env_load(init)
                                 || self.is_fresh_user_call_result(value)
+                                || self.is_owned_carrier_payload(value)
+                                || self.holds_owned_carrier_payload(value)
                                 // A `.clone()` result already took its deep
                                 // per-field copy at the dispatch, so the
                                 // binding takes the handles as they are - a

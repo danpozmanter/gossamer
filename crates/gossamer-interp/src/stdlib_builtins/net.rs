@@ -156,6 +156,7 @@ pub(crate) fn install_net(globals: &mut Vec<(&'static str, Value)>) {
             builtin_tcp_stream_set_write_timeout_ms,
         ),
         ("TcpStream::set_nodelay", builtin_tcp_stream_set_nodelay),
+        ("TcpStream::read_into", builtin_tcp_stream_read_into),
         (
             "TcpStream::clear_read_timeout",
             builtin_tcp_stream_clear_read_timeout,
@@ -375,6 +376,87 @@ pub(crate) fn builtin_tcp_stream_read(args: &[Value]) -> RuntimeResult<Value> {
                 .map(|b| Value::Int(i64::from(b)))
                 .collect(),
         )))),
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+/// `net::TcpStream::read_into(buf, max)`. Reads one chunk of at most `max`
+/// bytes and replaces the buffer's contents with it, answering the byte count.
+/// `Ok(0)` is the peer's clean close.
+pub(crate) fn builtin_tcp_stream_read_into(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("TcpStream::read_into: missing handle"));
+    };
+    let Some(Value::MutCell(cell)) = args.get(1) else {
+        return Ok(err_variant(
+            "TcpStream::read_into: expected &mut Vec<u8> buffer",
+        ));
+    };
+    let max = match args.get(2).and_then(value_to_int) {
+        Some(n) if n <= 0 => {
+            return Err(RuntimeError::Type(
+                "TcpStream::read_into: size must be positive".to_string(),
+            ));
+        }
+        Some(n) => n.min(1 << 24),
+        None => 4096,
+    };
+    let res = if tls_has(id) {
+        match fetch_socket(&TLS_STREAM_REGISTRY, id) {
+            Some(arc) => {
+                match gossamer_runtime::sched_global::run_blocking(
+                    "tls-stream-read-into",
+                    move || {
+                        let mut buf = vec![0u8; max as usize];
+                        match arc.lock().read(&mut buf) {
+                            Ok(n) => {
+                                buf.truncate(n);
+                                Ok(buf)
+                            }
+                            Err(e) => Err(e.to_string()),
+                        }
+                    },
+                ) {
+                    Ok(result) => result,
+                    Err(e) => Err(e),
+                }
+            }
+            None => Err("TcpStream::read_into: stale handle".to_string()),
+        }
+    } else {
+        match clone_tcp_stream(id) {
+            Ok(mut stream) => {
+                match gossamer_runtime::sched_global::run_blocking(
+                    "tcp-stream-read-into",
+                    move || {
+                        let mut buf = vec![0u8; max as usize];
+                        match stream.read(&mut buf) {
+                            Ok(n) => {
+                                buf.truncate(n);
+                                Ok(buf)
+                            }
+                            Err(e) => Err(e.to_string()),
+                        }
+                    },
+                ) {
+                    Ok(result) => result,
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        }
+    };
+    match res {
+        Ok(bytes) => {
+            let n = bytes.len() as i64;
+            *cell.lock() = Value::Array(Arc::new(
+                bytes
+                    .into_iter()
+                    .map(|b| Value::Int(i64::from(b)))
+                    .collect(),
+            ));
+            Ok(ok_variant(Value::Int(n)))
+        }
         Err(e) => Ok(err_variant(e)),
     }
 }

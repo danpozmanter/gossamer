@@ -354,10 +354,7 @@ pub(crate) fn u8vec_write_back(v: &Value, bytes: &[u8]) {
 }
 
 fn arg_int(args: &[Value], idx: usize) -> Option<i64> {
-    match args.get(idx) {
-        Some(Value::Int(n)) => Some(*n),
-        _ => None,
-    }
+    args.get(idx).and_then(Value::as_i64)
 }
 
 fn non_negative_arg(args: &[Value], idx: usize, default: i64, label: &str) -> RuntimeResult<usize> {

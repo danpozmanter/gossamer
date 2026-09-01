@@ -1,0 +1,60 @@
+// `TcpStream::read_into(buf, max)` fills a buffer the caller keeps instead of
+// answering a fresh one per chunk: the byte count is the answer and the
+// buffer's length is set to it, so a connection loop reuses one allocation.
+// A clean close answers `Ok(0)` and empties the buffer.
+//
+// Self-terminating: the echo server runs on a spawned goroutine and the
+// client drives the exchange from main. Binds a fixed loopback port.
+
+use std::net
+use std::process
+
+fn serve(listener: net::TcpListener) {
+    match listener.accept() {
+        Ok((mut conn, _peer)) => {
+            let mut buf: Vec<u8> = Vec::with_capacity(64)
+            let mut open = true
+            while open {
+                match conn.read_into(&mut buf, 64) {
+                    Ok(n) => {
+                        if n == 0 { open = false } else { let _ = conn.write_all(buf) }
+                    }
+                    Err(_) => open = false
+                }
+            }
+            let _ = conn.close()
+        }
+        Err(e) => eprintln("accept failed: {e}")
+    }
+}
+
+fn main() {
+    let listener = match net::TcpListener::bind("127.0.0.1:23983") {
+        Ok(l) => l
+        Err(e) => {
+            eprintln("bind failed: {e}")
+            process::exit(1)
+        }
+    }
+    spawn(|| serve(listener))
+
+    let mut client = match net::TcpStream::connect("127.0.0.1:23983") {
+        Ok(c) => c
+        Err(e) => {
+            eprintln("connect failed: {e}")
+            process::exit(1)
+        }
+    }
+
+    let mut buf: Vec<u8> = Vec::with_capacity(64)
+    let words = #["one", "two", "three"]
+    for w in words {
+        let _ = client.write_all(w.as_bytes())
+        match client.read_into(&mut buf, 64) {
+            Ok(n) => println("read {} len {} text {}", n, buf.len(), String::from_utf8(buf).unwrap_or(""))
+            Err(e) => println("read error: {}", e)
+        }
+    }
+    let _ = client.close()
+    process::exit(0)
+}

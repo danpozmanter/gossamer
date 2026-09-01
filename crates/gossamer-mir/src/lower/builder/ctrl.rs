@@ -1454,6 +1454,40 @@ impl<'a> Builder<'a> {
                     // Accept both `Some(x)` (Binding) and `Some((a, b))` (Tuple payload).
                     let is_binding = matches!(first.kind, HirPatKind::Binding { .. });
                     let is_tuple_payload = matches!(first.kind, HirPatKind::Tuple(_));
+                    // A payload the arm discards (`Ok(_)`) is still the frame's
+                    // to give back: the carrier is two words by value and
+                    // releases nothing, so a reference-counted payload nobody
+                    // names would outlive every holder. Reading it into a local
+                    // of its own puts it under the ordinary release schedule,
+                    // which decides ownership from where the carrier came from.
+                    if real_disc
+                        && !is_binding
+                        && !is_tuple_payload
+                        && matches!(first.kind, HirPatKind::Wildcard)
+                        && let Some(payload_ty) = match name.name.as_str() {
+                            "Ok" | "Some" => Some(0),
+                            "Err" => Some(1),
+                            _ => None,
+                        }
+                        .and_then(|idx| self.adt_generic_at(scrut_ty, idx))
+                        && self.tcx.is_rc_managed(payload_ty)
+                        && !self.is_by_value_enum_ty(payload_ty)
+                    {
+                        let saved_current = self.current;
+                        if let Some(defer) = self.payload_defer_block {
+                            self.current = Some(defer);
+                        }
+                        let discarded = self.fresh(payload_ty);
+                        self.emit_assign(
+                            Place::local(discarded),
+                            Rvalue::CallIntrinsic {
+                                name: "gos_rt_result_payload",
+                                args: vec![Operand::Copy(Place::local(scrutinee))],
+                            },
+                            span,
+                        );
+                        self.current = saved_current;
+                    }
                     if is_binding || is_tuple_payload {
                         // Bind the payload. With real discriminant
                         // encoding, allocate a fresh local from

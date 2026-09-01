@@ -1,0 +1,35 @@
+// `s.push_utf8(buf, start, end)` appends a byte window of a buffer straight
+// onto a String's own storage: no intermediate `Vec`, no intermediate
+// `String`, and no allocation when the receiver already has the room.
+//
+// The call answers whether the window was appended - an out-of-range window
+// or one that is not valid UTF-8 leaves the receiver untouched. Multi-byte
+// scalars append whole and a window that splits one is refused.
+
+fn main() {
+    let bytes = "hello world".as_bytes()
+    let mut s = String::with_capacity(64)
+    println("head={}", s.push_utf8(bytes, 0, 5))
+    println("space={}", s.push_utf8(bytes, 5, 6))
+    println("tail={}", s.push_utf8(bytes, 6, 11))
+    println("s={} len={}", s, s.len())
+
+    println("empty={}", s.push_utf8(bytes, 3, 3))
+    println("past_end={}", s.push_utf8(bytes, 0, 99))
+    println("reversed={}", s.push_utf8(bytes, 3, 2))
+    println("negative={}", s.push_utf8(bytes, -1, 2))
+    println("unchanged={}", s)
+
+    // A multi-byte scalar appends whole; a window that splits it is refused.
+    let wide = "héllo".as_bytes()
+    let mut w = String::with_capacity(16)
+    println("split={}", w.push_utf8(wide, 0, 2))
+    println("whole={}", w.push_utf8(wide, 0, wide.len()))
+    println("w={} chars={} bytes={}", w, w.len(), w.byte_len())
+
+    // Repeated appends reuse the reserved storage.
+    let mut acc = String::with_capacity(64)
+    let piece = "ab".as_bytes()
+    for _ in 0..8 { let _ = acc.push_utf8(piece, 0, 2) }
+    println("acc={} len={}", acc, acc.len())
+}

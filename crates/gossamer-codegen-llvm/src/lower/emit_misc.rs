@@ -331,6 +331,14 @@ impl<'a> Lowerer<'a> {
                 kind => {
                     let str_ptr = self.emit_concat_aggregate(arg, kind, &value)?;
                     writeln!(self.out, "  call void @gos_rt_print_str(ptr {str_ptr})").unwrap();
+                    // The formatter answers a fresh String this frame is the
+                    // only holder of, and the write copies its bytes out.
+                    declare_rt(&mut self.runtime_refs, "gos_rt_str_free_typed");
+                    writeln!(
+                        self.out,
+                        "  call void @gos_rt_str_free_typed(ptr {str_ptr})"
+                    )
+                    .unwrap();
                 }
             }
         }

@@ -30,18 +30,12 @@ fn stream_fd(value: &Value) -> i64 {
 fn math_arg(args: &[Value]) -> f64 {
     match args.first() {
         Some(Value::Float(x)) => *x,
-        Some(Value::Int(n)) => *n as f64,
-        _ => 0.0,
+        other => other.and_then(Value::as_i64).map_or(0.0, |n| n as f64),
     }
 }
 
 fn wrapping_int_arg(args: &[Value], index: usize) -> u64 {
-    args.get(index)
-        .and_then(|value| match value {
-            Value::Int(value) => Some(*value as u64),
-            _ => None,
-        })
-        .unwrap_or(0)
+    args.get(index).and_then(Value::as_u64).unwrap_or(0)
 }
 
 fn normalize_wrapping_int(value: u64, bits: u32, signed: bool) -> i64 {
@@ -87,10 +81,7 @@ fn builtin_f64_to_bits(args: &[Value]) -> RuntimeResult<Value> {
 
 /// `f64::from_bits(b) -> f64`: the binary64 value `b` encodes.
 fn builtin_f64_from_bits(args: &[Value]) -> RuntimeResult<Value> {
-    let bits = match args.first() {
-        Some(Value::Int(n)) => *n as u64,
-        _ => 0,
-    };
+    let bits = args.first().and_then(Value::as_u64).unwrap_or(0);
     Ok(Value::Float(f64::from_bits(bits)))
 }
 
@@ -103,10 +94,7 @@ fn builtin_f32_to_bits(args: &[Value]) -> RuntimeResult<Value> {
 /// `f32::from_bits(b) -> f32`: the binary32 value the low 32 bits of `b`
 /// encode, widened to the 64-bit float slot.
 fn builtin_f32_from_bits(args: &[Value]) -> RuntimeResult<Value> {
-    let bits = match args.first() {
-        Some(Value::Int(n)) => *n as u64 as u32,
-        _ => 0,
-    };
+    let bits = args.first().and_then(Value::as_u64).unwrap_or(0) as u32;
     Ok(Value::Float(f64::from(f32::from_bits(bits))))
 }
 

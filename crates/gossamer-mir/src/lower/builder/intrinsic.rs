@@ -100,6 +100,56 @@ impl<'a> Builder<'a> {
     /// Lowers Rust-style `fill` for fixed arrays, slices, and Vec values as a
     /// typed element-store loop. Using MIR places preserves aggregate and RC
     /// element semantics instead of copying an erased machine word.
+    /// The type the place names, following its projections.
+    ///
+    /// A receiver written as a field or an element is rooted in a local whose
+    /// own type is the aggregate it sits in, so the local's type alone answers
+    /// for the wrong value: `o.items.resize(..)` is rooted in `o`. The
+    /// projections are what say which value the place is. A step that cannot be
+    /// followed answers with the type reached so far, which leaves the caller
+    /// exactly as unable to recognise the receiver as it was before.
+    pub(crate) fn place_ty(&self, place: &Place) -> gossamer_types::Ty {
+        use gossamer_types::TyKind;
+        let mut ty = self.locals[place.local.0 as usize].ty;
+        for step in &place.projection {
+            let mut base = ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(base) {
+                base = *inner;
+            }
+            ty = match step {
+                crate::ir::Projection::Deref => match self.tcx.kind_of(ty) {
+                    TyKind::Ref { inner, .. } => *inner,
+                    _ => return ty,
+                },
+                crate::ir::Projection::Field(index) => match self.tcx.kind_of(base) {
+                    TyKind::Tuple(elems) => match elems.get(*index as usize) {
+                        Some(field) => *field,
+                        None => return ty,
+                    },
+                    TyKind::Adt { def, .. } => {
+                        match self
+                            .tcx
+                            .struct_field_tys(*def)
+                            .and_then(|fields| fields.get(*index as usize))
+                        {
+                            Some(field) => *field,
+                            None => return ty,
+                        }
+                    }
+                    _ => return ty,
+                },
+                crate::ir::Projection::Index(_) => match self.tcx.kind_of(base) {
+                    TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => *elem,
+                    _ => return ty,
+                },
+                crate::ir::Projection::Downcast(_) | crate::ir::Projection::Discriminant => {
+                    return ty;
+                }
+            };
+        }
+        ty
+    }
+
     pub(crate) fn try_lower_sequence_fill(
         &mut self,
         receiver: &HirExpr,
@@ -109,7 +159,7 @@ impl<'a> Builder<'a> {
         use gossamer_types::{IntTy, Mutbl, TyKind};
 
         let recv_place = self.lower_place_expr(receiver)?;
-        let recv_ty = self.locals[recv_place.local.0 as usize].ty;
+        let recv_ty = self.place_ty(&recv_place);
         let recv_kind = match self.tcx.kind_of(recv_ty) {
             TyKind::Ref { inner, .. } => self.tcx.kind_of(*inner).clone(),
             kind => kind.clone(),
@@ -245,7 +295,7 @@ impl<'a> Builder<'a> {
         use gossamer_types::{IntTy, TyKind};
 
         let recv_place = self.lower_place_expr(receiver)?;
-        let recv_ty = self.locals[recv_place.local.0 as usize].ty;
+        let recv_ty = self.place_ty(&recv_place);
         let mut peeled = recv_ty;
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
             peeled = *inner;
@@ -305,7 +355,7 @@ impl<'a> Builder<'a> {
         use gossamer_types::{IntTy, TyKind};
 
         let recv_place = self.lower_place_expr(receiver)?;
-        let recv_ty = self.locals[recv_place.local.0 as usize].ty;
+        let recv_ty = self.place_ty(&recv_place);
         let mut peeled = recv_ty;
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
             peeled = *inner;
@@ -419,7 +469,7 @@ impl<'a> Builder<'a> {
         use gossamer_types::{IntTy, TyKind};
 
         let recv_place = self.lower_place_expr(receiver)?;
-        let recv_ty = self.locals[recv_place.local.0 as usize].ty;
+        let recv_ty = self.place_ty(&recv_place);
         let mut peeled = recv_ty;
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
             peeled = *inner;
@@ -485,7 +535,7 @@ impl<'a> Builder<'a> {
         use gossamer_types::{IntTy, TyKind};
 
         let recv_place = self.lower_place_expr(receiver)?;
-        let recv_ty = self.locals[recv_place.local.0 as usize].ty;
+        let recv_ty = self.place_ty(&recv_place);
         let TyKind::Array { elem, len } = self.tcx.kind_of(recv_ty).clone() else {
             return None;
         };
@@ -555,7 +605,7 @@ impl<'a> Builder<'a> {
     ) -> Option<Local> {
         use gossamer_types::{IntTy, TyKind};
         let recv_place = self.lower_place_expr(receiver)?;
-        let recv_ty = self.locals[recv_place.local.0 as usize].ty;
+        let recv_ty = self.place_ty(&recv_place);
         let recv_kind = match self.tcx.kind_of(recv_ty) {
             TyKind::Ref { inner, .. } => self.tcx.kind_of(*inner).clone(),
             other => other.clone(),
@@ -742,9 +792,7 @@ impl<'a> Builder<'a> {
         let recv_place = self.lower_place_expr(receiver)?;
         let i_local = self.lower_expr(i_expr)?;
         let j_local = self.lower_expr(j_expr)?;
-        let recv_kind = self
-            .tcx
-            .kind_of(self.locals[recv_place.local.0 as usize].ty);
+        let recv_kind = self.tcx.kind_of(self.place_ty(&recv_place));
         let inner_kind = match recv_kind {
             gossamer_types::TyKind::Ref { inner, .. } => self.tcx.kind_of(*inner).clone(),
             other => other.clone(),
@@ -759,16 +807,18 @@ impl<'a> Builder<'a> {
             gossamer_types::TyKind::Vec(elem) => *elem,
             _ => return None,
         };
-        if is_vec_or_slice && recv_place.projection.is_empty() {
+        if is_vec_or_slice {
             // Vec/Slice swap goes through a checked helper so the GosVec
             // header is not mis-treated as a flat element buffer and invalid
-            // indices are returned as an error.
+            // indices are returned as an error. The receiver is passed as the
+            // place it is written as, so a vec reached through a field or an
+            // element is the one that gets swapped.
             let swap = self.fresh(ty);
             let next = self.new_block(span);
             self.terminate(Terminator::Call {
                 callee: Operand::Const(ConstValue::Str("gos_rt_vec_swap_safe".to_string())),
                 args: vec![
-                    Operand::Copy(Place::local(recv_place.local)),
+                    Operand::Copy(recv_place.clone()),
                     Operand::Copy(Place::local(i_local)),
                     Operand::Copy(Place::local(j_local)),
                 ],

@@ -1,5 +1,90 @@
 # Changelog
 
+## 0.58.6 - String answers, field reads through a reference, enum payloads, and response reclaim
+
+- Every runtime call that answers a freshly allocated `String` releases it.
+  The ABI registry now declares which shims mint one, so `true.to_string()`,
+  `'x'.to_string()`, `strconv::format_i64`, `base64::encode`, `hex::encode`,
+  `path::join`, `uuid::v4`, `sha256::hex`, `url::query_escape`, a `{:x}` or
+  `{:>8}` format, `strings::join`, and a `Vec` or tuple rendered with
+  `to_string` each cost one release-balanced String rather than leaking one per
+  call. Around 240 shims were reached only by a hand-kept list of 25 before.
+- Rendering a container into a `println` argument or a `format` result
+  reclaims the rendering. Printing a `Vec`, `Map`, `Set`, tuple, array,
+  `Option`, `Result`, `DynValue`, or JSON value leaked one String per print on
+  the compiled tiers.
+- A `Vec`, `String`, or other heap field read through a `&`/`&mut` receiver is
+  released. `p.toks.len()`, `p.toks[i]`, and `r.name` through a reference each
+  minted a share the frame never gave back, so a parser called per request grew
+  by one buffer per field read; the release schedule now reads the field
+  through the pointee exactly as the retain does.
+- A `Vec` payload the frame releases gets the carrier's own share when `Ok(v)`
+  or `Some(v)` takes it, so a field returned inside a carrier survives the
+  frame that built it. `fn take(r: &mut Rec) -> Result<Vec<i64>, String> {
+  Ok(r.data) }` answered a buffer whose contents were freed under the caller.
+- A payload-bearing enum reached through `?` or matched out of a carrier is
+  released with the heap fields it carries. A `Stmt::Select { cols, conds }`
+  built per statement kept its node, its `String`, and both `Vec`s.
+- A `http::Response` built outside a handler is reclaimed. The box and the body
+  copy it owns were freed only by the server after writing a handler's answer,
+  so a response constructed and dropped anywhere else lived to process exit.
+- A `http::Response` bound to a name is reclaimed where it dies rather than
+  only at the end of the function, so one built per turn of a loop no longer
+  keeps every prior one alive.
+- A closure that captures a struct reads the struct the enclosing scope holds
+  rather than a copy of it. A capture carrying a `Map` field cloned the whole
+  table on every call, so a handler holding a 50 000-entry index ran three
+  orders of magnitude slower than the same call written out.
+- `net::TcpStream::read_into(buf, max)` reads one chunk into a buffer the
+  caller keeps and answers the byte count, so a connection loop pays no
+  allocation per chunk. `Ok(0)` is the peer's clean close.
+- `String::push_utf8(buf, start, end)` appends a byte window straight onto a
+  string's own storage when that window is valid UTF-8, answering whether it
+  was appended. Rendering text out of a byte buffer needs neither an
+  intermediate `Vec` nor an intermediate `String`.
+- A struct carrying a `Map` field beside two or more `Vec` fields survives
+  being returned. The JIT gave the return slot the builder's own storage
+  rather than a copy, so the builder's field teardown emptied the map the
+  caller was handed - `c.memory` read back empty where the interpreter and the
+  native build both read the inserted values (#241).
+- A `Result` or `Option` payload an arm discards (`Ok(_)`) is released. The
+  carrier is two words by value and frees nothing, so a payload nobody named
+  outlived every holder: a parser answering a statement node kept the node and
+  every heap field it carried, once per call.
+- The HTTP server spends 4.4 us of CPU per request where it spent 6.6, so a
+  handler's own work is a larger share of what a request costs. The peer watch
+  registers a connection once rather than a request, a request opens its
+  context the first time its handler asks for one, and the `Date` header is
+  rendered once a second per connection thread instead of once a response.
+- A `String` rebound through a `&mut String` parameter costs no allocation of
+  its own. `push_str`, `push`, `push_char`, and `push_byte` published the
+  helper's answer into the slot as a second share, so a builder filling a
+  caller's buffer kept one String per append and ran about four times slower
+  than the same appends on a local.
+- `clear` and `truncate` on a `&mut String` release the text they displace.
+  Both answer a fresh string the slot takes, and the one it replaced was left
+  behind, once per call.
+- A `Result` or `Option` bound to a name before it is matched releases its
+  payload's heap fields. `let outcome = f(..)` followed by `match outcome` read
+  the payload as a borrow where matching the call directly read it as owned, so
+  every `Vec`, `String`, and nested field the payload carried outlived the
+  frame.
+- A container taken out of a carrier and bound to a name is handed on rather
+  than copied. `let vals = decode(..)?` followed by `Ok(vals)` deep-copied the
+  sequence into a buffer nothing reclaimed, so a keyed read answering a decoded
+  row kept one `Vec` per call.
+- A struct carrying a `Map` field keeps it when it is stored in a `Vec`. The
+  compiled tiers read the entries back as empty and the length as garbage while
+  the bytecode VM answered correctly, so a secondary index held beside the
+  structs it describes answered nothing under `gos build`.
+- `resize`, `fill`, and `swap` reach a receiver written as a field or an index
+  (`s.tables[i].slots.resize(n, 0)`), which took the whole-local path and left
+  the sequence unchanged.
+- `f64::from_bits`, `f32::from_bits`, and the math and wrapping-integer
+  builtins accept an argument the checker typed `u64`. On the bytecode VM such
+  an argument read as zero, so a float decoded out of a byte buffer rendered as
+  0 there and correctly on the compiled tiers.
+
 ## 0.58.5 - Channel carriers, a false deadlock under a server, Nagle, and the container-field leaks
 
 - A struct stored as a map value releases every heap field it carries. The

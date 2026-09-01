@@ -1,0 +1,66 @@
+// A struct carrying a `Map` field, held as an element of a `Vec`.
+//
+// The map is a heap value the element owns: the vec has to take a table of its
+// own when the element is copied in, and free it when the element dies. A
+// `GosMap` carries no reference count, so sharing the builder's table would
+// leave one table under two owners and the element would read back empty once
+// the frame that pushed it returned.
+//
+// The `Vec` and `String` fields beside it are the shapes that already worked;
+// they are here so a regression in either is visible in the same fixture.
+
+struct Index {
+    name: String
+    head: Map<String, i64>
+    chain: Vec<i64>
+}
+
+struct Catalogue {
+    entries: Vec<Index>
+}
+
+// Fills the entry through a call, so the pushing frame is gone by the time
+// anything reads it back.
+fn fill(cat: &mut Catalogue, at: i64) {
+    let _ = cat.entries[at].head.insert("alpha", 1)
+    let _ = cat.entries[at].head.insert("beta", 2)
+    cat.entries[at].chain.push(10)
+    cat.entries[at].chain.push(20)
+}
+
+fn open(cat: &mut Catalogue, name: String) {
+    cat.entries.push(Index { name: name, head: Map::new(), chain: #[] })
+    fill(cat, cat.entries.len() - 1)
+}
+
+fn main() {
+    let mut cat = Catalogue { entries: #[] }
+    open(&mut cat, "by_name")
+    open(&mut cat, "by_age")
+
+    println("entries {}", cat.entries.len())
+    for i in 0..cat.entries.len() {
+        println("{}: map {} chain {} alpha {} beta {} missing {}"
+            cat.entries[i].name
+            cat.entries[i].head.len()
+            cat.entries[i].chain.len()
+            cat.entries[i].head.get("alpha").unwrap_or(-1)
+            cat.entries[i].head.get("beta").unwrap_or(-1)
+            cat.entries[i].head.get("gamma").unwrap_or(-1))
+    }
+
+    // Writing through the element after it is in the vec reaches the table the
+    // vec owns, not a copy of it.
+    let _ = cat.entries[0].head.insert("gamma", 3)
+    let _ = cat.entries[0].head.remove("alpha")
+    println("after write: map {} alpha {} gamma {}"
+        cat.entries[0].head.len()
+        cat.entries[0].head.get("alpha").unwrap_or(-1)
+        cat.entries[0].head.get("gamma").unwrap_or(-1))
+
+    // The two elements hold tables of their own.
+    println("untouched: map {} alpha {} gamma {}"
+        cat.entries[1].head.len()
+        cat.entries[1].head.get("alpha").unwrap_or(-1)
+        cat.entries[1].head.get("gamma").unwrap_or(-1))
+}

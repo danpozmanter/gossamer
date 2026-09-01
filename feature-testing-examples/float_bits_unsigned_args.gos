@@ -1,0 +1,32 @@
+// A `u64` reaching a function that takes one.
+//
+// An unsigned expression carries its own value representation, so a reader that
+// recognises only the signed one sees nothing where a `u64` was passed, and a
+// silent default then answers for a value the program did supply. The bit
+// pattern of a float is the case where that is loudest: the answer is zero
+// rather than the number.
+
+use std::encoding::binary
+
+fn main() {
+    let v: f64 = 2.5
+    let signed: i64 = v.to_bits() as i64
+
+    // The same pattern reaching `from_bits` three ways: straight off `to_bits`,
+    // through a signed binding and back, and cast in the call itself.
+    println("direct   {}", f64::from_bits(v.to_bits()))
+    println("via i64  {}", f64::from_bits(signed as u64))
+    let widened = signed as u64
+    println("bound    {}", f64::from_bits(widened))
+
+    // Through a byte buffer, which is how a decoder reads one.
+    let mut buf: Vec<u8> = #[]
+    buf.extend(binary::put_u64_le(#[], signed))
+    match binary::get_u64_le_at(buf, 0) {
+        Ok(bits) => println("buffer   {}", f64::from_bits(bits))
+        Err(e) => println("buffer failed: {}", e.message())
+    }
+
+    let w: f32 = 1.25
+    println("f32      {}", f32::from_bits(w.to_bits()))
+}

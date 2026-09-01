@@ -309,6 +309,18 @@ impl TcpStream {
         }
     }
 
+    /// Reads one chunk of at most `max` bytes into `buf`, replacing its
+    /// contents and answering the byte count. `Ok(0)` is a clean close.
+    ///
+    /// The buffer's own storage is what the read fills, so a connection loop
+    /// that keeps one buffer pays no allocation per chunk.
+    pub fn read_into(&mut self, buf: &mut Vec<u8>, max: usize) -> Result<usize, IoError> {
+        buf.resize(max, 0);
+        let n = self.read(&mut buf[..max])?;
+        buf.truncate(n);
+        Ok(n)
+    }
+
     /// Cancellation-aware variant of [`Self::read`].
     ///
     /// Loops through the same non-blocking-read / poll-park

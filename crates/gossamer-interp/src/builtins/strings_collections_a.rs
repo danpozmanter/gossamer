@@ -254,6 +254,44 @@ fn builtin_str_push_byte(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(out))
 }
 
+/// `s.push_utf8(buf, start, end)` - append the `[start, end)` byte window of
+/// `buf` when it is valid UTF-8, answering whether it was appended.
+///
+/// The receiver crosses as a write-back cell because the call's value is the
+/// flag rather than the new string; an out-of-range or non-UTF-8 window leaves
+/// the receiver untouched.
+fn builtin_str_push_utf8(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(Value::MutCell(cell)) = args.first() else {
+        return Ok(Value::Bool(false));
+    };
+    let Some(Value::Array(bytes)) = args.get(1) else {
+        return Ok(Value::Bool(false));
+    };
+    let start = args.get(2).and_then(value_to_int).unwrap_or(-1);
+    let end = args.get(3).and_then(value_to_int).unwrap_or(-1);
+    if start < 0 || end < start || end as usize > bytes.len() {
+        return Ok(Value::Bool(false));
+    }
+    let window: Vec<u8> = bytes[start as usize..end as usize]
+        .iter()
+        .map(|v| match v {
+            Value::Int(n) => *n as u8,
+            _ => 0,
+        })
+        .collect();
+    let Ok(text) = std::str::from_utf8(&window) else {
+        return Ok(Value::Bool(false));
+    };
+    let mut guard = cell.lock();
+    let mut out = match &*guard {
+        Value::String(existing) => existing.clone(),
+        _ => return Ok(Value::Bool(false)),
+    };
+    out.push_str(text);
+    *guard = Value::String(out);
+    Ok(Value::Bool(true))
+}
+
 /// `s.push_str(t)` - append a string slice, returning the new String.
 /// See `builtin_str_push` for the writeback contract.
 fn builtin_str_push_str(args: &[Value]) -> RuntimeResult<Value> {

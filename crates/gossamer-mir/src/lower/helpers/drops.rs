@@ -145,6 +145,9 @@ fn is_self_consuming_append(name: &str) -> bool {
             | "gos_rt_str_append_bytes"
             | "gos_rt_str_push_char"
             | "gos_rt_str_push_byte"
+            // Appends through `gos_rt_str_append_bytes` and answers the
+            // accumulator in the carrier's payload.
+            | "gos_rt_str_push_utf8"
     )
 }
 
@@ -439,6 +442,34 @@ pub(crate) fn propagate_copy_types(body: &mut Body, tcx: &gossamer_types::TyCtxt
     }
 }
 
+/// Runtime calls that answer one of the sequence's OWN elements, wrapped in a
+/// carrier: the payload is the container's value, not a fresh one.
+///
+/// The combinator each shim implements is what the ABI registry declares, so
+/// the set is derived rather than spelled: `max`, `min`, their `_by` and
+/// `_by_key` forms, `find`, and `reduce` each hand back an element the
+/// sequence still holds, exactly as `first` / `last` / an index read do.
+fn answers_borrowed_element(name: &str) -> bool {
+    if matches!(
+        name,
+        "gos_rt_vec_get_i128"
+            | "gos_rt_vec_first"
+            | "gos_rt_vec_last"
+            // The upgrade's fresh strong reference is pinned by the shadow
+            // local `gos_rt_weak_opt_payload` answers, so the carrier's
+            // payload is a view of what that handle already owns.
+            | "gos_rt_rc_weak_upgrade_opt"
+    ) {
+        return true;
+    }
+    gossamer_abi::combinator_abi_of(name).is_some_and(|abi| {
+        matches!(
+            abi.combinator,
+            "max" | "min" | "max_by" | "min_by" | "max_by_key" | "min_by_key" | "find" | "reduce"
+        )
+    })
+}
+
 pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     let n_locals = body.locals.len();
     if n_locals == 0 {
@@ -531,18 +562,37 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             // (by matching both the local AND the projection) keeps the
             // accumulator off the retain-of-result / release-of-old paths.
             let (tmp, succ_idx) = (destination.local, succ.0 as usize);
-            if succ_idx < body.blocks.len()
-                && let Some(first) = body.blocks[succ_idx].stmts.first()
+            if succ_idx >= body.blocks.len() {
+                continue;
+            }
+            // The accumulator arrives either as the call's own answer or as
+            // the payload of the carrier it answers, so the copy-back is the
+            // successor's first statement or the one after the extraction.
+            let stmts = &body.blocks[succ_idx].stmts;
+            let (source, copy_at) = match stmts.first().map(|s| &s.kind) {
+                Some(StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::CallIntrinsic { name, args },
+                }) if *name == "gos_rt_result_payload"
+                    && place.projection.is_empty()
+                    && matches!(args.first(), Some(Operand::Copy(c)) if c.local == tmp
+                        && c.projection.is_empty()) =>
+                {
+                    (place.local, 1)
+                }
+                _ => (tmp, 0),
+            };
+            if let Some(stmt) = stmts.get(copy_at)
                 && let StatementKind::Assign {
                     place,
                     rvalue: Rvalue::Use(Operand::Copy(src)),
-                } = &first.kind
+                } = &stmt.kind
                 && place.local == arg0.local
                 && place.projection == arg0.projection
-                && src.local == tmp
+                && src.local == source
                 && src.projection.is_empty()
             {
-                copyback_sites.insert((succ_idx, 0));
+                copyback_sites.insert((succ_idx, copy_at));
             }
         }
     }
@@ -598,6 +648,12 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         })
         .collect();
     let mut retain_sites: Vec<(usize, usize, Local, usize)> = Vec::new();
+    // Extraction retains kept because the binding they feed is stored into an
+    // aggregate, as `(block, stmt, payload, binding)`.
+    let mut stored_extraction_retains: Vec<(usize, usize, Local, Local)> = Vec::new();
+    // `gos_rt_result_new` payload mints this pass may still owe, decided once
+    // the release schedule is known.
+    let mut carrier_vec_sites: Vec<(usize, usize, Local)> = Vec::new();
     // Retains to emit at the end of a block (just before a consuming
     // terminator call), `(block, local)`.
     let mut terminator_retains: Vec<(usize, Local)> = Vec::new();
@@ -624,10 +680,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         } = &block.terminator
             && destination.projection.is_empty()
             && (destination.local.0 as usize) < n_locals
-            && matches!(
-                name.as_str(),
-                "gos_rt_vec_get_i128" | "gos_rt_vec_first" | "gos_rt_vec_last"
-            )
+            && answers_borrowed_element(name.as_str())
         {
             borrowed_enum_src[destination.local.0 as usize] = true;
         }
@@ -701,6 +754,20 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 if p.projection.is_empty()
                     && (p.local.0 as usize) < n_locals
                     && borrowed_enum_src[p.local.0 as usize]
+        )
+    };
+    // Whether the carrier an extraction reads is one this frame built rather
+    // than one it was handed.
+    //
+    // A carrier PARAMETER is the caller's value - the frame receives the two
+    // words, not a share of what the payload points at - so the payload is a
+    // borrow and stays the caller's to release. Only a carrier the frame
+    // itself constructed hands its payload over.
+    let carrier_is_frame_owned = |args: &[Operand]| -> bool {
+        matches!(
+            args.first(),
+            Some(Operand::Copy(p))
+                if p.projection.is_empty() && (p.local.0 as usize) > arity
         )
     };
     // Word-slot element loads out of a vec the CONTAINER still owns: the
@@ -793,17 +860,18 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     let mut stored_into_aggregate = vec![false; n_locals];
     {
         use gossamer_types::TyKind;
-        // A `String` payload (or one left unresolved as `Var` - the nested
-        // `?` in a function whose own return type doesn't pin the Ok type, so
-        // inference never settles the extraction local). Aggregate (`Adt`)
-        // payloads are excluded; even if one slips through as `Var`, the
-        // transitive `stored_into_aggregate` gate keeps its retain.
-        let is_str = |l: Local| {
+        // A reference-counted payload - a `String`, a payload-bearing enum
+        // node, a closure - or one left unresolved as `Var` (the nested `?` in
+        // a function whose own return type doesn't pin the Ok type, so
+        // inference never settles the extraction local). The carrier is two
+        // words by value and releases nothing, so its share is the one the
+        // extraction hands over whatever the payload's shape; a payload that
+        // goes on into an aggregate keeps its retain through the transitive
+        // `stored_into_aggregate` gate.
+        let is_rc_payload = |l: Local| {
             (l.0 as usize) < n_locals
-                && matches!(
-                    tcx.kind_of(body.locals[l.0 as usize].ty),
-                    TyKind::String | TyKind::Var(_)
-                )
+                && (tcx.is_rc_managed(body.locals[l.0 as usize].ty)
+                    || matches!(tcx.kind_of(body.locals[l.0 as usize].ty), TyKind::Var(_)))
         };
         let mark_stored = |op: &Operand, set: &mut [bool]| {
             if let Operand::Copy(p) = op
@@ -824,8 +892,9 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         // `borrowed_enum_src`.
                         if *name == "gos_rt_result_payload"
                             && place.projection.is_empty()
-                            && is_str(place.local)
+                            && is_rc_payload(place.local)
                             && !enum_arg_is_borrowed(args)
+                            && carrier_is_frame_owned(args)
                         {
                             extraction_results[place.local.0 as usize] = true;
                         }
@@ -863,7 +932,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     "gos_rt_option_unwrap" | "gos_rt_result_unwrap"
                 )
                 && destination.projection.is_empty()
-                && is_str(destination.local)
+                && is_rc_payload(destination.local)
                 && !enum_arg_is_borrowed(args)
             {
                 extraction_results[destination.local.0 as usize] = true;
@@ -1044,6 +1113,16 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         && !borrowed_view
                     {
                         retain_sites.push((block_idx, stmt_idx, l, 1));
+                        // The binding this extraction feeds keeps the share
+                        // only while it has a release to give it back with.
+                        // Whether it does is settled once move elision has
+                        // run, so the pairing is checked there.
+                        if extraction_results[l.0 as usize]
+                            && place.projection.is_empty()
+                            && stored_into_aggregate[place.local.0 as usize]
+                        {
+                            stored_extraction_retains.push((block_idx, stmt_idx, l, place.local));
+                        }
                     }
                     // A String-typed binding copied from an untyped borrowed
                     // word-slot element (see `borrowed_word_elem_src`): mint
@@ -1166,6 +1245,12 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         // here would leave a share nothing returns.
                         if vec_released.contains(&l.0) {
                             retain_sites.push((block_idx, stmt_idx, l, 1));
+                        } else {
+                            // This pass schedules releases of its own, and a
+                            // payload one of them covers needs the same mint.
+                            // The set is only final once `releasable` is, so
+                            // the site is settled after it below.
+                            carrier_vec_sites.push((block_idx, stmt_idx, l));
                         }
                     }
                 }
@@ -1326,7 +1411,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         }
     }
 
-    // A `String` payload extracted out of a BORROWED container slot
+    // A reference-counted payload extracted out of a BORROWED container slot
     // (see `borrowed_enum_src`) into a binding this frame will own and
     // release (the `owned` `gos_rt_result_payload` arm below) needs its
     // own share: retain at the extraction site so the binding's release
@@ -1343,10 +1428,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 && place.projection.is_empty()
                 && (place.local.0 as usize) < n_locals
                 && !copy_sourced[place.local.0 as usize]
-                && matches!(
-                    tcx.kind_of(body.locals[place.local.0 as usize].ty),
-                    gossamer_types::TyKind::String
-                )
+                && tcx.is_rc_managed(body.locals[place.local.0 as usize].ty)
                 && enum_arg_is_borrowed(args)
                 && match args.first() {
                     Some(Operand::Copy(p)) if p.projection.is_empty() => {
@@ -1465,13 +1547,18 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         owned[i] = true;
                         vec_field_extract[i] = true;
                     }
+                    // Any other reference-counted payload read out of a
+                    // consumed by-value carrier and used where it stands - a
+                    // `String`, a payload-bearing enum node whose arm is
+                    // matched inline. The carrier releases nothing, so the
+                    // frame holds the payload's one share and gives it back at
+                    // scope; the node's own meta then frees the heap fields it
+                    // carries.
                     Rvalue::CallIntrinsic { name, args }
                         if *name == "gos_rt_result_payload"
                             && !copy_sourced[i]
-                            && matches!(
-                                tcx.kind_of(body.locals[i].ty),
-                                gossamer_types::TyKind::String
-                            )
+                            && tcx.is_rc_managed(body.locals[i].ty)
+                            && carrier_is_frame_owned(args)
                             && match args.first() {
                                 Some(Operand::Copy(p)) if p.projection.is_empty() => {
                                     let e = p.local.0 as usize;
@@ -1529,15 +1616,22 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     // Field-extract `X = Copy(Y.field)` of an RC field: X owns a
                     // new reference to that value (retained at the extract site
                     // in the field pass), released at scope like any RC local.
+                    //
+                    // `Y` reaches the aggregate either by value or through a
+                    // `&`/`&mut` parameter, and the extract mints the same
+                    // share either way, so ownership is read through the
+                    // pointee - the identical predicate the retain pass uses.
+                    // A [`FieldRcKind::Map`] field is excluded there and so is
+                    // excluded here: no share is minted for one, so none is
+                    // owed back.
                     Rvalue::Use(Operand::Copy(p))
                         if p.projection.len() == 1 && (p.local.0 as usize) < n_locals =>
                     {
                         if let crate::ir::Projection::Field(fidx) = p.projection[0] {
-                            let base_ty = body.locals[p.local.0 as usize].ty;
-                            if agg_rc_fields(base_ty)
-                                .iter()
-                                .any(|(path, _)| path.as_slice() == [fidx])
-                            {
+                            let base_ty = pointee_of(tcx, body.locals[p.local.0 as usize].ty);
+                            if agg_rc_fields(base_ty).iter().any(|(path, kind)| {
+                                path.as_slice() == [fidx] && *kind != FieldRcKind::Map
+                            }) {
                                 owned[i] = true;
                                 if matches!(
                                     tcx.kind_of(body.locals[i].ty),
@@ -1943,6 +2037,20 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         }
     }
 
+    // A binding that is itself moved into the aggregate hands over the one
+    // reference the carrier gave it, so the extraction that fed it mints
+    // nothing: the retain was kept only against a release move elision has
+    // now cancelled, and the carrier's own share would be left with no owner.
+    {
+        let cancelled: std::collections::HashSet<(usize, usize, u32)> = stored_extraction_retains
+            .iter()
+            .filter(|(_, _, _, binding)| moved[binding.0 as usize])
+            .map(|(bi, si, payload, _)| (*bi, *si, payload.0))
+            .collect();
+        if !cancelled.is_empty() {
+            retain_sites.retain(|(bi, si, l, _)| !cancelled.contains(&(*bi, *si, l.0)));
+        }
+    }
     // Drop retains whose source is moved (the single reference transfers
     // to the new owner; no `+1`).
     retain_sites.retain(|(_, _, l, _)| !moved[l.0 as usize]);
@@ -2027,6 +2135,20 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         .map(|i| Local(u32::try_from(i).unwrap_or(0)))
         .collect();
 
+    // A `Vec` payload the frame releases is one the frame still holds when the
+    // carrier takes it, so the carrier gets a share of its own here - the two
+    // sides of the exchange the `vec_released` gate above books for a payload
+    // an earlier pass already scheduled. Without it a released payload leaves
+    // in the carrier with the frame's release freeing it under the caller.
+    {
+        let released: std::collections::HashSet<u32> = releasable.iter().map(|l| l.0).collect();
+        for (block_idx, stmt_idx, local) in carrier_vec_sites.drain(..) {
+            if released.contains(&local.0) {
+                retain_sites.push((block_idx, stmt_idx, local, 1));
+            }
+        }
+    }
+
     // Return-copy move: `Local(0) = Copy(l)` in a `Return` block, where
     // `l` is a frame-owned RC local that flows into the return slot, is a
     // MOVE - `l`'s own reference transfers to the caller, and the frame
@@ -2098,6 +2220,43 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             };
             if hands_over {
                 from_owned_carrier[destination.local.0 as usize] = true;
+            }
+        }
+        // A carrier bound to a local of its own is the same carrier the call
+        // answered: `let outcome = f(..)` followed by `match outcome` reads a
+        // value this frame owns exactly as matching the call's own destination
+        // does, so the payload taken out of it is owned and its fields are
+        // released when it dies.
+        {
+            let copy_edges: Vec<(usize, usize)> = body
+                .blocks
+                .iter()
+                .flat_map(|b| &b.stmts)
+                .filter_map(|stmt| {
+                    if let StatementKind::Assign {
+                        place,
+                        rvalue: Rvalue::Use(Operand::Copy(src)),
+                    } = &stmt.kind
+                        && place.projection.is_empty()
+                        && src.projection.is_empty()
+                        && (place.local.0 as usize) < n_locals
+                        && (src.local.0 as usize) < n_locals
+                    {
+                        Some((place.local.0 as usize, src.local.0 as usize))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let mut changed = true;
+            while changed {
+                changed = false;
+                for &(dest, src) in &copy_edges {
+                    if from_owned_carrier[src] && !from_owned_carrier[dest] {
+                        from_owned_carrier[dest] = true;
+                        changed = true;
+                    }
+                }
             }
         }
         let extracts_owned = |args: &[Operand]| -> bool {
@@ -2469,6 +2628,11 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     && (place.local.0 as usize) < n_locals
                     && (src.local.0 as usize) < n_locals
                     && !owned.contains(&(place.local.0 as usize))
+                    // The same views the struct-copy retain skips: no share is
+                    // minted for one, so none is owed back.
+                    && !vec_borrow_agg[place.local.0 as usize]
+                    && !extraction_seed[place.local.0 as usize]
+                    && !enum_child_borrow[place.local.0 as usize]
                     && !body.locals[place.local.0 as usize].region
                     && !agg_rc_fields(body.locals[src.local.0 as usize].ty).is_empty()
                     && !minted.contains(&(place.local.0 as usize))
@@ -2746,9 +2910,18 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 // being a managed local) so a copy into the return slot - which
                 // transfers the value to the caller while the source local is
                 // released at this return - keeps the fields alive.
+                //
+                // A destination that is a view of storage someone else owns - a
+                // container element, a lifted closure's environment slot - is
+                // excluded: it releases nothing, so a share minted here would
+                // have no releaser, and a `Map` field's share is a clone of the
+                // whole table.
                 if let Rvalue::Use(Operand::Copy(src)) = rvalue
                     && src.projection.is_empty()
                     && (src.local.0 as usize) < body.locals.len()
+                    && !vec_borrow_agg[place.local.0 as usize]
+                    && !extraction_seed[place.local.0 as usize]
+                    && !enum_child_borrow[place.local.0 as usize]
                 {
                     for (f, w) in agg_rc_fields(body.locals[src.local.0 as usize].ty) {
                         field_gaps[bi][si + 1].push((true, place.local, f, w));
@@ -3034,51 +3207,29 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
 /// outlives the call), so the argument is a move, not a borrow. Missing
 /// one would free a value the container/channel still references; an
 /// extra one only leaks. Keep this list complete for RC-managed payloads.
-/// Runtime calls that return a freshly ALLOCATED, owned `String` (no aliasing
-/// of any argument). The caller owns the result and must release it at scope
-/// unless it is moved out. Deliberately EXCLUDES `gos_rt_str_concat_drop_a`,
-/// which answers `a` itself for an empty or in-place append, and
-/// `gos_rt_result_payload` (the payload may already be owned by its binding).
-/// A missing entry only leaks; a wrong one double-frees.
+/// Runtime calls that hand back an owned `String` the frame must release.
 ///
-/// `gos_rt_str_concat` belongs here: it always allocates its result. The
-/// accumulator shape `s += frag` is renamed to `gos_rt_str_concat_drop_a` by
-/// [`rewrite_str_concat_consuming`], which runs before the drop passes, so a
-/// call still spelled `gos_rt_str_concat` is a fresh allocation the frame owns.
+/// Two families answer one: a shim the ABI registry declares `mints_string`
+/// (its Rust signature is `-> *mut c_char`, a fresh allocation), and the
+/// carrier accessors below, whose `String` answer is the payload's single
+/// reference handed over rather than a new allocation - the carrier never
+/// releases one, so the frame that takes the value is the one that gives it
+/// back. `unwrap_or` / `unwrap_or_else` retain a fallback that becomes the
+/// answer, so both arms answer one owned share.
+///
+/// Deliberately EXCLUDES `gos_rt_str_concat_drop_a` and the in-place append
+/// family, which answer their accumulator itself, and `gos_rt_result_payload`
+/// (the payload may already be owned by its binding). A missing entry only
+/// leaks; a wrong one double-frees.
 fn mints_owned_string(name: &str) -> bool {
     matches!(
         name,
-        "gos_rt_str_concat"
-            // The payload-answering carrier accessors hand the carrier's share
-            // to the caller: the carrier itself never releases a `String`
-            // payload, so the frame that takes the value is the one that gives
-            // it back. `unwrap_or` / `unwrap_or_else` retain a fallback that
-            // becomes the answer, so both arms answer one owned share.
-            | "gos_rt_result_unwrap_or_str"
+        "gos_rt_result_unwrap_or_str"
             | "gos_rt_option_unwrap"
             | "gos_rt_result_unwrap"
             | "gos_rt_option_default_with"
             | "gos_rt_result_default_with"
-            | "gos_rt_i64_to_str"
-            | "gos_rt_u64_to_str"
-            | "gos_rt_f64_to_str"
-            | "gos_rt_str_with_capacity"
-            | "gos_rt_str_repeat"
-            | "gos_rt_str_to_upper"
-            | "gos_rt_str_to_lower"
-            | "gos_rt_str_to_title"
-            | "gos_rt_str_slice"
-            | "gos_rt_str_substring"
-            | "gos_rt_str_trim"
-            | "gos_rt_str_trim_start"
-            | "gos_rt_str_trim_end"
-            | "gos_rt_str_replace"
-            | "gos_rt_str_replacen"
-            | "gos_rt_str_pad_left"
-            | "gos_rt_str_pad_right"
-            | "gos_rt_http_response_content_type"
-            | "gos_rt_http_response_location"
-    )
+    ) || gossamer_abi::mints_owned_string(name)
 }
 
 /// A call the second argument's heap ownership moves through: a container
@@ -3737,6 +3888,7 @@ pub(crate) fn insert_aggr_copy_drops(body: &mut Body, tcx: &gossamer_types::TyCt
 // pointers (tag-bit-encoded) released via `gos_rt_rc_release`.
 const SLOT_KIND_STRING: i64 = 1;
 const SLOT_KIND_VEC: i64 = 2;
+const SLOT_KIND_MAP: i64 = 3;
 const SLOT_KIND_RC_NODE: i64 = 7;
 
 /// Walks the flat slot layout of a by-value aggregate `ty`, appending one
@@ -3802,6 +3954,14 @@ fn collect_field_rc(
             out.push((-1, 0, word, SLOT_KIND_VEC));
             *has_direct = true;
         }
+        // A `GosMap` carries no reference count, so the element owns a table
+        // of its own: the retain path clones it in and the free path drops it.
+        // Without this entry the field is nobody's, and the frame that built
+        // the element frees the table the element is left pointing at.
+        TyKind::HashMap { .. } => {
+            out.push((-1, 0, word, SLOT_KIND_MAP));
+            *has_direct = true;
+        }
         // `Option`/`Result`: the payload word holds a heap pointer only on
         // the side(s) whose inner type is heap-managed. Gate each side on
         // its discriminant (0 = Ok/Some, 1 = Err). Copy-blob and enum
@@ -3812,6 +3972,7 @@ fn collect_field_rc(
                 match tcx.kind_of(t) {
                     TyKind::String => Some(SLOT_KIND_STRING),
                     TyKind::Vec(_) | TyKind::Slice(_) => Some(SLOT_KIND_VEC),
+                    TyKind::HashMap { .. } => Some(SLOT_KIND_MAP),
                     TyKind::Adt { .. } | TyKind::Tuple(_)
                         if tcx.is_rc_managed(t) || tcx.slot_bytes(t) > 8 =>
                     {
@@ -5731,6 +5892,44 @@ pub(crate) fn clear_region_on_call_results(body: &mut Body) {
     }
 }
 
+/// Reclaim helpers whose value is a unique, non-reference-counted allocation,
+/// so a bare copy that consumes it for the last time can carry the reclaim to
+/// its new holder.
+///
+/// A value outside this set is left on the conservative at-return reclaim: two
+/// owners of one un-counted allocation free it twice.
+fn transferable_by_move(free: &str) -> bool {
+    matches!(
+        free,
+        "gos_rt_vec_free"
+            | "gos_rt_map_free"
+            | "gos_rt_lazy_iter_drop_i64"
+            | "gos_rt_lazy_iter_drop_pair_i64"
+            | "gos_rt_http_response_free"
+    )
+}
+
+/// Runtime calls that only READ the `http::Response` they are given: the box
+/// they are handed does not outlive the call and is not what they answer.
+///
+/// Reclaiming a response is safe exactly where the frame can see its whole
+/// life, and a call outside this set can hand the box on - `with_header`
+/// answers the very same pointer - so a response that reaches one is left to
+/// whoever ends up holding it.
+fn reads_response_only(name: &str) -> bool {
+    matches!(
+        name,
+        "gos_rt_http_response_status"
+            | "gos_rt_http_response_body"
+            | "gos_rt_http_response_raw_bytes"
+            | "gos_rt_http_response_headers"
+            | "gos_rt_http_response_get_header"
+            | "gos_rt_http_response_content_type"
+            | "gos_rt_http_response_location"
+            | "gos_rt_http_response_free"
+    )
+}
+
 pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     use gossamer_types::TyKind;
 
@@ -5847,6 +6046,13 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             | "gos_rt_set_intersection"
             | "gos_rt_set_difference"
             | "gos_rt_set_symmetric_difference" => Some("gos_rt_set_free"),
+            // A `http::Response` is a box the runtime owns; the server's
+            // reclaim after writing a handler's answer is the same call, so a
+            // response that never leaves the frame that built it is reclaimed
+            // exactly once here instead of outliving the process.
+            "gos_rt_http_response_text_new"
+            | "gos_rt_http_response_json_new"
+            | "gos_rt_http_response_stream_new" => Some("gos_rt_http_response_free"),
             // Iterator over a Vec - the destination local is typed as
             // the source Vec so the `.next()` dispatch can recover the
             // element type. Without this entry the type-based
@@ -6028,6 +6234,34 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
         }
     }
 
+    // A response the frame hands to anything but a reader may be the value
+    // that call answers, so the frame can no longer see where the box ends up
+    // and leaves the reclaim to whoever does.
+    for block in &body.blocks {
+        let Terminator::Call { callee, args, .. } = &block.terminator else {
+            continue;
+        };
+        let reader = matches!(
+            callee,
+            Operand::Const(ConstValue::Str(name)) if reads_response_only(name.as_str())
+        );
+        if reader {
+            continue;
+        }
+        for arg in args {
+            let Operand::Copy(place) = arg else {
+                continue;
+            };
+            let idx = place.local.0 as usize;
+            if place.projection.is_empty()
+                && idx < owner_ctor.len()
+                && owner_ctor[idx] == Some("gos_rt_http_response_free")
+            {
+                owner_ctor[idx] = None;
+            }
+        }
+    }
+
     // Heap slots that own what is written into them: an `gos_rc_alloc`
     // result carries a child descriptor, so its release reclaims the
     // children and a store into it needs no aliasing suppression.
@@ -6206,12 +6440,20 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                     Operand::Const(ConstValue::Str(s)) if returns_borrowed_pointer(s.as_str())
                 );
                 if !borrowed {
-                    fresh[destination.local.0 as usize] =
+                    // A constructor the reclaim table names answers its own
+                    // free whatever the destination's type says: an opaque
+                    // runtime handle carries no container type to read it from.
+                    let named = match callee {
+                        Operand::Const(ConstValue::Str(s)) => ctor_to_free(s.as_str()),
+                        _ => None,
+                    };
+                    fresh[destination.local.0 as usize] = named.or_else(|| {
                         match tcx.kind_of(body.locals[destination.local.0 as usize].ty) {
                             TyKind::HashMap { .. } => Some("gos_rt_map_free"),
                             TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_free"),
                             _ => iterator_free(body.locals[destination.local.0 as usize].ty),
-                        };
+                        }
+                    });
                 }
             }
         }
@@ -6379,15 +6621,10 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             ) else {
                 return false;
             };
-            matches!(
-                owner_ctor[origin].or(fresh_container_free[origin]),
-                Some(
-                    "gos_rt_vec_free"
-                        | "gos_rt_map_free"
-                        | "gos_rt_lazy_iter_drop_i64"
-                        | "gos_rt_lazy_iter_drop_pair_i64"
-                )
-            ) && consume_reads[origin] == 1
+            owner_ctor[origin]
+                .or(fresh_container_free[origin])
+                .is_some_and(transferable_by_move)
+                && consume_reads[origin] == 1
         };
         let mut dst_all_owning = vec![true; body.locals.len()];
         for block in &body.blocks {
@@ -6455,13 +6692,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 let Some(free) = owner_ctor[origin].or(fresh_container_free[origin]) else {
                     continue;
                 };
-                if !matches!(
-                    free,
-                    "gos_rt_vec_free"
-                        | "gos_rt_map_free"
-                        | "gos_rt_lazy_iter_drop_i64"
-                        | "gos_rt_lazy_iter_drop_pair_i64"
-                ) {
+                if !transferable_by_move(free) {
                     continue;
                 }
                 // `src` must be consumed exactly once (this copy) and `dst`
@@ -6590,6 +6821,17 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                                     copy_edges_to[to_idx].push(p.local);
                                 }
                             }
+                        }
+                    }
+                    // `Ok(v)` / `Some(v)` puts the payload's word in the
+                    // carrier, so a carrier that reaches the return slot takes
+                    // the payload with it and the frame's own reclaim would
+                    // free storage the caller is about to read.
+                    Rvalue::CallIntrinsic { name, args } if *name == "gos_rt_result_new" => {
+                        if let Some(Operand::Copy(p)) = args.get(1)
+                            && p.projection.is_empty()
+                        {
+                            copy_edges_to[to_idx].push(p.local);
                         }
                     }
                     _ => {}
@@ -6916,11 +7158,17 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             // Every counted container reclaims per site, not only the two
             // that were named here: a `Set`, a `Deque`, a `Queue`, and a
             // `Stack` rebuilt each iteration reached the return-only path and
-            // so freed all but the last.
+            // so freed all but the last. A `http::Response` box is the same
+            // per-site shape: one built per turn of a loop is reclaimed on
+            // each turn rather than growing the process by one response.
             !aliased[l.0 as usize]
                 && matches!(
                     *free,
-                    "gos_rt_vec_free" | "gos_rt_map_free" | "gos_rt_set_free" | "gos_rt_deque_free"
+                    "gos_rt_vec_free"
+                        | "gos_rt_map_free"
+                        | "gos_rt_set_free"
+                        | "gos_rt_deque_free"
+                        | "gos_rt_http_response_free"
                 )
         })
         .copied()

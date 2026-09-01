@@ -1,0 +1,52 @@
+// Sequence methods called on a receiver that is a field or an element, rather
+// than a bare binding.
+//
+// The receiver is rooted in the aggregate it sits in, so a lowering that reads
+// the root local's type sees the struct and not the sequence, and the call
+// falls through to a name no backend defines. What decides the receiver is the
+// projection, not the root.
+
+struct Inner {
+    slots: Vec<i64>
+}
+
+struct Outer {
+    tables: Vec<Inner>
+    direct: Vec<i64>
+    fixed: [i64; 4]
+}
+
+fn main() {
+    let mut o = Outer { tables: #[], direct: #[], fixed: [0; 4] }
+    o.tables.push(Inner { slots: #[] })
+
+    o.direct.resize(4, 5)
+    println("resize field:  len {} last {}", o.direct.len(), o.direct[3])
+
+    o.tables[0].slots.resize(3, 8)
+    println("resize nested: len {} last {}", o.tables[0].slots.len(), o.tables[0].slots[2])
+
+    o.direct.fill(9)
+    println("fill field:    {} {} {} {}", o.direct[0], o.direct[1], o.direct[2], o.direct[3])
+
+    o.direct[0] = 1
+    o.direct[3] = 4
+    o.direct.swap(0, 3)
+    println("swap field:    {} {} {} {}", o.direct[0], o.direct[1], o.direct[2], o.direct[3])
+
+    o.tables[0].slots.swap(0, 2)
+    println("swap nested:   {} {} {}", o.tables[0].slots[0], o.tables[0].slots[1], o.tables[0].slots[2])
+
+    o.fixed.fill(7)
+    o.fixed[0] = 1
+    o.fixed.swap(0, 3)
+    println("fixed field:   {} {} {} {}", o.fixed[0], o.fixed[1], o.fixed[2], o.fixed[3])
+
+    // The same calls on a binding of their own still answer the same way.
+    let mut plain: Vec<i64> = #[]
+    plain.resize(4, 5)
+    plain.fill(9)
+    plain[0] = 1
+    plain.swap(0, 3)
+    println("plain binding: {} {} {} {}", plain[0], plain[1], plain[2], plain[3])
+}

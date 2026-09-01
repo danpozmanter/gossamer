@@ -720,8 +720,9 @@ pub struct VecSlotChild {
     pub disc_word: usize,
     /// Word index of the child pointer within the slot.
     pub word: usize,
-    /// Child kind - [`vec_elem_kind::STRING`] or [`vec_elem_kind::VEC`]
-    /// - selecting the free / retain routine.
+    /// Child kind - [`vec_elem_kind::STRING`], [`vec_elem_kind::VEC`],
+    /// [`vec_elem_kind::MAP`] or [`vec_elem_kind::RC_NODE`] - selecting the
+    /// free / retain routine.
     pub kind: u8,
 }
 
@@ -764,6 +765,17 @@ unsafe fn visit_slot_children(
     children: &[VecSlotChild],
     mut f: impl FnMut(*mut u8, u8),
 ) {
+    unsafe { visit_slot_child_words(slot, children, |_, child, kind| f(child, kind)) };
+}
+
+/// Same walk as [`visit_slot_children`], but the callback also receives the
+/// address of the slot word holding the child. A kind whose copy takes a value
+/// of its own - [`vec_elem_kind::MAP`] - writes the new handle back through it.
+unsafe fn visit_slot_child_words(
+    slot: *const u8,
+    children: &[VecSlotChild],
+    mut f: impl FnMut(*mut usize, *mut u8, u8),
+) {
     for c in children {
         if c.gate >= 0 {
             let disc = unsafe { slot.add(c.disc_word * 8).cast::<i64>().read_unaligned() };
@@ -773,25 +785,35 @@ unsafe fn visit_slot_children(
         }
         // Slots hold child pointers exposed as integers by the flat-slot
         // ABI; recover provenance before use.
-        let raw = unsafe { slot.add(c.word * 8).cast::<usize>().read_unaligned() };
+        let word = unsafe { slot.add(c.word * 8).cast::<usize>().cast_mut() };
+        let raw = unsafe { word.read_unaligned() };
         let child: *mut u8 = std::ptr::with_exposed_provenance_mut(raw);
         if !child.is_null() {
-            f(child, c.kind);
+            f(word, child, c.kind);
         }
     }
 }
 
-/// Retain the owned children of the element slot at `slot` of the
-/// `AGGR_OWNED` vec `v` (a slot copy that now shares them).
-pub(crate) unsafe fn vec_retain_slot_children(v: *const GosVec, slot: *const u8) {
+/// Retain the owned children of a slot copy handed OUT of the `AGGR_OWNED`
+/// vec `v`, which now shares them with the vec.
+///
+/// A `GosMap` carries no reference count, so a map child cannot be shared: the
+/// copy takes a table of its own and the new handle is written back into the
+/// slot, leaving the vec's own table to the vec. The counted children are
+/// retained, as a second owner of each.
+pub(crate) unsafe fn vec_retain_slot_children(v: *const GosVec, slot: *mut u8) {
     let Some(children) = vec_slot_children(unsafe { &*v }) else {
         return;
     };
     unsafe {
-        visit_slot_children(slot, children, |child, kind| match kind {
+        visit_slot_child_words(slot, children, |word, child, kind| match kind {
             vec_elem_kind::STRING => crate::c_abi::string::gos_rt_str_retain(child.cast()),
             vec_elem_kind::VEC => vec_retain_header(child.cast()),
             vec_elem_kind::RC_NODE => crate::c_abi::rc::gos_rt_rc_retain(child),
+            vec_elem_kind::MAP => {
+                let cloned = crate::c_abi::gos_rt_map_clone(child.cast());
+                word.write_unaligned((cloned as *mut u8).expose_provenance());
+            }
             _ => {}
         });
     }
@@ -856,6 +878,7 @@ pub(crate) unsafe fn vec_release_slot_children(v: *const GosVec, slot: *const u8
         visit_slot_children(slot, children, |child, kind| match kind {
             vec_elem_kind::STRING => crate::c_abi::string::gos_rt_str_free(child.cast()),
             vec_elem_kind::VEC => crate::c_abi::map::gos_rt_vec_free(child.cast()),
+            vec_elem_kind::MAP => crate::c_abi::map::gos_rt_map_free(child.cast()),
             vec_elem_kind::RC_NODE => crate::c_abi::rc::gos_rt_rc_release(child),
             _ => {}
         });
@@ -939,6 +962,7 @@ pub(crate) unsafe fn vec_release_owned_children(v: &GosVec) {
             visit_slot_children(v.ptr.add(i * stride), children, |child, kind| match kind {
                 vec_elem_kind::STRING => crate::c_abi::string::gos_rt_str_free(child.cast()),
                 vec_elem_kind::VEC => crate::c_abi::map::gos_rt_vec_free(child.cast()),
+                vec_elem_kind::MAP => crate::c_abi::map::gos_rt_map_free(child.cast()),
                 vec_elem_kind::RC_NODE => crate::c_abi::rc::gos_rt_rc_release(child),
                 _ => {}
             });
@@ -999,6 +1023,9 @@ pub unsafe extern "C" fn gos_rt_vec_mark_shared(v: *mut GosVec) {
                         unsafe {
                             visit_slot_children(slot, children, |child, kind| match kind {
                                 vec_elem_kind::VEC => gos_rt_vec_mark_shared(child.cast()),
+                                vec_elem_kind::MAP => {
+                                    crate::c_abi::map::gos_rt_map_mark_shared(child.cast());
+                                }
                                 vec_elem_kind::STRING | vec_elem_kind::RC_NODE => {
                                     crate::c_abi::rc::gos_rt_rc_mark_shared(child);
                                 }

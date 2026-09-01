@@ -132,7 +132,7 @@ pub unsafe extern "C" fn gos_rt_ws_accept(req: *const GosHttpRequest) -> i128 {
             body: SyncRawPtr::new(alloc_cstring(b"")),
             headers,
             body_bytes: Some(Vec::new()),
-            content_type: String::new(),
+            content_type: std::borrow::Cow::Borrowed(""),
             stream_handle: -1,
         }));
         crate::c_abi::vec::pack_result(0, resp as i64)

@@ -1391,6 +1391,10 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         "String::push_str",
         builtin("String::push_str", builtin_str_push_str),
     ));
+    globals.push((
+        "String::push_utf8",
+        builtin("String::push_utf8", builtin_str_push_utf8),
+    ));
     globals.push(("String::chars", builtin("String::chars", builtin_str_chars)));
     globals.push(("unwrap", builtin("unwrap", builtin_variant_unwrap)));
     // `expect(msg)` reads only the receiver: the compiled tiers route

@@ -3111,6 +3111,50 @@ pub unsafe extern "C" fn gos_rt_str_prec_to_str(s: *const c_char, prec: i64) -> 
     })
 }
 
+/// `s.push_utf8(buf, start, end) -> bool` - appends the `[start, end)` byte
+/// window of `buf` to `s` when that window is valid UTF-8.
+///
+/// The window is appended in place through the growable-string path, so
+/// rendering text out of a byte buffer costs neither an intermediate `Vec`
+/// nor an intermediate `String`. An out-of-range or non-UTF-8 window appends
+/// nothing.
+///
+/// Answers a two-word carrier: `Ok` when the window was appended, `Err` when
+/// it was not, and the payload is the string pointer the receiver takes on
+/// either way.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_push_utf8(
+    s: *const c_char,
+    buf: *const crate::c_abi::vec::GosVec,
+    start: i64,
+    end: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let unchanged =
+            |ok: bool| unsafe { crate::c_abi::vec::gos_rt_result_new(i64::from(!ok), s as i64) };
+        if buf.is_null() || start < 0 || end < start {
+            return unchanged(false);
+        }
+        let (ptr, len) = unsafe {
+            let v = &*buf;
+            (v.ptr.as_ptr().cast_const(), v.len.max(0) as usize)
+        };
+        let (lo, hi) = (start as usize, end as usize);
+        if ptr.is_null() || hi > len {
+            return unchanged(false);
+        }
+        if lo == hi {
+            return unchanged(true);
+        }
+        let window = unsafe { std::slice::from_raw_parts(ptr.add(lo), hi - lo) };
+        if std::str::from_utf8(window).is_err() {
+            return unchanged(false);
+        }
+        let appended = unsafe { gos_rt_str_append_bytes(s, window.as_ptr(), (hi - lo) as i64) };
+        unsafe { crate::c_abi::vec::gos_rt_result_new(0, appended as i64) }
+    })
+}
+
 /// Stringifies a bool (passed as i32: nonzero = true). Used by
 /// codegen to assemble multi-arg panic / format-style messages.
 #[unsafe(no_mangle)]

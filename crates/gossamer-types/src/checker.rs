@@ -5966,6 +5966,12 @@ impl<'a> TypeChecker<'a> {
             "push_byte" | "truncate" => {
                 vec![receiver, self.tcx.int_ty(IntTy::I64)]
             }
+            "push_utf8" => {
+                let u8_ty = self.tcx.int_ty(IntTy::U8);
+                let bytes = self.tcx.intern(TyKind::Vec(u8_ty));
+                let idx = self.tcx.int_ty(IntTy::I64);
+                vec![receiver, bytes, idx, idx]
+            }
             _ => return None,
         };
         if args.len() != params.len() {
@@ -7186,6 +7192,11 @@ impl<'a> TypeChecker<'a> {
             ("net::TcpStream" | "net::UnixStream", "read") => {
                 let bytes = self.byte_vec_ty();
                 Some(self.fallible(bytes))
+            }
+            // Answers the byte count it wrote into the caller's buffer.
+            ("net::TcpStream", "read_into") => {
+                let count = self.tcx.int_ty(IntTy::I64);
+                Some(self.fallible(count))
             }
             ("net::TcpStream" | "net::UnixStream", "read_to_string")
             | ("net::TcpListener" | "net::UdpSocket", "local_addr") => {
@@ -9541,6 +9552,7 @@ impl<'a> TypeChecker<'a> {
             // from `check_strings_arity`.
             "clear" | "len" | "is_empty" | "as_bytes" => Some(0),
             "truncate" | "push" | "push_str" | "push_char" | "push_byte" => Some(1),
+            "push_utf8" => Some(3),
             _ => None,
         };
         if let Some(expected_arity) = expected_arity
@@ -9561,6 +9573,10 @@ impl<'a> TypeChecker<'a> {
                 "push" | "push_char" => Some(self.tcx.intern(TyKind::Char)),
                 "push_str" => Some(self.tcx.string_ty()),
                 "push_byte" | "truncate" => Some(self.tcx.int_ty(IntTy::I64)),
+                "push_utf8" => {
+                    let u8_ty = self.tcx.int_ty(IntTy::U8);
+                    Some(self.tcx.intern(TyKind::Vec(u8_ty)))
+                }
                 _ => None,
             };
             if let Some(want) = want {
@@ -11273,6 +11289,8 @@ impl<'a> TypeChecker<'a> {
             "clear" | "truncate" | "push" | "push_str" | "push_char" | "push_byte" => {
                 self.tcx.unit()
             }
+            // Answers whether the window was valid UTF-8 and therefore appended.
+            "push_utf8" => self.tcx.bool_ty(),
             // Methods that return a fresh `String` (runtime `*mut c_char`):
             // pinning the result type so chained calls (`s.trim().len()`) and
             // typed bindings lower from a known type instead of an inference
@@ -18700,6 +18718,7 @@ const STRING_METHODS: &[&str] = &[
     "push_str",
     "push_char",
     "push_byte",
+    "push_utf8",
     "parse",
 ];
 

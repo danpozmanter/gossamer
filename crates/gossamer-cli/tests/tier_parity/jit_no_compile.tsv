@@ -249,6 +249,7 @@ feature-testing-examples/nested_struct_record_update.gos	entry shape
 feature-testing-examples/nested_vec_capture.gos	callable local
 feature-testing-examples/net_ip.gos	no hot body
 feature-testing-examples/net_smtp_send.gos	bytecode-only local
+feature-testing-examples/net_read_into.gos	bytecode-only local
 feature-testing-examples/net_tcp_echo.gos	bytecode-only local
 feature-testing-examples/net_tcp_read_deadline.gos	no hot body
 feature-testing-examples/net_tls_client.gos	bytecode-only local

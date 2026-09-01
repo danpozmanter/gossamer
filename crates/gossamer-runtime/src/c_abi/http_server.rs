@@ -801,6 +801,13 @@ fn handle_http_conn_limited<C: HttpIo>(
     let mut scratch = ConnScratch::new();
     let mut accum: Vec<u8> = Vec::with_capacity(8192);
     let mut buf: Vec<u8> = vec![0u8; 8192];
+    // The peer watch is registered once for the connection; each request
+    // publishes its own context into this slot and clears it when it ends.
+    let watch_ctx = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    #[cfg(any(unix, windows))]
+    let _peer_watch = conn
+        .peer_socket()
+        .and_then(|socket| watch_for_disconnect(socket, std::sync::Arc::clone(&watch_ctx)));
     // Tracks whether a `100 Continue` interim response has already been
     // sent for the request currently being assembled, so the body-wait
     // re-entry below does not emit it more than once. Reset when a
@@ -899,8 +906,17 @@ fn handle_http_conn_limited<C: HttpIo>(
             // The request's own context. It is cancelled below when the
             // request ends, so anything the handler starts under it stops
             // with the request rather than outliving it.
-            scratch.request.context =
-                crate::c_abi::context::open_request_context(limits.request_timeout_ms);
+            // The request's context is opened the first time its handler
+            // asks for one; the deadline it will expire at starts here, with
+            // the request. A peer that goes away while the handler runs
+            // cancels whatever the request opened, so work it asked for stops
+            // instead of being paid for after it left.
+            scratch.request.context = 0;
+            let request_deadline = (limits.request_timeout_ms != 0).then(|| {
+                std::time::Instant::now()
+                    + std::time::Duration::from_millis(limits.request_timeout_ms)
+            });
+            set_request_context_site(request_deadline, &watch_ctx);
 
             // Chunked requests parse from the canonical de-chunked
             // rewrite; everything else parses straight from the
@@ -939,13 +955,6 @@ fn handle_http_conn_limited<C: HttpIo>(
             };
             let env_ptr = env_addr as *mut u8;
             let req_ptr: *mut GosHttpRequest = &raw mut scratch.request;
-            // A peer that goes away while the handler runs cancels the
-            // request's context, so work it asked for stops instead of
-            // being paid for after it left.
-            #[cfg(any(unix, windows))]
-            let _peer_watch = conn
-                .peer_socket()
-                .and_then(|socket| watch_for_disconnect(socket, scratch.request.context));
             // A panicking handler is a server fault, not the program's: the
             // client gets a 500 and the operator gets the record naming the
             // request, exactly as the bytecode VM reports it.
@@ -956,7 +965,7 @@ fn handle_http_conn_limited<C: HttpIo>(
                     Ok(result) => result,
                     Err(payload) => {
                         report_request_panic(&payload, &scratch.request);
-                        cancel_request_context(&mut scratch.request);
+                        end_request_context(&mut scratch.request, &watch_ctx);
                         scratch.response_buf.extend_from_slice(RESPONSE_500_BYTES);
                         unsafe { gos_rt_gc_reset() };
                         if conn.write_all(&scratch.response_buf).is_err() {
@@ -968,7 +977,7 @@ fn handle_http_conn_limited<C: HttpIo>(
                     }
                 };
             if let Some(handle) = streamed_ok_handle(result_ptr) {
-                cancel_request_context(&mut scratch.request);
+                end_request_context(&mut scratch.request, &watch_ctx);
                 // Streamed response (`Response::stream`): write the
                 // head, then drain the upstream reader straight to
                 // the connection in chunked frames - no buffering.
@@ -994,7 +1003,7 @@ fn handle_http_conn_limited<C: HttpIo>(
                 scratch.response_buf.extend_from_slice(RESPONSE_500_BYTES);
             }
             unsafe { drop_handler_result(result_ptr) };
-            cancel_request_context(&mut scratch.request);
+            end_request_context(&mut scratch.request, &watch_ctx);
 
             // Legacy collector hook. RequestArenaGuard owns real arena
             // cleanup and deliberately remains live until the response has
@@ -1002,7 +1011,6 @@ fn handle_http_conn_limited<C: HttpIo>(
             // region reset by a later request on this connection.
             unsafe { gos_rt_gc_reset() };
         }
-
         if conn.write_all(&scratch.response_buf).is_err() {
             return;
         }
@@ -1132,13 +1140,17 @@ pub fn peer_is_gone(_socket: RawPeerSocket) -> bool {
     false
 }
 
-/// One in-flight request's socket and the context to cancel when its peer
-/// goes away.
+/// One connection's socket and the slot naming the context to cancel when
+/// its peer goes away.
+///
+/// The slot holds the in-flight request's context, or zero between requests.
+/// Registration is per connection, so a request's own path writes one relaxed
+/// store rather than taking the registry lock.
 #[cfg(any(unix, windows))]
 struct PeerWatchEntry {
     id: u64,
     socket: RawPeerSocket,
-    ctx: usize,
+    ctx: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// Every request currently being watched, and the id the next one takes.
@@ -1167,16 +1179,18 @@ static PEER_WATCH_WAKE: parking_lot::Condvar = parking_lot::Condvar::new();
 /// a pipelined successor still arrives intact. A client that aborts
 /// therefore stops the work it asked for instead of paying for it to finish.
 ///
-/// One process-wide thread does the probing for every in-flight request.
-/// Registration is a push under a mutex, which is what a request pays; a
-/// thread of its own would cost that request a stack mapping, a clone, and
-/// a join, and those mappings serialise on the address space across every
-/// connection the server is serving.
+/// One process-wide thread does the probing for every watched connection.
+/// Registration happens once, when the connection is accepted, and the slot
+/// it returns is what a request publishes its context into - so serving a
+/// request costs a relaxed store rather than a turn of a process-wide lock.
+/// A thread per connection would cost a stack mapping, a clone, and a join,
+/// and those mappings serialise on the address space across every connection
+/// the server is serving.
 #[cfg(any(unix, windows))]
-fn watch_for_disconnect(stream: &TcpStream, ctx: usize) -> Option<DisconnectWatch> {
-    if ctx == 0 {
-        return None;
-    }
+fn watch_for_disconnect(
+    stream: &TcpStream,
+    ctx: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) -> Option<DisconnectWatch> {
     #[cfg(unix)]
     let socket = {
         use std::os::fd::AsRawFd;
@@ -1211,28 +1225,38 @@ fn watch_for_disconnect(stream: &TcpStream, ctx: usize) -> Option<DisconnectWatc
     Some(DisconnectWatch { id })
 }
 
-/// Probes every watched request once per interval, cancelling the context
-/// of any whose peer has left.
+/// Probes every watched connection that has a request in flight once per
+/// interval, cancelling the context of any whose peer has left.
 ///
-/// Probing happens under the registry lock, and a request deregisters under
+/// Probing happens under the registry lock, and a connection deregisters under
 /// that same lock while it still owns its socket. A descriptor is therefore
-/// never probed after the request that registered it has ended, so a
-/// recycled one is never mistaken for the socket it replaced.
+/// never probed after the connection that registered it has ended, so a
+/// recycled one is never mistaken for the socket it replaced. A connection
+/// between requests publishes a zero context and is left alone: its own next
+/// read is what observes the close.
 #[cfg(any(unix, windows))]
 fn peer_watch_loop() {
+    use std::sync::atomic::Ordering;
     loop {
         {
             let mut state = PEER_WATCH.lock();
             while state.entries.is_empty() {
                 PEER_WATCH_WAKE.wait(&mut state);
             }
-            state.entries.retain(|entry| {
-                if peer_is_gone(entry.socket) {
-                    crate::c_abi::context::close_request_context(entry.ctx);
-                    return false;
+            for entry in &state.entries {
+                let ctx = entry.ctx.load(Ordering::Relaxed);
+                if ctx != 0 && peer_is_gone(entry.socket) {
+                    // The connection clears its own slot when the request
+                    // ends, so a context is cancelled at most once here.
+                    if entry
+                        .ctx
+                        .compare_exchange(ctx, 0, Ordering::AcqRel, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        crate::c_abi::context::close_request_context(ctx);
+                    }
                 }
-                true
-            });
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(PEER_WATCH_INTERVAL_MS));
     }
@@ -1243,7 +1267,7 @@ fn peer_watch_loop() {
 /// is never probed again.
 const PEER_WATCH_INTERVAL_MS: u64 = 20;
 
-/// Deregisters the request from the peer watch when it ends.
+/// Deregisters the connection from the peer watch when it closes.
 #[cfg(any(unix, windows))]
 struct DisconnectWatch {
     id: u64,
@@ -1259,6 +1283,47 @@ impl Drop for DisconnectWatch {
     }
 }
 
+// The in-flight request's deadline and the peer-watch slot a context created
+// for it must be published into, on the thread serving it. A connection thread
+// serves one request at a time, so the site is a thread-local rather than
+// something the handler has to be handed.
+thread_local! {
+    static REQUEST_CONTEXT_SITE: std::cell::RefCell<
+        Option<(
+            Option<std::time::Instant>,
+            std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        )>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+/// Names the request the calling thread is serving, so a handler that asks
+/// for `req.context` gets one that expires with the request.
+fn set_request_context_site(
+    deadline: Option<std::time::Instant>,
+    watch_ctx: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) {
+    REQUEST_CONTEXT_SITE.with_borrow_mut(|site| {
+        *site = Some((deadline, std::sync::Arc::clone(watch_ctx)));
+    });
+}
+
+/// Forgets the request the calling thread was serving.
+fn clear_request_context_site() {
+    REQUEST_CONTEXT_SITE.with_borrow_mut(|site| *site = None);
+}
+
+/// Opens the in-flight request's context on first use, publishing it to the
+/// peer watch so a client that leaves still cancels it. `None` off a
+/// connection thread, where there is no request to bound.
+pub(crate) fn open_current_request_context() -> Option<usize> {
+    REQUEST_CONTEXT_SITE.with_borrow(|site| {
+        let (deadline, watch_ctx) = site.as_ref()?;
+        let ctx = crate::c_abi::context::open_request_context_at(*deadline);
+        watch_ctx.store(ctx, std::sync::atomic::Ordering::Release);
+        Some(ctx)
+    })
+}
+
 /// Cancels and retires the request's context.
 ///
 /// Runs on every path out of a served request, so a handler that spawned
@@ -1269,6 +1334,16 @@ fn cancel_request_context(request: &mut GosHttpRequest) {
     if ctx != 0 {
         crate::c_abi::context::close_request_context(ctx);
     }
+}
+
+/// Ends the request's context and stops the peer watch from naming it.
+///
+/// The slot is cleared first, so the watcher cannot pick up a context this
+/// call is about to close.
+fn end_request_context(request: &mut GosHttpRequest, watch_ctx: &std::sync::atomic::AtomicUsize) {
+    watch_ctx.store(0, std::sync::atomic::Ordering::Release);
+    clear_request_context_site();
+    cancel_request_context(request);
 }
 
 /// Reports a handler panic in the `slog` record shape every tier's server
@@ -1448,10 +1523,7 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 pub(crate) unsafe fn drop_handler_result(result: i128) {
     if super::vec::gos_rt_result_disc(result) == 0 {
         let response_ptr = super::vec::gos_rt_result_payload(result) as *mut GosHttpResponse;
-        if !response_ptr.is_null() {
-            unsafe { crate::c_abi::string::gos_rt_str_free((*response_ptr).body.as_ptr()) };
-            drop(unsafe { Box::from_raw(response_ptr) });
-        }
+        unsafe { crate::c_abi::http_client::gos_rt_http_response_free(response_ptr) };
     }
     // Result is now a 2-word by-value `i128` (no heap box), so there is
     // nothing to free here - this is exactly the per-request box leak that
@@ -1755,14 +1827,35 @@ fn is_valid_header_name(name: &str) -> bool {
 /// (`gossamer-std/src/http.rs` Config default).
 const SERVER_HEADER: &str = concat!("gossamer/", env!("CARGO_PKG_VERSION"));
 
-/// Current wall-clock time as an RFC 1123 / RFC 9110 HTTP-date
-/// (`Sun, 06 Nov 1994 08:49:37 GMT`). Uses the same civil-time
-/// conversion as `gos_rt_time_format_rfc3339`, so the rendering matches
-/// the interp tier's `time::format_rfc1123_gmt` byte for byte.
-fn http_date_now() -> String {
+// The rendered `Date` header and the second it names, per connection thread.
+// An HTTP-date has one-second resolution, so every response inside a second
+// carries the same one and the civil-time conversion runs once for all of
+// them rather than once each.
+thread_local! {
+    static HTTP_DATE_CACHE: std::cell::RefCell<(i64, String)> =
+        const { std::cell::RefCell::new((i64::MIN, String::new())) };
+}
+
+/// Appends the current HTTP-date to `out` without rendering or copying it
+/// into a String of its own.
+fn append_http_date_now(out: &mut Vec<u8>) {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
+    HTTP_DATE_CACHE.with_borrow_mut(|(cached_secs, cached)| {
+        if *cached_secs != secs {
+            *cached = render_http_date(secs);
+            *cached_secs = secs;
+        }
+        out.extend_from_slice(cached.as_bytes());
+    });
+}
+
+/// A Unix second as an RFC 1123 / RFC 9110 HTTP-date
+/// (`Sun, 06 Nov 1994 08:49:37 GMT`). Uses the same civil-time conversion as
+/// `gos_rt_time_format_rfc3339`, so the rendering matches the interp tier's
+/// `time::format_rfc1123_gmt` byte for byte.
+fn render_http_date(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     let is_leap = |yr: i64| (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0;
     let year_days = |yr: i64| if is_leap(yr) { 366 } else { 365 };
@@ -1873,7 +1966,7 @@ pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
     // (unless the handler set one) and a Server identity.
     if !has_date {
         out.extend_from_slice(b"date: ");
-        out.extend_from_slice(http_date_now().as_bytes());
+        append_http_date_now(out);
         out.extend_from_slice(b"\r\n");
     }
     if !has_server {
@@ -1952,7 +2045,7 @@ pub(crate) fn extract_response_struct(result: i128) -> Option<StructuredResponse
         let ct = if response.content_type.is_empty() {
             "text/plain; charset=utf-8".to_string()
         } else {
-            response.content_type.clone()
+            response.content_type.clone().into_owned()
         };
         headers.push(("content-type".to_string(), ct));
     }
@@ -2017,7 +2110,7 @@ fn extract_stream_head_into(result: i128, out: &mut Vec<u8>) {
     }
     if !has_date {
         out.extend_from_slice(b"date: ");
-        out.extend_from_slice(http_date_now().as_bytes());
+        append_http_date_now(out);
         out.extend_from_slice(b"\r\n");
     }
     if !has_server {
@@ -2369,7 +2462,7 @@ mod tests {
     fn empty_content_type_falls_back_to_text_plain() {
         let resp =
             unsafe { gos_rt_http_response_text_new(200, crate::c_abi::string::test_gos_str("ok")) };
-        unsafe { (*resp).content_type.clear() };
+        unsafe { (*resp).content_type = std::borrow::Cow::Borrowed("") };
         let result = super::super::vec::pack_result(0, resp as i64);
         let bytes = rendered(result);
         assert!(

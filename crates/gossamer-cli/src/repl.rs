@@ -580,6 +580,13 @@ const CORE_METHODS: &[CoreMethodHelp] = &[
     },
     CoreMethodHelp {
         owner: "String",
+        name: "push_utf8",
+        kind: "method",
+        signature: "fn push_utf8(self: &mut String, buf: Vec<u8>, start: i64, end: i64) -> bool",
+        doc: "Appends the [start, end) byte window of buf when it is valid UTF-8.",
+    },
+    CoreMethodHelp {
+        owner: "String",
         name: "clone",
         kind: "method",
         signature: "fn clone(self: String) -> String",

@@ -2212,6 +2212,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_http_response_text_new as *const u8,
         ),
         (
+            "gos_rt_http_response_free",
+            crate::c_abi::gos_rt_http_response_free as *const u8,
+        ),
+        (
             "gos_rt_http_response_stream_new",
             crate::c_abi::gos_rt_http_response_stream_new as *const u8,
         ),
@@ -5739,6 +5743,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_str_pad_right as *const u8,
         ),
         (
+            "gos_rt_str_push_utf8",
+            crate::c_abi::string::gos_rt_str_push_utf8 as *const u8,
+        ),
+        (
             "gos_rt_str_push_byte",
             crate::c_abi::gos_rt_str_push_byte as *const u8,
         ),
@@ -6053,6 +6061,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_tcp_stream_set_nodelay",
             crate::c_abi::gos_rt_tcp_stream_set_nodelay as *const u8,
+        ),
+        (
+            "gos_rt_tcp_stream_read_into",
+            crate::c_abi::gos_rt_tcp_stream_read_into as *const u8,
         ),
         (
             "gos_rt_tcp_stream_write",

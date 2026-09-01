@@ -3090,6 +3090,55 @@ impl<'tcx> FnBuilder<'tcx> {
             });
             return Ok(dst);
         }
+        // `s.push_utf8(buf, start, end)` mutates the receiver AND answers a
+        // bool, so the receiver crosses as a write-back cell: the replacement
+        // protocol below has only the return value to thread back, and here
+        // that value is the flag rather than the new string.
+        if name.name.as_str() == "push_utf8"
+            && args.len() == 3
+            && {
+                let mut peeled = receiver.ty;
+                while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(peeled) {
+                    peeled = *inner;
+                }
+                matches!(self.tcx.kind(peeled), Some(TyKind::String))
+            }
+            && self.place_root_is_local(receiver)
+        {
+            let cell = self.alloc_reg();
+            self.emit(Op::CellNew {
+                dst: cell,
+                src: receiver_reg,
+            });
+            let cell_args_start = self.next_reg;
+            self.next_reg = self
+                .next_reg
+                .checked_add(3)
+                .expect("register overflow reserving push_utf8 args");
+            for (i, arg) in args.iter().enumerate() {
+                let a = self.compile_expr(arg)?;
+                let slot = cell_args_start
+                    .checked_add(u16::try_from(i).expect("argc overflow"))
+                    .expect("reg overflow");
+                self.ensure_reg_slot(slot);
+                self.emit(Op::Move { dst: slot, src: a });
+            }
+            let name_idx = self.global_idx("String::push_utf8");
+            let dst = self.alloc_reg();
+            let cache_idx = self.alloc_cache_idx();
+            self.emit(Op::MethodCall {
+                dst,
+                receiver: cell,
+                name_idx,
+                args: cell_args_start,
+                argc: 3,
+                cache_idx,
+            });
+            let updated = self.alloc_reg();
+            self.emit(Op::CellTake { dst: updated, cell });
+            self.compile_place_store(receiver, updated)?;
+            return Ok(dst);
+        }
         let args_start = self.next_reg;
         self.next_reg = self
             .next_reg

@@ -967,6 +967,8 @@ impl<'a> Lowerer<'a> {
         // `to_string` for `Display` (`{}`), `fmt` for `Debug` (`{:?}`).
         let method = if debug { "fmt" } else { "to_string" };
         let mut plans: Vec<(ConcatKind, String)> = Vec::with_capacity(args.len());
+        // Renderings of aggregate arguments, freed after the join reads them.
+        let mut rendered_temps: Vec<String> = Vec::new();
         for arg in args {
             let kind = self.concat_print_kind(arg, method);
             if matches!(kind, ConcatKind::Unsupported) {
@@ -984,7 +986,15 @@ impl<'a> Lowerer<'a> {
                 | ConcatKind::Bool
                 | ConcatKind::Char
                 | ConcatKind::Unsupported => value,
-                ref kind => self.emit_concat_aggregate(arg, kind.clone(), &value)?,
+                ref kind => {
+                    let rendered = self.emit_concat_aggregate(arg, kind.clone(), &value)?;
+                    // The formatter answers a fresh String this frame is the
+                    // only holder of, and the buffer copies the bytes it
+                    // appends, so the rendering is reclaimed once the joined
+                    // result exists.
+                    rendered_temps.push(rendered.clone());
+                    rendered
+                }
             };
             plans.push((kind, value));
         }
@@ -1027,6 +1037,12 @@ impl<'a> Lowerer<'a> {
         }
         let result = self.fresh();
         writeln!(self.out, "  {result} = call ptr @gos_rt_concat_finish()").unwrap();
+        if !rendered_temps.is_empty() {
+            declare_rt(&mut self.runtime_refs, "gos_rt_str_free_typed");
+            for temp in &rendered_temps {
+                writeln!(self.out, "  call void @gos_rt_str_free_typed(ptr {temp})").unwrap();
+            }
+        }
         let dest_ty_mir = self.place_leaf_ty(destination);
         if !is_unit(self.tcx, dest_ty_mir) {
             let dest_ty = render_ty(self.tcx, dest_ty_mir);

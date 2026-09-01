@@ -913,6 +913,9 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/chan_carrier_elements.gos"),
     spec("feature-testing-examples/doctest_fences.gos"),
     spec("feature-testing-examples/map_struct_field_semantics.gos"),
+    spec("feature-testing-examples/map_field_in_vec_element.gos"),
+    spec("feature-testing-examples/seq_methods_on_projected_receivers.gos"),
+    spec("feature-testing-examples/float_bits_unsigned_args.gos"),
     spec("feature-testing-examples/channel_timers.gos"),
     Spec {
         nondeterministic: true,
@@ -1060,6 +1063,9 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/net_ip.gos"),
     spec("feature-testing-examples/net_tcp_echo.gos"),
     spec("feature-testing-examples/net_tcp_read_deadline.gos"),
+    spec("feature-testing-examples/net_read_into.gos"),
+    spec("feature-testing-examples/string_push_utf8.gos"),
+    spec("feature-testing-examples/aggr_map_field_return.gos"),
     spec("feature-testing-examples/net_smtp_send.gos"),
     Spec {
         // Unix-domain sockets are POSIX-only; on Windows every entry

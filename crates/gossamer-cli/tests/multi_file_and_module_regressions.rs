@@ -3743,6 +3743,32 @@ fn make(i: i64) -> Outer {\n\
 \x20   Outer { inner: Inner { xs: xs, name: \"row-\" + i.to_string() }, tags: tags }\n\
 }\n\
 \n\
+fn append(out: &mut String, i: i64) {\n\
+\x20   out.push_str(\"row-\")\n\
+\x20   out.push_str(i.to_string())\n\
+\x20   out.push('!')\n\
+\x20   out.push_char('?')\n\
+\x20   out.push_byte(b'.' as i64)\n\
+}\n\
+\n\
+fn shrink(out: &mut String) {\n\
+\x20   out.truncate(3)\n\
+\x20   out.clear()\n\
+}\n\
+\n\
+fn rows(i: i64) -> Result<Vec<String>, String> {\n\
+\x20   if i < 0 { return Err(\"no\") }\n\
+\x20   Ok(#[\"row-\" + i.to_string(), \"tag-\" + i.to_string()])\n\
+}\n\
+\n\
+// The sequence reaches the answer through a binding, which is the shape a
+// point read has: the carrier hands its payload over, and the binding hands
+// it on.\n\
+fn handed_on(i: i64) -> Result<Vec<String>, String> {\n\
+\x20   let vals = rows(i)?\n\
+\x20   Ok(vals)\n\
+}\n\
+\n\
 fn maybe(i: i64) -> Option<String> {\n\
 \x20   if i % 2 == 0 { Some(\"row-\" + i.to_string()) } else { None }\n\
 }\n\
@@ -3769,6 +3795,19 @@ fn main() {\n\
 \x20           let tx, rx = sync::channel_unbounded()\n\
 \x20           tx.send(make(i))\n\
 \x20           sink += i\n\
+\x20       } else if mode == \"handoff\" {\n\
+\x20           match handed_on(i) {\n\
+\x20               Ok(v) => sink += v.len()\n\
+\x20               Err(_) => sink += 0\n\
+\x20           }\n\
+\x20       } else if mode == \"rebind\" {\n\
+\x20           let mut b = \"\"\n\
+\x20           append(&mut b, i)\n\
+\x20           sink += b.len()\n\
+\x20       } else if mode == \"reset\" {\n\
+\x20           let mut b = \"seed-\" + i.to_string()\n\
+\x20           shrink(&mut b)\n\
+\x20           sink += b.len()\n\
 \x20       } else if mode == \"nested\" {\n\
 \x20           let holder: Vec<Outer> = #[make(i)]\n\
 \x20           sink += holder.len()\n\
@@ -3780,9 +3819,11 @@ fn main() {\n\
 
 #[test]
 fn heap_values_are_released_rather_than_held_per_round() {
-    // Each mode is one ownership path that used to keep a share per round: a
+    // Each mode is one ownership path that must not keep a share per round: a
     // `String` concatenation, an `Option` payload read through the carrier
-    // accessors, and an aggregate stored in a sequence. The channel modes the
+    // accessors, an aggregate stored in a sequence, the receiver-rebind methods
+    // writing back through a `&mut String` parameter, and a sequence handed on
+    // from a carrier's payload through a binding. The channel modes the
     // program also carries are exercised for correctness elsewhere; one
     // construction of a doubly-nested aggregate still keeps a share when it
     // crosses a channel, which is recorded rather than asserted here.
@@ -3791,7 +3832,7 @@ fn heap_values_are_released_rather_than_held_per_round() {
         "example.com/ownership",
         &[("src/main.gos", OWNERSHIP_PROGRAM)],
     );
-    for mode in ["concat", "carrier", "nested"] {
+    for mode in ["concat", "carrier", "nested", "rebind", "reset", "handoff"] {
         assert_live_set_flat(&dir, "ownership", mode);
     }
     let _ = fs::remove_dir_all(&dir);

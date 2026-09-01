@@ -85,6 +85,126 @@ fn assert_bounded_live_vecs(binary: &Path) {
     );
 }
 
+/// CPU a server's process tree has spent, in clock ticks, or `None` off Linux.
+#[cfg(target_os = "linux")]
+fn proc_cpu_ticks(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // The comm field can hold spaces and parentheses, so fields are counted
+    // from the closing paren rather than from the start of the line.
+    let rest = stat.rsplit_once(')')?.1;
+    let cols: Vec<&str> = rest.split_whitespace().collect();
+    // utime and stime are fields 14 and 15 of the line, which are 11 and 12
+    // past the state field that opens `rest`.
+    Some(cols.get(11)?.parse::<u64>().ok()? + cols.get(12)?.parse::<u64>().ok()?)
+}
+
+/// A port nothing is listening on, learned by binding and letting go.
+#[cfg(target_os = "linux")]
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind an ephemeral port")
+        .local_addr()
+        .expect("local_addr")
+        .port()
+}
+
+/// The CPU an HTTP server spends per request it answers.
+///
+/// Most of a request is two system calls - one read, one write - so this is
+/// mostly a floor rather than a figure to tune. The ceiling is set to catch a
+/// change that multiplies the work, not to police a few hundred nanoseconds:
+/// the fixture runs beside every other test in the workspace, on a machine
+/// whose other cores are busy.
+#[test]
+#[cfg(target_os = "linux")]
+fn http_server_cpu_per_request_stays_near_its_syscall_floor() {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let port = free_port();
+    let binary = build_release(
+        "http_cpu_floor",
+        r#"
+use std::{env, http}
+use std::http::router
+let addr = env::args()[0]
+let routes = router::Router::new()
+    .get("/ping", |_req, _p| http::Response::text(200, "ok"))
+let _ = http::serve(addr, routes)
+"#,
+    );
+    let mut server = Command::new(&binary)
+        .arg(format!("127.0.0.1:{port}"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn the server");
+
+    // Wait for the listener rather than sleeping a fixed amount.
+    let addr = format!("127.0.0.1:{port}");
+    let mut ready = false;
+    for _ in 0..600 {
+        if TcpStream::connect(&addr).is_ok() {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(ready, "the server never accepted a connection");
+
+    let request = b"GET /ping HTTP/1.1\r\nHost: x\r\n\r\n";
+    let per_worker = 4_000usize;
+    let workers = 4usize;
+    let drive = |count: usize| {
+        let addr = addr.clone();
+        std::thread::spawn(move || {
+            let mut sock = TcpStream::connect(&addr).expect("connect");
+            sock.set_nodelay(true).ok();
+            let mut buf = [0u8; 4096];
+            for _ in 0..count {
+                if sock.write_all(request).is_err() {
+                    return 0usize;
+                }
+                // One keep-alive response arrives whole on loopback; a short
+                // read would desynchronise the next request, so a failure ends
+                // this worker rather than being retried.
+                match sock.read(&mut buf) {
+                    Ok(n) if n > 0 => {}
+                    _ => return 0usize,
+                }
+            }
+            count
+        })
+    };
+
+    // A warm pass first, so the measured one is not paying for the accept or
+    // the first-touch of the connection scratch.
+    let warm: Vec<_> = (0..workers).map(|_| drive(500)).collect();
+    let warmed: usize = warm.into_iter().map(|h| h.join().unwrap_or(0)).sum();
+    assert!(warmed > 0, "no request was answered");
+
+    let before = proc_cpu_ticks(server.id()).expect("read the server's CPU");
+    let handles: Vec<_> = (0..workers).map(|_| drive(per_worker)).collect();
+    let answered: usize = handles.into_iter().map(|h| h.join().unwrap_or(0)).sum();
+    let after = proc_cpu_ticks(server.id()).expect("read the server's CPU");
+    let _ = server.kill();
+    let _ = server.wait();
+
+    assert_eq!(
+        answered,
+        workers * per_worker,
+        "every worker must finish its requests"
+    );
+    let hz = 100u64; // CLK_TCK on every Linux this runs on
+    let micros_per_request = (after - before) as f64 * 1_000_000.0 / hz as f64 / answered as f64;
+    eprintln!("http floor: {answered} requests, {micros_per_request:.2} us of CPU each");
+    assert!(
+        micros_per_request <= 25.0,
+        "HTTP server spent {micros_per_request:.1} us of CPU per request; \
+         the floor is about two system calls, so this is a multiple of it"
+    );
+}
+
 #[test]
 fn json_serde_like_release_work_stays_linear_and_fast() {
     let binary = build_release(
@@ -163,4 +283,376 @@ println("{}", src[0])
     let large = timed(&binary, 1_000_000);
     assert_linear_and_fast("radix-sort-like", small, large, Duration::from_secs(3));
     assert_bounded_live_vecs(&binary);
+}
+
+/// Runs `binary` twice with the ledger on and asserts the named family's
+/// live count at exit does not grow with the iteration count.
+fn assert_ledger_flat(binary: &Path, family: &str, small: usize, large: usize) {
+    let live = |n: usize| -> usize {
+        let output = Command::new(binary)
+            .arg(n.to_string())
+            .env("GOS_LEAK_LEDGER", "1")
+            .output()
+            .expect("run release fixture with allocation ledger");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        stderr
+            .split(&format!("{family}="))
+            .nth(1)
+            .and_then(|tail| tail.split_whitespace().next())
+            .and_then(|n| n.parse::<usize>().ok())
+            .unwrap_or_else(|| panic!("ledger must report {family}: {stderr}"))
+    };
+    let (a, b) = (live(small), live(large));
+    assert!(
+        b <= a + 4,
+        "{family} live count grows with N: {small} -> {a}, {large} -> {b}"
+    );
+}
+
+/// Asserts the fixture's own output, so a reclaim that frees storage still in
+/// use fails here rather than passing as a flat ledger over wrong answers.
+fn assert_output(binary: &Path, n: usize, expected: &str) {
+    let output = Command::new(binary)
+        .arg(n.to_string())
+        .output()
+        .expect("run release fixture");
+    assert!(
+        output.status.success(),
+        "fixture failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        expected,
+        "fixture answered the wrong value"
+    );
+}
+
+#[test]
+fn bool_to_string_releases_its_answer() {
+    let binary = build_release(
+        "bool_to_string_release",
+        r#"
+use std::env
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
+let mut total: i64 = 0
+for i in 0..n { total += true.to_string().len() + (i % 2) }
+println("{}", total)
+"#,
+    );
+    assert_ledger_flat(&binary, "str", 1_000, 20_000);
+}
+
+#[test]
+fn scalar_and_stdlib_string_answers_are_released() {
+    let binary = build_release(
+        "stdlib_string_release",
+        r#"
+use std::{encoding::base64, encoding::hex, env, net::url, path, strconv, strings, uuid}
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
+let mut total: i64 = 0
+for i in 0..n {
+    total += 'x'.to_string().len()
+    total += strconv::format_i64(i).len()
+    total += strconv::format_f64(1.5).len()
+    total += base64::encode("abc".as_bytes()).len()
+    total += hex::encode("abc".as_bytes()).len()
+    total += path::join("a", "b").len()
+    total += uuid::v4().len()
+    total += url::query_escape("a b").len()
+    total += format("{:>8}", i).len()
+    total += format("{:x}", i).len()
+    total += strings::join(#["a", "b"], ",").len()
+    total += #[1, 2, 3].to_string().len()
+    total += (1, 2).to_string().len()
+}
+println("{}", total)
+"#,
+    );
+    assert_ledger_flat(&binary, "str", 1_000, 20_000);
+}
+
+#[test]
+fn field_reassignment_through_mut_ref_releases_old_value() {
+    let binary = build_release(
+        "mut_ref_field_reassign",
+        r#"
+use std::env
+struct Holder { pending: Vec<u8> }
+fn shift(h: &mut Holder) { h.pending = h.pending.slice(1, h.pending.len()).unwrap_or(#[]) }
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
+let mut h = Holder { pending: #[] }
+let mut total: i64 = 0
+for i in 0..n {
+    h.pending.extend("line\n".as_bytes())
+    shift(&mut h)
+    total += h.pending.len() + i
+}
+println("{}", total)
+"#,
+    );
+    assert_ledger_flat(&binary, "vec", 1_000, 20_000);
+}
+
+#[test]
+fn vec_field_read_through_mut_ref_releases_its_share() {
+    let binary = build_release(
+        "mut_ref_vec_field_read",
+        r#"
+use std::env
+struct Tk { kind: u8, text: String }
+struct Parser { toks: Vec<Tk>, pos: i64 }
+fn peek(p: &mut Parser) -> i64 {
+    if p.pos >= p.toks.len() { return 0 }
+    p.toks[p.pos].kind as i64
+}
+fn bump(p: &mut Parser) -> String {
+    let t = p.toks[p.pos]
+    p.pos += 1
+    t.text
+}
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
+let mut total: i64 = 0
+for i in 0..n {
+    let mut p = Parser { toks: #[Tk { kind: 1, text: "select" }, Tk { kind: 2, text: "name" }], pos: 0 }
+    total += peek(&mut p) + bump(&mut p).len()
+}
+println("{}", total)
+"#,
+    );
+    assert_ledger_flat(&binary, "vec", 1_000, 20_000);
+    assert_output(&binary, 1_000, "7000");
+}
+
+#[test]
+fn struct_copied_from_vec_index_releases_moved_field() {
+    let binary = build_release(
+        "vec_index_struct_field_move",
+        r#"
+use std::env
+struct Tk { kind: u8, text: String }
+struct Parser { toks: Vec<Tk>, pos: i64 }
+fn take_word(p: &mut Parser) -> Result<String, String> {
+    let t = p.toks[p.pos]
+    p.pos += 1
+    if t.kind == 1 { return Ok(t.text) }
+    Err("not a word")
+}
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
+let mut total: i64 = 0
+let mut p = Parser { toks: #[Tk { kind: 1, text: "select" + n.to_string() }, Tk { kind: 1, text: "name" + n.to_string() }], pos: 0 }
+for i in 0..n {
+    p.pos = i % 2
+    total += take_word(&mut p).unwrap_or("").len()
+}
+println("{}", total)
+"#,
+    );
+    assert_ledger_flat(&binary, "str", 1_000, 20_000);
+}
+
+#[test]
+fn loop_local_struct_releases_its_vec_field() {
+    let binary = build_release(
+        "loop_local_struct_vec_field",
+        r#"
+use std::env
+struct Tk { kind: u8, text: String }
+struct Parser { toks: Vec<Tk>, pos: i64 }
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
+let mut total: i64 = 0
+for i in 0..n {
+    let p = Parser { toks: #[Tk { kind: 1, text: "a" }, Tk { kind: 1, text: "b" }], pos: i }
+    total += p.toks.len() + p.pos
+}
+println("{}", total)
+"#,
+    );
+    assert_ledger_flat(&binary, "vec", 1_000, 20_000);
+}
+
+#[test]
+fn enum_payload_vecs_release_after_question_mark_and_match() {
+    let binary = build_release(
+        "enum_payload_vec_release",
+        r#"
+use std::env
+enum Stmt { Select { table: String, cols: Vec<String>, conds: Vec<i64>, limit: i64 }, Compact }
+fn make(i: i64) -> Result<Stmt, String> {
+    Ok(Stmt::Select { table: "t", cols: #["a", "b" + i.to_string()], conds: #[i], limit: i })
+}
+fn consume(i: i64) -> Result<i64, String> {
+    let s = make(i)?
+    match s {
+        Stmt::Select { table, cols, conds, limit } => Ok(cols.len() + conds.len() + limit + table.len()),
+        Stmt::Compact => Ok(0),
+    }
+}
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
+let mut total: i64 = 0
+for i in 0..n { total += consume(i).unwrap_or(0) }
+println("{}", total)
+"#,
+    );
+    assert_ledger_flat(&binary, "vec", 1_000, 20_000);
+    assert_ledger_flat(&binary, "str", 1_000, 20_000);
+}
+
+#[test]
+fn enum_payload_matched_inline_releases_its_node() {
+    let binary = build_release(
+        "enum_payload_inline_match",
+        r#"
+use std::env
+enum Stmt { Select { table: String, cols: Vec<String>, conds: Vec<i64>, limit: i64 }, Compact }
+fn make(i: i64) -> Result<Stmt, String> {
+    Ok(Stmt::Select { table: "t", cols: #["a", "b" + i.to_string()], conds: #[i], limit: i })
+}
+fn consume(i: i64) -> Result<i64, String> {
+    match make(i) {
+        Ok(s) => match s {
+            Stmt::Select { table, cols, conds, limit } => Ok(cols.len() + conds.len() + limit + table.len()),
+            Stmt::Compact => Ok(0),
+        },
+        Err(e) => Err(e),
+    }
+}
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
+let mut total: i64 = 0
+for i in 0..n { total += consume(i).unwrap_or(0) }
+println("{}", total)
+"#,
+    );
+    assert_ledger_flat(&binary, "vec", 1_000, 20_000);
+    assert_ledger_flat(&binary, "str", 1_000, 20_000);
+}
+
+#[test]
+fn carrier_returned_field_payload_outlives_the_frame_that_built_it() {
+    let binary = build_release(
+        "carrier_field_payload",
+        r#"
+use std::env
+struct Rec { data: Vec<i64>, name: String }
+fn take(r: &mut Rec) -> Result<Vec<i64>, String> { Ok(r.data) }
+fn takes(r: &mut Rec) -> Result<String, String> { Ok(r.name) }
+let n: i64 = env::args()[0].to_i64().unwrap_or(50)
+let mut keep: Vec<Vec<i64>> = #[]
+let mut names: Vec<String> = #[]
+for i in 0..n {
+    let mut r = Rec { data: #[i, i + 1, i + 2], name: "n" + i.to_string() }
+    keep.push(take(&mut r).unwrap_or(#[]))
+    names.push(takes(&mut r).unwrap_or(""))
+}
+let mut total: i64 = 0
+for v in keep { total += v[0] + v[1] + v[2] }
+for s in names { total += s.len() }
+println("{}", total)
+"#,
+    );
+    assert_output(&binary, 2_000, "6011890");
+    assert_ledger_flat(&binary, "vec", 200, 2_000);
+}
+
+#[test]
+fn http_response_constructors_release_the_body_they_copy() {
+    let binary = build_release(
+        "http_response_body_release",
+        r#"
+use std::{env, http}
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
+let mut total: i64 = 0
+for i in 0..n {
+    let r = http::Response::json(200, "{\"id\":" + i.to_string() + "}")
+    let t = http::Response::text(200, "x" + i.to_string())
+    total += r.status + t.status
+}
+println("{}", total)
+"#,
+    );
+    assert_ledger_flat(&binary, "str", 1_000, 20_000);
+}
+
+#[test]
+fn closure_capturing_a_map_struct_does_not_copy_it_per_call() {
+    let binary = build_release(
+        "closure_capture_map_struct",
+        r#"
+use std::env
+struct Store { index: Map<String, i64>, name: String }
+fn hit(s: &mut Store, key: String) -> i64 { s.index.get(key).unwrap_or(0) }
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
+let mut st = Store { index: Map::new(), name: "s" }
+for i in 0..50000 { st.index.insert("k" + i.to_string(), i) }
+let label = env::args().len().to_string()
+let probe = |i: i64| hit(&mut st, "k" + (i % 50000).to_string()) + label.len()
+let mut total: i64 = 0
+for i in 0..n { total += probe(i) }
+println("{}", total)
+"#,
+    );
+    assert_output(&binary, 2_000, "2001000");
+    let small = timed(&binary, 2_000);
+    let large = timed(&binary, 4_000);
+    assert_linear_and_fast(
+        "closure-capture-map-struct",
+        small,
+        large,
+        Duration::from_millis(800),
+    );
+}
+
+#[test]
+fn carrier_payload_discarded_by_a_wildcard_arm_is_released() {
+    let binary = build_release(
+        "carrier_wildcard_discard",
+        r#"
+use std::env
+enum Stmt { Select { table: String, cols: Vec<String>, conds: Vec<i64>, limit: i64 }, Compact }
+fn parse(src: String) -> Result<Stmt, String> {
+    Ok(Stmt::Select { table: src, cols: #["a"], conds: #[1], limit: 5 })
+}
+let n: i64 = env::args()[0].to_i64().unwrap_or(1000)
+let mut total: i64 = 0
+for i in 0..n {
+    match parse("sel" + (i % 3).to_string()) {
+        Ok(_) => total += 1
+        Err(_) => total += 0
+    }
+}
+println("{}", total)
+"#,
+    );
+    assert_output(&binary, 1_000, "1000");
+    assert_ledger_flat(&binary, "str", 1_000, 20_000);
+    assert_ledger_flat(&binary, "vec", 1_000, 20_000);
+}
+
+#[test]
+fn returned_aggregate_map_field_survives_the_builder() {
+    let binary = build_release(
+        "aggr_map_field_return",
+        r#"
+use std::env
+struct C { memory: Map<i64, i64>, _a: i64, _b: i64, v1: Vec<i64>, v2: Vec<i64> }
+impl C {
+    fn new(program: Vec<i64>) -> Self {
+        let mut m = Map::new()
+        for (addr, value) in program.enumerate() { m.insert(addr, value) }
+        C { memory: m, _a: 0, _b: 0, v1: #[], v2: #[] }
+    }
+    fn feed(&mut self, items: [i64]) { self.v1.extend(items) }
+}
+let n: i64 = env::args()[0].to_i64().unwrap_or(3)
+let p: Vec<i64> = #[104, 5, 99]
+let mut total: i64 = 0
+for _ in 0..n {
+    let mut c = C::new(p)
+    c.feed([])
+    total += c.memory.get_or(0, 0)
+}
+println("{}", total)
+"#,
+    );
+    assert_output(&binary, 3, "312");
 }

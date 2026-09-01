@@ -666,7 +666,7 @@ fn shed_response(parts: &ResponseParts) -> i128 {
         body: SyncRawPtr::new(alloc_cstring(&parts.body)),
         headers: parts.headers.clone(),
         body_bytes: Some(parts.body.clone()),
-        content_type: "text/plain; charset=utf-8".to_string(),
+        content_type: "text/plain; charset=utf-8".into(),
         stream_handle: -1,
     }));
     crate::c_abi::vec::pack_result(0, resp as i64)

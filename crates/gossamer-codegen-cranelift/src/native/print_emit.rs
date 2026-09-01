@@ -136,6 +136,25 @@ use super::*;
 
 use super::*;
 
+/// Reclaims a rendering an aggregate formatter allocated for one print or
+/// join step.
+///
+/// The formatters answer a fresh `String` this frame is the only holder of,
+/// and both consumers copy out of it - `gos_rt_print_str` writes the bytes and
+/// `gos_rt_concat_str` appends them - so the rendering is dead once the call
+/// it fed returns.
+fn free_rendered_string(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+    rendered: ir::Value,
+) -> Result<()> {
+    let f = intrinsics.extern_fn_by_name(module, "gos_rt_str_free_typed")?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    builder.ins().call(fref, &[rendered]);
+    Ok(())
+}
+
 pub(super) fn emit_per_arg_print(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -394,17 +413,20 @@ pub(super) fn emit_per_arg_print(
                 let msg = builder.inst_results(call)[0];
                 let fref2 = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref2, &[msg]);
+                free_rendered_string(module, builder, intrinsics, msg)?;
             }
             PrintKind::Tuple => {
                 let s =
                     emit_tuple_format_value(module, builder, body, tcx, arg, value, intrinsics)?;
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::Map => {
                 let s = emit_map_format_value(module, builder, value, intrinsics)?;
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::MapTagged(key_tag, val_tag) => {
                 let s = emit_map_format_tagged_value(
@@ -412,27 +434,32 @@ pub(super) fn emit_per_arg_print(
                 )?;
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::HandleFormat(symbol) => {
                 let s = emit_handle_format_value(module, builder, value, symbol, intrinsics)?;
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::SetFormat(symbol, ordered) => {
                 let s = emit_set_format_value(module, builder, value, symbol, ordered, intrinsics)?;
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::Option(payload_kind) => {
                 let s = emit_debug_option_value(module, builder, value, payload_kind, intrinsics)?;
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::Result(ok_kind, err_kind) => {
                 let s =
                     emit_debug_result_value(module, builder, value, ok_kind, err_kind, intrinsics)?;
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::Unsupported(_) => unreachable!("checked above"),
         }
@@ -505,7 +532,7 @@ pub(super) fn emit_arr_print(
     let result = builder.inst_results(call)[0];
     let print_ref = module.declare_func_in_func(print_str, builder.func);
     builder.ins().call(print_ref, &[result]);
-    Ok(())
+    free_rendered_string(module, builder, intrinsics, result)
 }
 
 /// Prints a flat nested fixed array through its `(ptr, outer, inner)`
@@ -534,7 +561,7 @@ pub(super) fn emit_arr_arr_print(
     let result = builder.inst_results(call)[0];
     let print_ref = module.declare_func_in_func(print_str, builder.func);
     builder.ins().call(print_ref, &[result]);
-    Ok(())
+    free_rendered_string(module, builder, intrinsics, result)
 }
 
 pub(super) fn emit_vec_print(
@@ -552,7 +579,7 @@ pub(super) fn emit_vec_print(
     let s = builder.inst_results(call)[0];
     let pref = module.declare_func_in_func(print_str, builder.func);
     builder.ins().call(pref, &[s]);
-    Ok(())
+    free_rendered_string(module, builder, intrinsics, s)
 }
 
 /// Emits `gos_rt_tuple_format(buf, n, tags)` and returns the rendered
@@ -798,6 +825,7 @@ pub(super) fn emit_args_to_concat_string(
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::ArrI64(_)
             | PrintKind::ArrF64(_)
@@ -819,6 +847,7 @@ pub(super) fn emit_args_to_concat_string(
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::ArrArrI64(..) | PrintKind::ArrArrF64(..) | PrintKind::ArrArrBool(..) => {
                 let (helper, n, m) = match kind {
@@ -841,6 +870,7 @@ pub(super) fn emit_args_to_concat_string(
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::DynValue => {
                 let render_fn = intrinsics.extern_fn_by_name(module, "gos_rt_dyn_format")?;
@@ -850,6 +880,7 @@ pub(super) fn emit_args_to_concat_string(
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::JsonValue => {
                 let render_fn = intrinsics.extern_fn_by_name(module, "gos_rt_json_display")?;
@@ -859,6 +890,7 @@ pub(super) fn emit_args_to_concat_string(
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::ErrorMessage => {
                 // Display renders the colon-joined cause chain;
@@ -870,6 +902,7 @@ pub(super) fn emit_args_to_concat_string(
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::Tuple => {
                 let s =
@@ -877,12 +910,14 @@ pub(super) fn emit_args_to_concat_string(
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::Map => {
                 let s = emit_map_format_value(module, builder, value, intrinsics)?;
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::MapTagged(key_tag, val_tag) => {
                 let s = emit_map_format_tagged_value(
@@ -891,24 +926,28 @@ pub(super) fn emit_args_to_concat_string(
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::HandleFormat(symbol) => {
                 let s = emit_handle_format_value(module, builder, value, symbol, intrinsics)?;
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::SetFormat(symbol, ordered) => {
                 let s = emit_set_format_value(module, builder, value, symbol, ordered, intrinsics)?;
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::Option(payload_kind) => {
                 let s = emit_debug_option_value(module, builder, value, payload_kind, intrinsics)?;
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::Result(ok_kind, err_kind) => {
                 let s =
@@ -916,6 +955,7 @@ pub(super) fn emit_args_to_concat_string(
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);
+                free_rendered_string(module, builder, intrinsics, s)?;
             }
             PrintKind::Unsupported(_) => unreachable!("filtered above"),
         }
