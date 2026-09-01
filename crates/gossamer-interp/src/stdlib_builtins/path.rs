@@ -302,8 +302,8 @@ pub(crate) fn install_utf8(globals: &mut Vec<(&'static str, Value)>) {
 }
 
 pub(crate) fn builtin_utf8_count_runes(args: &[Value]) -> RuntimeResult<Value> {
-    let text = args.first().and_then(as_str).unwrap_or("");
-    Ok(Value::Int(utf8_std::rune_count(text.as_bytes()) as i64))
+    let bytes = bytes_from_utf8_arg(args.first());
+    Ok(Value::Int(utf8_std::rune_count(&bytes) as i64))
 }
 
 pub(crate) fn builtin_utf8_rune_len(args: &[Value]) -> RuntimeResult<Value> {

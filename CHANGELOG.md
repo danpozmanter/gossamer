@@ -17,6 +17,15 @@
   and a byte that is not UTF-8 did not survive either.
 - `TcpStream::read_into` refuses a buffer whose elements are wider than a byte
   rather than writing bytes across its slots.
+- A registered HTTP handler holds a share of the closure environment it
+  answers from. The router kept the environment pointer without taking one, so
+  the scope that built the closure released the last share at the end of the
+  statement that registered it, and every later request read a handler
+  environment the allocator had since handed to something else - a server
+  whose handler captures anything crashed once the machine was loaded enough
+  to recycle the block promptly. Registration also marks the environment
+  goroutine-shared, so the connection goroutines that read it count their
+  shares atomically.
 - One accessor now reads a byte buffer on each side - `Value::byte_slice` in
   the interpreter, `vec_bytes_cow` in the runtime - and the fourteen readers
   that each had their own partial copy go through it, so a representation is

@@ -137,6 +137,19 @@ unsafe fn router_add_verb(
     };
     let segments = parse_route_pattern(&pat);
     super::fn_registry::register(fn_addr as usize, super::fn_registry::FnKind::HttpHandlerEnv);
+    // A registered handler outlives the frame that built it: the router
+    // answers from it for as long as the server runs, while the scope that
+    // built the closure releases its own share at the end of the statement.
+    // The route therefore takes a share of the environment, and holds it for
+    // the life of the router - the same ownership `spawn` gives a goroutine
+    // it hands a closure to.
+    unsafe { crate::c_abi::rc::gos_rt_rc_retain(env) };
+    // The server dispatches this handler on a goroutine per connection, so
+    // everything the environment holds is reached from several threads at
+    // once and has to count its shares atomically. Registration is where
+    // that can be said: it runs on the thread that built the closure, before
+    // the listener exists, which is the ordering `mark_shared` requires.
+    unsafe { crate::c_abi::rc::gos_rt_rc_mark_shared(env) };
     r.routes.push(GosRoute {
         method: method.to_ascii_uppercase(),
         segments,
@@ -1378,7 +1391,7 @@ fn base64_oneshot(input: &[u8]) -> String {
 
 #[cfg(test)]
 mod static_path_tests {
-    use super::{StaticResolution, resolve_static_path};
+    use super::{StaticResolution, gos_rt_router_new, resolve_static_path, router_add_verb};
 
     fn temp_root(tag: &str) -> std::path::PathBuf {
         let mut dir = std::env::temp_dir();
@@ -1492,5 +1505,53 @@ mod static_path_tests {
         std::fs::create_dir_all(root.join("empty")).unwrap();
         assert_eq!(label(&resolve_static_path(&root, "empty/", 0)), "NotFound");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A registered handler outlives the frame that built it, so the route
+    /// has to hold a share of the closure's environment.
+    ///
+    /// Without one, the scope that built the closure releases the only share
+    /// at the end of the statement that registered it, and the router answers
+    /// every later request through a freed environment - which reads as
+    /// whatever the allocator has since put there.
+    #[test]
+    fn a_registered_route_holds_a_share_of_its_handler_environment() {
+        let meta: [i64; 2] = [8, 0];
+        let env = unsafe { crate::c_abi::rc::gos_rt_rc_alloc(8, meta.as_ptr()) };
+        assert!(!env.is_null(), "the test environment allocated");
+        let before = unsafe { crate::c_abi::rc::gos_rt_rc_strong_count(env) };
+
+        let router = unsafe { gos_rt_router_new() };
+        let pattern = crate::c_abi::string::test_gos_str("/user/{id}");
+        unsafe { router_add_verb(router, "GET", pattern, env, 0) };
+
+        let after = unsafe { crate::c_abi::rc::gos_rt_rc_strong_count(env) };
+        assert_eq!(
+            after,
+            before + 1,
+            "registering a handler takes one share of its environment"
+        );
+    }
+
+    /// The environment a handler reads from several connection goroutines
+    /// counts its shares atomically, which registration is what establishes.
+    #[test]
+    fn a_registered_route_marks_its_handler_environment_shared() {
+        let meta: [i64; 2] = [8, 0];
+        let env = unsafe { crate::c_abi::rc::gos_rt_rc_alloc(8, meta.as_ptr()) };
+        assert!(!env.is_null(), "the test environment allocated");
+        assert!(
+            !unsafe { crate::c_abi::rc::rc_payload_is_shared(env) },
+            "a fresh environment starts thread-local"
+        );
+
+        let router = unsafe { gos_rt_router_new() };
+        let pattern = crate::c_abi::string::test_gos_str("/user/{id}");
+        unsafe { router_add_verb(router, "GET", pattern, env, 0) };
+
+        assert!(
+            unsafe { crate::c_abi::rc::rc_payload_is_shared(env) },
+            "registering a handler publishes its environment to the server's goroutines"
+        );
     }
 }

@@ -2077,6 +2077,19 @@ pub unsafe extern "C" fn gos_rt_rc_release_no_buffer(payload: *mut u8) {
 /// in-process JIT, which owns a freshly-built tree of nodes and must reclaim
 /// each one fully even when the compiled tier's `?` accounting left it
 /// over-retained; never emitted by codegen.
+/// Whether `payload`'s object counts its shares atomically because it has
+/// escaped to another goroutine. Reads a header bit no accessor otherwise
+/// exposes, so the escape points that must set it can be asserted.
+#[cfg(test)]
+#[must_use]
+pub(crate) unsafe fn rc_payload_is_shared(payload: *mut u8) -> bool {
+    let base = untag_rc(payload);
+    if base.is_null() || unsafe { in_region_arena(base) } {
+        return false;
+    }
+    unsafe { is_shared(header_ptr(base)) }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_strong_count(payload: *mut u8) -> i64 {
     let payload = untag_rc(payload);
