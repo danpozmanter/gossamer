@@ -407,6 +407,11 @@ mod tests {
     // that touches the shared counters through this mutex.
     static TEST_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
+    /// This thread's copy of the preempt phase, for the assertions below.
+    fn local_phase() -> u64 {
+        LOCAL_PHASE.with(|p| p.load(Ordering::Relaxed))
+    }
+
     #[test]
     fn yield_request_sticks_until_polled() {
         let _guard = TEST_LOCK.lock();
@@ -420,8 +425,14 @@ mod tests {
         assert!(current_phase() > baseline);
         // First should_yield observes the phase change.
         assert!(should_yield());
-        // Second one returns false because the local phase caught up.
-        assert!(!should_yield());
+        // The second poll answers false for the phase this thread now
+        // holds. Only a request this test made is serialised by the
+        // mutex above - a scheduler another test started raises the
+        // global from its own threads - so the poll is entitled to
+        // answer true whenever it takes a phase past the held one, and
+        // the phase it consumed is what says which happened.
+        let held = local_phase();
+        assert!(!should_yield() || local_phase() > held);
     }
 
     #[test]
