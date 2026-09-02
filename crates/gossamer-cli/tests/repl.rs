@@ -4028,6 +4028,53 @@ fn repl_info_names_a_bare_stdlib_trait_and_the_method_to_implement() {
 }
 
 #[test]
+fn repl_info_answers_every_language_supplied_trait() {
+    for (name, expected) in [
+        ("PartialEq", "fn eq(&self, other: Self) -> bool"),
+        ("Eq", "fn eq(&self, other: Self) -> bool"),
+        ("Ord", "fn cmp(&self, other: Self) -> i64"),
+        ("Clone", "fn clone(&self) -> Self"),
+        ("Default", "fn default() -> Self"),
+        ("Iterator", "fn next(&mut self) -> Option<T>"),
+        ("From", "fn from(value: T) -> Self"),
+        ("Add", "fn add(&self, other: Self) -> Self"),
+        ("Not", "fn not(&self) -> Self"),
+        ("Index", "fn index(&self, index: I) -> T"),
+    ] {
+        let out = run_repl(&format!("%i {name}\n"));
+        assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+        assert!(
+            out.stdout
+                .contains(&format!("{name} {{ {expected} }} [trait]")),
+            "`%i {name}` should name the method an impl supplies: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
+fn repl_info_says_what_to_write_instead_of_a_language_supplied_trait() {
+    let out = run_repl("%i Hash\n%i Drop\n%i Into\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    for (name, guidance) in [
+        ("Hash", "Hashing is structural and automatic"),
+        ("Drop", "defer"),
+        ("Into", "impl From<Source> for"),
+    ] {
+        assert!(
+            out.stdout.contains(&format!("{name} [trait]")),
+            "`%i {name}` should answer: {}",
+            out.stdout
+        );
+        assert!(
+            out.stdout.contains(guidance),
+            "`%i {name}` should say what the language does instead: {}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
 fn repl_info_calls_an_implemented_trait_a_trait_not_a_type() {
     let out = run_repl(
         "struct P { a: i64 }\n\

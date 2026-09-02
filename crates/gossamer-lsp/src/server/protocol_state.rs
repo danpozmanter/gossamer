@@ -617,7 +617,9 @@ impl ServerState {
         };
         let body = render_hover(doc, &loc);
         if body.is_empty() {
-            return Value::Null;
+            // A built-in trait has no declaration to index, so the header and
+            // the bound that name it fall to the word-based rendering.
+            return word_hover(doc, offset);
         }
         let mut contents = BTreeMap::new();
         contents.insert("kind".to_string(), Value::String("markdown".to_string()));

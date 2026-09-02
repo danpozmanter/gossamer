@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0085]: A container that orders its elements as it stores them - a heap, a - here
+--- framed ---
+error[GT0085]: A container that orders its elements as it stores them - a heap, a
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

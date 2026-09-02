@@ -855,13 +855,18 @@ impl<'a> Builder<'a> {
             return Some(dest);
         }
         let inner = self.lower_expr(operand)?;
-        // `-x` on a user struct / enum routes to its `neg` impl method.
-        if matches!(op, HirUnaryOp::Neg) {
+        // `-x` / `!x` on a user struct / enum route to its `neg` / `not`
+        // impl method.
+        if let Some(method) = match op {
+            HirUnaryOp::Neg => Some("neg"),
+            HirUnaryOp::Not => Some("not"),
+            _ => None,
+        } {
             let sname = self
                 .adt_dispatch_name(operand.ty)
                 .or_else(|| self.adt_dispatch_name(self.locals[inner.0 as usize].ty));
             if let Some(sname) = sname {
-                let mangled = format!("{sname}::neg");
+                let mangled = format!("{sname}::{method}");
                 if self.impl_methods.contains_key(&mangled) {
                     let dest = self.fresh(ty);
                     let next = self.new_block(span);

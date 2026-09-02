@@ -3563,6 +3563,20 @@ fn render_catalog_matches(pattern: &Regex, details: bool) -> String {
     render_catalog_entries(entries, "no catalog matches")
 }
 
+/// Appends every cataloged method filed under `owner`. Naming a type is a
+/// request for the surface it owns, and its methods carry the type's own
+/// spelling, so a bare-name query never reaches them on its own.
+fn push_owned_method_entries(entries: &mut Vec<String>, owner: &str, details: bool) {
+    for method in core_method_entries()
+        .into_iter()
+        .filter(|method| method.owner == owner)
+    {
+        let mut entry = String::new();
+        push_core_method_match(&mut entry, &method, details);
+        entries.push(entry);
+    }
+}
+
 fn render_catalog_query_matches(query: &str, details: bool) -> String {
     let mut entries = Vec::new();
     for builtin in matching_builtin_macros(query) {
@@ -3591,6 +3605,11 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
         );
         entries.push(entry);
     }
+    for entry in matching_builtin_traits(query) {
+        let mut rendered = String::new();
+        push_builtin_trait_match(&mut rendered, entry, details);
+        entries.push(rendered);
+    }
     for core_type in matching_core_types(query) {
         let mut entry = String::new();
         push_catalog_match(
@@ -3603,16 +3622,7 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
             details,
         );
         entries.push(entry);
-        // Naming a type is a request for the surface it owns; its methods
-        // carry the type's own spelling and never match it on their own.
-        for method in core_method_entries()
-            .into_iter()
-            .filter(|method| method.owner == core_type.name)
-        {
-            let mut entry = String::new();
-            push_core_method_match(&mut entry, &method, details);
-            entries.push(entry);
-        }
+        push_owned_method_entries(&mut entries, core_type.name, details);
     }
     for owner in matching_core_namespaces(query) {
         let mut entry = String::new();
@@ -3626,14 +3636,7 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
             details,
         );
         entries.push(entry);
-        for method in core_method_entries()
-            .into_iter()
-            .filter(|method| method.owner == owner)
-        {
-            let mut entry = String::new();
-            push_core_method_match(&mut entry, &method, details);
-            entries.push(entry);
-        }
+        push_owned_method_entries(&mut entries, &owner, details);
     }
     for method in matching_core_methods(query) {
         let mut entry = String::new();
@@ -3662,14 +3665,7 @@ fn render_catalog_query_matches(query: &str, details: bool) -> String {
         // `%i bytes::Buffer` answered with the type alone, reading as a type
         // with nothing callable on it.
         if matches!(item.kind, gossamer_std::registry::StdItemKind::Type) {
-            for method in core_method_entries()
-                .into_iter()
-                .filter(|method| method.owner == item.name)
-            {
-                let mut entry = String::new();
-                push_core_method_match(&mut entry, &method, details);
-                entries.push(entry);
-            }
+            push_owned_method_entries(&mut entries, item.name, details);
         }
     }
     render_catalog_entries(entries, "")
@@ -3706,7 +3702,7 @@ fn push_catalog_match(
     // A type's line is otherwise just its name and tag, which answers
     // nothing about what the type is; a method's name and signature
     // already do, and a listing can match dozens of them.
-    if !details && kind == "type" && !description.is_empty() {
+    if !details && matches!(kind, "type" | "trait") && !description.is_empty() {
         out.push_str(&format!("    {description}\n"));
     }
     if details {
@@ -4090,6 +4086,32 @@ fn push_item_match(out: &mut String, module: &StdModule, item: &StdItem, details
         Some(module.path),
         details,
     );
+}
+
+/// One built-in trait's listing. An implementable trait leads with the block
+/// an `impl` writes; a trait the language supplies has no such block, so its
+/// line carries the name alone and the detail says what to write instead.
+fn push_builtin_trait_match(out: &mut String, entry: &gossamer_types::BuiltinTrait, details: bool) {
+    let signature = if entry.signature.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", entry.signature)
+    };
+    let description = if entry.instead.is_empty() {
+        entry.doc.to_string()
+    } else {
+        format!("{} {}", entry.doc, entry.instead)
+    };
+    out.push_str(entry.name);
+    out.push_str(&signature);
+    out.push_str(" [trait]\n");
+    if !details {
+        out.push_str(&format!("    {description}\n"));
+        return;
+    }
+    out.push_str(&format!("    {description}\n"));
+    push_catalog_origin(out, "Builtin");
+    out.push_str(&format!("    Example: {}\n", entry.example));
 }
 
 fn push_core_method_match(out: &mut String, method: &CoreMethodEntry, details: bool) {
@@ -4986,6 +5008,16 @@ fn matching_core_types(query: &str) -> Vec<&'static CoreTypeHelp> {
         .collect()
 }
 
+/// The built-in traits a query names. A trait the standard library declares
+/// is reached through its module's manifest entry instead, so the catalog's
+/// bare-name rendering covers only the ones the language supplies itself.
+fn matching_builtin_traits(query: &str) -> Vec<&'static gossamer_types::BuiltinTrait> {
+    gossamer_types::BUILTIN_TRAITS
+        .iter()
+        .filter(|entry| entry.module.is_none() && symbol_query_matches(entry.name, query))
+        .collect()
+}
+
 fn matching_prelude_builtins(query: &str) -> Vec<&'static PreludeBuiltinHelp> {
     PRELUDE_BUILTINS
         .iter()
@@ -5120,11 +5152,8 @@ fn normalize_query(arg: &str) -> &str {
 /// The method an `impl` of a stdlib trait must supply, rendered as the
 /// listing's signature suffix. `None` for a trait with no required method.
 fn trait_required_signature(name: &str) -> Option<String> {
-    match name {
-        "Display" => Some(" { fn fmt(&self) -> String }".to_string()),
-        "Debug" => Some(" { fn fmt(&self) -> String }".to_string()),
-        _ => None,
-    }
+    let entry = gossamer_types::builtin_trait(name)?;
+    (!entry.signature.is_empty()).then(|| format!(" {}", entry.signature))
 }
 
 fn item_kind_label(kind: StdItemKind) -> &'static str {

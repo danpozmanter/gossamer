@@ -18,8 +18,9 @@
 use std::collections::{HashMap, HashSet};
 
 use gossamer_ast::{
-    EnumDecl, EnumVariant, GenericArg, Item, ItemKind, ModBody, ModulePath, NodeId, SourceFile,
-    StructBody, StructDecl, TypeKind, UseDecl, UseTarget,
+    BINARY_SEARCH_PREFIX, EnumDecl, EnumVariant, GenericArg, Item, ItemKind, ModBody,
+    ModulePath, NodeId, PARTITION_POINT_PREFIX, SourceFile, STRUCTURAL_COMPARATOR_PREFIX,
+    StructBody, StructDecl, TypeKind, USER_COMPARATOR_PREFIX, UseDecl, UseTarget,
 };
 use gossamer_lex::{FileId, Keyword, Lexer, Punct, SourceMap, Span, TokenKind};
 

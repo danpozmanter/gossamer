@@ -868,6 +868,81 @@ impl<'a> Builder<'a> {
             .map_or(joined, std::string::ToString::to_string)
     }
 
+    /// A `sort::` free call over a tuple or struct element, lowered through
+    /// the field-kind stream that describes the element's layout.
+    ///
+    /// The by-word shims read one machine word per element, which for an
+    /// aggregate is the address rather than the value. `None` for a scalar
+    /// element, which those shims order correctly.
+    fn try_lower_aggregate_sort_free(
+        &mut self,
+        joined: &str,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::{IntTy, TyKind};
+        if !matches!(
+            joined,
+            "sort::sort_stable" | "sort::binary_search" | "sort::partition_point"
+        ) {
+            return None;
+        }
+        let sequence = args.first()?;
+        let elem = self.vec_receiver_elem_ty(sequence.ty);
+        let elem = self.peel_ref_ty(elem);
+        if !matches!(
+            self.tcx.kind_of(elem),
+            TyKind::Tuple(_) | TyKind::Adt { .. }
+        ) {
+            return None;
+        }
+        let (count, tags) = self.tuple_element_stream(elem)?;
+        let sequence_local = self.lower_expr(sequence)?;
+        let mut call_args = vec![Operand::Copy(Place::local(sequence_local))];
+        if joined != "sort::sort_stable" {
+            let target = args.get(1)?;
+            let target_local = self.lower_expr(target)?;
+            call_args.push(Operand::Copy(Place::local(target_local)));
+        }
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let count_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(count_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(
+                i128::try_from(count).unwrap_or(0),
+            ))),
+            span,
+        );
+        call_args.push(Operand::Copy(Place::local(count_local)));
+        let tag_text: String = tags.iter().map(|&b| b as char).collect();
+        let string_ty = self.tcx.string_ty();
+        let tags_local = self.fresh(string_ty);
+        self.emit_assign(
+            Place::local(tags_local),
+            Rvalue::Use(Operand::Const(ConstValue::Str(tag_text))),
+            span,
+        );
+        call_args.push(Operand::Copy(Place::local(tags_local)));
+        let (symbol, ret_ty) = match joined {
+            "sort::sort_stable" => (
+                "gos_rt_sort_stable_aggr",
+                self.tcx.intern(TyKind::Vec(elem)),
+            ),
+            "sort::binary_search" => ("gos_rt_sort_binary_search_aggr", self.option_i64_adt_ty()),
+            _ => ("gos_rt_sort_partition_point_aggr", i64_ty),
+        };
+        let dest = self.fresh(ret_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(symbol.to_string())),
+            args: call_args,
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
     /// The runtime symbol and pinned return type a stdlib free call
     /// lowers to, without emitting it.
     ///
@@ -969,6 +1044,12 @@ impl<'a> Builder<'a> {
         // shadows the prelude builtin.
         if !callee_def_some && seg_len == 1 && joined == "spawn" && matches!(args.len(), 1 | 2) {
             return ControlFlow::Break(self.lower_spawn(&args[0], args.get(1), span));
+        }
+        // A tuple or struct element spans several slots, so the by-word
+        // primitives have no single value to order it by. These take the
+        // element's field-kind stream and walk it in declaration order.
+        if let Some(local) = self.try_lower_aggregate_sort_free(joined, args, span) {
+            return ControlFlow::Break(Some(local));
         }
         // `assert(cond[, msg])` / `assert_eq(a, b[, msg])` prelude
         // assertions: lower to a conditional `panic(msg)` so the same

@@ -997,8 +997,108 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
             _ => {}
         }
     }
+    emit_comparators(&mut out, parsed, &user_cmp, &orderable);
     out
 }
+
+/// Emits one comparator per ordered type, under the prefix that says
+/// whether the source wrote the order or the compiler synthesized it.
+fn emit_comparators(
+    out: &mut String,
+    parsed: &SourceFile,
+    user_cmp: &HashSet<String>,
+    orderable: &HashSet<String>,
+) {
+    let searches = searches_sorted_sequences(parsed);
+    for (module, item) in flatten_items_with_modules(&parsed.items) {
+        let (name, generics) = match &item.kind {
+            ItemKind::Struct(decl) => (&decl.name.name, &decl.generics),
+            ItemKind::Enum(decl) => (&decl.name.name, &decl.generics),
+            _ => continue,
+        };
+        let prefix = if user_cmp.contains(name) {
+            USER_COMPARATOR_PREFIX
+        } else if orderable.contains(name) {
+            STRUCTURAL_COMPARATOR_PREFIX
+        } else {
+            continue;
+        };
+        let ty = TyId::new(&module, name);
+        let params: Vec<&str> = generics
+            .params
+            .iter()
+            .filter_map(|p| match p {
+                gossamer_ast::GenericParam::Type { name, .. } => Some(name.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let (gen_decl, self_ty) = if params.is_empty() {
+            (String::new(), ty.path.clone())
+        } else {
+            let args = format!("<{}>", params.join(", "));
+            (args.clone(), format!("{}{args}", ty.path))
+        };
+        out.push_str(&format!(
+            "// Comparator for {}, reaching the order the type carries.\n\
+             fn {prefix}{}{gen_decl}(a: {self_ty}, b: {self_ty}) -> i64 {{ a.cmp(b) }}\n",
+            ty.path, ty.symbol,
+        ));
+        // A search over a sorted sequence compares against a target rather
+        // than ranking a pair, so it needs its own body. Monomorphic, since
+        // the ordering call names it directly, and emitted only where the
+        // program searches at all.
+        if searches && params.is_empty() {
+            let cmp = format!("{prefix}{}", ty.symbol);
+            out.push_str(&format!(
+                "\
+fn {PARTITION_POINT_PREFIX}{sym}(xs: Vec<{self_ty}>, pivot: {self_ty}) -> i64 {{
+    let mut lo = 0
+    let mut hi = xs.len()
+    while lo < hi {{
+        let mid = (lo + hi) / 2
+        if {cmp}(xs[mid], pivot) < 0 {{ lo = mid + 1 }} else {{ hi = mid }}
+    }}
+    lo
+}}
+
+fn {BINARY_SEARCH_PREFIX}{sym}(xs: Vec<{self_ty}>, target: {self_ty}) -> Option<i64> {{
+    let at = {PARTITION_POINT_PREFIX}{sym}(xs, target)
+    if at < xs.len() && {cmp}(xs[at], target) == 0 {{ Some(at) }} else {{ None }}
+}}
+",
+                sym = ty.symbol,
+            ));
+        }
+    }
+}
+
+/// True when the source searches a sorted sequence, so the per-type search
+/// bodies are worth emitting.
+fn searches_sorted_sequences(parsed: &SourceFile) -> bool {
+    struct Search {
+        found: bool,
+    }
+    impl gossamer_ast::visitor::Visitor for Search {
+        fn visit_expr(&mut self, expr: &gossamer_ast::Expr) {
+            if let gossamer_ast::ExprKind::Call { callee, .. } = &expr.kind
+                && let gossamer_ast::ExprKind::Path(path) = &callee.kind
+                && path.segments.last().is_some_and(|s| {
+                    matches!(s.name.name.as_str(), "binary_search" | "partition_point")
+                })
+            {
+                self.found = true;
+            }
+            gossamer_ast::visitor::walk_expr(self, expr);
+        }
+    }
+    let mut search = Search { found: false };
+    for item in &parsed.items {
+        gossamer_ast::visitor::walk_item(&mut search, item);
+    }
+    search.found
+}
+
+
 
 /// Iterator over the payload field types of an enum variant (empty for unit
 /// variants), for the implicit-`fmt` formattability check.

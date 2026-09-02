@@ -184,6 +184,29 @@ fn main() {
 }
 
 #[test]
+fn unary_not_routes_to_the_not_impl_on_every_tier() {
+    // `!value` on a user type reaches its `not` impl the way `-value`
+    // reaches `neg`, and both route through the same nominal dispatch.
+    let src = r#"
+struct Mask { bits: i64 }
+
+impl Not for Mask {
+    fn not(&self) -> Mask { Mask { bits: 255 - self.bits } }
+}
+
+impl Neg for Mask {
+    fn neg(&self) -> Mask { Mask { bits: 0 - self.bits } }
+}
+
+fn main() {
+    let m = Mask { bits: 12 }
+    println("not={} neg={}", (!m).bits, (-m).bits)
+}
+"#;
+    assert_three_tier_parity("unary_not_impl", src, "not=243 neg=-12");
+}
+
+#[test]
 fn trait_method_dispatched_via_concrete_self_type() {
     // Trait method dispatched on concrete self type. The 2026-
     // 04-28 `compiled_impl_method_dispatch.md` regression

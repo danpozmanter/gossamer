@@ -1,7 +1,19 @@
 # Changelog
 
-## 0.58.8 - Read optimizations
+## 0.58.8 - Read optimizations, trait discoverability in REPL
 
+- Discoverable traits in REPL. `%info Hash`, `%info Eq`,
+  `%info PartialEq`, `%info Add`, `%info Drop` and the rest answer with the
+  method an `impl` supplies, what the trait governs, and an example; only
+  `Display` and `Debug` had entries before. Tab completion offers the trait
+  names, and LSP hover reads the same catalog.
+- `!value` on a user struct or enum routes to its `not` impl, the way `-value`
+  already routed to `neg`. The impl was accepted and the operator rejected.
+- An `impl` of a trait the language supplies itself reports GT0084 instead of
+  compiling to a block nothing dispatches through. `impl Hash for Point`,
+  `impl Drop for File`, `impl Copy`, `impl Into<i64>` and their kind were
+  accepted and silently ignored; the diagnostic names what the language does
+  and what to write in its place.
 - A read through a nested place (`st.tables[i].slots[j]`, `buf[p]`,
   `keys[c]`) no longer retains and releases every intermediate it passes
   through. The compiler copied each heap-valued intermediate into a holder

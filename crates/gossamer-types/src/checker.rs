@@ -26,6 +26,7 @@ fn qualified_type_name(module_path: &[String], name: &str) -> String {
     format!("{}::{name}", module_path.join("::"))
 }
 
+use crate::builtin_traits::ITERATOR_BOUND_METHODS as ITERATOR_METHODS;
 use gossamer_ast::{
     ArrayExpr, BinaryOp, Block, ClosureParam, Expr, ExprKind, FieldPattern, FnDecl, FnParam,
     GenericArg as AstGenericArg, ImplDecl, ImplItem, Item, ItemKind, Literal, MatchArm, NodeId,
@@ -915,6 +916,10 @@ struct TypeChecker<'a> {
     /// declaration order. Every `impl Trait for Type` has to supply them;
     /// monomorphisation emits a direct call to each one.
     trait_required_methods: HashMap<String, Vec<String>>,
+    /// Types whose source writes its own `cmp`, so their order is the one that
+    /// `impl` answers rather than the field-by-field one. A container that
+    /// orders its elements internally cannot reach it.
+    user_ordered_types: std::collections::HashSet<String>,
     /// Every method name a trait declares, defaults included, in declaration
     /// order. An `impl` of the trait may define these and nothing else.
     trait_declared_methods: HashMap<String, Vec<String>>,
@@ -953,9 +958,7 @@ struct GenericScope {
 
 impl<'a> TypeChecker<'a> {
     fn new(tcx: &'a mut TyCtxt, resolutions: &'a Resolutions) -> Self {
-        register_stdlib_struct_fields(tcx);
-        let mut checker_struct_fields = HashMap::new();
-        seed_checker_stdlib_struct_fields(tcx, &mut checker_struct_fields);
+        let checker_struct_fields = stdlib_struct_fields(tcx);
         Self {
             tcx,
             infer: InferCtxt::new(),
@@ -1045,6 +1048,7 @@ impl<'a> TypeChecker<'a> {
             current_module: Vec::new(),
             trait_own_methods: HashMap::new(),
             trait_required_methods: builtin_trait_required_methods(),
+            user_ordered_types: std::collections::HashSet::new(),
             trait_declared_methods: HashMap::new(),
             claimed_trait_impls: HashMap::new(),
             derived_traits: HashMap::new(),
@@ -1431,6 +1435,24 @@ impl<'a> TypeChecker<'a> {
                 TypeError::UnknownImplTrait {
                     name: trait_name,
                     ty: self_ty,
+                },
+                span,
+            );
+            return;
+        }
+        // A trait the language supplies itself is decided once, for every
+        // type: a block naming one would sit there with nothing dispatching
+        // through it, and the behaviour it means to change would not change.
+        if !self.trait_own_methods.contains_key(&trait_name)
+            && let Some(entry) = crate::builtin_traits::builtin_trait(&trait_name)
+            && entry.kind == crate::builtin_traits::BuiltinTraitKind::Automatic
+        {
+            self.emit(
+                TypeError::AutomaticTraitImpl {
+                    name: trait_name,
+                    ty: self_ty,
+                    reason: entry.doc.to_string(),
+                    instead: entry.instead.to_string(),
                 },
                 span,
             );
@@ -2641,6 +2663,17 @@ impl<'a> TypeChecker<'a> {
                 ItemKind::Impl(decl) => {
                     self.validate_declared_bounds(&decl.generics, &decl.where_clause, item.span);
                     self.collect_impl_signatures(decl, module_path);
+                    // A `cmp` the source wrote is the type's order. The
+                    // synthesized field-by-field one carries the marker, and
+                    // is the order every ordering primitive already reads.
+                    if !item.attrs.has_word("gos_synthesized")
+                        && decl
+                            .items
+                            .iter()
+                            .any(|it| matches!(it, ImplItem::Fn(f) if f.name.name == "cmp"))
+                    {
+                        self.user_ordered_types.insert(impl_self_ty_name(decl));
+                    }
                 }
                 ItemKind::Trait(decl) => {
                     self.validate_declared_bounds(&decl.generics, &decl.where_clause, item.span);
@@ -6851,6 +6884,9 @@ impl<'a> TypeChecker<'a> {
             }
             "Set" | "BTreeSet" => {
                 let elem = array_source_elem(self);
+                if owner == "BTreeSet" {
+                    self.require_container_reads_the_types_order(elem, owner, span);
+                }
                 Some(self.set_ty(owner, elem))
             }
             "Deque" => {
@@ -7627,6 +7663,26 @@ impl<'a> TypeChecker<'a> {
         clippy::cognitive_complexity,
         reason = "flat stdlib module dispatch table keeps call typing local"
     )]
+    /// `sort::sort_stable(xs) -> Vec<T>`, answering the element type its
+    /// argument holds.
+    ///
+    /// The catalogue row cannot say so on its own: its `Vec<T>` names a
+    /// parameter the row has no argument to pin, and an unpinned return
+    /// leaves the sequence spelled as a slice wherever it is shown.
+    fn sort_stable_ret_ty(&mut self, module: &[&str], last: &str, arg_tys: &[Ty]) -> Option<Ty> {
+        if !matches!(module, ["sort"] | ["std", "sort"]) || last != "sort_stable" {
+            return None;
+        }
+        let resolved = self.infer.resolve(self.tcx, *arg_tys.first()?);
+        let (TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. }) =
+            self.tcx.kind(resolved)?
+        else {
+            return None;
+        };
+        let elem = *elem;
+        Some(self.tcx.intern(TyKind::Vec(elem)))
+    }
+
     fn check_stdlib_module_ret_ty(
         &mut self,
         module: &[&str],
@@ -7641,6 +7697,9 @@ impl<'a> TypeChecker<'a> {
         }
         if is_channel_constructor_path(module, last) {
             return Some(self.channel_tuple_ty());
+        }
+        if let Some(ty) = self.sort_stable_ret_ty(module, last, arg_tys) {
+            return Some(ty);
         }
         // `env::var(name) -> Option<String>`. Typing it concretely lets the
         // match checker reject matching its result with `Result` patterns
@@ -8631,6 +8690,7 @@ impl<'a> TypeChecker<'a> {
         if !matches!(owner, "MaxHeap" | "MinHeap" | "BinaryHeap") {
             return elem;
         }
+        self.require_container_reads_the_types_order(resolved, owner, span);
         if self.is_orderable_elem(resolved) {
             return elem;
         }
@@ -8646,6 +8706,35 @@ impl<'a> TypeChecker<'a> {
         // pops that follow are checked against it rather than reported a
         // second time against a substituted `i64`.
         elem
+    }
+
+    /// Reports a container that orders its elements as it stores them when the
+    /// element writes its own `cmp`.
+    ///
+    /// A sequence orders on demand, so its ordering calls route through the
+    /// type's comparator. A heap and a sorted set or map keep their elements
+    /// in the order they were stored in, reached with no comparator to call,
+    /// so the order the type declares would silently not be the one read back.
+    fn require_container_reads_the_types_order(&mut self, elem: Ty, owner: &str, span: Span) {
+        let resolved = self.infer.resolve(self.tcx, elem);
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return;
+        };
+        let Some(name) = self.tcx.def_name(*def) else {
+            return;
+        };
+        let bare = name.rsplit("::").next().unwrap_or(name).to_string();
+        if !self.user_ordered_types.contains(&bare) {
+            return;
+        }
+        let elem = self.render_public_ty(resolved);
+        self.emit(
+            TypeError::ContainerIgnoresUserOrder {
+                owner: owner.to_string(),
+                elem,
+            },
+            span,
+        );
     }
 
     /// Whether values of `ty` have an ordering: the scalars, `String`, and
@@ -13139,6 +13228,28 @@ impl<'a> TypeChecker<'a> {
                     self.tcx.bool_ty()
                 } else if self.reject_operator_off_bound(resolved, "!", "not", span) {
                     self.tcx.error_ty()
+                } else if self.adt_name_of(resolved).is_some() {
+                    // `!x` on a user struct / enum routes to its `not` impl
+                    // (a zero-arg method on the receiver), the same way `-x`
+                    // routes to `neg`. The operand node is anchored to its
+                    // resolved nominal type so tier lowering dispatches the
+                    // call.
+                    self.record(operand.id, resolved);
+                    if let Some(ret) = self.adt_op_method_ret(resolved, "not", 0) {
+                        ret
+                    } else {
+                        let ty = self.render_public_ty(resolved);
+                        self.emit(
+                            TypeError::UnresolvedOpImpl {
+                                op: "!".to_string(),
+                                trait_name: "Not".to_string(),
+                                method: "not".to_string(),
+                                ty,
+                            },
+                            span,
+                        );
+                        self.tcx.error_ty()
+                    }
                 } else if self.is_concrete(resolved) && !self.is_integer(resolved) {
                     let lhs = self.render_public_ty(resolved);
                     self.emit(
@@ -16385,6 +16496,11 @@ impl<'a> TypeChecker<'a> {
                 } else {
                     (HASH_SET_DEF_LOCAL, "Set")
                 };
+                if name == "BTreeSet"
+                    && let Some(elem) = substs.types().first().copied()
+                {
+                    self.require_container_reads_the_types_order(elem, name, span);
+                }
                 let def = gossamer_resolve::DefId::local(local);
                 self.tcx.register_def_name(def, name);
                 return self.tcx.intern(TyKind::Adt { def, substs });
@@ -16394,6 +16510,7 @@ impl<'a> TypeChecker<'a> {
                 let tys = substs.types();
                 let key = tys.first().copied().unwrap_or_else(|| self.fresh());
                 let value = tys.get(1).copied().unwrap_or_else(|| self.fresh());
+                self.require_container_reads_the_types_order(key, "BTreeMap", span);
                 return self.tcx.intern(TyKind::HashMap {
                     key,
                     value,
@@ -17855,6 +17972,15 @@ fn register_stdlib_struct_fields(tcx: &mut TyCtxt) {
 /// Without this, `lookup_field_ty_diagnosed` returns `UnknownField {
 /// opaque: true }` for `entry: &fs::DirInfo` even though `tcx` knows
 /// the field layout.
+/// The stdlib struct field tables the checker starts with, registered into
+/// `tcx` and returned as the checker's own copy.
+fn stdlib_struct_fields(tcx: &mut TyCtxt) -> HashMap<gossamer_resolve::DefId, Vec<(String, Ty)>> {
+    register_stdlib_struct_fields(tcx);
+    let mut fields = HashMap::new();
+    seed_checker_stdlib_struct_fields(tcx, &mut fields);
+    fields
+}
+
 fn seed_checker_stdlib_struct_fields(
     tcx: &mut TyCtxt,
     map: &mut HashMap<gossamer_resolve::DefId, Vec<(String, Ty)>>,
@@ -18983,59 +19109,6 @@ const LAZY_ITERATOR_ADAPTERS: &[&str] = &[
     "rev",
 ];
 
-/// The `Iterator<T>` method surface available on every execution tier.
-const ITERATOR_METHODS: &[&str] = &[
-    "next",
-    "take",
-    "skip",
-    "step_by",
-    "enumerate",
-    "chain",
-    "zip",
-    "map",
-    "filter",
-    "filter_map",
-    "flat_map",
-    "scan",
-    "take_while",
-    "skip_while",
-    "rev",
-    "dedup",
-    "flatten",
-    "pairwise",
-    "windows",
-    "chunks",
-    "collect",
-    "count",
-    "sum",
-    "product",
-    "min",
-    "max",
-    "fold",
-    "any",
-    "all",
-    "find",
-    // Terminals and eager-only operations. An iterator argument is legal for
-    // these too: the eager ones drain it first, which is what a sequence
-    // operation over an iterator has to do anyway.
-    "find_map",
-    "for_each",
-    "position",
-    "reduce",
-    "partition",
-    "unzip",
-    "sort_by",
-    "sort_by_key",
-    "min_by",
-    "min_by_key",
-    "max_by",
-    "max_by_key",
-    "sum_by",
-    "product_by",
-    "chunk_by",
-    "count_by",
-];
-
 /// Best-effort human-readable name for a call's callee expression,
 /// used in arity diagnostics. A path renders as its joined segments;
 /// anything else falls back to a generic label.
@@ -19167,26 +19240,11 @@ fn merge_bound_table(table: &mut Vec<Vec<String>>, extra: &[Vec<String>]) {
 
 /// Whether a built-in trait name is one the language expects an explicit
 /// `impl` block to supply. The operator traits are written out by hand;
-/// every other built-in name (`Clone`, `Debug`, `Hash`, `Ord`, ...) names
-/// behaviour every value already has.
+/// every other built-in name (`Clone`, `Debug`, `Ord`, ...) names behaviour
+/// every value already has.
 fn builtin_trait_needs_impl(name: &str) -> bool {
-    matches!(
-        name,
-        "Add"
-            | "Sub"
-            | "Mul"
-            | "Div"
-            | "Rem"
-            | "Neg"
-            | "Not"
-            | "BitAnd"
-            | "BitOr"
-            | "BitXor"
-            | "Shl"
-            | "Shr"
-            | "Index"
-            | "IndexMut"
-    )
+    crate::builtin_traits::builtin_trait(name)
+        .is_some_and(|entry| entry.kind == crate::builtin_traits::BuiltinTraitKind::Operator)
 }
 
 /// Head name of the type an `impl` block attaches to, as written.
@@ -19205,41 +19263,10 @@ fn impl_self_ty_name(decl: &ImplDecl) -> String {
 /// lives outside the checked source - so nothing the block writes can be
 /// ruled out.
 fn builtin_trait_impl_items(name: &str) -> Option<&'static [&'static str]> {
-    Some(match name {
-        "Display" => &["to_string"],
-        "Debug" => &["fmt"],
-        "Iterator" => ITERATOR_METHODS,
-        "IntoIterator" => &["into_iter"],
-        "Clone" => &["clone"],
-        "Default" => &["default"],
-        "Hash" | "Hashable" => &["hash"],
-        "PartialEq" | "Eq" => &["eq", "ne"],
-        "PartialOrd" | "Ord" => &["cmp", "partial_cmp"],
-        "From" => &["from"],
-        "Into" => &["into"],
-        "TryFrom" => &["try_from"],
-        "TryInto" => &["try_into"],
-        "Add" => &["add"],
-        "Sub" => &["sub"],
-        "Mul" => &["mul"],
-        "Div" => &["div"],
-        "Rem" => &["rem"],
-        "Neg" => &["neg"],
-        "Not" => &["not"],
-        "BitAnd" => &["bitand"],
-        "BitOr" => &["bitor"],
-        "BitXor" => &["bitxor"],
-        "Shl" => &["shl"],
-        "Shr" => &["shr"],
-        "Index" | "IndexMut" => &["index"],
-        "AsRef" => &["as_ref"],
-        "AsMut" => &["as_mut"],
-        "Drop" => &["drop"],
-        "Handler" => &["serve"],
-        // Marker traits carry no items of their own.
-        "Copy" | "Sized" | "Send" | "Sync" => &[],
-        _ => return None,
-    })
+    match name {
+        "Handler" => Some(&["serve"]),
+        _ => crate::builtin_traits::builtin_trait(name).map(|entry| entry.impl_items),
+    }
 }
 
 /// Methods a built-in trait requires an `impl` block to supply. `Display`
@@ -19255,57 +19282,7 @@ fn builtin_trait_required_methods() -> HashMap<String, Vec<String>> {
 /// Every trait name an `impl` header may legitimately name: the language's
 /// own built-ins plus the traits the standard library declares.
 fn known_builtin_trait(name: &str) -> bool {
-    STDLIB_TRAIT_NAMES.contains(&name)
-        || matches!(
-            name,
-            "Iterator"
-                | "IntoIterator"
-                | "FromIterator"
-                | "Fn"
-                | "FnMut"
-                | "FnOnce"
-                | "Clone"
-                | "Copy"
-                | "Debug"
-                | "Display"
-                | "Default"
-                | "Hash"
-                | "Hashable"
-                | "PartialEq"
-                | "Eq"
-                | "PartialOrd"
-                | "Ord"
-                | "Sized"
-                | "Send"
-                | "Sync"
-                | "Drop"
-                | "From"
-                | "Into"
-                | "TryFrom"
-                | "TryInto"
-                | "Add"
-                | "Sub"
-                | "Mul"
-                | "Div"
-                | "Rem"
-                | "Neg"
-                | "Not"
-                | "BitAnd"
-                | "BitOr"
-                | "BitXor"
-                | "Shl"
-                | "Shr"
-                | "Index"
-                | "IndexMut"
-                | "AsRef"
-                | "AsMut"
-                | "Read"
-                | "Write"
-                | "Error"
-                | "Future"
-                | "Serialize"
-                | "Deserialize"
-        )
+    STDLIB_TRAIT_NAMES.contains(&name) || crate::builtin_traits::builtin_trait(name).is_some()
 }
 
 /// Traits the standard library declares, which user code implements the same
@@ -19366,37 +19343,7 @@ fn struct_literal_positional_index(name: &str) -> Option<usize> {
 /// decide whether a call is valid. An empty surface means the trait licenses
 /// no methods of its own, which is different from having none known.
 fn builtin_trait_methods(name: &str) -> Option<&'static [&'static str]> {
-    Some(match name {
-        "Iterator" | "IntoIterator" => ITERATOR_METHODS,
-        "Clone" => &["clone"],
-        "Debug" | "Display" => &["fmt", "to_string"],
-        "Default" => &["default"],
-        "Hash" | "Hashable" => &["hash"],
-        "PartialEq" | "Eq" => &["eq", "ne"],
-        "PartialOrd" | "Ord" => &["cmp", "partial_cmp"],
-        "From" => &["from"],
-        "Into" => &["into"],
-        "TryFrom" => &["try_from"],
-        "TryInto" => &["try_into"],
-        "Add" => &["add"],
-        "Sub" => &["sub"],
-        "Mul" => &["mul"],
-        "Div" => &["div"],
-        "Rem" => &["rem"],
-        "Neg" => &["neg"],
-        "Not" => &["not"],
-        "BitAnd" => &["bitand"],
-        "BitOr" => &["bitor"],
-        "BitXor" => &["bitxor"],
-        "Shl" => &["shl"],
-        "Shr" => &["shr"],
-        "Index" | "IndexMut" => &["index"],
-        "AsRef" => &["as_ref"],
-        "AsMut" => &["as_mut"],
-        // Marker traits carry no methods of their own.
-        "Copy" | "Sized" | "Send" | "Sync" | "Drop" => &[],
-        _ => return None,
-    })
+    crate::builtin_traits::builtin_trait(name).map(|entry| entry.bound_methods)
 }
 
 /// Sentinel-def offset for a stdlib handle named by its last path segment.

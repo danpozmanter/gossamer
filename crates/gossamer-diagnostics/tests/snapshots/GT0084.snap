@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0084]: An `impl` header named a trait the language supplies itself. Hashing, - here
+--- framed ---
+error[GT0084]: An `impl` header named a trait the language supplies itself. Hashing,
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

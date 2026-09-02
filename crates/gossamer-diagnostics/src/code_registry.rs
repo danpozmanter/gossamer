@@ -1360,6 +1360,28 @@ pub const REGISTRY: &[(&str, &str)] = &[
             call site.",
     ),
     (
+        "GT0084",
+        "An `impl` header named a trait the language supplies itself. Hashing,\n\
+            copying, release, marker safety, and the `Into` / `TryInto` /\n\
+            `IntoIterator` directions are decided by the language, not chosen\n\
+            per type, so the block would declare a contract nothing dispatches\n\
+            through and the behaviour would stay as it was. The diagnostic\n\
+            names what the language does and what to write in the block's\n\
+            place - a `From` impl on the target, a `defer`, an inherent\n\
+            method - or remove the block.",
+    ),
+    (
+        "GT0085",
+        "A container that orders its elements as it stores them - a heap, a\n\
+            `BTreeSet`, a `BTreeMap` - named an element or key whose type\n\
+            writes its own `cmp`. Such a container keeps its elements in the\n\
+            order they went in and reads them back with no comparator to call,\n\
+            so the order the type declares would silently not be the order it\n\
+            answers. A sequence orders on demand and does route through the\n\
+            type's `cmp`: sort a `Vec<T>`, or key the container on a value\n\
+            that carries the order.",
+    ),
+    (
         "GX0001",
         "An operation received a value of an incompatible type. The\n\
                      diagnostic names the type that was required and the type\n\

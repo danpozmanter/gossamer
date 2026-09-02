@@ -11,6 +11,7 @@ struct N { v: i64 }
 impl N {
     fn rem(self, o: N) -> N { N { v: self.v % o.v } }
     fn neg(self) -> N { N { v: 0 - self.v } }
+    fn not(self) -> N { N { v: 0 - self.v - 1 } }
     fn bitor(self, o: N) -> N { N { v: self.v | o.v } }
     fn bitand(self, o: N) -> N { N { v: self.v & o.v } }
     fn bitxor(self, o: N) -> N { N { v: self.v ^ o.v } }
@@ -49,6 +50,7 @@ fn main() {
     println("{}", (N { v: 17 } % N { v: 5 }).v)
     let a = N { v: 6 }
     println("{}", (-a).v)
+    println("{}", (!a).v)
     println("{}", (N { v: 5 } | N { v: 2 }).v)
     println("{}", (N { v: 6 } & N { v: 3 }).v)
     println("{}", (N { v: 5 } ^ N { v: 1 }).v)

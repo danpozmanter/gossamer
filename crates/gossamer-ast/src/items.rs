@@ -10,6 +10,26 @@ use crate::node_id::NodeId;
 use crate::pattern::Pattern;
 use crate::ty::{Type, TypePath};
 
+/// Name prefix of the comparator the autoderive pass emits for a type whose
+/// source writes its own `cmp`.
+///
+/// A sequence orders its elements structurally, and the ordering primitives
+/// take a comparator rather than a method, so an order the source declares
+/// reaches them only through a function of this shape.
+pub const USER_COMPARATOR_PREFIX: &str = "__gos_cmp_";
+
+/// Name prefix of the synthesized field-by-field comparator, for the ordering
+/// primitives that cannot compare an aggregate element on their own.
+pub const STRUCTURAL_COMPARATOR_PREFIX: &str = "__gos_ord_";
+
+/// Name prefix of the synthesized sorted-sequence search over a type, which
+/// runs the same binary search the primitive does but through the type's
+/// comparator.
+pub const BINARY_SEARCH_PREFIX: &str = "__gos_bsearch_";
+
+/// Name prefix of the synthesized sorted-sequence insertion-point search.
+pub const PARTITION_POINT_PREFIX: &str = "__gos_ppoint_";
+
 /// An item-level declaration.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Item {

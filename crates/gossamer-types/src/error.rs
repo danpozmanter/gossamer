@@ -150,6 +150,17 @@ pub enum TypeError {
         /// The element type the annotation named.
         found: String,
     },
+    /// A container that orders its elements internally named an element
+    /// whose type writes its own `cmp`. The container keeps its elements in
+    /// its own order and never calls a comparator, so the order the type
+    /// declares would not be the order the container reads.
+    #[error("`{owner}` cannot order an element of type `{elem}`, which writes its own `cmp`")]
+    ContainerIgnoresUserOrder {
+        /// Container spelling as written.
+        owner: String,
+        /// Element or key type that declares its own order.
+        elem: String,
+    },
     /// A method reached from outside the module its `impl` was written
     /// in, without `pub`.
     #[error("method `{name}` on `{ty}` is private to module `{module}`")]
@@ -455,6 +466,20 @@ pub enum TypeError {
         name: String,
         /// Type the block implements it for.
         ty: String,
+    },
+    /// An `impl` header names a trait the language supplies itself. The
+    /// block would declare a contract nothing dispatches through, so the
+    /// behaviour it means to change would stay exactly as it was.
+    #[error("`{name}` is supplied by the language, so `impl {name} for {ty}` changes nothing")]
+    AutomaticTraitImpl {
+        /// Trait name as written in the header.
+        name: String,
+        /// Type the block implements it for.
+        ty: String,
+        /// What the language does instead, from the built-in trait catalog.
+        reason: String,
+        /// What to write in the block's place.
+        instead: String,
     },
     /// A generic call instantiates a type parameter with a concrete type
     /// that does not implement a required trait bound.
@@ -967,6 +992,7 @@ impl TypeError {
             Self::OptionValueMismatch { .. } => "option-value-mismatch",
             Self::ArgumentTypeMismatch { .. } => "argument-type-mismatch",
             Self::SlotCollectionElement { .. } => "slot-collection-element",
+            Self::ContainerIgnoresUserOrder { .. } => "container-ignores-user-order",
             Self::UnresolvedMethod { .. } => "unresolved-method",
             Self::PrivateMethod { .. } => "private-method",
             Self::PrivateField { .. } => "private-field",
@@ -1007,6 +1033,7 @@ impl TypeError {
             Self::InvalidEscape { .. } => "invalid-escape",
             Self::UnknownTraitBound { .. } => "unknown-trait-bound",
             Self::UnknownImplTrait { .. } => "unknown-impl-trait",
+            Self::AutomaticTraitImpl { .. } => "automatic-trait-impl",
             Self::TraitInTypePosition { .. } => "trait-in-type-position",
             Self::TraitBoundNotSatisfied { .. } => "trait-bound-not-satisfied",
             Self::MethodNotOnBound { .. } => "method-not-on-bound",
@@ -1080,6 +1107,7 @@ impl TypeError {
             Self::OptionValueMismatch { .. } => "GT0001",
             Self::ArgumentTypeMismatch { .. } => "GT0001",
             Self::SlotCollectionElement { .. } => "GT0068",
+            Self::ContainerIgnoresUserOrder { .. } => "GT0085",
             Self::UnresolvedMethod { .. } => "GT0002",
             Self::UnresolvedOp { .. } | Self::UnresolvedOpImpl { .. } => "GT0003",
             Self::NonExhaustiveMatch { .. } => "GT0004",
@@ -1110,6 +1138,7 @@ impl TypeError {
             Self::InvalidEscape { .. } => "GT0010",
             Self::UnknownTraitBound { .. } => "GT0011",
             Self::UnknownImplTrait { .. } => "GT0070",
+            Self::AutomaticTraitImpl { .. } => "GT0084",
             Self::TraitInTypePosition { .. } => "GT0071",
             Self::TooManyVariants { .. } => "GT0012",
             Self::ClosureParamUninferred { .. } => "GT0013",
@@ -1797,6 +1826,28 @@ impl TypeDiagnostic {
                          as in `fn f<T: {name}>(value: T)`"
                     ))
                     .with_note("there is no `dyn`, so a trait has no value shape of its own");
+            }
+            TypeError::ContainerIgnoresUserOrder { owner, elem } => {
+                out = out
+                    .with_help(format!(
+                        "sort a `Vec<{elem}>`, which reads the type's `cmp`, or key the \
+                         container on a value that carries the order - `{owner}<i64>` beside \
+                         a `Map<i64, {elem}>`"
+                    ))
+                    .with_note(
+                        "the container orders its elements as it stores them, with no \
+                         comparator to call",
+                    );
+            }
+            TypeError::AutomaticTraitImpl {
+                name,
+                instead,
+                reason,
+                ..
+            } => {
+                out = out
+                    .with_help(instead.clone())
+                    .with_note(format!("`{name}`: {reason}"));
             }
             TypeError::UnknownImplTrait { name, ty } => {
                 out = out

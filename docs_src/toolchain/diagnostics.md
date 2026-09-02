@@ -66,6 +66,8 @@ version. This page is auto-generated from the catalogue in
 | [`GT0081`](#gt0081) | Types | enum representation too narrow for its variants |
 | [`GT0082`](#gt0082) | Types | reference passed where a value is taken |
 | [`GT0083`](#gt0083) | Types | write through a value that is not a reference |
+| [`GT0084`](#gt0084) | Types | impl of a trait the language supplies itself |
+| [`GT0085`](#gt0085) | Types | ordered container over a type that writes its own `cmp` |
 | [`GP0052`](#gp0052) | Parser | build-time validated call without a literal |
 | [`GP0056`](#gp0056) | Parser | retired cohort isolation spelling |
 | [`GP0053`](#gp0053) | Parser | `Display` rendering declared as `to_string` |
@@ -414,6 +416,18 @@ A parameter that is not `&mut` takes the value, and a reference names one rather
 **Types** - write through a value that is not a reference
 
 `*` reaches the place a reference names, and a value has no such place, so the write would reach nothing. Write the binding directly, or make the parameter `&mut T` and pass `&mut` at the call site.
+
+## `GT0084` <a id="gt0084"></a>
+
+**Types** - impl of a trait the language supplies itself
+
+Hashing, copying, release, marker safety, and the `Into` / `TryInto` / `IntoIterator` directions are the language's, not a per-type choice, so the block would declare a contract nothing dispatches through. The diagnostic names what the language does and what to write in its place - a `From` impl on the target, a `defer`, an inherent method - or remove the block.
+
+## `GT0085` <a id="gt0085"></a>
+
+**Types** - ordered container over a type that writes its own `cmp`
+
+A heap, a `BTreeSet`, or a `BTreeMap` keeps its elements in the order they went in and reads them back with no comparator to call, so an element or key whose type writes its own `cmp` would silently not be ordered by it. A sequence orders on demand and does route through the type's `cmp`: sort a `Vec<T>`, or key the container on a value that carries the order.
 
 ## `GP0052` <a id="gp0052"></a>
 

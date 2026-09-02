@@ -1,0 +1,56 @@
+// A type whose source writes its own `cmp` decides its order, and every
+// sequence ordering site reads that order: `sort`, `sort::sort_stable`,
+// `min` / `max` on a sequence and on an iterator, and the sorted-sequence
+// searches. A type with no written `cmp` keeps the field-by-field order,
+// which the same sites answer through the synthesized comparator.
+// Output must be bit-identical across the VM, Cranelift, and LLVM.
+
+use std::sort
+
+// Descending: the larger `x` orders first.
+struct Ranked { x: i64 }
+
+impl Ord for Ranked {
+    fn cmp(&self, other: Ranked) -> i64 { other.x - self.x }
+}
+
+struct Plain { x: i64, tag: String }
+
+fn ranked() -> Vec<Ranked> {
+    #[Ranked { x: 1 }, Ranked { x: 3 }, Ranked { x: 2 }]
+}
+
+fn plain() -> Vec<Plain> {
+    #[Plain { x: 10, tag: "j" }, Plain { x: 9, tag: "i" }, Plain { x: 100, tag: "z" }]
+}
+
+fn main() {
+    println("lt {}", Ranked { x: 1 } < Ranked { x: 3 })
+
+    let mut written = ranked()
+    written.sort()
+    println("sort {}", written)
+    println("stable {}", sort::sort_stable(ranked()))
+    println("min {}", ranked().min())
+    println("max {}", ranked().max())
+    println("iter min {}", ranked().iter().min())
+    println("iter max {}", ranked().iter().max())
+
+    // Already descending, so a search reads the same order it was built in.
+    println("search {}", sort::binary_search(written, Ranked { x: 2 }))
+    println("point {}", sort::partition_point(written, Ranked { x: 2 }))
+
+    let mut structural = plain()
+    structural.sort()
+    println("plain sort {}", structural)
+    println("plain stable {}", sort::sort_stable(plain()))
+    println("plain min {}", plain().min())
+
+    let tuples = #[(2, "b"), (1, "a"), (3, "c")]
+    println("tuple stable {}", sort::sort_stable(tuples))
+    let sorted = sort::sort_stable(tuples)
+    println("tuple search {}", sort::binary_search(sorted, (2, "b")))
+    println("tuple point {}", sort::partition_point(sorted, (2, "b")))
+
+    println("scalars {} {}", sort::sort_stable(#[3, 1, 2]), sort::binary_search(#[1, 3, 5], 3))
+}

@@ -3,12 +3,14 @@
 #![forbid(unsafe_code)]
 
 use gossamer_ast::{
-    ArrayExpr as AstArrayExpr, AssignOp, BinaryOp as AstBinOp, Block as AstBlock,
-    ClosureParam as AstClosureParam, EnumDecl, Expr as AstExpr, ExprKind as AstExprKind,
-    FieldPattern as AstFieldPat, FnDecl as AstFnDecl, FnParam as AstFnParam, Ident, ImplDecl,
-    ImplItem, Item as AstItem, ItemKind as AstItemKind, Literal as AstLiteral, MatchArm,
-    Mutability, NodeId, Pattern as AstPat, PatternKind as AstPatKind, SourceFile, Stmt as AstStmt,
-    StmtKind as AstStmtKind, StructDecl, TraitDecl, TraitItem, Type as AstType, UnaryOp,
+    ArrayExpr as AstArrayExpr, AssignOp, BINARY_SEARCH_PREFIX, BinaryOp as AstBinOp,
+    Block as AstBlock, ClosureParam as AstClosureParam, EnumDecl, Expr as AstExpr,
+    ExprKind as AstExprKind, FieldPattern as AstFieldPat, FnDecl as AstFnDecl,
+    FnParam as AstFnParam, Ident, ImplDecl, ImplItem, Item as AstItem, ItemKind as AstItemKind,
+    Literal as AstLiteral, MatchArm, Mutability, NodeId, PARTITION_POINT_PREFIX, Pattern as AstPat,
+    PatternKind as AstPatKind, STRUCTURAL_COMPARATOR_PREFIX, SourceFile, Stmt as AstStmt,
+    StmtKind as AstStmtKind, StructDecl, TraitDecl, TraitItem, Type as AstType,
+    USER_COMPARATOR_PREFIX, UnaryOp,
 };
 use gossamer_lex::Span;
 use gossamer_resolve::{Resolution, Resolutions};
@@ -69,6 +71,7 @@ pub fn lower_source_file(
         module_impl_fns,
         module_type_names,
         current_module: Vec::new(),
+        user_comparators: collect_user_comparators(&source.items),
         promoted_items: Vec::new(),
     };
     let mut items = Vec::new();
@@ -82,6 +85,41 @@ pub fn lower_source_file(
     // stage/terminal closures are still inline and can be spliced in.
     crate::fuse::fuse_iter_pipelines(&mut program, &mut *lowerer.tcx, &mut lowerer.ids);
     program
+}
+
+/// The comparator-taking spelling of an ordering call written bare, or
+/// `None` for a call that names no order.
+fn comparator_ordering_form(method: &str) -> Option<&'static str> {
+    match method {
+        "sort" => Some("sort_by"),
+        "min" => Some("min_by"),
+        "max" => Some("max_by"),
+        _ => None,
+    }
+}
+
+/// Names of the comparator functions the autoderive pass emitted: one per
+/// ordered type, under the prefix that says whether the source wrote the
+/// order (`__gos_cmp_`) or the compiler synthesized it (`__gos_ord_`).
+fn collect_user_comparators(items: &[AstItem]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for item in items {
+        match &item.kind {
+            AstItemKind::Fn(decl)
+                if decl.name.name.starts_with(USER_COMPARATOR_PREFIX)
+                    || decl.name.name.starts_with(STRUCTURAL_COMPARATOR_PREFIX) =>
+            {
+                out.insert(decl.name.name.clone());
+            }
+            AstItemKind::Mod(decl) => {
+                if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    out.extend(collect_user_comparators(inner));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Gives every block-local function or struct a globally unique backend symbol.
@@ -587,6 +625,10 @@ struct Lowerer<'a> {
     dependency_modules: std::collections::HashSet<String>,
     /// Module whose items are currently being lowered.
     current_module: Vec<String>,
+    /// Comparator functions the autoderive pass emitted, one per type
+    /// whose source supplies its own `cmp`. An ordering call on such an
+    /// element names one of these rather than the structural order.
+    user_comparators: std::collections::HashSet<String>,
     promoted_items: Vec<HirItem>,
 }
 
@@ -653,6 +695,139 @@ impl Lowerer<'_> {
             gossamer_types::TyKind::Float(gossamer_types::FloatTy::F32) => Some("f32"),
             gossamer_types::TyKind::Float(gossamer_types::FloatTy::F64) => Some("f64"),
             _ => None,
+        }
+    }
+
+    /// A `sort::` call over a struct or enum element, rewritten to the
+    /// comparator-taking form.
+    ///
+    /// These primitives order by a single machine word, which for an aggregate
+    /// element is the address rather than the value, so an aggregate reaches
+    /// its order only through a comparator - the type's own when its source
+    /// writes one, and the synthesized field-by-field order otherwise.
+    fn lower_sequence_order_call(
+        &mut self,
+        callee: &AstExpr,
+        args: &[AstExpr],
+        span: Span,
+    ) -> Option<HirExprKind> {
+        let AstExprKind::Path(path) = &callee.kind else {
+            return None;
+        };
+        let joined: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+        let last = *joined.last()?;
+        if joined.len() > 2 || (joined.len() == 2 && joined[0] != "sort") {
+            return None;
+        }
+        let sequence = args.first()?;
+        // A type whose source writes its own `cmp` orders by that; every other
+        // ordered type carries the synthesized field-by-field one, which the
+        // primitives need only because they cannot compare an aggregate.
+        let (symbol, elem, cmp_prefix) = self
+            .element_comparator(sequence.id, USER_COMPARATOR_PREFIX)
+            .map(|(symbol, elem)| (symbol, elem, USER_COMPARATOR_PREFIX))
+            .or_else(|| {
+                self.element_comparator(sequence.id, STRUCTURAL_COMPARATOR_PREFIX)
+                    .map(|(symbol, elem)| (symbol, elem, STRUCTURAL_COMPARATOR_PREFIX))
+            })?;
+        let mut lowered: Vec<HirExpr> = args.iter().map(|a| self.lower_expr(a)).collect();
+        match (last, lowered.len()) {
+            // Caller-side normalization has already run, so a free `iter::`
+            // call reaches lowering with its callback first.
+            ("sort_stable", 1) => {
+                let cmp = self.comparator_path(&format!("{cmp_prefix}{symbol}"), elem, span);
+                let sort_by = self.free_path(&["iter", "sort_by"], span);
+                Some(HirExprKind::Call {
+                    callee: Box::new(sort_by),
+                    args: vec![cmp, lowered.remove(0)],
+                })
+            }
+            // The search body is monomorphic and names the comparator itself,
+            // so the call passes only the sequence and the value sought.
+            ("binary_search" | "partition_point", 2) => {
+                let prefix = if last == "binary_search" {
+                    BINARY_SEARCH_PREFIX
+                } else {
+                    PARTITION_POINT_PREFIX
+                };
+                let helper = format!("{prefix}{symbol}");
+                let callee = self.free_path(&[&helper], span);
+                Some(HirExprKind::Call {
+                    callee: Box::new(callee),
+                    args: lowered,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// A path expression naming a free function, for a call this pass builds.
+    fn free_path(&mut self, segments: &[&str], span: Span) -> HirExpr {
+        HirExpr {
+            id: self.fresh(),
+            span,
+            ty: self.tcx.error_ty(),
+            kind: HirExprKind::Path {
+                segments: segments.iter().map(|s| Ident::new(*s)).collect(),
+                def: None,
+            },
+        }
+    }
+
+    /// The backend symbol of a sequence's element type, together with the
+    /// element type itself, when the element is a user type carrying a
+    /// comparator under `prefix`.
+    ///
+    /// The ordering primitives take a comparator, not a method, so the order
+    /// such a type declares reaches them only by naming its synthesized
+    /// functions, all of which are keyed by this symbol.
+    fn element_comparator(&mut self, receiver: NodeId, prefix: &str) -> Option<(String, Ty)> {
+        use gossamer_types::TyKind;
+        let mut recv = self.table.get(receiver)?;
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(recv) {
+            recv = *inner;
+        }
+        let elem = match self.tcx.kind(recv)? {
+            TyKind::Vec(elem)
+            | TyKind::Slice(elem)
+            | TyKind::Array { elem, .. }
+            | TyKind::Iterator(elem) => *elem,
+            _ => return None,
+        };
+        let mut elem = elem;
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(elem) {
+            elem = *inner;
+        }
+        let TyKind::Adt { def, .. } = self.tcx.kind(elem)? else {
+            return None;
+        };
+        let registered = self.tcx.def_name(*def)?;
+        if registered.starts_with("adt#") {
+            return None;
+        }
+        let symbol = registered.replace("::", "__");
+        self.user_comparators
+            .contains(&format!("{prefix}{symbol}"))
+            .then_some((symbol, elem))
+    }
+
+    /// A path expression naming `comparator`, typed as the two-element
+    /// comparison the ordering helpers call it through.
+    fn comparator_path(&mut self, comparator: &str, elem: Ty, span: Span) -> HirExpr {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let sig = gossamer_types::FnSig {
+            inputs: vec![elem, elem],
+            output: i64_ty,
+        };
+        let ty = self.tcx.intern(gossamer_types::TyKind::FnTrait(sig));
+        HirExpr {
+            id: self.fresh(),
+            span,
+            ty,
+            kind: HirExprKind::Path {
+                segments: vec![Ident::new(comparator)],
+                def: None,
+            },
         }
     }
 
@@ -1123,7 +1298,9 @@ impl Lowerer<'_> {
             }
             AstExprKind::Path(path) => self.lower_path_expr(expr.id, path),
             AstExprKind::Call { callee, args } => {
-                if let Some(lowered) = self.lower_reverse_call(callee, args, expr.span) {
+                if let Some(lowered) = self.lower_sequence_order_call(callee, args, expr.span) {
+                    lowered
+                } else if let Some(lowered) = self.lower_reverse_call(callee, args, expr.span) {
                     lowered
                 } else if let Some(lowered) = self.lower_tuple_struct_call(callee, args, expr.span)
                 {
@@ -1227,6 +1404,23 @@ impl Lowerer<'_> {
                 // that walk through the iterator its `iter()` answers.
                 if let Some(kind) = self.desugar_keyed_traversal(expr, receiver, name, args) {
                     return kind;
+                }
+                // An element type whose source supplies its own `cmp` decides
+                // its order. The ordering primitives take a comparator, so the
+                // bare spelling names the type's comparator explicitly.
+                if args.is_empty()
+                    && let Some(by) = comparator_ordering_form(name.name.as_str())
+                    && let Some((symbol, elem)) =
+                        self.element_comparator(receiver.id, USER_COMPARATOR_PREFIX)
+                {
+                    let lowered_receiver = self.lower_expr(receiver);
+                    let name = format!("{USER_COMPARATOR_PREFIX}{symbol}");
+                    let cmp = self.comparator_path(&name, elem, expr.span);
+                    return HirExprKind::MethodCall {
+                        receiver: Box::new(lowered_receiver),
+                        name: Ident::new(by),
+                        args: vec![cmp],
+                    };
                 }
                 HirExprKind::MethodCall {
                     receiver: Box::new(self.lower_expr(receiver)),

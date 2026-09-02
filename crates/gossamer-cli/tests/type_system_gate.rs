@@ -130,6 +130,76 @@ fn numeric_conversions_are_never_implicit() {
 }
 
 #[test]
+fn a_trait_impl_names_a_contract_the_language_dispatches_through() {
+    gate(
+        "trait impl",
+        &[
+            (
+                "an operator impl supplies the operator",
+                "struct M { b: i64 }\nimpl Not for M { fn not(&self) -> M { M { b: 0 - self.b } } }\nfn main() { println(\"{}\", (!M { b: 1 }).b) }\n",
+                Expect::Accept,
+            ),
+            (
+                "hashing is the language's, not the type's",
+                "struct P { x: i64 }\nimpl Hash for P { fn hash(&self) -> i64 { self.x } }\nfn main() { println(\"{}\", P { x: 1 }) }\n",
+                Expect::Reject("GT0084"),
+            ),
+            (
+                "there is no destructor hook to implement",
+                "struct P { x: i64 }\nimpl Drop for P { fn drop(&mut self) { println(\"gone\") } }\nfn main() { println(\"{}\", P { x: 1 }) }\n",
+                Expect::Reject("GT0084"),
+            ),
+            (
+                "the conversion is written on the target's `From`",
+                "struct P { x: i64 }\nimpl Into<i64> for P { fn into(&self) -> i64 { self.x } }\nfn main() { println(\"{}\", P { x: 1 }) }\n",
+                Expect::Reject("GT0084"),
+            ),
+            (
+                "a trait nothing declares is still unknown",
+                "struct P { x: i64 }\nimpl Bogus for P { fn go(&self) -> i64 { self.x } }\nfn main() { println(\"{}\", P { x: 1 }) }\n",
+                Expect::Reject("GT0070"),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_written_cmp_reaches_the_sites_that_can_read_it() {
+    let ordered = "struct P { x: i64 }\nimpl Ord for P { fn cmp(&self, other: P) -> i64 { other.x - self.x } }\n";
+    gate(
+        "user ordering",
+        &[
+            (
+                "a sequence orders on demand, through the type's own cmp",
+                &format!(
+                    "{ordered}fn main() {{ let mut v = #[P {{ x: 1 }}]\n v.sort()\n println(\"{{}}\", v.min()) }}\n"
+                ),
+                Expect::Accept,
+            ),
+            (
+                "a heap orders as it stores, with no comparator to call",
+                &format!(
+                    "use std::collections::MinHeap\n{ordered}fn main() {{ let h = MinHeap::from(#[P {{ x: 1 }}])\n println(\"{{}}\", h.len()) }}\n"
+                ),
+                Expect::Reject("GT0085"),
+            ),
+            (
+                "a sorted set orders as it stores",
+                &format!(
+                    "use std::collections::BTreeSet\n{ordered}fn main() {{ let s: BTreeSet<P> = BTreeSet::from([P {{ x: 1 }}])\n println(\"{{}}\", s.len()) }}\n"
+                ),
+                Expect::Reject("GT0085"),
+            ),
+            (
+                "a type with no written cmp keeps every container",
+                "use std::collections::MinHeap\nstruct Q { x: i64 }\nfn main() { let h = MinHeap::from(#[Q { x: 1 }])\n println(\"{}\", h.len()) }\n",
+                Expect::Accept,
+            ),
+        ],
+    );
+}
+
+#[test]
 fn references_distinguish_shared_from_mutable() {
     gate(
         "reference",

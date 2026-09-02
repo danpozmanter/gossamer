@@ -275,6 +275,14 @@ fn complete_at(
                 .filter(|kw| kw.starts_with(word))
                 .map(|kw| (*kw).to_string()),
         );
+        // A trait is named bare in the `impl` header and the bound that reach
+        // for it, so that is the spelling completion has to offer.
+        out.extend(
+            gossamer_types::BUILTIN_TRAITS
+                .iter()
+                .filter(|entry| entry.name.starts_with(word))
+                .map(|entry| entry.name.to_string()),
+        );
     }
     for module in gossamer_std::registry::modules() {
         for prefix in module_prefixes(module.path) {

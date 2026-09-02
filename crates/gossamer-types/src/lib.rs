@@ -14,6 +14,7 @@
 #![forbid(unsafe_code)]
 
 mod arena_escape;
+pub mod builtin_traits;
 mod checker;
 mod context;
 pub mod data_first;
@@ -33,6 +34,9 @@ mod ty;
 
 pub use arena_escape::{
     ArenaEscapeDiagnostic, ArenaEscapeError, ArenaEscapeKind, check_arena_escapes,
+};
+pub use builtin_traits::{
+    BUILTIN_TRAITS, BuiltinTrait, BuiltinTraitKind, ITERATOR_BOUND_METHODS, builtin_trait,
 };
 pub use checker::{
     STDLIB_TRAIT_NAMES, core_type_accepts_method, is_array_sequence_method,

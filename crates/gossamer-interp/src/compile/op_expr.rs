@@ -7,11 +7,15 @@ impl<'tcx> FnBuilder<'tcx> {
         op: HirUnaryOp,
         operand: &HirExpr,
     ) -> RuntimeResult<Reg> {
-        // `-x` on a user struct / enum routes to its `neg` impl method.
-        if matches!(op, HirUnaryOp::Neg)
-            && let Some(sname) = self.adt_type_name(operand.ty)
+        // `-x` / `!x` on a user struct / enum route to its `neg` / `not`
+        // impl method.
+        if let Some(method) = match op {
+            HirUnaryOp::Neg => Some("neg"),
+            HirUnaryOp::Not => Some("not"),
+            _ => None,
+        } && let Some(sname) = self.adt_type_name(operand.ty)
         {
-            return Ok(self.compile_struct_unary(&sname, "neg", operand)?.reg);
+            return Ok(self.compile_struct_unary(&sname, method, operand)?.reg);
         }
         let operand_reg = self.compile_expr(operand)?;
         let dst = self.alloc_reg();

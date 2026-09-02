@@ -36,10 +36,11 @@ pub use gossamer_abi::format_pad::{
     PAD_REQUEST_RIGHT, PAD_REQUEST_ZERO_FLAG, resolve_pad_request, sign_aware_prefix_len,
 };
 pub use items::{
-    AssocBinding, Attribute, Attrs, ConstDecl, EnumDecl, EnumRepr, EnumVariant, FnDecl, FnParam,
-    GenericParam, Generics, ImplDecl, ImplItem, Item, ItemKind, ModBody, ModDecl, Receiver,
-    StaticDecl, StructBody, StructDecl, StructField, TraitBound, TraitDecl, TraitItem, TupleField,
-    TypeAliasDecl, WhereClause, WherePredicate,
+    AssocBinding, Attribute, Attrs, BINARY_SEARCH_PREFIX, ConstDecl, EnumDecl, EnumRepr,
+    EnumVariant, FnDecl, FnParam, GenericParam, Generics, ImplDecl, ImplItem, Item, ItemKind,
+    ModBody, ModDecl, PARTITION_POINT_PREFIX, Receiver, STRUCTURAL_COMPARATOR_PREFIX, StaticDecl,
+    StructBody, StructDecl, StructField, TraitBound, TraitDecl, TraitItem, TupleField,
+    TypeAliasDecl, USER_COMPARATOR_PREFIX, WhereClause, WherePredicate,
 };
 pub use node_id::{NodeId, NodeIdGenerator};
 pub use path::{Path, Segment};

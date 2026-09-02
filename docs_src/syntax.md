@@ -553,6 +553,20 @@ A trait names behaviour, never a value's type. There is no `dyn`, so
 (`fn width<T: Display>(x: T)`). An `impl` header naming a trait nothing
 declares reports `GT0070`, which is what catches a misspelled trait name.
 
+The built-in traits an `impl` supplies are `Display` and `Debug`, the
+comparisons `PartialEq` / `Eq` (`fn eq`) and `PartialOrd` / `Ord` (`fn cmp`),
+`Clone`, `Default`, `Iterator` (`fn next`), the conversions `From` and
+`TryFrom`, and the operators `Add` `Sub` `Mul` `Div` `Rem` `Neg` `Not`
+`BitAnd` `BitOr` `BitXor` `Shl` `Shr` `Index` / `IndexMut`. `%info <Trait>` in
+the REPL answers any of them with the method to write.
+
+Every other built-in name is the language's own and rejects an `impl` with
+`GT0084`: hashing, copying, and release are automatic (`Hash`, `Copy`,
+`Drop`, `Send`, `Sync`, `Sized`), and `Into` / `TryInto` / `IntoIterator` name
+the direction opposite the one that is written - `x.into()` reads the `From`
+impl on the target, and `for v in x` drives `Iterator::next`. The diagnostic
+names what the language does and what to write in the block's place.
+
 ## Modules
 
 ```gossamer

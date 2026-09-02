@@ -127,13 +127,29 @@ fn render_hover(doc: &DocumentAnalysis, loc: &Locate) -> String {
     }
 }
 
+/// The word as a hover title: a built-in trait leads with the block an
+/// `impl` writes, and every other word is shown as it was typed.
+fn builtin_trait_signature(word: &str) -> String {
+    match gossamer_types::builtin_trait(word) {
+        Some(entry) if !entry.signature.is_empty() => format!("{word} {}", entry.signature),
+        _ => word.to_string(),
+    }
+}
+
 fn word_hover(doc: &DocumentAnalysis, offset: u32) -> Value {
     let Some(word) = doc.word_at(offset) else {
         return Value::Null;
     };
-    let mut markdown = format!("```\n{word}\n```");
+    let mut markdown = format!("```\n{}\n```", builtin_trait_signature(word));
     if doc.top_level_span(word).is_some() {
         markdown.push_str("\n\nDeclared at the top level of this file.");
+    } else if let Some(entry) = gossamer_types::builtin_trait(word) {
+        markdown.push_str("\n\n");
+        markdown.push_str(entry.doc);
+        if !entry.instead.is_empty() {
+            markdown.push(' ');
+            markdown.push_str(entry.instead);
+        }
     }
     let mut contents = BTreeMap::new();
     contents.insert("kind".to_string(), Value::String("markdown".to_string()));

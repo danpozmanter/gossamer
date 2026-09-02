@@ -5060,6 +5060,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_sort_stable_str as *const u8,
         ),
         (
+            "gos_rt_sort_stable_aggr",
+            crate::c_abi::gos_rt_sort_stable_aggr as *const u8,
+        ),
+        (
+            "gos_rt_sort_binary_search_aggr",
+            crate::c_abi::gos_rt_sort_binary_search_aggr as *const u8,
+        ),
+        (
+            "gos_rt_sort_partition_point_aggr",
+            crate::c_abi::gos_rt_sort_partition_point_aggr as *const u8,
+        ),
+        (
             "gos_rt_sql_conn_begin",
             crate::c_abi::gos_rt_sql_conn_begin as *const u8,
         ),

@@ -523,3 +523,49 @@ fn checker_trait_allowlist_matches_the_std_manifest() {
          missing from table: {missing:?}\n  extra in table: {extra:?}"
     );
 }
+
+/// A built-in trait the catalog files under a module must be the one the
+/// manifest declares there. `%info Display` answers from the manifest entry
+/// and takes its contract from the catalog, so a module path that drifts
+/// would leave the trait listed with no method an `impl` supplies.
+#[test]
+fn cataloged_trait_modules_match_the_std_manifest() {
+    let mismatched: Vec<String> = gossamer_types::BUILTIN_TRAITS
+        .iter()
+        .filter_map(|entry| {
+            let module = entry.module?;
+            let declared = gossamer_std::registry::modules().iter().any(|m| {
+                m.path == module
+                    && m.items.iter().any(|item| {
+                        item.name == entry.name
+                            && matches!(item.kind, gossamer_std::registry::StdItemKind::Trait)
+                    })
+            });
+            (!declared).then(|| format!("{module}::{}", entry.name))
+        })
+        .collect();
+    assert!(
+        mismatched.is_empty(),
+        "cataloged traits name a module that does not declare them: {mismatched:?}"
+    );
+}
+
+/// Every trait the manifest declares and the catalog also knows agrees on
+/// which module owns it, so a bare-name query and a qualified one answer the
+/// same entry rather than two.
+#[test]
+fn a_manifest_trait_the_catalog_knows_is_never_listed_bare() {
+    let bare: Vec<&str> = gossamer_std::registry::modules()
+        .iter()
+        .flat_map(|m| m.items.iter())
+        .filter(|item| matches!(item.kind, gossamer_std::registry::StdItemKind::Trait))
+        .filter(|item| {
+            gossamer_types::builtin_trait(item.name).is_some_and(|entry| entry.module.is_none())
+        })
+        .map(|item| item.name)
+        .collect();
+    assert!(
+        bare.is_empty(),
+        "a manifest trait must carry its module in the catalog: {bare:?}"
+    );
+}

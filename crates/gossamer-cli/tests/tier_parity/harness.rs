@@ -560,9 +560,13 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/structural_comparison.gos"),
     spec("feature-testing-examples/nested_function_items.gos"),
     spec("feature-testing-examples/nested_struct_items.gos"),
-    // Operator overloading (`% - | & ^ << >> []`), the desugar macros
+    // Operator overloading (`% - ! | & ^ << >> []`), the desugar macros
     // (`matches!` / `dbg!`), and `x.into()` routing to `B::from(x)`.
     spec("feature-testing-examples/operator_overloads.gos"),
+    // A written `cmp` decides the order every sequence ordering site reads,
+    // and a type with none keeps the field-by-field order through the same
+    // path: sort, sort_stable, min / max, and the sorted-sequence searches.
+    spec("feature-testing-examples/user_cmp_ordering.gos"),
     // Pattern destructuring in function parameters (tuple / struct /
     // tuple-struct), bound via a fresh local + injected destructuring let.
     spec("feature-testing-examples/param_destructure.gos"),
