@@ -313,13 +313,59 @@ fn rc_calls_on(body: &gossamer_mir::Body, name: &str, local: Local) -> usize {
         .count()
 }
 
+/// Count of `name` intrinsic calls on `local.field`.
+fn field_rc_calls_on(body: &gossamer_mir::Body, name: &str, local: Local, field: u32) -> usize {
+    body.blocks
+        .iter()
+        .flat_map(|b| b.stmts.iter())
+        .filter(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name: n, args },
+                    ..
+                } if *n == name
+                    && matches!(
+                        args.first(),
+                        Some(Operand::Copy(p)) if p.local == local
+                            && p.projection.as_slice() == [gossamer_mir::Projection::Field(field)]
+                    )
+            )
+        })
+        .count()
+}
+
+/// The tuple slot a field-0 extract copies from.
+fn field0_extract_source(body: &gossamer_mir::Body) -> Option<Local> {
+    body.blocks
+        .iter()
+        .flat_map(|b| b.stmts.iter())
+        .find_map(|stmt| match &stmt.kind {
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Use(Operand::Copy(src)),
+            } if place.projection.is_empty()
+                && matches!(
+                    src.projection.as_slice(),
+                    [gossamer_mir::Projection::Field(0)]
+                ) =>
+            {
+                Some(src.local)
+            }
+            _ => None,
+        })
+}
+
 /// A by-value tuple is a stack slot whose RC-managed elements are owned
-/// per-field: `let t, n = make()` (where `make -> (String, i64)`) must
-/// retain the extracted `String` at the field-0 copy - the binding holds
-/// a fresh reference - and release it at end of life. Without it every
-/// round of a tuple-returning allocator leaks one element.
+/// per-field: `let t, n = make()` (where `make -> (String, i64)`) must keep
+/// the `String` share it received in the slot's field, retained when the
+/// slot is copied and released at the slot's end of life, so every round of
+/// a tuple-returning allocator gives back what it took. The extracted binding
+/// reads that share as a borrow for as long as the slot outlives its uses,
+/// so its own accounting is balanced: a retain of its own paired with a
+/// release, or neither.
 #[test]
-fn drop_pass_retains_and_releases_tuple_extracted_rc_field() {
+fn drop_pass_balances_tuple_extracted_rc_field() {
     let source = r#"
 fn make() -> (String, i64) {
     let s = "node"
@@ -334,18 +380,28 @@ fn use_it() -> i64 {
     let (bodies, _) = build(source);
     let body = bodies.iter().find(|b| b.name == "use_it").expect("body");
     let dest = field0_extract_dest(body).expect("field-0 tuple extract");
+    let slot = field0_extract_source(body).expect("field-0 tuple extract");
 
     assert!(
-        rc_calls_on(body, "gos_rt_rc_retain", dest)
-            + rc_calls_on(body, "gos_rt_str_retain_typed", dest)
-            > 0,
-        "extracted tuple String must be retained at the field copy"
+        field_rc_calls_on(body, "gos_rt_rc_retain", slot, 0) > 0,
+        "the tuple slot's String field must be retained when the slot is copied"
     );
     assert!(
-        rc_calls_on(body, "gos_rt_rc_release", dest)
-            + rc_calls_on(body, "gos_rt_str_free_typed", dest)
-            > 0,
-        "extracted tuple String must be released at end of life"
+        field_rc_calls_on(body, "gos_rt_rc_release", slot, 0) > 0,
+        "the tuple slot's String field must be released at the slot's end of life"
+    );
+    let retains = rc_calls_on(body, "gos_rt_rc_retain", dest)
+        + rc_calls_on(body, "gos_rt_str_retain_typed", dest);
+    let releases = rc_calls_on(body, "gos_rt_rc_release", dest)
+        + rc_calls_on(body, "gos_rt_str_free_typed", dest);
+    assert_eq!(
+        retains == 0,
+        releases == 0,
+        "the extracted binding's share must be balanced: {retains} retain(s), {releases} release(s)"
+    );
+    assert_eq!(
+        retains, 0,
+        "the extracted binding borrows the slot's share while the slot outlives it"
     );
 }
 

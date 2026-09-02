@@ -4,7 +4,8 @@ mod elision_tests {
     use gossamer_types::TyCtxt;
 
     use super::{
-        bounds_check_elim, elide_redundant_rc_pairs, elide_vec_clone_of_fresh_temporary,
+        bounds_check_elim, elide_borrowed_holder_rc, elide_redundant_rc_pairs,
+        elide_vec_clone_of_fresh_temporary,
         fuse_slice_parse_ranges, local_branch_bounds_check_elim, loop_body_has_exactly_one_vec_push,
         reserve_bound_available_at_entry, reserve_vecs_for_counted_push_loops,
         scalar_replace_short_lived_aggregates,
@@ -380,6 +381,108 @@ mod elision_tests {
             }],
             span: span(),
         }
+    }
+
+    /// `L2 = Copy(L1.0); retain(L2); <mid>; L3 = gos_rt_vec_len(L2)` then
+    /// `release(L2); Return` in a second block. `L1` is a by-value
+    /// `(Vec<i64>, i64)` parameter and `L2` the holder its Vec is read through.
+    fn holder_body(tcx: &mut TyCtxt, mid: Vec<Statement>) -> Body {
+        let unit = tcx.unit();
+        let i64_ty = tcx.int_ty(gossamer_types::IntTy::I64);
+        let vec_ty = tcx.intern(gossamer_types::TyKind::Vec(i64_ty));
+        let pair = tcx.intern(gossamer_types::TyKind::Tuple(vec![vec_ty, i64_ty]));
+        let locals = vec![
+            decl(unit),   // L0 return
+            decl(pair),   // L1 parameter
+            decl(vec_ty), // L2 holder
+            decl(i64_ty), // L3 len
+            decl(unit),   // L4 retain dest
+            decl(unit),   // L5 release dest
+            decl(vec_ty), // L6 another Vec
+        ];
+        let mut stmts = vec![assign(
+            Place::local(Local(2)),
+            Rvalue::Use(Operand::Copy(Place {
+                local: Local(1),
+                projection: vec![Projection::Field(0)],
+            })),
+        )];
+        stmts.push(rc_call(4, "gos_rt_vec_retain", Place::local(Local(2))));
+        stmts.extend(mid);
+        Body {
+            name: "t".into(),
+            def: None,
+            arity: 1,
+            locals,
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts,
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".into())),
+                        args: vec![Operand::Copy(Place::local(Local(2)))],
+                        destination: Place::local(Local(3)),
+                        target: Some(BlockId(1)),
+                    },
+                    span: span(),
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![rc_call(5, "gos_rt_vec_free", Place::local(Local(2)))],
+                    terminator: Terminator::Return,
+                    span: span(),
+                },
+            ],
+            span: span(),
+        }
+    }
+
+    #[test]
+    fn elides_share_of_holder_that_borrows_a_field() {
+        let mut tcx = TyCtxt::new();
+        let mut body = holder_body(&mut tcx, vec![]);
+        elide_borrowed_holder_rc(&mut body, &tcx);
+        assert!(is_nop(&body.blocks[0].stmts[1]), "retain of the holder should go");
+        assert!(is_nop(&body.blocks[1].stmts[0]), "release of the holder should go");
+        assert!(
+            matches!(body.blocks[0].stmts[0].kind, StatementKind::Assign { .. }),
+            "the borrowing copy itself stays"
+        );
+    }
+
+    #[test]
+    fn keeps_share_of_holder_when_its_source_is_written_before_the_read() {
+        let mut tcx = TyCtxt::new();
+        // `L1.0 = Copy(L6)` replaces the Vec the holder borrows before the
+        // holder is read, so the holder's own share is what keeps it alive.
+        let overwrite = assign(
+            Place {
+                local: Local(1),
+                projection: vec![Projection::Field(0)],
+            },
+            Rvalue::Use(Operand::Copy(Place::local(Local(6)))),
+        );
+        let mut body = holder_body(&mut tcx, vec![overwrite]);
+        elide_borrowed_holder_rc(&mut body, &tcx);
+        assert_eq!(intrinsic_name(&body.blocks[0].stmts[1]), Some("gos_rt_vec_retain"));
+        assert_eq!(intrinsic_name(&body.blocks[1].stmts[0]), Some("gos_rt_vec_free"));
+    }
+
+    #[test]
+    fn keeps_share_of_holder_passed_to_a_consuming_helper() {
+        let mut tcx = TyCtxt::new();
+        let mut body = holder_body(&mut tcx, vec![]);
+        body.blocks[0].terminator = Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_push".into())),
+            args: vec![
+                Operand::Copy(Place::local(Local(6))),
+                Operand::Copy(Place::local(Local(2))),
+            ],
+            destination: Place::local(Local(3)),
+            target: Some(BlockId(1)),
+        };
+        elide_borrowed_holder_rc(&mut body, &tcx);
+        assert_eq!(intrinsic_name(&body.blocks[0].stmts[1]), Some("gos_rt_vec_retain"));
     }
 
     #[test]

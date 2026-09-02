@@ -43,35 +43,64 @@ unsafe fn cstr_bytes<'a>(s: *const c_char) -> &'a [u8] {
 // CRC-32 (IEEE 802.3 polynomial)
 // ---------------------------------------------------------------
 
-const fn crc32_table() -> [u32; 256] {
-    let mut table = [0u32; 256];
+const fn crc32_tables() -> [[u32; 256]; 8] {
+    let mut tables = [[0u32; 256]; 8];
     let mut i = 0usize;
     while i < 256 {
         let mut crc = i as u32;
         let mut j = 0;
         while j < 8 {
-            if crc & 1 != 0 {
-                crc = 0xEDB8_8320 ^ (crc >> 1);
+            crc = if crc & 1 != 0 {
+                0xEDB8_8320 ^ (crc >> 1)
             } else {
-                crc >>= 1;
-            }
+                crc >> 1
+            };
             j += 1;
         }
-        table[i] = crc;
+        tables[0][i] = crc;
         i += 1;
     }
-    table
+    let mut i = 0usize;
+    while i < 256 {
+        let mut crc = tables[0][i];
+        let mut k = 1;
+        while k < 8 {
+            crc = tables[0][(crc & 0xFF) as usize] ^ (crc >> 8);
+            tables[k][i] = crc;
+            k += 1;
+        }
+        i += 1;
+    }
+    tables
 }
 
-static CRC32_TABLE: [u32; 256] = crc32_table();
+// Slicing-by-eight: one table lookup per byte with eight independent lookups
+// per word, so the loop is bound by table loads rather than by the dependency
+// chain of the byte-at-a-time form.
+static CRC32_TABLES: [[u32; 256]; 8] = crc32_tables();
+
+fn crc32_slice_by_eight(mut state: u32, data: &[u8]) -> u32 {
+    let mut chunks = data.chunks_exact(8);
+    for chunk in &mut chunks {
+        let lo = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) ^ state;
+        let hi = u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
+        state = CRC32_TABLES[7][(lo & 0xFF) as usize]
+            ^ CRC32_TABLES[6][((lo >> 8) & 0xFF) as usize]
+            ^ CRC32_TABLES[5][((lo >> 16) & 0xFF) as usize]
+            ^ CRC32_TABLES[4][(lo >> 24) as usize]
+            ^ CRC32_TABLES[3][(hi & 0xFF) as usize]
+            ^ CRC32_TABLES[2][((hi >> 8) & 0xFF) as usize]
+            ^ CRC32_TABLES[1][((hi >> 16) & 0xFF) as usize]
+            ^ CRC32_TABLES[0][(hi >> 24) as usize];
+    }
+    for &byte in chunks.remainder() {
+        state = CRC32_TABLES[0][((state ^ u32::from(byte)) & 0xFF) as usize] ^ (state >> 8);
+    }
+    state
+}
 
 fn crc32_update(crc: u32, data: &[u8]) -> u32 {
-    let mut state = !crc;
-    for &byte in data {
-        let idx = ((state ^ u32::from(byte)) & 0xFF) as usize;
-        state = CRC32_TABLE[idx] ^ (state >> 8);
-    }
-    !state
+    !crc32_slice_by_eight(!crc, data)
 }
 
 /// `hash::crc32::checksum(data) -> i64`.

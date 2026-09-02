@@ -18,9 +18,11 @@
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
 use rustc_hash::FxHashSet;
 
 use super::*;
@@ -47,7 +49,11 @@ struct StringOwner {
     abi_version: u16,
     kind: u16,
     destructor: u32,
-    generation: u64,
+    /// The body address this owner was written for, mixed with a salt: an
+    /// untyped entry point accepts a pointer as a runtime string only when
+    /// the owner it reads names that very body, so a foreign allocation that
+    /// happens to sit in the heap cannot pass as one.
+    check: u64,
 }
 
 const STRING_OWNER_VERSION: u16 = 1;
@@ -65,17 +71,62 @@ const STRING_OWNER_BYTES: usize = std::mem::size_of::<StringOwner>();
 const STRING_LEGACY_HEADER_BYTES: usize = 13;
 const STRING_BODY_OFFSET: usize = STRING_OWNER_BYTES + STRING_LEGACY_HEADER_BYTES;
 const STRING_BODY_TAG: usize = STRING_BODY_OFFSET & 7;
-static NEXT_STRING_GENERATION: AtomicU64 = AtomicU64::new(1);
-/// Number of independent registry shards. A string body's address selects its
-/// shard, so allocation and release on different goroutines contend only when
-/// two live bodies hash to the same shard.
-const STRING_REGISTRY_SHARDS: usize = 64;
-static HEAP_STRING_BODIES: OnceLock<Box<[Mutex<FxHashSet<usize>>]>> = OnceLock::new();
+const OWNER_CHECK_SALT: u64 = 0x5347_4F53_5452_4F57;
 
 const _: () = assert!(STRING_OWNER_BYTES == 16);
 const _: () = assert!(STRING_BODY_TAG == 5);
+
+#[inline]
+fn owner_check(body: *const c_char) -> u64 {
+    (body as usize as u64) ^ OWNER_CHECK_SALT
+}
+
+// Whether the sixteen bytes before `s` may be read as a string owner. A
+// runtime string body lives in an allocation the global allocator handed
+// out, and the owner sits at the front of that allocation, so an address
+// mimalloc manages is one the read stays inside. A pointer into rodata, a
+// stack, or another allocator's memory is a foreign C string, and the bytes
+// before it belong to whoever placed it; they are never read.
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+#[inline]
+fn body_is_probeable(s: *const c_char) -> bool {
+    // SAFETY: mimalloc answers from its segment map without touching `p`.
+    unsafe {
+        libmimalloc_sys::mi_is_in_heap_region(
+            s.cast::<u8>().wrapping_sub(STRING_BODY_OFFSET).cast(),
+        )
+    }
+}
+
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+#[inline]
+fn register_heap_string_body(_s: *const c_char) {}
+
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+#[inline]
+fn unregister_heap_string_body(_s: *const c_char) {}
+
+// Builds whose global allocator is not mimalloc keep a registry of live heap
+// bodies, so the untyped entry points can still tell a runtime string from a
+// foreign pointer without reading in front of it.
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
+#[inline]
+fn body_is_probeable(s: *const c_char) -> bool {
+    is_registered_heap_string_body(s)
+}
+
+/// Number of independent registry shards. A string body's address selects its
+/// shard, so allocation and release on different goroutines contend only when
+/// two live bodies hash to the same shard.
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
+const STRING_REGISTRY_SHARDS: usize = 64;
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
+static HEAP_STRING_BODIES: OnceLock<Box<[Mutex<FxHashSet<usize>>]>> = OnceLock::new();
+
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
 const _: () = assert!(STRING_REGISTRY_SHARDS.is_power_of_two());
 
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
 fn heap_string_shard(s: *const c_char) -> &'static Mutex<FxHashSet<usize>> {
     let shards = HEAP_STRING_BODIES.get_or_init(|| {
         (0..STRING_REGISTRY_SHARDS)
@@ -91,6 +142,7 @@ fn heap_string_shard(s: *const c_char) -> &'static Mutex<FxHashSet<usize>> {
     &shards[index]
 }
 
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
 fn register_heap_string_body(s: *const c_char) {
     heap_string_shard(s)
         .lock()
@@ -98,6 +150,7 @@ fn register_heap_string_body(s: *const c_char) {
         .insert(s as usize);
 }
 
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
 fn unregister_heap_string_body(s: *const c_char) {
     heap_string_shard(s)
         .lock()
@@ -105,6 +158,7 @@ fn unregister_heap_string_body(s: *const c_char) {
         .remove(&(s as usize));
 }
 
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
 fn is_registered_heap_string_body(s: *const c_char) -> bool {
     heap_string_shard(s)
         .lock()
@@ -129,17 +183,17 @@ fn str_owner(s: *const c_char) -> Option<&'static StringOwner> {
     if s.is_null() || !has_body_shape(s) {
         return None;
     }
-    if !is_registered_heap_string_body(s) {
+    if !body_is_probeable(s) {
         return None;
     }
-    // Membership in the heap-string registry proves this pointer was returned
-    // from `alloc_growable_with_fill`, so the fixed backwards offset stays
-    // within the original allocation. Foreign C strings never reach this read.
+    // The read stays inside heap memory, and an owner naming this very body
+    // proves the pointer was returned from `alloc_growable_with_fill`.
     let owner = unsafe { &*s.cast::<u8>().sub(STRING_BODY_OFFSET).cast::<StringOwner>() };
     (owner.abi_version == STRING_OWNER_VERSION
         && owner.kind == STRING_OWNER_KIND
-        && owner.destructor == STRING_DTOR_HEAP)
-        .then_some(owner)
+        && owner.destructor == STRING_DTOR_HEAP
+        && owner.check == owner_check(s))
+    .then_some(owner)
 }
 
 #[inline]
@@ -425,6 +479,7 @@ unsafe fn rebuild_str_index(s: *mut c_char, len: usize, cap: usize) {
 /// Extends the footer character index after an in-place append. The previous
 /// implementation rebuilt it from byte zero on every append, making otherwise
 /// amortized string builders quadratic.
+#[inline]
 unsafe fn extend_str_index(s: *mut c_char, old_len: usize, added: &[u8], cap: usize) {
     let footer = unsafe { s.cast::<u8>().add(cap + 1).cast::<u32>() };
     let old_chars = unsafe { footer.read_unaligned() };
@@ -652,6 +707,7 @@ where
     // trailing zero region are initialised here; `fill` initialises the content
     // prefix promised by its caller.
     unsafe {
+        let content = base.add(STRING_BODY_OFFSET);
         let owner = base.cast::<StringOwner>();
         owner.write(StringOwner {
             abi_version: STRING_OWNER_VERSION,
@@ -663,14 +719,13 @@ where
             } else {
                 STRING_DTOR_HEAP
             },
-            generation: NEXT_STRING_GENERATION.fetch_add(1, Ordering::Relaxed),
+            check: owner_check(content.cast::<c_char>()),
         });
         let hdr = base.add(STRING_OWNER_BYTES);
         std::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), hdr, 4);
         std::ptr::copy_nonoverlapping((cap as u32).to_le_bytes().as_ptr(), hdr.add(4), 4);
         std::ptr::copy_nonoverlapping((content_len as u32).to_le_bytes().as_ptr(), hdr.add(8), 4);
         *hdr.add(12) = tag;
-        let content = base.add(STRING_BODY_OFFSET);
         fill(content);
         if zero_tail {
             // Region allocations arrive zeroed. Heap allocations need their
@@ -1362,7 +1417,7 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
             if new_len <= cap && rc == 1 {
                 unsafe {
                     let dst = (a as *mut u8).add(len_a);
-                    std::ptr::copy_nonoverlapping(b_bytes.as_ptr(), dst, len_b);
+                    copy_small_bytes(b_bytes.as_ptr(), dst, len_b);
                     *dst.add(len_b) = 0;
                     let hdr_mut = hdr.cast_mut();
                     std::ptr::copy_nonoverlapping(
@@ -1428,7 +1483,7 @@ pub unsafe extern "C" fn gos_rt_str_append_bytes(
         if new_len <= cap && rc == 1 {
             unsafe {
                 let dst = (acc as *mut u8).add(len_a);
-                std::ptr::copy_nonoverlapping(b_bytes.as_ptr(), dst, len_b);
+                copy_small_bytes(b_bytes.as_ptr(), dst, len_b);
                 *dst.add(len_b) = 0;
                 let hdr_mut = hdr.cast_mut();
                 std::ptr::copy_nonoverlapping(
@@ -3140,7 +3195,15 @@ impl std::fmt::Write for StackText {
         if end > self.buf.len() {
             return Err(std::fmt::Error);
         }
-        self.buf[self.len..end].copy_from_slice(bytes);
+        // SAFETY: `end <= buf.len()` was checked above, and `bytes` is a
+        // separate allocation from the stack buffer.
+        unsafe {
+            copy_small_bytes(
+                bytes.as_ptr(),
+                self.buf.as_mut_ptr().add(self.len),
+                bytes.len(),
+            );
+        }
         self.len = end;
         Ok(())
     }

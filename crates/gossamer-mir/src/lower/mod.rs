@@ -271,6 +271,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         for body in &mut bodies {
             crate::opt::elide_null_rc_accounting(body);
             crate::opt::elide_redundant_rc_pairs(body, tcx);
+            crate::opt::elide_borrowed_holder_rc(body, tcx);
         }
     }
     // Perceus reuse: recycle a uniquely-owned block being released into a

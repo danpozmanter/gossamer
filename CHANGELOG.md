@@ -1,7 +1,23 @@
 # Changelog
 
-## 0.58.8 - A window costs the window
+## 0.58.8 - Read optimizations
 
+- A read through a nested place (`st.tables[i].slots[j]`, `buf[p]`,
+  `keys[c]`) no longer retains and releases every intermediate it passes
+  through. The compiler copied each heap-valued intermediate into a holder
+  local with a share of its own, so one byte read through a field paid two
+  atomic reference-count updates. A holder that only borrows, with nothing
+  writing, referencing, or releasing the structure between the copy and its
+  last read, now keeps no share.
+- Allocating and freeing a `String` no longer takes a global lock. Every heap
+  string was recorded in a mutex-guarded registry so an untyped entry point
+  could tell a runtime string from a foreign C pointer; that question is now
+  answered by asking the allocator whether the pointer is in its heap and by a
+  self-check the string's owner header carries.
+- `push_str` and `push_utf8` copy short fragments inline instead of calling
+  the platform `memcpy`, whose per-call cost dominated a JSON builder's
+  appends under the static musl link.
+- `hash::crc32` computes eight bytes per step (slicing-by-eight) on every tier.
 - `crc32::update_window` and `String::push_utf8` read the window they are given
   rather than the buffer it sits in. The interpreter gathered the whole buffer
   to reach the window, so checking one 45-byte record of a resident 3.8 MB file
