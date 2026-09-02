@@ -3056,8 +3056,34 @@ pub unsafe extern "C" fn gos_rt_parse_f64(s: *const c_char, ok_out: *mut i32) ->
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_i64_to_str(n: i64) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        alloc_cstring(n.to_string().as_bytes())
+        let mut digits = [0u8; 20];
+        alloc_cstring(i64_digits(n, &mut digits))
     })
+}
+
+/// The decimal text of `n`, written into `out` and answered as the filled
+/// part. The widest `i64` is 20 bytes with its sign, so the caller's buffer
+/// is always large enough and the number reaches its string in one
+/// allocation rather than through a `String` that is then copied.
+fn i64_digits(n: i64, out: &mut [u8; 20]) -> &[u8] {
+    if n == 0 {
+        out[0] = b'0';
+        return &out[..1];
+    }
+    // Negating in the unsigned domain so `i64::MIN` has a magnitude.
+    let negative = n < 0;
+    let mut magnitude = n.unsigned_abs();
+    let mut end = out.len();
+    while magnitude > 0 {
+        end -= 1;
+        out[end] = b'0' + (magnitude % 10) as u8;
+        magnitude /= 10;
+    }
+    if negative {
+        end -= 1;
+        out[end] = b'-';
+    }
+    &out[end..]
 }
 
 /// Stringifies an *unsigned* 64-bit integer. Distinct from
@@ -3075,8 +3101,49 @@ pub unsafe extern "C" fn gos_rt_u64_to_str(n: u64) -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_f64_to_str(x: f64) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
-        alloc_cstring(format!("{x}").as_bytes())
+        // `f64`'s Display is at most a couple of dozen bytes, so it is written
+        // into a stack buffer and allocated once. A value that somehow needs
+        // more falls back to the heap-formatted form, which answers the same
+        // text.
+        let mut sink = StackText::new();
+        match std::fmt::write(&mut sink, format_args!("{x}")) {
+            Ok(()) => alloc_cstring(sink.filled()),
+            Err(_) => alloc_cstring(format!("{x}").as_bytes()),
+        }
     })
+}
+
+/// A small `fmt::Write` sink over a stack buffer, so a formatted number
+/// reaches its C string in one allocation instead of through a `String`.
+struct StackText {
+    buf: [u8; 48],
+    len: usize,
+}
+
+impl StackText {
+    fn new() -> Self {
+        Self {
+            buf: [0u8; 48],
+            len: 0,
+        }
+    }
+
+    fn filled(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+impl std::fmt::Write for StackText {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        let bytes = text.as_bytes();
+        let end = self.len + bytes.len();
+        if end > self.buf.len() {
+            return Err(std::fmt::Error);
+        }
+        self.buf[self.len..end].copy_from_slice(bytes);
+        self.len = end;
+        Ok(())
+    }
 }
 
 /// Stringifies an `f64` with `prec` fractional digits - the runtime
@@ -3136,16 +3203,16 @@ pub unsafe extern "C" fn gos_rt_str_push_utf8(
             return unchanged(false);
         }
         let (lo, hi) = (start as usize, end as usize);
-        // A packed buffer is read where it lies; a buffer whose slots are wider
-        // than a byte is gathered first, so the window is the same either way.
-        let bytes = unsafe { crate::c_abi::vec::vec_bytes_cow(buf) };
-        if hi > bytes.len() {
+        // A packed buffer is read where it lies; a buffer whose slots are
+        // wider than a byte has its window gathered - the window, not the
+        // buffer, so appending a record out of a large file costs the record.
+        let Some(bytes) = (unsafe { crate::c_abi::vec::vec_bytes_window(buf, lo, hi) }) else {
             return unchanged(false);
-        }
+        };
         if lo == hi {
             return unchanged(true);
         }
-        let window = &bytes[lo..hi];
+        let window = &bytes[..];
         if std::str::from_utf8(window).is_err() {
             return unchanged(false);
         }

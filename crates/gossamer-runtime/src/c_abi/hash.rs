@@ -113,12 +113,11 @@ pub unsafe extern "C" fn gos_rt_hash_crc32_update_window(
         if start < 0 || end < start {
             return i64::from(crc as u32);
         }
-        let bytes = unsafe { crate::c_abi::vec::vec_bytes_cow(data) };
         let (lo, hi) = (start as usize, end as usize);
-        if hi > bytes.len() {
+        let Some(bytes) = (unsafe { crate::c_abi::vec::vec_bytes_window(data, lo, hi) }) else {
             return i64::from(crc as u32);
-        }
-        i64::from(crc32_update(crc as u32, &bytes[lo..hi]))
+        };
+        i64::from(crc32_update(crc as u32, &bytes))
     })
 }
 

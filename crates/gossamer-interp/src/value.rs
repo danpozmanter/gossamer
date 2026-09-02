@@ -452,6 +452,42 @@ impl Value {
         self.byte_slice().map_or_else(Vec::new, Cow::into_owned)
     }
 
+    /// The bytes of `start..end`, gathered without reading the rest.
+    ///
+    /// A caller that wants a window of a buffer pays for the window: a
+    /// representation that already holds bytes lends them, and one that holds
+    /// boxed elements builds only the elements asked for. Reaching a window
+    /// through [`Self::byte_slice`] would instead cost the whole buffer on
+    /// every call, which is what a store checking one record in a resident
+    /// file does per read.
+    ///
+    /// `None` where the value is not a byte buffer or the window is not
+    /// inside it.
+    #[must_use]
+    pub fn byte_window(&self, start: usize, end: usize) -> Option<Cow<'_, [u8]>> {
+        if end < start {
+            return None;
+        }
+        match self {
+            Self::ByteArray(bytes) => bytes.get(start..end).map(Cow::Borrowed),
+            Self::InlineByteArray(bytes) => bytes.as_slice().get(start..end).map(Cow::Borrowed),
+            Self::ByteVec(bytes) => bytes.as_slice().get(start..end).map(Cow::Borrowed),
+            Self::String(text) => text.as_str().as_bytes().get(start..end).map(Cow::Borrowed),
+            Self::IntArray(ns) => ns
+                .get(start..end)
+                .map(|w| Cow::Owned(w.iter().map(|n| *n as u8).collect())),
+            Self::Array(items) => {
+                let window = items.get(start..end)?;
+                let mut out = Vec::with_capacity(window.len());
+                for item in window {
+                    out.push(item.as_i64()? as u8);
+                }
+                Some(Cow::Owned(out))
+            }
+            _ => None,
+        }
+    }
+
     /// The bit pattern this value holds, whichever width it was written at.
     #[must_use]
     pub fn as_u64(&self) -> Option<u64> {

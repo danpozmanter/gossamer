@@ -12,8 +12,8 @@
 use std::sync::Arc;
 
 use crate::builtins::{
-    CELL_REGISTRY, FlagDef, FlagKind, NEXT_SET_ID, PROGRAM_ARGS, SET_REGISTRY, SetState, as_str,
-    make_cell, ok_variant, value_to_int,
+    CELL_REGISTRY, FlagDef, FlagKind, NEXT_SET_ID, SET_REGISTRY, SetState, as_str, make_cell,
+    ok_variant, program_args, value_to_int,
 };
 use crate::value::{RuntimeResult, SmolStr, Value};
 
@@ -344,7 +344,7 @@ pub(crate) fn builtin_flag_set_parse(args: &[Value]) -> RuntimeResult<Value> {
                 _ => None,
             })
             .collect(),
-        _ => PROGRAM_ARGS.with(|cell| cell.borrow().clone()),
+        _ => program_args(),
     };
     let state = SET_REGISTRY.with(|reg| reg.borrow().get(&id).cloned());
     let Some(state) = state else {

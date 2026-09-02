@@ -1,0 +1,35 @@
+use std::env
+
+// The arguments a process was started with, and its name, belong to the
+// process: a goroutine runs on whichever worker thread the scheduler hands it,
+// and reads the same list the main goroutine reads. Reading them per thread
+// would answer an empty list on every goroutine but the first, and would
+// answer it on one tier and not the others.
+//
+// `tally` is the body the compiled tiers take: it reads the arguments in a
+// loop, so the reads happen in native code as well as in the interpreter, and
+// it is called from a goroutine as well as from `main`.
+
+fn tally(reps: i64) -> i64 {
+    let mut seen = 0
+    let mut i = 0
+    while i < reps {
+        seen += env::args().len()
+        i += 1
+    }
+    seen
+}
+
+fn describe() -> String {
+    let a = env::args()
+    format("{} [{}] name={}", a.len(), a.join(","), env::program_name().byte_len() > 0)
+}
+
+fn main() {
+    println("main: {}", describe())
+    println("main tally: {}", tally(2000))
+    let seen = spawn(|| describe())
+    println("goroutine: {}", seen.join().unwrap_or("join failed"))
+    let counted = spawn(|| tally(2000))
+    println("goroutine tally: {}", counted.join().unwrap_or(-1))
+}

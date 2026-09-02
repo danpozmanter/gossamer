@@ -699,3 +699,71 @@ println("{}", total)
     );
     assert_output(&binary, 3, "312");
 }
+
+/// A window read costs the window, not the buffer it sits in - on every tier.
+///
+/// `crc32::update_window` and `String::push_utf8` are given a buffer and a
+/// `[start, end)` inside it. Reading the whole buffer to reach the window
+/// makes each call scale with the buffer, which a store that keeps a file
+/// resident pays on every record it checks. The interpreter is the tier that
+/// can regress here alone: the compiled tiers reach the bytes through the
+/// runtime's window accessor.
+///
+/// The fixture times its own read loop, because building the buffer scales
+/// with the buffer on any tier and would otherwise be what the test measured.
+#[test]
+fn window_reads_cost_the_window_not_the_buffer() {
+    const SOURCE: &str = r#"
+use std::{env, time}
+use std::hash::crc32
+
+fn main() {
+    let mb = env::args().first().unwrap_or("1").to_i64().unwrap_or(1)
+    let mut buf: Vec<u8> = #[]
+    let mut i = 0
+    while i < mb * 1048576 { buf.push((i & 255) as u8); i += 1 }
+
+    let start = time::monotonic_ms()
+    let mut crc = 0
+    let mut out = ""
+    let mut k = 0
+    while k < 2000 {
+        crc = crc32::update_window(crc, buf, 0, 45)
+        let _ = out.push_utf8(buf, 0, 8)
+        out = ""
+        k += 1
+    }
+    println("{} {}", time::monotonic_ms() - start, crc)
+}
+"#;
+    let (dir, source_path) = fixture("window_cost", SOURCE);
+    let read_ms = |mb: &str| -> i64 {
+        let output = Command::new(env!("CARGO_BIN_EXE_gos"))
+            .env("GOS_JIT", "0")
+            .arg("run")
+            .arg(&source_path)
+            .arg(mb)
+            .output()
+            .expect("run the window fixture on the interpreter");
+        assert!(
+            output.status.success(),
+            "window fixture failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout)
+            .split_whitespace()
+            .next()
+            .and_then(|n| n.parse::<i64>().ok())
+            .expect("fixture must report the milliseconds its read loop took")
+    };
+    // The window is the same size in both runs, so a buffer eight times the
+    // size must not make the same 2000 reads take longer.
+    let small = read_ms("1");
+    let large = read_ms("8");
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        large <= small.max(20) * 4,
+        "window reads scaled with the buffer rather than the window: \
+         1 MiB={small}ms, 8 MiB={large}ms"
+    );
+}

@@ -430,8 +430,7 @@ impl Vm {
         // shares the caller's storage there shares it here too.
         let mut fn_param_shareable = crate::compile::FnParamShareable::new();
         {
-            let region_unsafe = gossamer_mir::collect_region_unsafe_fns(program, &tcx);
-            let by_def = gossamer_mir::collect_shareable_params(program, &tcx, &region_unsafe);
+            let by_def = gossamer_mir::collect_shareable_params(program, &tcx);
             for item in &program.items {
                 if let HirItemKind::Fn(decl) = &item.kind
                     && let Some(def) = item.def

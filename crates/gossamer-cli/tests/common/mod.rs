@@ -117,50 +117,6 @@ fn ntstatus_name(code: u32) -> Option<&'static str> {
     }
 }
 
-/// Cross-process serialization for tests that bind fixed loopback
-/// ports. The per-binary `Mutex` guards can't stop two test
-/// *processes* (`tier_parity` and `release_stability` under
-/// `cargo test --workspace`) from overlapping their server windows;
-/// this advisory file lock in the shared temp dir does. A holder
-/// that crashed without unwinding leaves a stale file, broken after
-/// 120 seconds.
-pub struct ServerPortLock {
-    path: std::path::PathBuf,
-}
-
-impl ServerPortLock {
-    pub fn acquire() -> Self {
-        use std::io::Write;
-        let path = std::env::temp_dir().join("gossamer-test-server-port.lock");
-        loop {
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                let _ = write!(f, "{}", std::process::id());
-                return Self { path };
-            }
-            let stale = std::fs::metadata(&path)
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.elapsed().ok())
-                .is_some_and(|e| e.as_secs() > 120);
-            if stale {
-                let _ = std::fs::remove_file(&path);
-                continue;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-    }
-}
-
-impl Drop for ServerPortLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
 /// A raw-TCP server that answers every read with one fixed HTTP response.
 ///
 /// It shares the runtime, the scheduler, the goroutine-per-connection shape,

@@ -8,6 +8,11 @@
  * route table per request and dispatches to the matching function;
  * unmatched paths fall through to a built-in 404 response.
  *
+ * The listen address is the first argument, so the server can be given a
+ * free port instead of competing for a well-known one:
+ *
+ *     gos run examples/web_server.gos 127.0.0.1:9000
+ *
  * Run:
  *     gos run examples/web_server.gos
  *     curl -i http://localhost:8080/
@@ -17,6 +22,7 @@
  *     curl -i 'http://localhost:8080/echo?msg=hi'
  */
 
+use std::env
 use std::http
 use std::http::router
 
@@ -50,7 +56,8 @@ fn echo(request: http::Request) -> Result<http::Response, http::Error> {
 }
 
 fn main() -> Result<(), http::Error> {
-    println("listening on 0.0.0.0:8080")
+    let addr = env::args().first().unwrap_or("0.0.0.0:8080")
+    println("listening on {}", addr)
     router::Router::new().get("/", index).get("/health", health).get("/users", list_users).post("/users", create_user).get("/echo", echo)
-        |> |v| http::serve("0.0.0.0:8080", v)
+        |> |v| http::serve(addr, v)
 }

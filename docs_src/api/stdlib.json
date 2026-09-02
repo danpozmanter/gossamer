@@ -4771,6 +4771,25 @@
       "reference_status": "catalog_only"
     },
     {
+      "id": "std-hash-crc32-update-window",
+      "name": "std::hash::crc32::update_window",
+      "kind": "function",
+      "signature": "fn update_window(seed: i64, data: Vec<u8>, start: i64, end: i64) -> i64",
+      "description": "Continues a CRC-32 over `data[start..end]`, checking a record where it lies rather than copying the window out first.",
+      "lifecycle": "experimental",
+      "tier_support": [
+        "not_audited",
+        "not_audited",
+        "not_audited"
+      ],
+      "platform_support": "not_audited",
+      "limits": [],
+      "cookbook_tags": [],
+      "doc_anchor": "docs_src/stdlib.md#stdhashcrc32",
+      "example_id": null,
+      "reference_status": "catalog_only"
+    },
+    {
       "id": "std-hash-fnv-hash32",
       "name": "std::hash::fnv::hash32",
       "kind": "function",

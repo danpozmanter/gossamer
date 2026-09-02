@@ -32,11 +32,12 @@ fn web_server_smoke_llvm() {
 /// `expect_contains` guards against an all-tiers-identically-broken
 /// pass (e.g. every tier printing the same connection error).
 fn self_terminating_server_parity(path: &'static str, expect_contains: &[&str]) {
-    let _port_guard = SERVER_PORT_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let _server_window = common::ServerPortLock::acquire();
-    let fixture = spec(path);
+    // Every tier of one fixture is given the same pair of addresses, so the
+    // three runs stay comparable, and no two fixtures are given the same pair.
+    let fixture = Spec {
+        args: leaked_free_addrs(),
+        ..spec(path)
+    };
     let vm = run_tier(&fixture, Tier::Vm).expect("vm run");
     assert_eq!(
         vm.code,
@@ -784,41 +785,46 @@ fn http_raw_bytes_parity_across_tiers() {
     );
 }
 
-/// Serialises the `web_server.gos` smoke tests across all three
-/// tiers. The example hardcodes `0.0.0.0:8080`; running the three
-/// `#[test]` variants in parallel races on that port and produces
-/// spurious connection-refused failures on whichever tier the
-/// scheduler started second.
-static SERVER_PORT_LOCK: Mutex<()> = Mutex::new(());
+/// A loopback address nothing on the box is listening on.
+///
+/// The kernel picks the port from its ephemeral range and the test
+/// hands it to the fixture, so a server fixture competes neither with
+/// another tier's run nor with whatever a developer left listening on
+/// a well-known number.
+fn free_addr() -> String {
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+    let addr = probe.local_addr().expect("read the bound address");
+    drop(probe);
+    addr.to_string()
+}
+
+/// Two distinct loopback addresses nothing is listening on, leaked so a
+/// `Spec` can name them. Both listeners are held while the pair is read, so
+/// the kernel cannot answer with one port twice.
+fn leaked_free_addrs() -> &'static [&'static str] {
+    let first = std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+    let second = std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+    let pair = [
+        first.local_addr().expect("read the bound address").to_string(),
+        second.local_addr().expect("read the bound address").to_string(),
+    ];
+    drop(first);
+    drop(second);
+    let leaked: Vec<&'static str> = pair
+        .into_iter()
+        .map(|a| &*Box::leak(a.into_boxed_str()))
+        .collect();
+    Box::leak(leaked.into_boxed_slice())
+}
 
 fn server_smoke(tier: Tier) {
-    let _port_guard = SERVER_PORT_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let _server_window = common::ServerPortLock::acquire();
     let spec = SPECS
         .iter()
         .find(|s| s.path == "examples/web_server.gos")
         .expect("web_server spec");
     let server = spec.server.expect("server fixture");
+    let addr = free_addr();
     let deadline = Instant::now() + PER_RUN_TIMEOUT;
-
-    // Pre-flight: if port 8080 is already bound (stale server from a
-    // prior run, an unrelated dev process, etc.) the spawned child's
-    // listener will fail to bind but the test would still probe and
-    // hit the *other* process - producing a confusing "status 404"
-    // panic. Try to acquire the port briefly to fail fast with a
-    // clear diagnostic instead.
-    if let Err(e) = std::net::TcpListener::bind(server.addr) {
-        panic!(
-            "{} web_server smoke: cannot bind {} ({e}). \
-             Likely a stale server from a previous test run or a \
-             benchmark holding the port. Kill it (`fuser -k 8080/tcp` \
-             or `pkill -9 -f server.gos`) and retry.",
-            tier.label(),
-            server.addr,
-        );
-    }
 
     let src = workspace_root().join(spec.path);
     let (mut child, scratch) = match tier {
@@ -826,6 +832,7 @@ fn server_smoke(tier: Tier) {
             let child = Command::new(gos_bin())
                 .arg("run")
                 .arg(&src)
+                .arg(&addr)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -841,6 +848,7 @@ fn server_smoke(tier: Tier) {
                 Err(e) => panic!("{} build of web_server.gos failed: {e}", compiled.label()),
             };
             let child = Command::new(&bin)
+                .arg(&addr)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -852,7 +860,7 @@ fn server_smoke(tier: Tier) {
 
     std::thread::sleep(Duration::from_millis(server.boot_ms));
 
-    let probe = http_probe(server.addr, server.probe_path, deadline);
+    let probe = http_probe(&addr, server.probe_path, deadline);
     let _ = child.kill();
     let captured = read_child_streams(&mut child);
     let _ = child.wait();
@@ -869,7 +877,7 @@ fn server_smoke(tier: Tier) {
         !bind_raced,
         "{} web_server: bind raced - port {} taken before child could listen\n--- child stderr ---\n{}",
         tier.label(),
-        server.addr,
+        addr,
         captured.stderr,
     );
 
@@ -1125,7 +1133,6 @@ fn forced_jit_matches_bytecode_on_unlowerable_shapes() {
 // fire on it, on any tier.
 // ----------------------------------------------------------------
 
-const POOL_ADDR: &str = "127.0.0.1:8099";
 /// More than `http_channel_pool.gos` has tokens, so some handlers must wait.
 const POOL_CLIENTS: usize = 8;
 
@@ -1145,22 +1152,16 @@ fn http_channel_pool_llvm() {
 }
 
 fn channel_pool_smoke(tier: Tier) {
-    let _port_guard = SERVER_PORT_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let _server_window = common::ServerPortLock::acquire();
     let deadline = Instant::now() + PER_RUN_TIMEOUT;
     let src = workspace_root().join("feature-testing-examples/http_channel_pool.gos");
-
-    if let Err(e) = std::net::TcpListener::bind(POOL_ADDR) {
-        panic!("{} channel pool: cannot bind {POOL_ADDR} ({e})", tier.label());
-    }
+    let addr = free_addr();
 
     let (mut child, scratch) = match tier {
         Tier::Vm => {
             let child = Command::new(gos_bin())
                 .arg("run")
                 .arg(&src)
+                .arg(&addr)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1176,6 +1177,7 @@ fn channel_pool_smoke(tier: Tier) {
                 Err(e) => panic!("{} build of http_channel_pool.gos failed: {e}", compiled.label()),
             };
             let child = Command::new(&bin)
+                .arg(&addr)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1191,7 +1193,7 @@ fn channel_pool_smoke(tier: Tier) {
     // handlers that find it empty park on the channel.
     let results: Vec<Result<(u16, String), String>> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..POOL_CLIENTS)
-            .map(|_| scope.spawn(move || http_probe(POOL_ADDR, "/pool", deadline)))
+            .map(|_| scope.spawn(|| http_probe(&addr, "/pool", deadline)))
             .collect();
         handles.into_iter().map(|h| h.join().expect("probe")).collect()
     });

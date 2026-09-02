@@ -25,9 +25,27 @@ use crate::value::{
     dense_map_with_capacity,
 };
 
-thread_local! {
-    pub(crate) static PROGRAM_ARGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    pub(crate) static PROGRAM_NAME: RefCell<String> = RefCell::new(String::from("gos"));
+/// The arguments the process was started with, and its program name.
+///
+/// A goroutine runs on whichever worker thread the scheduler hands it, and a
+/// process has one argument list on every one of them, so these belong to the
+/// process rather than to a thread. The compiled tiers read the same facts
+/// from a process-global in the runtime's `c_abi`, which is what keeps
+/// `env::args()` answering the same list on all three.
+static PROGRAM_ARGS: parking_lot::RwLock<Vec<String>> = parking_lot::RwLock::new(Vec::new());
+static PROGRAM_NAME: parking_lot::RwLock<Option<String>> = parking_lot::RwLock::new(None);
+
+/// The arguments `env::args()` answers with.
+pub(crate) fn program_args() -> Vec<String> {
+    PROGRAM_ARGS.read().clone()
+}
+
+/// The name `os::program_name()` answers with.
+pub(crate) fn program_name() -> String {
+    PROGRAM_NAME
+        .read()
+        .clone()
+        .unwrap_or_else(|| String::from("gos"))
 }
 
 /// Overwrites the program-level argument list that `env::args()`
@@ -47,18 +65,18 @@ thread_local! {
 /// `lib.rs`, which is allowed to call into the FFI; this module
 /// keeps `forbid(unsafe_code)`.
 pub fn set_program_args(args: &[String]) {
-    PROGRAM_ARGS.with(|cell| {
-        let mut v = cell.borrow_mut();
+    {
+        let mut v = PROGRAM_ARGS.write();
         v.clear();
         v.extend_from_slice(args);
-    });
+    }
     crate::set_runtime_args(args);
 }
 
 /// Sets the program name returned by `os::program_name()`. The CLI
 /// calls this with the script path before invoking `main`.
 pub fn set_program_name(name: &str) {
-    PROGRAM_NAME.with(|cell| *cell.borrow_mut() = String::from(name));
+    *PROGRAM_NAME.write() = Some(String::from(name));
     crate::set_runtime_program_name(name);
 }
 

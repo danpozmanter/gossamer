@@ -1155,7 +1155,7 @@ fn builtin_flag_define(args: &[Value]) -> RuntimeResult<Value> {
             fields.push(entry);
         }
     }
-    let args_vec = PROGRAM_ARGS.with(|cell| cell.borrow().clone());
+    let args_vec = program_args();
     let args_array = Value::Array(Arc::new(
         args_vec
             .into_iter()

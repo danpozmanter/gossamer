@@ -23,7 +23,6 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -117,8 +116,6 @@ struct Spec {
 struct ServerFixture {
     /// Wait this long after launch before issuing the probe.
     boot_ms: u64,
-    /// Listen address baked into the example.
-    addr: &'static str,
     /// Probe path, e.g. `/health`.
     probe_path: &'static str,
 }
@@ -400,7 +397,6 @@ const SPECS: &[Spec] = &[
     Spec {
         server: Some(ServerFixture {
             boot_ms: 800,
-            addr: "127.0.0.1:8080",
             probe_path: "/health",
         }),
         ..spec("examples/web_server.gos")
@@ -414,6 +410,13 @@ const SPECS: &[Spec] = &[
     Spec {
         args: &["Qwen3.6-35B", "a", "b", "c", "d"],
         ..spec("feature-testing-examples/os_args_clone_roundtrip.gos")
+    },
+    // The arguments belong to the process, so a goroutine reads the list the
+    // main goroutine reads. Held per thread they would answer empty on every
+    // goroutine but the first, and would do it on one tier and not the others.
+    Spec {
+        args: &["alpha", "beta", "gamma"],
+        ..spec("feature-testing-examples/program_args_in_goroutine.gos")
     },
     // Phase 7A: the compiled tiers inline the `Vec<(i64,f64)>` scalar-projection
     // get (`table[j].1`) and `buf.set_byte` on the call route; the LCG-driven

@@ -1,4 +1,4 @@
-use std::{http, sync, time}
+use std::{env, http, sync, time}
 use std::http::router
 
 // An HTTP server whose handlers share a fixed pool of tokens through a channel,
@@ -16,7 +16,9 @@ use std::http::router
 const TOKENS: i64 = 2
 
 fn main() {
-    let addr = "127.0.0.1:8099"
+    // The caller names the port, so the fixture competes with nothing on the
+    // box it runs on.
+    let addr = env::args().first().unwrap_or("127.0.0.1:8099")
     let tx, rx = sync::channel_unbounded()
     let mut i: i64 = 0
     while i < TOKENS {

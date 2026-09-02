@@ -165,15 +165,20 @@ pub(crate) fn builtin_hash_crc32_update(args: &[Value]) -> RuntimeResult<Value> 
 
 pub(crate) fn builtin_hash_crc32_update_window(args: &[Value]) -> RuntimeResult<Value> {
     let crc = args.first().and_then(value_to_int).unwrap_or(0) as u32;
-    let data = bytes_from_value(args.get(1).unwrap_or(&Value::Unit));
+    let data = args.get(1).unwrap_or(&Value::Unit);
     let start = args.get(2).and_then(value_to_int).unwrap_or(-1);
     let end = args.get(3).and_then(value_to_int).unwrap_or(-1);
-    if start < 0 || end < start || end as usize > data.len() {
+    if start < 0 || end < start {
         return Ok(Value::Int(i64::from(crc)));
     }
+    // The window is what the checksum reads, so the window is what is
+    // gathered: continuing a checksum over one record of a resident file
+    // costs that record rather than the file.
+    let Some(window) = data.byte_window(start as usize, end as usize) else {
+        return Ok(Value::Int(i64::from(crc)));
+    };
     Ok(Value::Int(i64::from(gossamer_std::hash::crc32::update(
-        crc,
-        &data[start as usize..end as usize],
+        crc, &window,
     ))))
 }
 

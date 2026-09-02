@@ -762,12 +762,12 @@ impl<'a> LoopEligibility<'a> {
 /// expression, on either side of an assignment, inside a literal - keeps the
 /// clone. A field read is the one projection that stays read-only: it reaches
 /// the parameter's storage only when the field's own type can carry it.
-pub fn collect_shareable_params<S: std::hash::BuildHasher>(
-    program: &HirProgram,
-    tcx: &TyCtxt,
-    region_unsafe: &HashSet<DefId, S>,
-) -> HashMap<DefId, Vec<bool>> {
+/// Whether a parameter stays inside its call is a property of that parameter,
+/// so it is answered per parameter: a helper that writes through one `&mut`
+/// parameter still only reads the collection handed to another.
+pub fn collect_shareable_params(program: &HirProgram, tcx: &TyCtxt) -> HashMap<DefId, Vec<bool>> {
     let mut out = HashMap::new();
+    let mut pending: HashMap<DefId, Vec<Vec<(DefId, usize)>>> = HashMap::new();
     for item in &program.items {
         let HirItemKind::Fn(f) = &item.kind else {
             continue;
@@ -775,13 +775,6 @@ pub fn collect_shareable_params<S: std::hash::BuildHasher>(
         let (Some(def), Some(body)) = (item.def, &f.body) else {
             continue;
         };
-        // A callee that can put a value somewhere outliving its own frame -
-        // a static, a channel, a goroutine, a store through a parameter -
-        // could put this one there, whatever its own return says.
-        if region_unsafe.contains(&def) {
-            out.insert(def, vec![false; f.params.len()]);
-            continue;
-        }
         // A return that cannot carry the parameter: a scalar or a String.
         // Anything else could hand back the parameter's own storage, or a
         // cursor over it.
@@ -791,19 +784,20 @@ pub fn collect_shareable_params<S: std::hash::BuildHasher>(
                 TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::Unit
             ) || matches!(tcx.kind_of(ret), TyKind::String)
         });
-        let flags: Vec<bool> = f
-            .params
-            .iter()
-            .map(|p| {
+        let mut flags: Vec<bool> = Vec::with_capacity(f.params.len());
+        let mut param_forwards: Vec<Vec<(DefId, usize)>> = Vec::with_capacity(f.params.len());
+        for p in &f.params {
+            let mut forwards = Vec::new();
+            let shareable = 'param: {
                 if !returns_opaque_value {
-                    return false;
+                    break 'param false;
                 }
                 let gossamer_hir::HirPatKind::Binding {
                     name,
                     mutable: false,
                 } = &p.pattern.kind
                 else {
-                    return false;
+                    break 'param false;
                 };
                 if !matches!(
                     tcx.kind_of(p.ty),
@@ -814,21 +808,70 @@ pub fn collect_shareable_params<S: std::hash::BuildHasher>(
                         | TyKind::Adt { .. }
                         | TyKind::Tuple(_)
                 ) {
-                    return false;
+                    break 'param false;
                 }
                 let mut scan = ShareScan {
                     tcx,
                     name: name.name.as_str(),
                     escaped: false,
+                    forwards: Vec::new(),
                 };
                 scan.block(&body.block, false);
+                forwards = scan.forwards;
                 !scan.escaped
-            })
-            .collect();
+            };
+            flags.push(shareable);
+            param_forwards.push(forwards);
+        }
         out.insert(def, flags);
+        pending.insert(def, param_forwards);
+    }
+    // A parameter that is only forwarded is shareable exactly when every
+    // position it reaches is. The pass starts from each body's own answer and
+    // withdraws one whose target has been withdrawn, until nothing changes -
+    // so a chain of read-only helpers stays shareable the whole way down, and
+    // mutual recursion that only forwards settles rather than falsifying
+    // itself.
+    loop {
+        let mut changed = false;
+        for (def, forwards) in &pending {
+            for (idx, targets) in forwards.iter().enumerate() {
+                if !out[def][idx] {
+                    continue;
+                }
+                let reaches_unshareable = targets.iter().any(|(callee, pos)| {
+                    out.get(callee)
+                        .is_none_or(|flags| !flags.get(*pos).copied().unwrap_or(false))
+                });
+                if reaches_unshareable {
+                    out.get_mut(def).expect("summary present")[idx] = false;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
     }
     out
 }
+
+/// Methods whose arguments they only read: the argument's storage stays the
+/// caller's, so handing a parameter to one is a read of that parameter rather
+/// than a use that could keep it.
+///
+/// Every entry is a load-bearing claim in the same sense the non-capturing
+/// runtime list is: a method that stored an argument, or answered something
+/// that reaches it, would let a callee observe the caller's later writes.
+const READ_ONLY_ARG_METHODS: &[&str] = &[
+    "contains",
+    "ends_with",
+    "extend",
+    "index_of",
+    "push_str",
+    "push_utf8",
+    "starts_with",
+];
 
 /// Walks a body looking for any mention of one parameter outside a read-only
 /// place position.
@@ -836,6 +879,13 @@ struct ShareScan<'a> {
     tcx: &'a TyCtxt,
     name: &'a str,
     escaped: bool,
+    /// `(callee, parameter index)` for every use that is the whole argument
+    /// of a direct call. Reading the parameter through a callee that only
+    /// reads its own is still only reading, so the use is answered by that
+    /// callee's summary rather than by giving up here - which is what lets a
+    /// helper hand its collection to another helper without the caller
+    /// copying it first.
+    forwards: Vec<(DefId, usize)>,
 }
 
 impl ShareScan<'_> {
@@ -868,10 +918,25 @@ impl ShareScan<'_> {
                 }
             }
             // Reading through the parameter keeps its storage inside the call.
-            HirExprKind::MethodCall { receiver, args, .. } => {
-                self.expr(receiver, true);
+            HirExprKind::MethodCall {
+                receiver,
+                name,
+                args,
+                ..
+            } => {
+                // A method answering a scalar answers a copy, so the receiver's
+                // storage stays inside the call however the answer is used.
+                // Any other answer may reach that storage - a cursor over it,
+                // a view of it - and is read-only only where the whole call
+                // already sits in a read-only place. This is the rule the
+                // field projection below follows, for the same reason.
+                self.expr(receiver, place || is_copy_ty(self.tcx, e.ty));
+                // A method that only reads the argument it is handed leaves
+                // the argument's storage inside the call, exactly as a field
+                // read does, so a parameter passed to one is still only read.
+                let reads_args = READ_ONLY_ARG_METHODS.contains(&name.name.as_str());
                 for a in args {
-                    self.expr(a, false);
+                    self.expr(a, reads_args);
                 }
             }
             HirExprKind::Index { base, index } => {
@@ -880,7 +945,22 @@ impl ShareScan<'_> {
             }
             HirExprKind::Call { callee, args } => {
                 self.expr(callee, false);
-                for a in args {
+                let target = match &callee.kind {
+                    HirExprKind::Path { def: Some(d), .. } => Some(*d),
+                    _ => None,
+                };
+                for (idx, a) in args.iter().enumerate() {
+                    // The argument that is exactly the parameter's name is a
+                    // forward: whether it stays inside the call is the
+                    // callee's own answer for that position.
+                    if let Some(def) = target
+                        && let HirExprKind::Path { segments, .. } = &a.kind
+                        && segments.len() == 1
+                        && segments[0].name.as_str() == self.name
+                    {
+                        self.forwards.push((def, idx));
+                        continue;
+                    }
                     self.expr(a, false);
                 }
             }

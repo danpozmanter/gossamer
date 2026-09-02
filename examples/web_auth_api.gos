@@ -13,6 +13,7 @@
 // bit-identical under `gos` (bytecode VM) and `gos build` (LLVM
 // AOT). Binds a fixed loopback port (serialized in CI).
 
+use std::env
 use std::http
 use std::http::middleware
 use std::http::router
@@ -36,9 +37,16 @@ fn get_order(r: http::Request) -> http::Response {
     }
 }
 
+/// Where this run listens. The caller names it, so the fixture competes with
+/// nothing on the box it runs on; the default is what a reader running the
+/// example by hand gets.
+fn addr() -> String { env::args().first().unwrap_or("127.0.0.1:23892") }
+
+fn base() -> String { "http://" + addr() }
+
 fn serve() {
     let r = router::Router::new().post("/login", login).get("/orders/{id}", get_order)
-    if let Err(e) = http::serve("127.0.0.1:23892", r) {
+    if let Err(e) = http::serve(addr(), r) {
         eprintln("serve failed: {e}")
     }
 }
@@ -56,10 +64,10 @@ fn await_ready(url: String) {
 }
 
 spawn(|| serve())
-await_ready("http://127.0.0.1:23892/orders/0")
+await_ready(base() + "/orders/0")
 
 // 1) Log in, then verify the returned cookie round-trips locally.
-match http::request("POST", "http://127.0.0.1:23892/login", "ada", #[]) {
+match http::request("POST", base() + "/login", "ada", #[]) {
     Ok(r) => match http::session::verify(r.body, #[9, 8, 7, 6, 5, 4, 3, 2]) {
         Ok(data) => println("login session={}", data)
         Err(_) => println("login verify failed")
@@ -69,13 +77,13 @@ match http::request("POST", "http://127.0.0.1:23892/login", "ada", #[]) {
 
 // 2) Authorized request with a typed path parameter.
 let auth: Vec<(String, String)> = #[("Authorization", "Bearer s3cret-token")]
-match http::request("GET", "http://127.0.0.1:23892/orders/42", "", auth) {
+match http::request("GET", base() + "/orders/42", "", auth) {
     Ok(r) => println("order status={} body={}", r.status, r.body)
     Err(e) => println("order error: {}", e)
 }
 
 // 3) Missing token → 401.
-match http::get("http://127.0.0.1:23892/orders/42", #[]) {
+match http::get(base() + "/orders/42", #[]) {
     Ok(r) => println("noauth status={}", r.status)
     Err(e) => println("noauth error: {}", e)
 }

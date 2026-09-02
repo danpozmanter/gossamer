@@ -1929,6 +1929,51 @@ pub unsafe fn vec_byte_slice<'a>(v: *const GosVec) -> Option<&'a [u8]> {
     Some(unsafe { std::slice::from_raw_parts(header.ptr.as_const_ptr(), len) })
 }
 
+/// The bytes of `v[start..end]`, borrowed where the slots are already bytes.
+///
+/// A reader that wants one record out of a large buffer gathers that record
+/// rather than the buffer: materialising the whole of a wide-slot vector to
+/// hand back a few bytes is work proportional to the file per row read.
+/// `None` when the window is not inside the vector.
+///
+/// # Safety
+/// `v` must be null or point to a live `GosVec` whose buffer outlives the
+/// returned value.
+#[must_use]
+pub unsafe fn vec_bytes_window<'a>(
+    v: *const GosVec,
+    start: usize,
+    end: usize,
+) -> Option<std::borrow::Cow<'a, [u8]>> {
+    use std::borrow::Cow;
+    if v.is_null() || end < start {
+        return None;
+    }
+    let header = unsafe { &*v };
+    let len = usize::try_from(header.len.max(0)).unwrap_or(0);
+    if end > len {
+        return None;
+    }
+    if start == end {
+        return Some(Cow::Borrowed(&[]));
+    }
+    if header.ptr.is_null() {
+        return None;
+    }
+    if header.elem_bytes == 1 {
+        return Some(Cow::Borrowed(unsafe {
+            std::slice::from_raw_parts(header.ptr.as_const_ptr().add(start), end - start)
+        }));
+    }
+    let words = unsafe {
+        std::slice::from_raw_parts(
+            header.ptr.as_const_ptr().cast::<i64>().add(start),
+            end - start,
+        )
+    };
+    Some(Cow::Owned(words.iter().map(|&w| w as u8).collect()))
+}
+
 /// The bytes a `GosVec` holds, borrowed where its slots are already bytes.
 ///
 /// This is the form a reader wants: a packed buffer costs nothing to read and

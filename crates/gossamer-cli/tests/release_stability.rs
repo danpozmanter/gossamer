@@ -95,6 +95,22 @@ fn run(prog: &Program) -> (i32, String, String) {
 /// Asserts the released binary exits 0 and emits exactly `expected`
 /// on stdout. Failure messages dump both streams plus the exit code
 /// so the source of any drift is visible without re-running.
+/// Rewrites the loopback ports a fixture's inline source names.
+///
+/// The kernel picks each replacement, so a fixture binds a port nothing else
+/// on the box holds - which is what lets these tests run beside each other and
+/// beside whatever a developer has listening.
+fn with_free_ports(body: &str, ports: &[&str]) -> String {
+    let mut out = body.to_string();
+    for port in ports {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+        let chosen = probe.local_addr().expect("read the bound address").port();
+        drop(probe);
+        out = out.replace(port, &chosen.to_string());
+    }
+    out
+}
+
 fn assert_release_stdout_eq(name: &str, body: &str, expected: &str) {
     let prog = build_release(name, body);
     let (code, stdout, stderr) = run(&prog);
@@ -117,7 +133,6 @@ fn assert_release_stdout_eq(name: &str, body: &str, expected: &str) {
 
 #[test]
 fn release_request_field_string_methods_dispatch_correctly() {
-    let _server_window = common::ServerPortLock::acquire();
     // Catches method-dispatch regressions on opaque http::Request
     // fields: `r.query` / `r.path` are checker-opaque (inference
     // Vars), and without the MIR field-type promotion `.len()`
@@ -126,7 +141,8 @@ fn release_request_field_string_methods_dispatch_correctly() {
     // request (the locurlfwd proxy crash shape).
     assert_release_stdout_eq(
         "request_field_methods",
-        r#"
+        &with_free_ports(
+            r#"
 use std::http
 use std::process
 use std::strings
@@ -182,13 +198,14 @@ fn main() {
     process::exit(0)
 }
 "#,
+            &["23924"],
+        ),
         "status=200 body=qlen=7 plen=5 starts=true has=true blen=0\n",
     );
 }
 
 #[test]
 fn release_http_bare_response_handler_serves_200() {
-    let _server_window = common::ServerPortLock::acquire();
     // Catches handler-ABI regressions: a serve method declaring a
     // bare `http::Response` return (no `Result` wrapper) is adapted
     // to the packed-Result handler C-ABI by the MIR-synthesized
@@ -196,7 +213,8 @@ fn release_http_bare_response_handler_serves_200() {
     // the Response pointer as a Result discriminant and answers 500.
     assert_release_stdout_eq(
         "bare_handler",
-        r#"
+        &with_free_ports(
+            r#"
 use std::http
 use std::process
 use std::time
@@ -242,13 +260,14 @@ fn main() {
     process::exit(0)
 }
 "#,
+            &["23921"],
+        ),
         "status=200 body=bare ok\n",
     );
 }
 
 #[test]
 fn release_proxy_stream_passthrough_serves_chunked_body() {
-    let _server_window = common::ServerPortLock::acquire();
     // Catches streamed-response regressions in the release
     // pipeline: a proxy handler returns
     // `http::Response::stream(up.status, up.content_type, up)` and
@@ -256,7 +275,8 @@ fn release_proxy_stream_passthrough_serves_chunked_body() {
     // chunked frames (the locurlfwd proxy-passthrough shape).
     assert_release_stdout_eq(
         "proxy_stream",
-        r#"
+        &with_free_ports(
+            r#"
 use std::http
 use std::process
 use std::time
@@ -332,6 +352,8 @@ fn main() {
     process::exit(0)
 }
 "#,
+            &["23922", "23923"],
+        ),
         "status=200 ct=text/plain; charset=utf-8 body=release streamed body\n",
     );
 }

@@ -77,7 +77,7 @@ fn builtin_flag_parse(args: &[Value]) -> RuntimeResult<Value> {
             "flag::parse: expected array of FlagDecl".to_string(),
         ));
     };
-    let program_args = PROGRAM_ARGS.with(|cell| cell.borrow().clone());
+    let program_args = program_args();
     let entries = extract_flag_decls(decls);
     let mut map_fields: Vec<(&'static str, Value)> = Vec::new();
     let mut positional: Vec<Value> = Vec::new();

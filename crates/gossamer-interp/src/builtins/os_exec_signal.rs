@@ -40,8 +40,7 @@ pub(crate) fn none_variant() -> Value {
 }
 
 fn builtin_os_args(_args: &[Value]) -> RuntimeResult<Value> {
-    let argv: Vec<Value> = PROGRAM_ARGS
-        .with(|cell| cell.borrow().clone())
+    let argv: Vec<Value> = program_args()
         .into_iter()
         .map(|s| Value::String(s.into()))
         .collect();
@@ -49,7 +48,7 @@ fn builtin_os_args(_args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_os_program_name(_args: &[Value]) -> RuntimeResult<Value> {
-    let name = PROGRAM_NAME.with(|cell| cell.borrow().clone());
+    let name = program_name();
     Ok(Value::String(name.into()))
 }
 

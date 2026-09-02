@@ -264,20 +264,23 @@ fn builtin_str_push_utf8(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::MutCell(cell)) = args.first() else {
         return Ok(Value::Bool(false));
     };
-    // The buffer is read through `byte_slice`, which answers whichever
-    // representation the VM chose for it, so a window is appended the same way
-    // whether the caller built the buffer by literal, by push, or out of a
-    // file. A packed buffer is borrowed rather than rebuilt, which is what
-    // makes this cheaper than slicing the window into a `Vec` first.
-    let Some(bytes) = args.get(1).and_then(Value::byte_slice) else {
-        return Ok(Value::Bool(false));
-    };
+    // The window is read through `byte_window`, which answers whichever
+    // representation the VM chose for the buffer, so a window is appended the
+    // same way whether the caller built the buffer by literal, by push, or out
+    // of a file - and costs the window rather than the buffer, which is what a
+    // caller appending one field of a resident file pays per call.
     let start = args.get(2).and_then(value_to_int).unwrap_or(-1);
     let end = args.get(3).and_then(value_to_int).unwrap_or(-1);
-    if start < 0 || end < start || end as usize > bytes.len() {
+    if start < 0 || end < start {
         return Ok(Value::Bool(false));
     }
-    let Ok(text) = std::str::from_utf8(&bytes[start as usize..end as usize]) else {
+    let Some(bytes) = args
+        .get(1)
+        .and_then(|buf| buf.byte_window(start as usize, end as usize))
+    else {
+        return Ok(Value::Bool(false));
+    };
+    let Ok(text) = std::str::from_utf8(&bytes) else {
         return Ok(Value::Bool(false));
     };
     let mut guard = cell.lock();

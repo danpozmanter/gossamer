@@ -23,11 +23,8 @@ fn run_executes_every_terminating_example() {
 /// `gos run examples/web_server.gos` in a child process, connects,
 /// drives a real HTTP/1.1 request, and inspects the response.
 ///
-/// The example hardcodes port 8080. If that port is already bound
-/// the test is skipped rather than marked as failing - CI sandboxes
-/// commonly have port collisions, and the interpreter-level
-/// `crates/gossamer-interp/tests/http_end_to_end.rs` already
-/// validates the full dispatch path without needing a subprocess.
+/// The example takes its listen address, so the test hands it one the kernel
+/// chose and every answer below is an assertion rather than a skip.
 #[test]
 fn web_server_example_binds_and_serves_real_requests() {
     use std::io::{Read, Write};
@@ -35,16 +32,20 @@ fn web_server_example_binds_and_serves_real_requests() {
     use std::thread;
     use std::time::Duration;
 
-    let _server_window = common::ServerPortLock::acquire();
-
-    let probe = std::net::TcpListener::bind("127.0.0.1:8080");
-    drop(probe.ok());
-    // NOTE: the probe above may race with a concurrent test; treat
-    // connection failures below as "skip" rather than "fail".
+    // The kernel names the port and the example is told which one, so this
+    // test contends with nothing - not another tier's run, and not whatever a
+    // developer left listening on a well-known number.
+    let addr = {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+        let addr = probe.local_addr().expect("read the bound address");
+        drop(probe);
+        addr.to_string()
+    };
 
     let mut child = match std::process::Command::new(gos_bin())
         .arg("run")
         .arg(examples_dir().join("web_server.gos"))
+        .arg(&addr)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -59,7 +60,7 @@ fn web_server_example_binds_and_serves_real_requests() {
     let mut response: Option<Vec<u8>> = None;
     for _ in 0..40 {
         thread::sleep(Duration::from_millis(100));
-        if let Ok(mut stream) = TcpStream::connect("127.0.0.1:8080") {
+        if let Ok(mut stream) = TcpStream::connect(&addr) {
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
@@ -76,26 +77,16 @@ fn web_server_example_binds_and_serves_real_requests() {
     let _ = child.kill();
     let _ = child.wait();
 
-    let Some(body) = response else {
-        eprintln!("skipping - port 8080 unreachable (likely taken by another process)");
-        return;
-    };
+    let body = response.unwrap_or_else(|| panic!("{addr} never answered the echo request"));
     let text = String::from_utf8_lossy(&body);
-    if !text.starts_with("HTTP/1.1 ") {
-        eprintln!("skipping - response not HTTP/1.1: {text}");
-        return;
-    }
-    // Concurrent test runs can collide on port 8080 (e.g. another
-    // benchmark server, or a parallel test invocation). When the
-    // response we got back doesn't look like our echo handler's
-    // shape, treat it as a port collision and skip rather than
-    // fail. The interpreter-level test
-    // (`crates/gossamer-interp/tests/http_end_to_end.rs`) covers
-    // the dispatch path without requiring an exclusive port grab.
-    if !(text.contains("method") && text.contains("GET")) {
-        eprintln!("skipping - port 8080 served unrelated content: {text}");
-        return;
-    }
+    assert!(
+        text.starts_with("HTTP/1.1 "),
+        "response is not HTTP/1.1: {text}"
+    );
+    assert!(
+        text.contains("method") && text.contains("GET"),
+        "echo body missing the method: {text}"
+    );
     assert!(
         text.contains("query") && text.contains("name=jane"),
         "echo body missing query: {text}"

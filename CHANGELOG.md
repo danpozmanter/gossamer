@@ -1,7 +1,13 @@
 # Changelog
 
-## 0.58.8 - A slice is spelled like a slice
+## 0.58.8 - A window costs the window
 
+- `crc32::update_window` and `String::push_utf8` read the window they are given
+  rather than the buffer it sits in. The interpreter gathered the whole buffer
+  to reach the window, so checking one 45-byte record of a resident 3.8 MB file
+  cost 1.7ms a call where the compiled tiers cost nothing measurable; a server
+  reading rows out of a file it keeps in memory answered 584 requests a second
+  under `gos run` and 280,000 compiled.
 - A `[T]` slice renders in bare brackets on the compiled tiers, as it already
   did in the interpreter. A slice and a `Vec` share one runtime
   representation, and the formatter was handed only the value, so every
@@ -16,6 +22,17 @@
   a window of a buffer. A store holding a file in memory checks a record where
   it lies rather than copying the window out to have something to hand
   `update`.
+- `env::args()` and `env::program_name()` answer the process from every
+  goroutine. The interpreter held them per thread, so a goroutine the
+  scheduler placed on any other worker read an empty argument list while a
+  compiled binary read the real one - a server spawned with `spawn` bound the
+  default address rather than the one it was given.
+- A parameter a callee only reads is passed without a copy even when the
+  callee writes through one of its other parameters. Whether a value stays
+  inside a call is a property of that parameter, and it was answered per
+  function: a helper that took a collection and a `&mut` store copied the
+  collection on every call. Forwarding a four-element `Vec<String>` through
+  one call layer cost 118ns and now costs nothing.
 
 ## 0.58.7 - Byte buffers read the same everywhere
 

@@ -18,6 +18,7 @@
 // by `http_proxy_stream_parity_across_tiers` in
 // crates/gossamer-cli/tests/tier_parity.rs.
 
+use std::env
 use std::http
 use std::process
 use std::time
@@ -30,11 +31,21 @@ impl http::Handler for Upstream {
     }
 }
 
+/// The two ports this run listens on. The caller names them, so the fixture
+/// competes with nothing on the box; the defaults are what running it by hand
+/// gets.
+fn upstream_addr() -> String { env::args().first().unwrap_or("127.0.0.1:23877") }
+
+fn proxy_addr() -> String {
+    let a = env::args()
+    if a.len() > 1 { a[1] } else { "127.0.0.1:23878" }
+}
+
 struct Proxy { }
 
 impl http::Handler for Proxy {
     fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {
-        match http::stream(r.method, "http://127.0.0.1:23877/data", r.body, Vec::from([])) {
+        match http::stream(r.method, "http://" + upstream_addr() + "/data", r.body, Vec::from([])) {
             Ok(up) => {
                 if r.path() == "/consumed" {
                     let streamed = http::Response::stream(up.status, up.content_type, up)
@@ -51,19 +62,19 @@ impl http::Handler for Proxy {
 }
 
 fn run_upstream() {
-    if let Err(e) = http::serve("127.0.0.1:23877", Upstream { }) {
+    if let Err(e) = http::serve(upstream_addr(), Upstream { }) {
         eprintln("serve failed: {e}")
     }
 }
 
 fn run_proxy() {
-    if let Err(e) = http::serve("127.0.0.1:23878", Proxy { }) {
+    if let Err(e) = http::serve(proxy_addr(), Proxy { }) {
         eprintln("serve failed: {e}")
     }
 }
 
 fn fetch(label: String, path: String) {
-    match http::get("http://127.0.0.1:23878" + path, Vec::from([])) {
+    match http::get("http://" + proxy_addr() + path, Vec::from([])) {
         Ok(resp) => println(
             "{} status={} ct={} len={} body={}"
             label
@@ -94,8 +105,8 @@ fn await_ready(url: String) {
 fn main() {
     spawn(|| run_upstream())
     spawn(|| run_proxy())
-    await_ready("http://127.0.0.1:23877/data")
-    await_ready("http://127.0.0.1:23878/a")
+    await_ready("http://" + upstream_addr() + "/data")
+    await_ready("http://" + proxy_addr() + "/a")
     fetch("first", "/a")
     fetch("second", "/b")
     fetch("consumed", "/consumed")
