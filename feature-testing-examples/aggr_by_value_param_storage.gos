@@ -1,0 +1,67 @@
+// A struct carrying a `Map` field beside an `i64` and a `Vec` field, reached
+// through methods that take `self` BY VALUE while the caller still owns the
+// aggregate and reads it afterwards.
+//
+// A by-value parameter names a value the callee owns: its map field is swapped
+// for a clone on entry and freed at every exit, both through the field's
+// address. The callee's parameter storage therefore has to be its own frame's,
+// never the caller's aggregate, or the first by-value call empties the table
+// the caller goes on to read. Bit-identical on the VM, Cranelift, and LLVM
+// tiers.
+
+struct IC {
+    memory: Map<i64, i64>
+    position: i64
+    inputs: Vec<i64>
+}
+
+impl IC {
+    fn new(program: Vec<i64>) -> Self {
+        let mut memory = Map::new()
+        for (addr, value) in program.enumerate() {
+            memory.insert(addr, value)
+        }
+        IC { memory: memory, position: 0, inputs: #[] }
+    }
+
+    fn read_memory(self, addr: i64) -> i64 {
+        self.memory.get_or(addr, -1)
+    }
+
+    fn get_param(self, offset: i64) -> i64 {
+        let value = self.read_memory(self.position + offset)
+        self.read_memory(value)
+    }
+
+    fn set_memory(&mut self, addr: i64, value: i64) -> () {
+        self.memory.insert(addr, value)
+    }
+
+    fn run(&mut self, new_inputs: [i64]) {
+        self.inputs.extend(new_inputs)
+        let a = self.get_param(1)
+        let b = self.get_param(2)
+        self.set_memory(1, a * b)
+        println(
+            "a={} b={} m1={} m4={} len={} inputs={}"
+            a, b, self.read_memory(1), self.read_memory(4)
+            self.memory.len(), self.inputs.len()
+        )
+    }
+}
+
+// A free function taking the aggregate by value: the caller's table survives
+// the call and reads back every key it inserted.
+fn lookup(ic: IC, addr: i64) -> i64 {
+    ic.memory.get_or(addr, -1)
+}
+
+fn main() {
+    let p: Vec<i64> = #[1, 3, 1, 1, 109]
+
+    for k in ..3 {
+        let mut ic = IC::new(p)
+        ic.run([k, k + 1])
+        println("after {} first={} last={} len={}", k, lookup(ic, 0), lookup(ic, 4), ic.memory.len())
+    }
+}

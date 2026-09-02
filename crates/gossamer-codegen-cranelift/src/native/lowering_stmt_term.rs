@@ -726,7 +726,7 @@ fn is_aggregate_copy_src(body: &Body, tcx: &TyCtxt, rvalue: &Rvalue) -> bool {
 /// table stored there, so a copy destination one of them names has storage of
 /// its own to keep: aliasing it to the source would let the source's own field
 /// teardown reach into the value the caller was handed.
-fn local_fields_written_through_address(body: &Body, local: Local) -> bool {
+pub(super) fn local_fields_written_through_address(body: &Body, local: Local) -> bool {
     body.blocks.iter().any(|block| {
         block.stmts.iter().any(|stmt| {
             let StatementKind::Assign {

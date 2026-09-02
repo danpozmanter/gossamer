@@ -217,6 +217,58 @@ fn stack_aggregate_slots(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
     (bytes <= MAX_STACK_AGGR_BYTES).then_some(slots)
 }
 
+/// Slot width of a by-value aggregate parameter that arrives as the ADDRESS of
+/// the caller's storage, or `None` for every other parameter shape.
+///
+/// A parameter of this shape names a value the callee owns: the drop pass
+/// schedules its ownership on the parameter's own words - a `Map` field is
+/// swapped for a clone at entry through `gos_rt_map_field_clone` and freed
+/// through `gos_rt_map_field_release` at every exit, both taking the field's
+/// address. The caller's aggregate has to be storage the callee never reaches,
+/// so the entry copies the words into a frame slot of its own and binds the
+/// local there. Mirrors the LLVM backend's entry `llvm.memcpy` of a
+/// by-pointer parameter into the body's own alloca (see `lower/setup.rs`).
+///
+/// The shape test matches [`body_returns_sret_aggregate`]: an inline two-word
+/// carrier crosses as a packed `i128` value and a one-word handle aggregate as
+/// its pointer, neither of which is an address of caller-owned words.
+///
+/// An aggregate wider than the frame budget still takes a slot when the body
+/// writes its words - the caller's value is what a missing copy corrupts, and
+/// the slot is the size the caller already reserved for the same aggregate.
+/// A body that only reads keeps the budget's ceiling, so a large read-only
+/// buffer parameter stays a pointer.
+fn by_address_param_slots(tcx: &TyCtxt, body: &Body, local: Local) -> Option<u32> {
+    let ty = body.local_ty(local);
+    if is_inline_two_word_ty(tcx, ty)
+        || !matches!(
+            tcx.kind_of(ty),
+            TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }
+        )
+    {
+        return None;
+    }
+    if type_slot_count(tcx, ty) <= 1 && !single_slot_addr_aggregate(tcx, ty) {
+        return None;
+    }
+    stack_aggregate_slots(tcx, ty)
+        .or_else(|| param_storage_is_written(body, local).then(|| type_slot_count(tcx, ty).max(1)))
+}
+
+/// True when the body stores into parameter `local`'s own words: a projected
+/// assignment (`p.f = v`) or a map-field helper handed the address of one of
+/// its fields. Either reaches the caller's aggregate while the parameter names
+/// the caller's storage.
+fn param_storage_is_written(body: &Body, local: Local) -> bool {
+    local_fields_written_through_address(body, local)
+        || body.blocks.iter().any(|block| {
+            block.stmts.iter().any(|stmt| {
+                matches!(&stmt.kind, StatementKind::Assign { place, .. }
+                    if place.local == local && !place.projection.is_empty())
+            })
+        })
+}
+
 pub(super) fn lower_body(
     module: &mut dyn Module,
     func: &mut Function,
@@ -292,9 +344,31 @@ pub(super) fn lower_body(
         let entry = blocks[&first_block.id.as_u32()];
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
+        let param_ptr_ty = module.target_config().pointer_type();
         for (index, param_local_u32) in (1..=body.arity).enumerate() {
             let local = Local(param_local_u32);
             let param_value = builder.block_params(entry)[index];
+            if let Some(slots) = by_address_param_slots(tcx, body, local) {
+                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    slots * 8,
+                    3,
+                ));
+                let addr = builder.ins().stack_addr(param_ptr_ty, slot, 0);
+                for word_idx in 0..slots {
+                    let off = ir::immediates::Offset32::new((word_idx as i32) * 8);
+                    let word =
+                        builder
+                            .ins()
+                            .load(types::I64, MemFlagsData::trusted(), param_value, off);
+                    builder
+                        .ins()
+                        .store(MemFlagsData::trusted(), word, addr, off);
+                }
+                define_var_to_with(&mut builder, &mut locals, local, addr, Some(param_ptr_ty));
+                intrinsics.stack_slotted.insert(local);
+                continue;
+            }
             define_var_to(
                 &mut builder,
                 &mut locals,

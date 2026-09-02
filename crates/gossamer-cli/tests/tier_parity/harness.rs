@@ -1086,6 +1086,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/net_read_into.gos"),
     spec("feature-testing-examples/string_push_utf8.gos"),
     spec("feature-testing-examples/aggr_map_field_return.gos"),
+    spec("feature-testing-examples/aggr_by_value_param_storage.gos"),
     spec("feature-testing-examples/net_smtp_send.gos"),
     Spec {
         // Unix-domain sockets are POSIX-only; on Windows every entry

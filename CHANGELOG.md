@@ -72,6 +72,12 @@
 - A zero-width element occupies the slot a tuple or struct reserves for it on
   the compiled tiers. `(nothing(), 7, 8)` wrote 7 into the unit's slot, so `.1`
   answered 8 and `.2` answered a stack address.
+- A by-value aggregate parameter is the callee's own value under the JIT. The
+  Cranelift backend bound such a parameter to the caller's storage, so a method
+  taking `self` by value swapped the caller's `Map` field for a clone on entry
+  and freed it on return: the first call emptied the table the caller went on
+  to read, and every later lookup answered the default. A struct with a `Map`
+  field read back as empty under `gos run` and correctly under `gos build`.
 
 ## 0.58.7 - Byte buffers read the same everywhere
 
