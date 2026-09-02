@@ -97,6 +97,31 @@ pub unsafe extern "C" fn gos_rt_hash_crc32_update(
     })
 }
 
+/// `hash::crc32::update_window(crc, data, start, end) -> i64`.
+///
+/// Continues a checksum over `data[start..end]`. A caller holding a record
+/// inside a larger buffer checks it where it lies, rather than copying the
+/// window out to have something to hand `update`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_hash_crc32_update_window(
+    crc: i64,
+    data: *const super::vec::GosVec,
+    start: i64,
+    end: i64,
+) -> i64 {
+    ffi_entry!(0, {
+        if start < 0 || end < start {
+            return i64::from(crc as u32);
+        }
+        let bytes = unsafe { crate::c_abi::vec::vec_bytes_cow(data) };
+        let (lo, hi) = (start as usize, end as usize);
+        if hi > bytes.len() {
+            return i64::from(crc as u32);
+        }
+        i64::from(crc32_update(crc as u32, &bytes[lo..hi]))
+    })
+}
+
 // ---------------------------------------------------------------
 // Adler-32 (zlib / RFC 1950)
 // ---------------------------------------------------------------

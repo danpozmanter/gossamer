@@ -318,6 +318,12 @@ pub const HASH_CRC32: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Continues a CRC-32 from a running value over more bytes.",
         },
+        StdItem {
+            name: "update_window",
+            kind: StdItemKind::Function,
+            doc: "Continues a CRC-32 over `data[start..end]`, checking a record \
+                  where it lies rather than copying the window out first.",
+        },
     ],
 };
 

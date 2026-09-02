@@ -128,6 +128,7 @@ pub(crate) fn install_hash_crc32_adler32(globals: &mut Vec<(&'static str, Value)
         ),
         ("crc32::checksum_string", builtin_hash_crc32_checksum_string),
         ("crc32::update", builtin_hash_crc32_update),
+        ("crc32::update_window", builtin_hash_crc32_update_window),
         ("adler32::checksum", builtin_hash_adler32_checksum),
         (
             "adler32::checksum_string",
@@ -159,6 +160,20 @@ pub(crate) fn builtin_hash_crc32_update(args: &[Value]) -> RuntimeResult<Value> 
     let data = bytes_from_value(args.get(1).unwrap_or(&Value::Unit));
     Ok(Value::Int(i64::from(gossamer_std::hash::crc32::update(
         crc, &data,
+    ))))
+}
+
+pub(crate) fn builtin_hash_crc32_update_window(args: &[Value]) -> RuntimeResult<Value> {
+    let crc = args.first().and_then(value_to_int).unwrap_or(0) as u32;
+    let data = bytes_from_value(args.get(1).unwrap_or(&Value::Unit));
+    let start = args.get(2).and_then(value_to_int).unwrap_or(-1);
+    let end = args.get(3).and_then(value_to_int).unwrap_or(-1);
+    if start < 0 || end < start || end as usize > data.len() {
+        return Ok(Value::Int(i64::from(crc)));
+    }
+    Ok(Value::Int(i64::from(gossamer_std::hash::crc32::update(
+        crc,
+        &data[start as usize..end as usize],
     ))))
 }
 

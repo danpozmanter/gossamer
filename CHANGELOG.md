@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.58.8 - A slice is spelled like a slice
+
+- A `[T]` slice renders in bare brackets on the compiled tiers, as it already
+  did in the interpreter. A slice and a `Vec` share one runtime
+  representation, and the formatter was handed only the value, so every
+  sequence took the `Vec` spelling: `fn f(xs: [i64])` printing its argument
+  answered `#[1, 2, 3]` under `gos build` and `[1, 2, 3]` under `gos run`.
+  The spelling now comes from the static type at the call site, which is the
+  only thing that knows it.
+- A Rust binding's `Bytes` value carries the `[u8]` it is declared as. Its MIR
+  type was the `Vec` its runtime representation is shared with, so a binding
+  return printed `#[..]` under `gos build` and `[..]` under `gos run`.
+- `hash::crc32::update_window(crc, data, start, end)` continues a checksum over
+  a window of a buffer. A store holding a file in memory checks a record where
+  it lies rather than copying the window out to have something to hand
+  `update`.
+
 ## 0.58.7 - Byte buffers read the same everywhere
 
 - `String::push_utf8` appends the window it was given whatever the buffer is.

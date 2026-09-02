@@ -1852,6 +1852,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_hash_crc32_update as *const u8,
         ),
         (
+            "gos_rt_hash_crc32_update_window",
+            crate::c_abi::gos_rt_hash_crc32_update_window as *const u8,
+        ),
+        (
             "gos_rt_hash_fnv32",
             crate::c_abi::gos_rt_hash_fnv32 as *const u8,
         ),

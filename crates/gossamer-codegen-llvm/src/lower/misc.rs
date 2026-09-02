@@ -701,8 +701,11 @@ impl<'a> Lowerer<'a> {
                         }
                     }
                     Some(TyKind::Slice(elem) | TyKind::Vec(elem)) => {
+                        // A slice renders in bare brackets and a `Vec` in its
+                        // own spelling, over one runtime representation.
+                        let bare = matches!(self.tcx.kind(ty), Some(TyKind::Slice(_)));
                         let elem = *elem;
-                        match self.tcx.kind(elem) {
+                        let kind = match self.tcx.kind(elem) {
                             // An element type nothing constrained belongs to
                             // a sequence nothing put a value in, so it reads
                             // as the empty sequence the word printer renders.
@@ -749,6 +752,11 @@ impl<'a> Lowerer<'a> {
                                     .value_descriptor(elem, method)
                                     .map_or(ConcatKind::Unsupported, ConcatKind::VecDesc),
                             },
+                        };
+                        if bare && !matches!(kind, ConcatKind::Unsupported) {
+                            ConcatKind::Seq(Box::new(kind))
+                        } else {
+                            kind
                         }
                     }
                     // Tuple of scalar elements: route through

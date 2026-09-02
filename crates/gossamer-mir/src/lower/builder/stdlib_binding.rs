@@ -223,12 +223,16 @@ impl<'a> Builder<'a> {
         use gossamer_types::TyKind;
         match ret {
             B::Bytes => {
+                // `Bytes` is `[u8]` at the source level, so the converted
+                // value carries the slice type the caller wrote - the same
+                // runtime object a `Vec` carries, under the spelling the
+                // declared type is written in.
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let vec_ty = self.tcx.intern(TyKind::Vec(i64_ty));
+                let slice_ty = self.tcx.intern(TyKind::Slice(i64_ty));
                 self.emit_runtime_call(
                     "gos_rt_binding_bytes_to_vec",
                     vec![Operand::Copy(Place::local(raw))],
-                    vec_ty,
+                    slice_ty,
                     span,
                 )
             }

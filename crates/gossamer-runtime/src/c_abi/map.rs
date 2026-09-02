@@ -1868,7 +1868,7 @@ pub(crate) unsafe fn render_tagged_word(out: &mut String, word: i64, tag: u8) {
         }
         6 => {
             let vp = std::ptr::with_exposed_provenance(word as usize);
-            let rendered = unsafe { crate::c_abi::gos_rt_vec_format_i64(vp) };
+            let rendered = unsafe { crate::c_abi::gos_rt_vec_format_i64(vp, 0) };
             if !rendered.is_null() {
                 out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
             }
@@ -2382,7 +2382,7 @@ pub(crate) unsafe fn render_tuple_elements(
             }
             6 => {
                 let vp = std::ptr::with_exposed_provenance(word as usize);
-                let rendered = unsafe { crate::c_abi::gos_rt_vec_format_i64(vp) };
+                let rendered = unsafe { crate::c_abi::gos_rt_vec_format_i64(vp, 0) };
                 if !rendered.is_null() {
                     out.push_str(&unsafe { crate::c_abi::gos_str_arg_lossy(rendered) });
                 }

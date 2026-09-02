@@ -1,0 +1,41 @@
+// A value renders in the spelling that builds it: `#[..]` for a `Vec`,
+// `[..]` for a fixed array or a slice. A slice and a `Vec` share one runtime
+// representation, so only the static type tells them apart - and every tier
+// has to reach the same answer from it.
+
+fn take_slice(xs: [i64]) -> String { format("{:?}", xs) }
+fn take_str_slice(xs: [String]) -> String { format("{:?}", xs) }
+fn take_bytes(xs: [u8]) -> String { format("{:?}", xs) }
+fn take_float_slice(xs: [f64]) -> String { format("{:?}", xs) }
+fn take_bool_slice(xs: [bool]) -> String { format("{:?}", xs) }
+fn take_empty(xs: [i64]) -> String { format("{:?}", xs) }
+
+struct Point { x: i64, y: i64 }
+
+fn take_struct_slice(xs: [Point]) -> String { format("{:?}", xs) }
+fn take_tuple_slice(xs: [(i64, String)]) -> String { format("{:?}", xs) }
+
+fn main() {
+    let arr = [1, 2, 3]
+    let vec = #[1, 2, 3]
+    println("array        {:?}", arr)
+    println("vec          {:?}", vec)
+    println("slice of arr {}", take_slice(arr))
+    println("slice of vec {}", take_slice(vec))
+    println("empty slice  {}", take_empty(#[]))
+
+    println("bytes        {}", take_bytes(#[1u8, 2u8, 255u8]))
+    println("floats       {}", take_float_slice(#[1.5, 2.5]))
+    println("bools        {}", take_bool_slice(#[true, false]))
+    println("strings      {}", take_str_slice(#["a", "b"]))
+
+    // An element that is itself a sequence keeps its own spelling.
+    let rows = #[#[1, 2], #[3]]
+    println("vec of vec   {:?}", rows)
+
+    println("structs      {}", take_struct_slice(#[Point { x: 1, y: 2 }]))
+    println("tuples       {}", take_tuple_slice(#[(1, "a"), (2, "b")]))
+
+    // A String's bytes are a `Vec<u8>`, which keeps the Vec spelling.
+    println("as_bytes     {:?}", "abc".as_bytes())
+}

@@ -167,6 +167,10 @@ pub(super) enum PrintKind {
     Char,
     /// `Vec<i64>` (or any 8-byte-elem Vec): formatted at runtime
     /// via `gos_rt_vec_format_i64` into a `[v0, v1, …]` string.
+    /// The same rendering as the kind it wraps, in the bare-bracket spelling
+    /// a fixed array and a slice take. A slice shares the `Vec` runtime
+    /// representation, so only the static type tells them apart.
+    Seq(Box<PrintKind>),
     VecI64,
     /// `Vec<u64>` / `Vec<usize>`: the same slots read as unsigned, so an
     /// element at or above `i64::MAX` renders as its own decimal.
@@ -662,19 +666,28 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                         _ => PrintKind::Unsupported("array"),
                     }
                 }
-                TyKind::Slice(elem) => match tcx.kind_of(*elem) {
-                    TyKind::Int(IntTy::U64 | IntTy::Usize) => PrintKind::VecUint,
-                    TyKind::Int(_) => PrintKind::VecI64,
-                    TyKind::Float(_) => PrintKind::VecF64,
-                    TyKind::Bool => PrintKind::VecBool,
-                    TyKind::String => PrintKind::VecString,
-                    TyKind::Vec(inner) => match tcx.kind_of(*inner) {
-                        TyKind::Int(_) => PrintKind::VecVecI64,
-                        TyKind::String => PrintKind::VecVecString,
-                        _ => PrintKind::Unsupported("nested slice"),
-                    },
-                    _ => PrintKind::Unsupported("slice"),
-                },
+                // A slice renders in bare brackets over the same runtime
+                // object a `Vec` carries, so it wraps the `Vec` kind rather
+                // than naming a parallel set of its own.
+                TyKind::Slice(elem) => {
+                    let inner = match tcx.kind_of(*elem) {
+                        TyKind::Int(IntTy::U64 | IntTy::Usize) => PrintKind::VecUint,
+                        TyKind::Int(_) => PrintKind::VecI64,
+                        TyKind::Float(_) => PrintKind::VecF64,
+                        TyKind::Bool => PrintKind::VecBool,
+                        TyKind::String => PrintKind::VecString,
+                        TyKind::Vec(inner) => match tcx.kind_of(*inner) {
+                            TyKind::Int(_) => PrintKind::VecVecI64,
+                            TyKind::String => PrintKind::VecVecString,
+                            _ => PrintKind::Unsupported("nested slice"),
+                        },
+                        _ => PrintKind::Unsupported("slice"),
+                    };
+                    match inner {
+                        PrintKind::Unsupported(reason) => PrintKind::Unsupported(reason),
+                        kind => PrintKind::Seq(Box::new(kind)),
+                    }
+                }
                 TyKind::Vec(elem) => match tcx.kind_of(*elem) {
                     TyKind::Int(IntTy::U64 | IntTy::Usize) => PrintKind::VecUint,
                     TyKind::Int(_) => PrintKind::VecI64,

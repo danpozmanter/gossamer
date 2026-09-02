@@ -19,15 +19,29 @@ use std::os::raw::c_char;
 
 use super::*;
 
+/// The opening bracket a sequence renders under.
+///
+/// A `Vec` is written `#[..]` and a fixed array or slice `[..]`, and the two
+/// share one runtime representation - so the caller's static type is the only
+/// thing that knows which spelling a value takes, and it says so here.
+fn seq_open(bare: i32) -> &'static str {
+    if bare == 0 { "#[" } else { "[" }
+}
+
+/// The same choice for a sequence with nothing in it.
+fn seq_empty(bare: i32) -> &'static str {
+    if bare == 0 { "#[]" } else { "[]" }
+}
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_format_i64(v: *const GosVec) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_vec_format_i64(v: *const GosVec, bare: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 4);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -47,14 +61,14 @@ pub unsafe extern "C" fn gos_rt_vec_format_i64(v: *const GosVec) -> *mut c_char 
 /// rather than the negative the same bits spell. Returns a fresh String
 /// pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_format_u64(v: *const GosVec) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_vec_format_u64(v: *const GosVec, bare: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 4);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -70,14 +84,14 @@ pub unsafe extern "C" fn gos_rt_vec_format_u64(v: *const GosVec) -> *mut c_char 
 /// Renders an `f64`-elem `Vec` as `[v0, v1, …]`. Returns a fresh
 /// String pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_format_f64(v: *const GosVec) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_vec_format_f64(v: *const GosVec, bare: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 6);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -94,14 +108,14 @@ pub unsafe extern "C" fn gos_rt_vec_format_f64(v: *const GosVec) -> *mut c_char 
 /// Renders a `bool`-elem `Vec` as `[true, false, …]`. Returns a
 /// fresh String pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_format_bool(v: *const GosVec) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_vec_format_bool(v: *const GosVec, bare: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 6);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -119,14 +133,14 @@ pub unsafe extern "C" fn gos_rt_vec_format_bool(v: *const GosVec) -> *mut c_char
 /// full slot each and hold the scalar value's code point. Returns a
 /// fresh String pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_format_char(v: *const GosVec) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_vec_format_char(v: *const GosVec, bare: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 3);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -151,14 +165,15 @@ pub unsafe extern "C" fn gos_rt_vec_format_adt(
     v: *const GosVec,
     fmt: *const std::ffi::c_void,
     by_ref: i32,
+    bare: i32,
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() || fmt.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -187,10 +202,11 @@ pub unsafe extern "C" fn gos_rt_vec_format_desc(
     v: *const GosVec,
     tags: *const u8,
     desc: i64,
+    bare: i32,
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() || tags.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let tags = unsafe { crate::c_abi::map::DescStream::new(tags) };
         let vec = unsafe { &*v };
@@ -203,7 +219,7 @@ pub unsafe extern "C" fn gos_rt_vec_format_desc(
             crate::c_abi::map::Storage::ByWord
         };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -225,14 +241,14 @@ pub unsafe extern "C" fn gos_rt_vec_format_desc(
 /// # Safety
 /// `v` is a live `GosVec` whose elements are `GosMap` handles.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_format_map(v: *const GosVec) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_vec_format_map(v: *const GosVec, bare: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -262,14 +278,15 @@ pub unsafe extern "C" fn gos_rt_vec_format_tuple(
     v: *const GosVec,
     n: i64,
     tags: *const u8,
+    bare: i32,
 ) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() || tags.is_null() || n <= 0 {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 16);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -298,14 +315,14 @@ pub unsafe extern "C" fn gos_rt_vec_format_tuple(
 /// an 8-byte word and dereference. Returns a fresh String
 /// pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_format_string(v: *const GosVec) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_vec_format_string(v: *const GosVec, bare: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -328,14 +345,14 @@ pub unsafe extern "C" fn gos_rt_vec_format_string(v: *const GosVec) -> *mut c_ch
 /// stringify each inner `Vec<i64>`. Returns a fresh String
 /// pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec, bare: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -347,7 +364,7 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec) -> *mut c_c
             if inner_ptr.is_null() {
                 out.push_str("#[]");
             } else {
-                let rendered = unsafe { gos_rt_vec_format_i64(inner_ptr) };
+                let rendered = unsafe { gos_rt_vec_format_i64(inner_ptr, 0) };
                 if rendered.is_null() {
                     out.push_str("#[]");
                 } else {
@@ -364,14 +381,14 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec) -> *mut c_c
 /// `*mut GosVec` (8-byte slot) whose rows render through the `f64` element
 /// formatter. Returns a fresh String pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_format_vec_f64(v: *const GosVec) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_vec_format_vec_f64(v: *const GosVec, bare: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -383,7 +400,7 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_f64(v: *const GosVec) -> *mut c_c
             if inner_ptr.is_null() {
                 out.push_str("#[]");
             } else {
-                let rendered = unsafe { gos_rt_vec_format_f64(inner_ptr) };
+                let rendered = unsafe { gos_rt_vec_format_f64(inner_ptr, 0) };
                 if rendered.is_null() {
                     out.push_str("#[]");
                 } else {
@@ -401,14 +418,14 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_f64(v: *const GosVec) -> *mut c_c
 /// stringify each inner `Vec<String>`. Returns a fresh String
 /// pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_format_vec_string(v: *const GosVec) -> *mut c_char {
+pub unsafe extern "C" fn gos_rt_vec_format_vec_string(v: *const GosVec, bare: i32) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
         if v.is_null() {
-            return alloc_cstring(b"#[]");
+            return alloc_cstring(seq_empty(bare).as_bytes());
         }
         let vec = unsafe { &*v };
         let mut out = String::with_capacity(2 + (vec.len as usize) * 8);
-        out.push_str("#[");
+        out.push_str(seq_open(bare));
         for i in 0..vec.len {
             if i > 0 {
                 out.push_str(", ");
@@ -420,7 +437,7 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_string(v: *const GosVec) -> *mut 
             if inner_ptr.is_null() {
                 out.push_str("#[]");
             } else {
-                let rendered = unsafe { gos_rt_vec_format_string(inner_ptr) };
+                let rendered = unsafe { gos_rt_vec_format_string(inner_ptr, 0) };
                 if rendered.is_null() {
                     out.push_str("#[]");
                 } else {

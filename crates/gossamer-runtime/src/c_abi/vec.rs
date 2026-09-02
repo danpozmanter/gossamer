@@ -2543,8 +2543,8 @@ fn debug_payload_string(payload: i64, kind: i64) -> String {
         // A collection payload arrives as its `GosVec` pointer, so the
         // element formatter that renders a bare `{:?}` of that vec renders
         // it inside the variant too.
-        6 => unsafe { take_rt_string(super::btmap::gos_rt_vec_format_i64(vec_ptr(payload))) },
-        7 => unsafe { take_rt_string(super::btmap::gos_rt_vec_format_string(vec_ptr(payload))) },
+        6 => unsafe { take_rt_string(super::btmap::gos_rt_vec_format_i64(vec_ptr(payload), 0)) },
+        7 => unsafe { take_rt_string(super::btmap::gos_rt_vec_format_string(vec_ptr(payload), 0)) },
         8 => unsafe {
             take_rt_string(crate::c_abi::gos_rt_json_display(
                 std::ptr::with_exposed_provenance(payload as usize),

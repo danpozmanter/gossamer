@@ -192,6 +192,11 @@ pub(super) fn lower_intrinsic_call_io_math(
                 } else {
                     kind
                 };
+                // A slice carries the `Vec` kind under the bare spelling.
+                let (kind, bare) = match kind {
+                    PrintKind::Seq(inner) => (*inner, true),
+                    other => (other, false),
+                };
                 match kind {
                     PrintKind::StrPtr => {
                         let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
@@ -274,6 +279,9 @@ pub(super) fn lower_intrinsic_call_io_math(
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[c]);
                     }
+                    // The spelling was taken off the kind above, so a
+                    // sequence reaching here carries the kind it wraps.
+                    PrintKind::Seq(_) => unreachable!("the sequence spelling is unwrapped above"),
                     PrintKind::VecI64
                     | PrintKind::VecUint
                     | PrintKind::VecF64
@@ -291,10 +299,15 @@ pub(super) fn lower_intrinsic_call_io_math(
                             PrintKind::VecVecString => "gos_rt_vec_format_vec_string",
                             _ => unreachable!(),
                         };
-                        let format_fn =
-                            intrinsics.extern_fn(module, helper, &[ptr_ty], &[ptr_ty])?;
+                        let format_fn = intrinsics.extern_fn(
+                            module,
+                            helper,
+                            &[ptr_ty, types::I32],
+                            &[ptr_ty],
+                        )?;
                         let format_ref = module.declare_func_in_func(format_fn, builder.func);
-                        let call = builder.ins().call(format_ref, &[value]);
+                        let spelling = builder.ins().iconst(types::I32, i64::from(bare));
+                        let call = builder.ins().call(format_ref, &[value, spelling]);
                         let s = builder.inst_results(call)[0];
                         let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                         let fref = module.declare_func_in_func(f, builder.func);

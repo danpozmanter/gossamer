@@ -520,13 +520,30 @@ impl<'a> Lowerer<'a> {
     /// kinds carry the static length so the helper knows the
     /// flat buffer's bounds.
     pub(crate) fn emit_aggregate_format(&mut self, kind: ConcatKind, value: &str) -> String {
+        self.emit_aggregate_format_spelled(kind, value, false)
+    }
+
+    /// The same rendering under a chosen sequence spelling: a `Vec` writes
+    /// `#[..]` and a fixed array or slice `[..]`. The two share one runtime
+    /// representation, so the static type at the call site is what decides,
+    /// and it says so through `bare`.
+    pub(crate) fn emit_aggregate_format_spelled(
+        &mut self,
+        kind: ConcatKind,
+        value: &str,
+        bare: bool,
+    ) -> String {
+        if let ConcatKind::Seq(inner) = kind {
+            return self.emit_aggregate_format_spelled(*inner, value, true);
+        }
+        let bare = i32::from(bare);
         let dest = self.fresh();
         match kind {
             ConcatKind::VecI64 => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_i64");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_i64(ptr {value})"
+                    "  {dest} = call ptr @gos_rt_vec_format_i64(ptr {value}, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -534,7 +551,7 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_u64");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_u64(ptr {value})"
+                    "  {dest} = call ptr @gos_rt_vec_format_u64(ptr {value}, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -542,7 +559,7 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_f64");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_f64(ptr {value})"
+                    "  {dest} = call ptr @gos_rt_vec_format_f64(ptr {value}, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -550,7 +567,7 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_bool");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_bool(ptr {value})"
+                    "  {dest} = call ptr @gos_rt_vec_format_bool(ptr {value}, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -558,7 +575,7 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_string");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_string(ptr {value})"
+                    "  {dest} = call ptr @gos_rt_vec_format_string(ptr {value}, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -566,7 +583,7 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_char");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_char(ptr {value})"
+                    "  {dest} = call ptr @gos_rt_vec_format_char(ptr {value}, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -575,7 +592,7 @@ impl<'a> Lowerer<'a> {
                 let by_ref = i32::from(by_ref);
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_adt(ptr {value}, ptr @\"{fmt}\", i32 {by_ref})"
+                    "  {dest} = call ptr @gos_rt_vec_format_adt(ptr {value}, ptr @\"{fmt}\", i32 {by_ref}, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -612,7 +629,7 @@ impl<'a> Lowerer<'a> {
                 let global = self.intern_value_descriptor(desc);
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_desc(ptr {value}, ptr {global}, i64 0)"
+                    "  {dest} = call ptr @gos_rt_vec_format_desc(ptr {value}, ptr {global}, i64 0, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -629,7 +646,7 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_map");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_map(ptr {value})"
+                    "  {dest} = call ptr @gos_rt_vec_format_map(ptr {value}, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -639,7 +656,7 @@ impl<'a> Lowerer<'a> {
                 let (tags_global, _) = self.strings.borrow_mut().intern(&tag_str);
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_tuple(ptr {value}, i64 {arity}, ptr {tags_global})"
+                    "  {dest} = call ptr @gos_rt_vec_format_tuple(ptr {value}, i64 {arity}, ptr {tags_global}, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -647,7 +664,7 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_vec_i64");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_vec_i64(ptr {value})"
+                    "  {dest} = call ptr @gos_rt_vec_format_vec_i64(ptr {value}, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -655,7 +672,7 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_vec_f64");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_vec_f64(ptr {value})"
+                    "  {dest} = call ptr @gos_rt_vec_format_vec_f64(ptr {value}, i32 {bare})"
                 )
                 .unwrap();
             }
@@ -663,7 +680,7 @@ impl<'a> Lowerer<'a> {
                 declare_rt(&mut self.runtime_refs, "gos_rt_vec_format_vec_string");
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_vec_format_vec_string(ptr {value})"
+                    "  {dest} = call ptr @gos_rt_vec_format_vec_string(ptr {value}, i32 {bare})"
                 )
                 .unwrap();
             }

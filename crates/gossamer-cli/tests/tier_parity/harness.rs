@@ -453,6 +453,10 @@ const SPECS: &[Spec] = &[
     // bytes helpers, the encoders - have to read all of them and answer the
     // same thing on every tier.
     spec("feature-testing-examples/byte_buffer_representations.gos"),
+    // A slice and a `Vec` share one runtime representation and are written
+    // differently, so the spelling has to come from the static type on every
+    // tier rather than from the value the formatter is handed.
+    spec("feature-testing-examples/sequence_spelling.gos"),
     // In-place append fast paths: a tail-position `v.push(x)` inside an `if` /
     // `match` arm, `s += x` / `*out += x`, and the `&mut`-arg write-back cell
     // move (with its clone fallback when a sibling argument reads the same

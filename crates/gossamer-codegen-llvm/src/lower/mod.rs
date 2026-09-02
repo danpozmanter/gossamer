@@ -302,6 +302,10 @@ pub(super) enum ConcatKind {
     VecMap,
     /// Vec whose elements are described by a descriptor stream.
     VecDesc(ValueDesc),
+    /// The same rendering as the kind it wraps, written in the bare-bracket
+    /// spelling a fixed array and a slice take. A slice shares the `Vec`
+    /// runtime representation, so only the static type tells them apart.
+    Seq(Box<ConcatKind>),
     /// A tuple with a field no flat tag describes, rendered by walking the
     /// tuple's own descriptor over its slot buffer.
     TupleDesc(ValueDesc),

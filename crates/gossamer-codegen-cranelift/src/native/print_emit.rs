@@ -208,7 +208,15 @@ pub(super) fn emit_per_arg_print(
         } else {
             kind
         };
+        // A slice carries the `Vec` kind under the bare-bracket spelling.
+        let (kind, bare) = match kind {
+            PrintKind::Seq(inner) => (*inner, true),
+            other => (other, false),
+        };
         match kind {
+            // The spelling was taken off the kind above, so a sequence
+            // reaching here carries the kind it wraps.
+            PrintKind::Seq(_) => unreachable!("the sequence spelling is unwrapped above"),
             PrintKind::StrPtr => {
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[value]);
@@ -273,6 +281,7 @@ pub(super) fn emit_per_arg_print(
                 value,
                 print_str,
                 intrinsics,
+                Some(bare),
             )?,
             PrintKind::VecUint => emit_vec_print(
                 module,
@@ -281,6 +290,7 @@ pub(super) fn emit_per_arg_print(
                 value,
                 print_str,
                 intrinsics,
+                Some(bare),
             )?,
             PrintKind::VecF64 => emit_vec_print(
                 module,
@@ -289,6 +299,7 @@ pub(super) fn emit_per_arg_print(
                 value,
                 print_str,
                 intrinsics,
+                Some(bare),
             )?,
             PrintKind::VecBool => emit_vec_print(
                 module,
@@ -297,6 +308,7 @@ pub(super) fn emit_per_arg_print(
                 value,
                 print_str,
                 intrinsics,
+                Some(bare),
             )?,
             PrintKind::VecString => emit_vec_print(
                 module,
@@ -305,6 +317,7 @@ pub(super) fn emit_per_arg_print(
                 value,
                 print_str,
                 intrinsics,
+                Some(bare),
             )?,
             PrintKind::VecVecI64 => emit_vec_print(
                 module,
@@ -313,6 +326,7 @@ pub(super) fn emit_per_arg_print(
                 value,
                 print_str,
                 intrinsics,
+                Some(bare),
             )?,
             PrintKind::VecVecString => emit_vec_print(
                 module,
@@ -321,6 +335,7 @@ pub(super) fn emit_per_arg_print(
                 value,
                 print_str,
                 intrinsics,
+                Some(bare),
             )?,
             PrintKind::ArrI64(len) => emit_arr_print(
                 module,
@@ -395,6 +410,7 @@ pub(super) fn emit_per_arg_print(
                 value,
                 print_str,
                 intrinsics,
+                None,
             )?,
             PrintKind::DynValue => emit_vec_print(
                 module,
@@ -403,6 +419,7 @@ pub(super) fn emit_per_arg_print(
                 value,
                 print_str,
                 intrinsics,
+                None,
             )?,
             PrintKind::ErrorMessage => {
                 // Display renders the colon-joined cause chain;
@@ -564,6 +581,11 @@ pub(super) fn emit_arr_arr_print(
     free_rendered_string(module, builder, intrinsics, result)
 }
 
+/// Renders `value` through `helper_name` and prints it.
+///
+/// `bare` is `Some` for a helper that takes the sequence spelling - a `Vec`
+/// writes `#[..]` and a slice `[..]` - and `None` for one rendering a shape
+/// with only one way to write it.
 pub(super) fn emit_vec_print(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -571,11 +593,22 @@ pub(super) fn emit_vec_print(
     value: ir::Value,
     print_str: cranelift_module::FuncId,
     intrinsics: &mut IntrinsicContext,
+    bare: Option<bool>,
 ) -> Result<()> {
     let ptr_ty = module.target_config().pointer_type();
-    let f = intrinsics.extern_fn(module, helper_name, &[ptr_ty], &[ptr_ty])?;
+    let params: &[ir::Type] = match bare {
+        Some(_) => &[ptr_ty, types::I32],
+        None => &[ptr_ty],
+    };
+    let f = intrinsics.extern_fn(module, helper_name, params, &[ptr_ty])?;
     let fref = module.declare_func_in_func(f, builder.func);
-    let call = builder.ins().call(fref, &[value]);
+    let call = match bare {
+        Some(bare) => {
+            let spelling = builder.ins().iconst(types::I32, i64::from(bare));
+            builder.ins().call(fref, &[value, spelling])
+        }
+        None => builder.ins().call(fref, &[value]),
+    };
     let s = builder.inst_results(call)[0];
     let pref = module.declare_func_in_func(print_str, builder.func);
     builder.ins().call(pref, &[s]);
@@ -741,7 +774,15 @@ pub(super) fn emit_args_to_concat_string(
         } else {
             kind
         };
+        // A slice carries the `Vec` kind under the bare-bracket spelling.
+        let (kind, bare) = match kind {
+            PrintKind::Seq(inner) => (*inner, true),
+            other => (other, false),
+        };
         match kind {
+            // The spelling was taken off the kind above, so a sequence
+            // reaching here carries the kind it wraps.
+            PrintKind::Seq(_) => unreachable!("the sequence spelling is unwrapped above"),
             PrintKind::StrPtr => {
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
@@ -818,9 +859,11 @@ pub(super) fn emit_args_to_concat_string(
                     PrintKind::VecVecString => "gos_rt_vec_format_vec_string",
                     _ => unreachable!(),
                 };
-                let format_fn = intrinsics.extern_fn(module, helper, &[ptr_ty], &[ptr_ty])?;
+                let format_fn =
+                    intrinsics.extern_fn(module, helper, &[ptr_ty, types::I32], &[ptr_ty])?;
                 let format_ref = module.declare_func_in_func(format_fn, builder.func);
-                let call = builder.ins().call(format_ref, &[value]);
+                let spelling = builder.ins().iconst(types::I32, i64::from(bare));
+                let call = builder.ins().call(format_ref, &[value, spelling]);
                 let s = builder.inst_results(call)[0];
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
