@@ -556,7 +556,7 @@ impl<'a> Builder<'a> {
     /// descriptor flattens them. `Vec` / nested-enum fields aren't keyable.
     pub(crate) fn key_descriptor(&self, ty: Ty) -> Option<String> {
         let mut out = String::new();
-        if self.append_key_descriptor(ty, &mut out) && !out.is_empty() {
+        if self.append_key_descriptor(ty, &mut out) {
             Some(out)
         } else {
             None
@@ -620,11 +620,11 @@ impl<'a> Builder<'a> {
                     return false;
                 }
                 let fields = self.tcx.adt_field_tys(*def, substs).map(<[Ty]>::to_vec);
+                // A field-less struct contributes no slots: every value of it
+                // holds the same (empty) content, so they all key one entry.
                 match fields {
-                    Some(fields) if !fields.is_empty() => {
-                        fields.iter().all(|f| self.append_key_descriptor(*f, out))
-                    }
-                    _ => false,
+                    Some(fields) => fields.iter().all(|f| self.append_key_descriptor(*f, out)),
+                    None => false,
                 }
             }
             _ => false,

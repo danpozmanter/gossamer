@@ -382,6 +382,7 @@ feature-testing-examples/typing_multi_bound.gos	entry shape
 feature-testing-examples/u64_unsigned.gos	no hot body
 feature-testing-examples/unicode_full.gos	no hot body
 feature-testing-examples/unit_main_goroutine_drain.gos	cross-goroutine
+feature-testing-examples/unit_struct_values.gos	bytecode-only local
 feature-testing-examples/usize_compare.gos	no hot body
 feature-testing-examples/validate_errors.gos	no hot body
 feature-testing-examples/validate_errors_return.gos	bytecode-only local

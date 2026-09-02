@@ -158,9 +158,27 @@ impl<'a> Lowerer<'a> {
                 op_slots = 1;
             }
             if op_slots == 0 {
-                // A genuine zero-slot operand (Unit). Nothing to
-                // store; skip to the next operand without
-                // advancing `slot_idx`.
+                // A zero-width element still occupies the slot the
+                // aggregate's layout reserves for it - `slot_count` and
+                // `field_slot_offset` floor every element at one word - so
+                // the slot is zeroed and the next operand lands past it.
+                let dst = self.fresh();
+                if packed_bytes {
+                    writeln!(
+                        self.out,
+                        "  {dst} = getelementptr i8, ptr {base}, i64 {slot_idx}"
+                    )
+                    .unwrap();
+                    writeln!(self.out, "  store i8 0, ptr {dst}{tbaa}").unwrap();
+                } else {
+                    writeln!(
+                        self.out,
+                        "  {dst} = getelementptr i64, ptr {base}, i64 {slot_idx}"
+                    )
+                    .unwrap();
+                    writeln!(self.out, "  store i64 0, ptr {dst}{tbaa}").unwrap();
+                }
+                slot_idx += 1;
                 continue;
             }
             // A struct/tuple field whose own value is a single-slot

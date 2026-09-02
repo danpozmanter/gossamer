@@ -3011,14 +3011,14 @@ unsafe fn map_aggregate_entries(m: *const GosMap) -> Vec<DescEntry> {
     match &*storage {
         MapStorage::SkeyVal { entries, desc } => {
             let slots = desc.len();
-            if slots == 0 {
-                return Vec::new();
-            }
             let mut keys: Vec<&Box<[u8]>> = entries.keys().collect();
             keys.sort_by_cached_key(|key| skey_order(key, desc));
             keys.into_iter()
                 .filter_map(|k| {
-                    let mut key_slots = vec![0i64; slots];
+                    // A field-less key owns no slots, yet the renderer reads
+                    // through the buffer's address, so it always points at
+                    // storage of its own.
+                    let mut key_slots = vec![0i64; slots.max(1)];
                     if !decode_skey_into(k, desc, &mut key_slots) {
                         return None;
                     }
@@ -3974,10 +3974,9 @@ pub unsafe extern "C" fn gos_rt_map_keys_skey(m: *const GosMap) -> *mut GosVec {
             return unsafe { gos_rt_vec_new(8) };
         };
         let slots = desc.len();
-        if slots == 0 {
-            return unsafe { gos_rt_vec_new(8) };
-        }
-        let elem_bytes = (slots * 8) as u32;
+        // A field-less key occupies the one slot every inline aggregate is
+        // sized at, and decodes no content into it.
+        let elem_bytes = (slots.max(1) * 8) as u32;
         let mut keys: Vec<&[u8]> = entries.keys().map(|k| &**k).collect();
         keys.sort_by_cached_key(|key| skey_order(key, desc));
         let out = unsafe {
@@ -3987,7 +3986,7 @@ pub unsafe extern "C" fn gos_rt_map_keys_skey(m: *const GosMap) -> *mut GosVec {
                 vec_elem_kind::PRIMITIVE,
             )
         };
-        let mut slot_buf = vec![0i64; slots];
+        let mut slot_buf = vec![0i64; slots.max(1)];
         for key in keys {
             if !decode_skey_into(key, desc, &mut slot_buf) {
                 continue;

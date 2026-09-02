@@ -167,6 +167,10 @@ const SPECS: &[Spec] = &[
         ..spec("examples/cli_args.gos")
     },
     spec("feature-testing-examples/triple_quoted_strings.gos"),
+    // A field-less struct is the zero-slot aggregate: it compares, orders,
+    // renders, keys a map, and pads a tuple element identically on every
+    // tier, whether it is spelled `Marker` or `Empty {}`.
+    spec("feature-testing-examples/unit_struct_values.gos"),
     // `env::vars()` crosses the C-ABI as a Map<String, String>. The
     // fixture reads back only names it set itself, so the transcript is
     // host-independent whatever else the environment carries.

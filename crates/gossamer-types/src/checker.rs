@@ -3224,11 +3224,12 @@ impl<'a> TypeChecker<'a> {
             self.field_homes
                 .insert((def, name), (module_path.to_vec(), visibility));
         }
-        if !matches!(decl.body, StructBody::Unit) {
-            let tys: Vec<Ty> = list.iter().map(|(_, t)| *t).collect();
-            self.tcx.register_struct_fields(def, tys);
-            self.struct_fields.insert(def, list);
-        }
+        // A unit struct is the zero-field shape `Unit {}` also spells, so it
+        // carries the same registered (empty) layout: the tiers read its
+        // fields, its slots, and its key content through one description.
+        let tys: Vec<Ty> = list.iter().map(|(_, t)| *t).collect();
+        self.tcx.register_struct_fields(def, tys);
+        self.struct_fields.insert(def, list);
         if matches!(decl.body, StructBody::Tuple(_)) {
             self.tcx.register_tuple_struct(def.local);
         }

@@ -80,7 +80,11 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
                     classified.push((ty, SerdeShape::Tuple(typed)));
                 }
             }
-            StructBody::Unit => {}
+            // A unit struct is the zero-field named shape, so it encodes as
+            // the empty object `Unit {}` encodes as.
+            StructBody::Unit => {
+                classified.push((ty, SerdeShape::Named(Vec::new(), HashSet::new())));
+            }
         }
     }
 
@@ -913,11 +917,7 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
         // lacks one, so `{}` / `{:?}` lowers on the compiled tiers exactly as it
         // renders on the VM.
         let implicit_target = match &item.kind {
-            ItemKind::Struct(d)
-                if matches!(&d.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
-            {
-                Some(&d.name.name)
-            }
+            ItemKind::Struct(d) => Some(&d.name.name),
             ItemKind::Enum(d) => Some(&d.name.name),
             _ => None,
         };
@@ -988,7 +988,15 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
                         &aliases,
                     );
                 }
-                StructBody::Unit => {}
+                // A unit struct carries no fields, so it takes the same
+                // derived bodies an empty named struct takes: every pair of
+                // values is equal, and every rendering is the bare shape.
+                StructBody::Unit => {
+                    let ty = TyId::new(&module, &decl.name.name);
+                    emit_struct_derive_impl(
+                        &mut out, decl, &ty, &[], &derives, &struct_names, &aliases,
+                    );
+                }
             },
             ItemKind::Enum(decl) => {
                 let ty = TyId::new(&module, &decl.name.name);

@@ -1,0 +1,37 @@
+struct Marker
+struct Empty {}
+struct Holder { m: Marker, n: i64 }
+
+fn nothing() {}
+
+fn main() {
+    let a = Marker
+    let b = Marker {}
+    println("{} {} {} {}", a == b, a < b, a, b)
+    println("{} {:?}", Empty {}, Empty {})
+
+    let mut counts = Map::new()
+    counts.insert(Marker, 1)
+    counts.insert(Marker {}, 2)
+    println("{} {} {}", counts.len(), counts, counts.keys())
+    println("{}", counts.contains_key(Marker))
+
+    let mut seen = Set::new()
+    seen.insert(Empty {})
+    seen.insert(Empty {})
+    println("{} {} {}", seen.len(), seen, seen.to_vec())
+
+    let mut markers = #[Marker, Marker]
+    markers.sort()
+    println("{} {}", markers.len(), markers)
+
+    let one = Holder { m: Marker, n: 1 }
+    let two = Holder { m: Marker, n: 2 }
+    println("{} {} {}", one == two, one < two, two)
+
+    let literal = { Marker: 9 }
+    println("{}", literal)
+
+    let padded = (nothing(), 7, 8)
+    println("{} {}", padded.1, padded.2)
+}

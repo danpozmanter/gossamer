@@ -61,6 +61,17 @@
   function: a helper that took a collection and a `&mut` store copied the
   collection on every call. Forwarding a four-element `Vec<String>` through
   one call layer cost 118ns and now costs nothing.
+- A field-less struct carries the structural comparison, ordering, rendering,
+  and JSON encoding every other struct carries. `struct Marker` reported GT0002
+  for a `cmp` the compiler had synthesized a call to and nothing had written, so
+  a program that declared one did not compile at all, and `struct Empty {}`
+  compiled but keyed a `Map` or a `Set` by address under `gos build`, so two
+  equal values took two entries where the interpreter took one. The bare and
+  braced spellings now describe one zero-field type everywhere: its field
+  layout, its key content, its encoding, and each tier's rendering.
+- A zero-width element occupies the slot a tuple or struct reserves for it on
+  the compiled tiers. `(nothing(), 7, 8)` wrote 7 into the unit's slot, so `.1`
+  answered 8 and `.2` answered a stack address.
 
 ## 0.58.7 - Byte buffers read the same everywhere
 
