@@ -16307,7 +16307,15 @@ impl<'a> TypeChecker<'a> {
         if let Some(last) = path.segments.last()
             && !matches!(
                 self.resolutions.get(node),
-                Some(Resolution::Def { .. } | Resolution::Primitive(_))
+                Some(
+                    Resolution::Def {
+                        kind: gossamer_resolve::DefKind::Struct
+                            | gossamer_resolve::DefKind::Enum
+                            | gossamer_resolve::DefKind::TypeAlias
+                            | gossamer_resolve::DefKind::TypeParam,
+                        ..
+                    } | Resolution::Primitive(_)
+                )
             )
             && (STDLIB_TRAIT_NAMES.contains(&last.name.name.as_str())
                 || self.trait_own_methods.contains_key(&last.name.name))

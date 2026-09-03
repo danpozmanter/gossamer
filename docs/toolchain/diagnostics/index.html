@@ -484,6 +484,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -572,6 +574,34 @@
 
 
     Arena blocks
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../../language/builtin_traits/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Built-in traits
 
 
 
@@ -1869,6 +1899,28 @@
     <span class="md-ellipsis">
 
         GT0083
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gt0084" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GT0084
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gt0085" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GT0085
 
     </span>
   </a>
@@ -3575,6 +3627,28 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#gt0084" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GT0084
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
+  <a href="#gt0085" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        GT0085
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#gp0052" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -4145,6 +4219,16 @@ version. This page is auto-generated from the catalogue in
 <td>write through a value that is not a reference</td>
 </tr>
 <tr>
+<td><a href="#gt0084"><code>GT0084</code></a></td>
+<td>Types</td>
+<td>impl of a trait the language supplies itself</td>
+</tr>
+<tr>
+<td><a href="#gt0085"><code>GT0085</code></a></td>
+<td>Types</td>
+<td>ordered container over a type that writes its own <code>cmp</code></td>
+</tr>
+<tr>
 <td><a href="#gp0052"><code>GP0052</code></a></td>
 <td>Parser</td>
 <td>build-time validated call without a literal</td>
@@ -4428,6 +4512,12 @@ version. This page is auto-generated from the catalogue in
 <h2 id="gt0083"><code>GT0083</code> <a id="gt0083"></a><a class="headerlink" href="#gt0083" title="Permanent link">&para;</a></h2>
 <p><strong>Types</strong> - write through a value that is not a reference</p>
 <p><code>*</code> reaches the place a reference names, and a value has no such place, so the write would reach nothing. Write the binding directly, or make the parameter <code>&amp;mut T</code> and pass <code>&amp;mut</code> at the call site.</p>
+<h2 id="gt0084"><code>GT0084</code> <a id="gt0084"></a><a class="headerlink" href="#gt0084" title="Permanent link">&para;</a></h2>
+<p><strong>Types</strong> - impl of a trait the language supplies itself</p>
+<p>Hashing, copying, release, marker safety, and the <code>Into</code> / <code>TryInto</code> / <code>IntoIterator</code> directions are the language's, not a per-type choice, so the block would declare a contract nothing dispatches through. The diagnostic names what the language does and what to write in its place - a <code>From</code> impl on the target, a <code>defer</code>, an inherent method - or remove the block.</p>
+<h2 id="gt0085"><code>GT0085</code> <a id="gt0085"></a><a class="headerlink" href="#gt0085" title="Permanent link">&para;</a></h2>
+<p><strong>Types</strong> - ordered container over a type that writes its own <code>cmp</code></p>
+<p>A heap, a <code>BTreeSet</code>, or a <code>BTreeMap</code> keeps its elements in the order they went in and reads them back with no comparator to call, so an element or key whose type writes its own <code>cmp</code> would silently not be ordered by it. A sequence orders on demand and does route through the type's <code>cmp</code>: sort a <code>Vec&lt;T&gt;</code>, or key the container on a value that carries the order.</p>
 <h2 id="gp0052"><code>GP0052</code> <a id="gp0052"></a><a class="headerlink" href="#gp0052" title="Permanent link">&para;</a></h2>
 <p><strong>Parser</strong> - build-time validated call without a literal</p>
 <p><code>sql::statement</code> was handed something other than a literal. The statement is checked while the program is compiled, so it has to be there to check; a statement built at run time is an ordinary <code>String</code> and needs no wrapper.</p>

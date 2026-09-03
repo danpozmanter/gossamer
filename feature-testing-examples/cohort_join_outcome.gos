@@ -1,0 +1,76 @@
+// A child's outcome reaches its joiner even when that child's own failure
+// cancels the cohort. The child delivers to the join handle before it reports
+// to the cohort, and a cancelled channel operation still hands over what has
+// already arrived - so `join()` answers the panic message or the returned
+// `Err` rather than a placeholder for the cancellation it raced.
+//
+// Every line is printed by the joining goroutine after `join()` has
+// synchronised, so the transcript is determined on the bytecode VM, the
+// Cranelift JIT, and the LLVM AOT tiers alike.
+
+use std::sync::channel_unbounded
+
+fn boom() -> i64 { panic("panic message") }
+
+fn bad() -> Result<i64, String> { Err("returned failure") }
+
+fn main() {
+    // A panic, joined outside any explicit cohort.
+    let plain = spawn(|| { let _ = boom() }, reason: "plain")
+    match plain.join() {
+        Ok(_) => println("plain: ok")
+        Err(e) => println("plain: {}", e)
+    }
+
+    // The same panic inside a cohort, whose fail-fast policy cancels on it.
+    let _ = cohort {
+        let child = spawn(|| { let _ = boom() }, reason: "panicking")
+        match child.join() {
+            Ok(_) => println("cohort panic: ok")
+            Err(e) => println("cohort panic: {}", e)
+        }
+    }
+
+    // A child that answers `Err` cancels the same way; the joiner still reads
+    // the value, so the handle answers `Ok` carrying the child's own `Err`.
+    let _ = cohort {
+        let child = spawn(|| bad(), reason: "failing")
+        match child.join() {
+            Ok(inner) => {
+                match inner {
+                    Ok(v) => println("cohort err: ok {}", v)
+                    Err(e) => println("cohort err: inner {}", e)
+                }
+            }
+            Err(e) => println("cohort err: outer {}", e)
+        }
+    }
+
+    // A child that returns normally is unaffected.
+    let _ = cohort {
+        let child = spawn(|| 42, reason: "fine")
+        match child.join() {
+            Ok(v) => println("cohort ok: {}", v)
+            Err(e) => println("cohort ok: {}", e)
+        }
+    }
+
+    // Under a cancelled cohort a send that needs no wait still delivers, and a
+    // recv and a select still hand over what the buffer holds: cancellation
+    // ends the waiting, not the delivery.
+    let _ = cohort {
+        let failer = spawn(|| { let _ = boom() }, reason: "canceller")
+        let _ = failer.join()
+
+        let tx, rx = channel_unbounded()
+        tx.send(7)
+        select {
+            v = rx.recv() => println("cancelled select: {:?}", v)
+            default => println("cancelled select: default")
+        }
+
+        let tx2, rx2 = channel_unbounded()
+        tx2.send(9)
+        println("cancelled recv: {:?}", rx2.recv())
+    }
+}

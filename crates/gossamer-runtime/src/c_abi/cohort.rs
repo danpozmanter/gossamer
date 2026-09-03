@@ -30,7 +30,7 @@
 //! child leaves through its own normal exit path and its `defer` frames
 //! and RC releases run in order.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -398,6 +398,11 @@ pub fn leave_child(id: i64, index: i64, failure: Option<String>) {
     let Some(node) = cohort_at(id) else {
         return;
     };
+    // Read and released before the state lock is taken. The joiner reaches
+    // `mark_handle_observed` on its own goroutine and holds the state lock
+    // while it consults the same set, so this path holding only one at a
+    // time is what leaves the two no cycle to deadlock on.
+    let observed = observed_ahead(id, index);
     let cancel_now;
     {
         let mut state = node.state.lock();
@@ -412,7 +417,7 @@ pub fn leave_child(id: i64, index: i64, failure: Option<String>) {
             state.failures.push(ChildFailure {
                 index,
                 message,
-                observed: false,
+                observed,
             });
             // Fail-fast winds the siblings down as soon as one child
             // fails; race does the same as soon as one succeeds.
@@ -591,8 +596,12 @@ fn pop_current() {
         CANCELLED_COHORTS.fetch_sub(1, Ordering::AcqRel);
     }
     // A handle nobody joined has no one left to mark it observed, so its
-    // entry retires with the cohort rather than living for the process.
+    // entry retires with the cohort rather than living for the process. An
+    // observation recorded ahead of its failure retires the same way: every
+    // child consumes its own on the way out, and this covers a cohort torn
+    // down before one of them got there.
     CHILD_HANDLES.lock().retain(|_, (cohort, _)| *cohort != id);
+    OBSERVED_AHEAD.lock().retain(|(cohort, _)| *cohort != id);
     if let Some(enclosing) = cohort_at(node.parent) {
         enclosing.children.lock().retain(|child| *child != id);
     }
@@ -706,8 +715,21 @@ pub fn note_child_handle(handle: usize, cohort: i64, index: i64) {
     CHILD_HANDLES.lock().insert(handle, (cohort, index));
 }
 
+/// Children whose outcome a joiner read before their failure was
+/// recorded, as `(cohort, index)`.
+///
+/// A child delivers its outcome to the join handle before it reports to
+/// its cohort, so the joiner can reach `mark_handle_observed` first. The
+/// observation is kept here until [`leave_child`] pushes the failure,
+/// which is born observed rather than orphaned.
+static OBSERVED_AHEAD: LazyLock<Mutex<HashSet<(i64, i64)>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
 /// Marks the child behind `handle` as observed: its outcome reached the
 /// program, so a failure it reported is not an orphaned one.
+///
+/// The failure may not be recorded yet, so an observation that arrives
+/// first is remembered rather than dropped.
 pub fn mark_handle_observed(handle: usize) {
     if handle == 0 {
         return;
@@ -718,12 +740,22 @@ pub fn mark_handle_observed(handle: usize) {
     };
     if let Some(node) = cohort_at(cohort) {
         let mut state = node.state.lock();
+        let mut found = false;
         for failure in &mut state.failures {
             if failure.index == index {
                 failure.observed = true;
+                found = true;
             }
         }
+        if !found {
+            OBSERVED_AHEAD.lock().insert((cohort, index));
+        }
     }
+}
+
+/// Whether a joiner already read this child's outcome.
+fn observed_ahead(cohort: i64, index: i64) -> bool {
+    OBSERVED_AHEAD.lock().remove(&(cohort, index))
 }
 
 /// Opens the process-wide root cohort that `main` runs inside.

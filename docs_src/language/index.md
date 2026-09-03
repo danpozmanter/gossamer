@@ -4,6 +4,7 @@ One page per language feature. Source is `crates/gossamer-std/src/manifest/featu
 
 | Feature | Summary |
 |---|---|
+| [Built-in traits](builtin_traits.md) | Every trait an `impl` header or a bound may name without declaring it. |
 | [`lang::let`](let.md) | Immutable binding. |
 | [`lang::let_mut`](let_mut.md) | Mutable bindings can be reassigned and can be the source of `&mut`. |
 | [`lang::if`](if.md) | Conditional expression. |

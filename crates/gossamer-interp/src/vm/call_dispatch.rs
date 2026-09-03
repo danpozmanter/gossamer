@@ -598,14 +598,20 @@ impl Vm {
                 }
                 Err(other) => Value::variant("Err", vec![Value::String(format!("{other}").into())]),
             };
+            // The outcome reaches the handle before the cohort is told.
+            // Reporting a failure under a fail-fast policy cancels the
+            // cohort, and cancelling wakes a joiner parked on this very
+            // handle - so telling the cohort first would hand that joiner a
+            // cancellation in place of the outcome it was waiting for. The
+            // send is what the joiner is waiting on, so it can never be the
+            // last thing running.
+            let _delivered = worker_channel.send(outcome);
             if cohort != 0 {
-                // Before the send: a joiner that wakes on the outcome must
-                // not mark a failure observed before it is recorded.
+                // A joiner may already have read the outcome and marked the
+                // child observed; `leave_child` picks that up, so a failure
+                // read through `join()` is not reported as orphaned at exit.
                 crate::stdlib_builtins::cohort::leave_child(cohort, index, failure);
             }
-            // This send delivers the join handle's result on a channel the
-            // joiner holds, so it can never be the last thing running.
-            let _delivered = worker_channel.send(outcome);
             crate::stdlib_builtins::cohort::unwind_open_cohorts();
         });
         Ok(Value::Channel(channel))

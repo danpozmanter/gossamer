@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.58.9 - Join outcomes under cancellation, trait catalog on the site
+
+- `handle.join()` answers the child's own outcome when that child's failure
+  cancels its cohort. A joiner parked on the handle was woken by the
+  cancellation the child had just triggered, before the child delivered, so a
+  panic that read `Err("boom")` outside a `cohort { }` read
+  `Err("join: handle channel closed")` on the bytecode VM inside one, and an
+  `Err` with an empty message on the Cranelift and LLVM tiers. A child now
+  reaches its handle before it reports to its cohort. A child answering `Err`
+  under a fail-fast policy lost its value the same way and is fixed with it.
+- A cancelled channel operation hands over what has already arrived.
+  Cancellation ends the waiting, not the delivery: `recv` drains the buffer
+  before it reports, `select` takes an arm that is already ready, and a send a
+  buffered channel can accept without blocking still delivers. The compiled
+  tiers discarded all three, so a value the VM handed over was lost under
+  `gos build`.
+- A trait written where a type belongs reports GT0071 for a trait declared in
+  the checked source, not only for one the language knows. `fn f(x: Area)` for
+  a user `trait Area` type-checked and then failed at the call site with
+  `type mismatch: expected adt#0`, naming an internal type the program never
+  wrote.
+- The docs site carries a built-in trait catalog at Language / Built-in traits:
+  every trait an `impl` header or a bound may name without declaring it, what
+  an `impl` of one writes, and what to write instead of one the language
+  supplies itself. The page is generated from the same table the checker and
+  `%info` read, under the drift gate `gos doc --emit-stdlib --check` runs.
+
 ## 0.58.8 - Read optimizations, trait discoverability in REPL
 
 - Discoverable traits in REPL. `%info Hash`, `%info Eq`,

@@ -779,6 +779,8 @@
 
 
 
+
+
     <li class="md-nav__item md-nav__item--section md-nav__item--nested">
 
 
@@ -867,6 +869,34 @@
 
 
     Arena blocks
+
+
+
+  </span>
+
+
+
+      </a>
+    </li>
+
+
+
+
+
+
+
+
+
+
+    <li class="md-nav__item">
+      <a href="../language/builtin_traits/" class="md-nav__link">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Built-in traits
 
 
 
@@ -3096,6 +3126,18 @@ block, so a second <code>impl</code> of the same pair - or an <code>impl Debug f
 <code>fn width(x: Display)</code> reports <code>GT0071</code>; bound a generic by the trait instead
 (<code>fn width&lt;T: Display&gt;(x: T)</code>). An <code>impl</code> header naming a trait nothing
 declares reports <code>GT0070</code>, which is what catches a misspelled trait name.</p>
+<p>The built-in traits an <code>impl</code> supplies are <code>Display</code> and <code>Debug</code>, the
+comparisons <code>PartialEq</code> / <code>Eq</code> (<code>fn eq</code>) and <code>PartialOrd</code> / <code>Ord</code> (<code>fn cmp</code>),
+<code>Clone</code>, <code>Default</code>, <code>Iterator</code> (<code>fn next</code>), the conversions <code>From</code> and
+<code>TryFrom</code>, and the operators <code>Add</code> <code>Sub</code> <code>Mul</code> <code>Div</code> <code>Rem</code> <code>Neg</code> <code>Not</code>
+<code>BitAnd</code> <code>BitOr</code> <code>BitXor</code> <code>Shl</code> <code>Shr</code> <code>Index</code> / <code>IndexMut</code>. <code>%info &lt;Trait&gt;</code> in
+the REPL answers any of them with the method to write.</p>
+<p>Every other built-in name is the language's own and rejects an <code>impl</code> with
+<code>GT0084</code>: hashing, copying, and release are automatic (<code>Hash</code>, <code>Copy</code>,
+<code>Drop</code>, <code>Send</code>, <code>Sync</code>, <code>Sized</code>), and <code>Into</code> / <code>TryInto</code> / <code>IntoIterator</code> name
+the direction opposite the one that is written - <code>x.into()</code> reads the <code>From</code>
+impl on the target, and <code>for v in x</code> drives <code>Iterator::next</code>. The diagnostic
+names what the language does and what to write in the block's place.</p>
 <h2 id="modules">Modules<a class="headerlink" href="#modules" title="Permanent link">&para;</a></h2>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>
 <a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>::<span class="p">{</span><span class="n">Handler</span><span class="p">,</span><span class="w"> </span><span class="n">Request</span><span class="p">,</span><span class="w"> </span><span class="n">Response</span><span class="p">}</span>

@@ -37,6 +37,7 @@ pub use arena_escape::{
 };
 pub use builtin_traits::{
     BUILTIN_TRAITS, BuiltinTrait, BuiltinTraitKind, ITERATOR_BOUND_METHODS, builtin_trait,
+    render_builtin_traits_markdown,
 };
 pub use checker::{
     STDLIB_TRAIT_NAMES, core_type_accepts_method, is_array_sequence_method,

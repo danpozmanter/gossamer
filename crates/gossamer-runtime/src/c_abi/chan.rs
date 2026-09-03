@@ -200,12 +200,6 @@ pub unsafe extern "C-unwind" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8
             0
         };
         loop {
-            // A cancelled cohort has no reader left to hand this value to,
-            // so the send stops waiting rather than pinning its child in a
-            // block the cohort is trying to wind down.
-            if super::cohort::current_is_cancelled() {
-                return false;
-            }
             let mut guard = chan.buf.lock();
             // A channel closed while this send was parked has no reader
             // left expecting the value, which is the same program error as
@@ -235,6 +229,14 @@ pub unsafe extern "C-unwind" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8
                 chan.last_sender
                     .store(i64::from(crate::race::current_gid()), Ordering::Release);
                 wake_one_recv(chan);
+                return false;
+            }
+            // A cancelled cohort has no reader left to wait for, so the send
+            // stops here rather than pinning its child in a block the cohort
+            // is winding down. The check sits after the paths that complete
+            // without waiting: cancellation ends the wait, not a delivery the
+            // channel could already take.
+            if super::cohort::current_is_cancelled() {
                 return false;
             }
             // Buffer full. Goroutines park; OS threads block. Either way,
@@ -434,9 +436,22 @@ pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 
         let bytes_len = chan.elem_bytes as usize;
         loop {
             // A cancelled cohort answers its children the way a closed
-            // channel does. The check precedes the buffer read so the
-            // answer does not depend on whether a sender arrived first.
+            // channel does: nothing more is coming. What already arrived is
+            // still handed over, because a closed channel drains before it
+            // answers, and cancellation says no more will be sent rather
+            // than that a delivered value is dropped. A join handle carries
+            // its child's outcome on this path, and the failure that
+            // cancelled the cohort is often the very value in the buffer.
             if super::cohort::current_is_cancelled() {
+                let mut guard = chan.buf.lock();
+                chan.sync_ready(storage_len(&guard));
+                if let Some(consumed_id) = pop_front(&mut guard, out, bytes_len) {
+                    chan.sync_ready(storage_len(&guard));
+                    drop(guard);
+                    record_chan_handoff(chan);
+                    wake_send_after_consume(chan, consumed_id);
+                    return 1;
+                }
                 return 0;
             }
             let mut guard = chan.buf.lock();
@@ -1185,13 +1200,6 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
             .collect();
         let default_index = arms.iter().position(|(k, _, _)| *k == 2);
         loop {
-            // A cancelled cohort makes every blocking arm behave the way a
-            // closed channel does, so a select under cancellation resolves
-            // instead of waiting for a partner that will never come.
-            if super::cohort::current_is_cancelled() {
-                builder.last_value = 0;
-                return default_index.map_or(0, |index| index as i64);
-            }
             for i in select_shuffle_indices(arms.len()) {
                 let (kind, c, v) = arms[i];
                 if kind == 0 {
@@ -1236,6 +1244,16 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
             }
             if let Some(idx) = default_index {
                 return idx as i64;
+            }
+            // A cancelled cohort makes every blocking arm behave the way a
+            // closed channel does, so a select under cancellation resolves
+            // instead of waiting for a partner that will never come. The
+            // check sits after the poll above: an arm that is already ready
+            // is taken, because cancellation ends the wait rather than
+            // discarding a value the channel is holding.
+            if super::cohort::current_is_cancelled() {
+                builder.last_value = 0;
+                return default_index.map_or(0, |index| index as i64);
             }
             // Nothing ready, no default: block until a channel changes, then
             // re-poll. Mirrors the single-channel recv/send park discipline,

@@ -69,6 +69,7 @@ nav:
       - language/index.md
       - Top-level statements: language/top_level_statements.md
       - Arena blocks: language/arena.md
+      - Built-in traits: language/builtin_traits.md
       - Cohorts: language/cohort.md
       - Comptime: language/comptime.md
       - Keyword arguments: language/keyword_arguments.md
@@ -127,6 +128,7 @@ not_in_nav: |
   !/language/index.md
   !/language/top_level_statements.md
   !/language/arena.md
+  !/language/builtin_traits.md
   !/language/cohort.md
   !/language/comptime.md
   !/language/keyword_arguments.md

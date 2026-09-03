@@ -177,6 +177,12 @@ is regenerated from `manifest::FEATURE_STATUS` by \
     );
     out.push_str("| Feature | Summary |\n");
     out.push_str("|---|---|\n");
+    // The trait catalog is not a feature-status entry - it is rendered from
+    // the checker's own table - so the index names it explicitly rather than
+    // leaving the one page a reader cannot reach from here.
+    out.push_str(
+        "| [Built-in traits](builtin_traits.md) | Every trait an `impl` header or a bound may name without declaring it. |\n",
+    );
     for entry in super::feature_status::FEATURE_STATUS {
         if !entry.path.starts_with("lang::") {
             continue;

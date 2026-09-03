@@ -214,6 +214,7 @@ const SPECS: &[Spec] = &[
     // even though the work inside them is concurrent.
     spec("feature-testing-examples/cohort_basics.gos"),
     spec("feature-testing-examples/cohort_cancel.gos"),
+    spec("feature-testing-examples/cohort_join_outcome.gos"),
     spec("examples/structured_concurrency.gos"),
     spec("feature-testing-examples/jit_map_local_promotion.gos"),
     // The same promotion for a map keyed by a tuple, struct, String-bearing

@@ -627,6 +627,102 @@ pub fn builtin_trait(name: &str) -> Option<&'static BuiltinTrait> {
     BUILTIN_TRAITS.iter().find(|entry| entry.name == name)
 }
 
+/// Renders the docs-site page cataloguing every trait the language knows.
+///
+/// The page is generated from [`BUILTIN_TRAITS`] so the site and the checker
+/// cannot disagree about which traits exist, what an `impl` of one must
+/// define, or what to write instead of one the language supplies outright.
+#[must_use]
+pub fn render_builtin_traits_markdown() -> String {
+    let mut out = String::with_capacity(8192);
+    out.push_str("# Built-in traits\n\n");
+    out.push_str(
+        "Traits the language knows by name: an `impl` header or a generic bound \
+         may name one without declaring it. Source is \
+         `crates/gossamer-types/src/builtin_traits.rs`; this page is regenerated \
+         from `BUILTIN_TRAITS` by `gos doc --emit-stdlib`.\n\n",
+    );
+    out.push_str("| Trait | Kind | An `impl` writes |\n|---|---|---|\n");
+    for entry in BUILTIN_TRAITS {
+        let kind = match entry.kind {
+            BuiltinTraitKind::Overridable => "overridable",
+            BuiltinTraitKind::Operator => "operator",
+            BuiltinTraitKind::Automatic => "automatic",
+        };
+        let writes = if entry.signature.is_empty() {
+            "nothing - the language supplies it".to_string()
+        } else {
+            format!("`{}`", entry.signature)
+        };
+        out.push_str(&format!(
+            "| [`{name}`](#{anchor}) | {kind} | {writes} |\n",
+            name = entry.name,
+            anchor = entry.name.to_lowercase(),
+        ));
+    }
+    push_kind_section(
+        &mut out,
+        BuiltinTraitKind::Overridable,
+        "Overridable",
+        "Every type already has this behaviour; an `impl` replaces the \
+         synthesized one. `#[derive(..)]` asks for the synthesized behaviour \
+         explicitly where a type needs it named.",
+    );
+    push_kind_section(
+        &mut out,
+        BuiltinTraitKind::Operator,
+        "Operators",
+        "The operator has no meaning for a user type until an `impl` supplies \
+         one. Each block defines the one method named below, and the operator \
+         dispatches to it.",
+    );
+    push_kind_section(
+        &mut out,
+        BuiltinTraitKind::Automatic,
+        "Supplied by the language",
+        "The language provides this behaviour outright, so an `impl` block \
+         would name a contract nothing dispatches through and is rejected. \
+         Each entry says what to write in its place.",
+    );
+    out
+}
+
+/// Appends the section for one trait kind, with an entry per trait.
+fn push_kind_section(out: &mut String, kind: BuiltinTraitKind, title: &str, blurb: &str) {
+    out.push_str(&format!("\n## {title}\n\n{blurb}\n"));
+    for entry in BUILTIN_TRAITS.iter().filter(|e| e.kind == kind) {
+        out.push_str(&format!("\n### `{}`\n\n", entry.name));
+        if let Some(module) = entry.module {
+            out.push_str(&format!("Declared by `{module}`.\n\n"));
+        }
+        out.push_str(&format!("{}\n", entry.doc));
+        if !entry.signature.is_empty() {
+            out.push_str(&format!(
+                "\n```gossamer\nimpl {} for Type {}\n```\n",
+                entry.name, entry.signature
+            ));
+        }
+        if !entry.instead.is_empty() {
+            out.push_str(&format!("\nInstead: {}\n", entry.instead));
+        }
+        if !entry.example.is_empty() {
+            out.push_str(&format!("\n```gossamer\n{}\n```\n", entry.example));
+        }
+        if !entry.bound_methods.is_empty() {
+            let methods: Vec<String> = entry
+                .bound_methods
+                .iter()
+                .map(|m| format!("`{m}`"))
+                .collect();
+            out.push_str(&format!(
+                "\nA bound naming `{}` licenses {} on a type parameter.\n",
+                entry.name,
+                methods.join(", ")
+            ));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{BUILTIN_TRAITS, BuiltinTraitKind, builtin_trait};

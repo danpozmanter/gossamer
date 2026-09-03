@@ -105,6 +105,7 @@ feature-testing-examples/cohort_cancel.gos	cross-goroutine
 feature-testing-examples/cohort_drain_deadline.gos	cross-goroutine
 feature-testing-examples/cohort_enumeration.gos	cross-goroutine
 feature-testing-examples/cohort_header_settings.gos	cross-goroutine
+feature-testing-examples/cohort_join_outcome.gos	bytecode-only local
 feature-testing-examples/cohort_library_combinators.gos	cross-goroutine
 feature-testing-examples/combinator_element_kinds.gos	entry shape
 feature-testing-examples/compress_bzip2.gos	no hot body

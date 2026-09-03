@@ -2667,10 +2667,16 @@ impl Channel {
         let mut registered = false;
         let outcome = loop {
             // A cancelled cohort answers its children the way a closed
-            // channel does: nothing more is coming. The check precedes the
-            // buffer read so the answer does not depend on whether a
-            // sender reached the channel first, matching `recv_with_cancel`.
+            // channel does: nothing more is coming. What already arrived is
+            // still handed over, because a closed channel drains before it
+            // answers `None` and cancellation says no more will be sent, not
+            // that a delivered value is dropped. A join handle carries its
+            // child's outcome on this path, and the failure that cancelled
+            // the cohort is often the very value waiting in the buffer.
             if crate::stdlib_builtins::cohort::current_is_cancelled() {
+                if let Some(msg) = guard.buf.pop_front() {
+                    break RecvOutcome::Value(msg.value);
+                }
                 break RecvOutcome::Closed;
             }
             if let Some(msg) = guard.buf.pop_front() {

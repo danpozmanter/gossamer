@@ -45,7 +45,14 @@ fn merge_handwritten(body: &str, on_disk: &str) -> String {
 /// directories.
 pub(crate) fn cmd_emit_stdlib(out_dir: &Path, check: bool) -> Result<()> {
     let stdlib_pages = gossamer_std::manifest::render_all_docs();
-    let language_pages = gossamer_std::manifest::render_all_language_docs();
+    let mut language_pages = gossamer_std::manifest::render_all_language_docs();
+    // The trait catalog is rendered from `gossamer_types::BUILTIN_TRAITS`
+    // rather than from the feature manifest, so the page and the checker
+    // cannot disagree about which traits exist or what an `impl` may define.
+    language_pages.push((
+        "builtin_traits".to_string(),
+        gossamer_types::render_builtin_traits_markdown(),
+    ));
     let language_dir = out_dir.parent().map_or_else(
         || Path::new("docs_src/language").to_path_buf(),
         |p| p.join("language"),

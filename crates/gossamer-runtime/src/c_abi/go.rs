@@ -101,11 +101,13 @@ impl Drop for SpawnOutcomeGuard {
             return;
         }
         // Unwinding: the goroutine panicked. `gos_rt_panic` stashed the
-        // message before raising; recover it (falling back to a generic
-        // note for a non-`gos_rt_panic` unwind) and hand the joiner an
-        // Err. The panic itself continues up to the coroutine wrapper,
-        // which isolates the goroutine.
-        let msg = super::panic::take_last_goroutine_panic()
+        // message before raising; read it (falling back to a generic note
+        // for a non-`gos_rt_panic` unwind) and hand the joiner an Err. The
+        // message is read without clearing it, because the cohort guard
+        // drops after this one and reports the same failure. The panic
+        // itself continues up to the coroutine wrapper, which isolates the
+        // goroutine.
+        let msg = super::panic::peek_last_goroutine_panic()
             .unwrap_or_else(|| "spawned goroutine panicked".to_string());
         let cstr = super::string::alloc_cstring(msg.as_bytes());
         deliver_outcome(self.ch_addr, 1, cstr as i64);
@@ -137,8 +139,11 @@ impl CohortChildGuard {
         let failure = if self.completed {
             self.failure.take()
         } else {
+            // Last observer on this unwind: the outcome guard has already
+            // delivered the same message, so this one clears it rather than
+            // leaving it to be read by the next goroutine on this worker.
             Some(super::cohort::panic_failure_message(
-                super::panic::peek_last_goroutine_panic(),
+                super::panic::take_last_goroutine_panic(),
             ))
         };
         super::cohort::leave_child(self.cohort, self.index, failure);
@@ -309,19 +314,21 @@ pub unsafe extern "C" fn gos_rt_spawn_ex(
             // an unwind, which is why the guard drops it rather than a call
             // after the body.
             let _env_ref = ChildEnvRef { env };
-            let mut guard = SpawnOutcomeGuard {
-                ch_addr,
-                armed: true,
-            };
-            // Declared after the outcome guard so it drops first on an
-            // unwind: it reads the panic message without consuming it,
-            // leaving the outcome guard the same message to deliver.
             let mut cohort_guard = CohortChildGuard {
                 cohort,
                 index,
                 failure: None,
                 completed: false,
                 reported: false,
+            };
+            // Declared after the cohort guard so it drops first on an
+            // unwind: the handle carries the outcome before the cohort is
+            // told, and telling the cohort is what cancels a fail-fast
+            // block - which would otherwise wake a joiner parked on this
+            // very handle with a cancellation in place of the outcome.
+            let mut guard = SpawnOutcomeGuard {
+                ch_addr,
+                armed: true,
             };
             // SAFETY: `code` is the callable's entry address; the
             // closure ABI calls it as `fn(env) -> T` with the
@@ -344,13 +351,16 @@ pub unsafe extern "C" fn gos_rt_spawn_ex(
                 let f: Fn1 = unsafe { std::mem::transmute(code) };
                 unsafe { f(env) }
             };
-            // Normal completion. The cohort learns the outcome before the
-            // joiner can wake on it, so a joiner cannot mark a failure
-            // observed before the failure has been recorded.
+            // Normal completion. The outcome reaches the handle before the
+            // cohort is told, because a child answering `Err` cancels a
+            // fail-fast cohort exactly as a panic does, and that
+            // cancellation would reach a joiner parked on this handle. A
+            // joiner that wakes first marks the child observed, which
+            // `leave_child` picks up when it records the failure.
             guard.armed = false;
             cohort_guard.completed = true;
-            cohort_guard.report();
             deliver_outcome(ch_addr, 0, value);
+            cohort_guard.report();
         };
         if cohort != 0 && super::cohort::current_isolation() == super::cohort::ISOLATION_THREAD {
             // An isolated child owns an OS thread for its whole life, so
