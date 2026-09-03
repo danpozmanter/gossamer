@@ -12,9 +12,26 @@ pub fn join_outstanding_goroutines() {
     MAIN_RETURNED.store(true, Ordering::Release);
     crate::value::wake_all_channel_waiters();
     if let Some(pool) = POOL.get() {
-        pool.drain();
+        pool.drain_until(exit_drain_deadline());
     }
 }
+
+/// The instant every wait on the exit path is bounded by, starting the
+/// clock on the first call.
+///
+/// The root cohort's drain and the pool drain that follows it are two
+/// waits over the same goroutines, so they share one deadline: the process
+/// leaves when a compiled binary would, rather than at the sum of two
+/// independent bounds. A goroutine still running at that instant is one
+/// the root cohort has already reported and abandoned, and waiting past it
+/// would contradict that report.
+pub(crate) fn exit_drain_deadline() -> std::time::Instant {
+    *EXIT_DRAIN_UNTIL.get_or_init(|| {
+        std::time::Instant::now() + crate::stdlib_builtins::cohort::ROOT_DRAIN_DEADLINE
+    })
+}
+
+static EXIT_DRAIN_UNTIL: OnceLock<std::time::Instant> = OnceLock::new();
 
 /// Set once `main` has returned and the process is draining spawned work.
 /// From that point the program's participants are the outstanding
@@ -286,17 +303,26 @@ impl GoroutinePool {
         }
     }
 
-    /// Blocks until every queued / in-flight task has finished.
-    /// Called by [`join_outstanding_goroutines`] at program exit.
+    /// Blocks until every queued / in-flight task has finished, or until
+    /// `until` passes. Called by [`join_outstanding_goroutines`] at
+    /// program exit.
+    ///
+    /// A task can be outstanding without ever reaching a channel wait - a
+    /// goroutine spinning on a computation, or parked in a blocking call -
+    /// so the stuck-waiter count alone cannot decide when to stop waiting.
+    /// The deadline is what makes the wait answer for every such task, and
+    /// it is shared with the root cohort's own drain.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn drain(&self) {
+    pub(crate) fn drain_until(&self, until: std::time::Instant) {
         let mut inner = self.inner.lock();
         loop {
             let outstanding = self.outstanding.load(Ordering::Acquire);
             if outstanding == 0 || STUCK_WAITERS.load(Ordering::Acquire) >= outstanding {
                 return;
             }
-            self.drain_cv.wait(&mut inner);
+            if self.drain_cv.wait_until(&mut inner, until).timed_out() {
+                return;
+            }
         }
     }
 
@@ -309,7 +335,7 @@ impl GoroutinePool {
     /// wasm runs goroutines eagerly to completion in `spawn`, so there
     /// is never anything outstanding to drain at exit.
     #[cfg(target_arch = "wasm32")]
-    pub(crate) fn drain(&self) {}
+    pub(crate) fn drain_until(&self, _until: std::time::Instant) {}
 }
 
 static POOL: OnceLock<Arc<GoroutinePool>> = OnceLock::new();
@@ -527,6 +553,12 @@ mod tests {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
+    /// A deadline past every timeout these tests set, so a drain that
+    /// returns did so because the work finished.
+    fn far_future() -> Instant {
+        Instant::now() + Duration::from_mins(10)
+    }
+
     /// The counts a report rests on are read one at a time, so a program that
     /// moved between two of them was never in the state they add up to.
     #[test]
@@ -593,7 +625,7 @@ mod tests {
         for release in releases {
             release.send(()).ok();
         }
-        pool.drain();
+        pool.drain_until(far_future());
     }
 
     #[test]
@@ -617,7 +649,7 @@ mod tests {
         let drain_pool = Arc::clone(&pool);
         let (drained_tx, drained_rx) = mpsc::channel();
         let drainer = std::thread::spawn(move || {
-            drain_pool.drain();
+            drain_pool.drain_until(far_future());
             drained_tx.send(()).expect("test receiver remains live");
         });
         drained_rx
@@ -656,7 +688,7 @@ mod tests {
             let drain_pool = Arc::clone(&pool);
             let (drained_tx, drained_rx) = mpsc::channel();
             std::thread::spawn(move || {
-                drain_pool.drain();
+                drain_pool.drain_until(far_future());
                 drained_tx.send(()).expect("test receiver remains live");
             });
             release_tx.send(()).expect("worker remains live");

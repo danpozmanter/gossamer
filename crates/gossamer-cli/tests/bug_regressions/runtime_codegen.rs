@@ -1278,3 +1278,145 @@ fn main() {
         );
     }
 }
+
+/// Goroutines stranded on several channels must not hold the process at
+/// exit. The root cohort reports what it abandons and the pool drain shares
+/// its deadline, so the run ends on both tiers instead of waiting forever.
+#[test]
+fn stranded_goroutines_on_several_channels_still_exit() {
+    let src = r#"
+use std::sync::channel
+
+fn round(r: i64) {
+    let tx, rx = channel()
+    for i in 0..2 {
+        let tx = tx
+        spawn(|| { tx.send(r * 10 + i) }, reason: "w")
+    }
+    let first = rx.recv()
+    println("round {r}: {first}")
+}
+
+fn main() {
+    for r in 1..=3 { round(r) }
+    println("main done")
+}
+"#;
+    let dir = fresh_dir("stranded_channels_exit");
+    let path = write_source(&dir, "stranded_channels_exit", src);
+
+    let run = run_vm(&path);
+    assert_eq!(run.2, Some(0), "vm did not exit: stderr={}", run.1);
+    assert!(run.0.contains("main done"), "vm stdout: {:?}", run.0);
+    assert!(
+        run.1.contains("had not finished"),
+        "the drain must name what it left running: {:?}",
+        run.1
+    );
+
+    let native_dir = dir.join("native");
+    fs::create_dir_all(&native_dir).unwrap();
+    let bin = build_native(&path, &native_dir).expect("native build");
+    let native = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native did not exit: stderr={}", native.1);
+    assert!(
+        native.1.contains("had not finished"),
+        "native drain report: {:?}",
+        native.1
+    );
+}
+
+/// A goroutine profile taken while children are running names them on
+/// both tiers, rather than answering the format header alone.
+#[test]
+fn goroutine_profile_names_live_goroutines() {
+    let src = r#"
+use std::pprof
+use std::time
+
+fn main() {
+    let _ = cohort {
+        for i in 0..3 {
+            spawn(|| { time::sleep(400) }, reason: "sleeper")
+        }
+        time::sleep(120)
+        let p = pprof::goroutine_profile()
+        println("{p}")
+    }
+    println("done")
+}
+"#;
+    let dir = fresh_dir("goroutine_profile_live");
+    let path = write_source(&dir, "goroutine_profile_live", src);
+
+    let run = run_vm(&path);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(
+        run.0.matches("samples=1").count(),
+        3,
+        "vm profile must carry one sample per live goroutine: {:?}",
+        run.0
+    );
+
+    let native_dir = dir.join("native");
+    fs::create_dir_all(&native_dir).unwrap();
+    let bin = build_native(&path, &native_dir).expect("native build");
+    let native = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(
+        native.0.matches("samples=1").count(),
+        3,
+        "native profile: {:?}",
+        native.0
+    );
+}
+
+/// An `errors::Error` shows its message through a `Result` whose `Ok` type
+/// holds a user struct, which routes the operand through the walk that
+/// renders types supplying their own rendering.
+#[test]
+fn error_displays_its_message_through_a_struct_carrying_result() {
+    let src = r#"
+use std::errors
+struct S { value: i64 }
+
+fn direct() -> Result<Vec<S>, errors::Error> { Err(errors::new("boom")) }
+
+fn wrapped() -> Result<S, errors::Error> {
+    Err(errors::wrap(errors::new("root"), "outer"))
+}
+
+fn main() {
+    let a = direct()
+    let b = wrapped()
+    println("display {a}")
+    println("debug {a:?}")
+    println("chain {b}")
+}
+"#;
+    let dir = fresh_dir("error_display_struct_result");
+    let path = write_source(&dir, "error_display_struct_result", src);
+    let expected = ["display Err(boom)", "debug Err(boom)", "chain Err(outer: root)"];
+
+    let run = run_vm(&path);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    for line in expected {
+        assert!(run.0.contains(line), "vm: missing `{line}` in {:?}", run.0);
+    }
+
+    let native_dir = dir.join("native");
+    fs::create_dir_all(&native_dir).unwrap();
+    let bin = build_native(&path, &native_dir).expect("native build");
+    let native = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    for line in expected {
+        assert!(
+            native.0.contains(line),
+            "native: missing `{line}` in {:?}",
+            native.0
+        );
+    }
+}

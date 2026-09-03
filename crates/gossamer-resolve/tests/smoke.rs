@@ -384,3 +384,204 @@ fn a_std_macro_named_as_a_value_path_is_rejected() {
         );
     }
 }
+
+/// The bundled shape a project compiles as: `src/engine/mod.gos` and its
+/// sibling files become nested inline modules, and a `use` written inside one
+/// is hoisted to the file's top with the module it was written in recorded on
+/// it. The three slots are the file's own level, `mod engine`, and
+/// `mod engine::plan`.
+fn bundled(at_root: &str, in_engine: &str, in_plan: &str) -> String {
+    format!(
+        "{at_root}\n\
+         pub mod engine {{\n\
+             {in_engine}\n\
+             pub mod plan {{ {in_plan} }}\n\
+             pub mod filter {{ pub fn keep(n: i64) -> bool {{ n > 1 }} }}\n\
+             pub struct Handle {{ pub n: i64 }}\n\
+             pub enum Colour {{ Red, Blue }}\n\
+             pub const LIMIT: i64 = 4\n\
+             pub fn run() -> i64 {{ 1 }}\n\
+         }}\n\
+         fn main() {{ }}\n"
+    )
+}
+
+fn unknown_module_paths(source: &str) -> Vec<String> {
+    let sf = parse(source);
+    let (_resolutions, diags) = resolve_source_file(&sf);
+    diags
+        .iter()
+        .filter_map(|d| match &d.error {
+            ResolveError::UnknownModulePath { path } => Some(path.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_relative_use_naming_a_module_of_this_unit_resolves() {
+    for spelled in [
+        "use crate::engine",
+        "use crate::engine::filter",
+        "use crate::engine::filter::keep",
+        "use crate::engine::Handle",
+        "use crate::engine::Colour::Red",
+        "use crate::engine::LIMIT",
+        "use crate::engine::run",
+    ] {
+        assert!(
+            unknown_module_paths(&bundled(spelled, "", "")).is_empty(),
+            "{spelled} names something this unit declares"
+        );
+    }
+    // Written inside `mod engine`, where the anchor is that module.
+    for spelled in [
+        "use self::filter",
+        "use self::filter as f",
+        "use crate::engine::filter",
+    ] {
+        assert!(
+            unknown_module_paths(&bundled("", spelled, "")).is_empty(),
+            "{spelled} names a module of the package it is written in"
+        );
+    }
+    // Written inside `mod engine::plan`, whose `super` is `engine`.
+    for spelled in [
+        "use super::filter",
+        "use super::filter::keep",
+        "use self::super::run",
+    ] {
+        assert!(
+            unknown_module_paths(&bundled("", "", spelled)).is_empty(),
+            "{spelled} names a module of the package it is written in"
+        );
+    }
+}
+
+#[test]
+fn a_relative_use_naming_nothing_is_rejected_where_it_is_written() {
+    // Binding a name nothing declares stands in front of every path headed by
+    // it, so the use site resolves against the import, reports nothing, and
+    // leaves the failure to run time.
+    for (spelled, reported) in [
+        ("use crate::missing", "crate::missing"),
+        ("use crate::missing as m", "crate::missing"),
+        ("use crate::engien", "crate::engien"),
+        ("use crate::engine::nowhere", "crate::engine::nowhere"),
+        ("use super::src::engine", "super::src::engine"),
+    ] {
+        assert_eq!(
+            unknown_module_paths(&bundled(spelled, "", "")),
+            vec![reported.to_string()],
+            "{spelled} names nothing"
+        );
+    }
+    assert_eq!(
+        unknown_module_paths(&bundled("", "", "use super::nowhere")),
+        vec!["super::nowhere".to_string()],
+        "`super` from `engine::plan` is `engine`, which declares no `nowhere`"
+    );
+}
+
+#[test]
+fn a_relative_use_keeps_the_anchor_of_the_module_it_was_written_in() {
+    // A `use` inside a `mod { }` body is hoisted to the file's imports, so the
+    // module it was written in travels with it: `super::filter` names
+    // `engine::filter` there and nothing at the file's own level.
+    assert!(unknown_module_paths(&bundled("", "", "use super::filter")).is_empty());
+    assert_eq!(
+        unknown_module_paths(&bundled("use super::filter", "", "")),
+        vec!["super::filter".to_string()],
+        "the same spelling at the file's own level reaches above the unit"
+    );
+}
+
+#[test]
+fn a_misspelled_relative_use_names_the_module_this_unit_declares() {
+    let sf = parse(&bundled("use crate::engien", "", ""));
+    let (_resolutions, diags) = resolve_source_file(&sf);
+    let unknown = diags
+        .iter()
+        .find(|d| matches!(d.error, ResolveError::UnknownModulePath { .. }))
+        .expect("the path names no module");
+    assert_eq!(
+        unknown.in_scope_candidate.as_deref(),
+        Some("crate::engine"),
+        "the candidate is drawn from this unit, not from the standard library"
+    );
+}
+
+#[test]
+fn a_relative_use_may_name_what_the_unit_imported_from_outside_it() {
+    // `use super::add` inside a `mod tests { }` reaches a name the enclosing
+    // module bound with an import of its own, whose items live in a package or
+    // a Rust binding rather than in this unit.
+    let source = "use std::fs\n\
+                  pub mod tests { use super::fs }\n\
+                  fn main() { }\n";
+    assert!(unknown_module_paths(source).is_empty());
+}
+
+#[test]
+fn an_aliased_relative_use_binds_the_module_it_names() {
+    // The alias has to record the module's path from the unit root, which is
+    // the key its items registered under, or every path through the alias is
+    // unbound where it is dispatched.
+    let sf = parse(&bundled("", "use self::filter as f", ""));
+    let (resolutions, diags) = resolve_source_file(&sf);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    assert_eq!(
+        resolutions.module_alias("f"),
+        Some("engine::filter"),
+        "the alias leads to the module's path from the unit root"
+    );
+}
+
+#[test]
+fn a_packages_own_crate_paths_survive_being_embedded_as_a_dependency() {
+    // The bundler wraps a path dependency's source in a module of its own, so
+    // the package's `crate::` paths no longer start at the unit root. They
+    // still name the package's own modules.
+    let source = "pub mod dep {\n\
+                  use crate::engine\n\
+                  pub mod engine { pub fn open() -> i64 { 1 } }\n\
+                  }\n\
+                  fn main() { }\n";
+    assert!(unknown_module_paths(source).is_empty());
+    // The same spelling in the consuming unit, which declares no `engine`.
+    let consumer = "use crate::engine\n\
+                    pub mod dep { pub mod engine { pub fn open() -> i64 { 1 } } }\n\
+                    fn main() { }\n";
+    assert_eq!(
+        unknown_module_paths(consumer),
+        vec!["crate::engine".to_string()]
+    );
+}
+
+#[test]
+fn a_relative_use_list_is_checked_entry_by_entry() {
+    // Every entry binds a name of its own, so each is validated as the whole
+    // path the list's root and that entry's segments spell.
+    assert!(unknown_module_paths(&bundled("use crate::{engine}", "", "")).is_empty());
+    assert!(unknown_module_paths(&bundled("use crate::engine::{run, filter}", "", "")).is_empty());
+    assert!(unknown_module_paths(&bundled("", "", "use super::{filter, run}")).is_empty());
+    assert_eq!(
+        unknown_module_paths(&bundled("use crate::{engine, missing}", "", "")),
+        vec!["crate::missing".to_string()],
+        "the entry that names nothing is the one reported"
+    );
+    assert_eq!(
+        unknown_module_paths(&bundled("use crate::engine::{run, nowhere}", "", "")),
+        vec!["crate::engine::nowhere".to_string()]
+    );
+}
+
+#[test]
+fn a_use_list_entry_naming_a_module_binds_that_module() {
+    // Without the alias record, a path through the name the entry introduced
+    // is unbound where it is dispatched.
+    let sf = parse(&bundled("use crate::engine::{filter}", "", ""));
+    let (resolutions, diags) = resolve_source_file(&sf);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    assert_eq!(resolutions.module_alias("filter"), Some("engine::filter"));
+}

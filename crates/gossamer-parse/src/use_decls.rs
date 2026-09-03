@@ -43,6 +43,7 @@ impl Parser<'_> {
             target,
             alias,
             list,
+            module: self.mod_stack.clone(),
         }
     }
 

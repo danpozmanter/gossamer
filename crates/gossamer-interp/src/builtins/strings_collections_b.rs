@@ -1213,6 +1213,10 @@ fn render_display(
                 None => Ok(crate::value::vec_render_text(items)),
             }
         }
+        // An error renders as its cause chain here too: a walk entered
+        // because something else in the operand carries its own rendering
+        // must not change how an error inside it shows.
+        Value::Struct(_) if let Some(text) = crate::value::error_chain_text(value) => Ok(text),
         Value::Struct(inner) => {
             let mut parts = Vec::with_capacity(inner.fields.len());
             for (name, field) in &inner.fields {

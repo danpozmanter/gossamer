@@ -55,6 +55,9 @@ pub struct Parser<'src> {
     /// file-level `uses` slot, so a `use std::encoding::json` inside
     /// `mod chat { ... }` would otherwise be silently dropped.
     pub(crate) hoisted_uses: Vec<gossamer_ast::UseDecl>,
+    /// Inline modules the parser is inside, outermost first. A hoisted `use`
+    /// carries this so a relative path keeps the anchor it was written at.
+    pub(crate) mod_stack: Vec<String>,
     /// Argument labels written at call sites (`f(width: 10)`), moved into
     /// [`gossamer_ast::SourceFile::named_args`] by
     /// [`crate::parse_source_file`]. Held beside the tree rather than in
@@ -118,6 +121,7 @@ impl<'src> Parser<'src> {
             recursion_depth: 0,
             recursion_limit_reported: false,
             hoisted_uses: Vec::new(),
+            mod_stack: Vec::new(),
             named_args: std::collections::HashMap::new(),
             newline_separator_at: None,
         }

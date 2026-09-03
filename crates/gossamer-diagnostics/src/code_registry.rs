@@ -658,10 +658,13 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GR0005",
-        "The `use` names a `std::` module path that does not exist.\n\
-                     Every module has exactly one canonical path (e.g. JSON lives\n\
-                     at `std::encoding::json`); check `gos doc` or the stdlib\n\
-                     reference for the module's path.",
+        "The `use` names a module path that does not exist.\n\
+                     A `std::` module has exactly one canonical path (e.g. JSON\n\
+                     lives at `std::encoding::json`); check `gos doc` or the\n\
+                     stdlib reference for it. A `crate::` / `super::` / `self::`\n\
+                     path names a module of this package or an item one declares,\n\
+                     and a file is a module: add the file that declares it, or\n\
+                     correct the path.",
     ),
     (
         "GR0006",

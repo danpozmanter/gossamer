@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GR0005]: The `use` names a `std::` module path that does not exist. - here
+error[GR0005]: The `use` names a module path that does not exist. - here
 --- framed ---
-error[GR0005]: The `use` names a `std::` module path that does not exist.
+error[GR0005]: The `use` names a module path that does not exist.
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

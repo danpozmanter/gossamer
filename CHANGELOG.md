@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.58.10 - Bounded exit drain, goroutine profiles on the VM
+
+- A program that leaves a goroutine running exits on the bytecode VM instead of
+  hanging. The root cohort's wait was bounded and the goroutine pool's was not,
+  and the pool's ended only once every goroutine had classified itself as
+  permanently parked, which one spinning on a computation never does. Both waits
+  now share one deadline.
+- A `use crate::` / `super::` / `self::` path naming nothing is reported where it
+  is written, as `use nosuchmodule` already was. Such a path was exempted from
+  validation, so the import bound the name anyway and then stood in front of
+  every path headed by it, leaving a program `gos check` called clean to fail at
+  run time with `GX0002`. The leaf is checked too, a `use crate::{a, b}` list
+  entry by entry, and the did-you-mean names a module of the package rather than
+  one of the standard library's.
+- A `use` written inside a `mod { }` body keeps the module it was written in.
+  Hoisting it to the file's own imports discarded the anchor every relative path
+  is spelled against, so `super::filter` meant the same thing wherever it was
+  written. The anchor now travels with the import, which is what lets a relative
+  path be checked at all, and what keeps a package's own `crate::` paths meaning
+  its own modules once the bundler has embedded it as a dependency.
+- `use self::filter as f` and `use crate::engine::{filter}` reach the modules
+  they name. Both recorded the name against the path as written rather than the
+  key the module's items register under, so every path through the bound name
+  was unbound at run time while `gos check` reported nothing.
+- `pprof::goroutine_profile()` describes VM goroutines. The bytecode VM never
+  published them to the diagnostic registry the profile reads, so it answered
+  its format header alone where the compiled tiers listed one sample each.
+- `{}` and `{:?}` on a `Result` carrying an `errors::Error` show the error's
+  message on the bytecode VM when the `Ok` type holds a user struct. The walk
+  that renders values supplying their own rendering had no case for an error, so
+  it printed the struct where the compiled tiers printed the message. Cause
+  chains join with `: ` there as everywhere.
+
 ## 0.58.9 - Join outcomes under cancellation, trait catalog on the site
 
 - `handle.join()` answers the child's own outcome when that child's failure

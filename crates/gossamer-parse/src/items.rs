@@ -1123,6 +1123,7 @@ impl Parser<'_> {
             };
         }
         self.bump();
+        self.mod_stack.push(name.name.clone());
         let mut items = Vec::new();
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
             let before = self.checkpoint_public();
@@ -1153,6 +1154,7 @@ impl Parser<'_> {
             }
         }
         self.expect_punct(Punct::RBrace, "to close inline module");
+        self.mod_stack.pop();
         ModDecl {
             name,
             body: ModBody::Inline(items),

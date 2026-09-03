@@ -65,11 +65,30 @@ fn unknown_module_help(
     out: gossamer_diagnostics::Diagnostic,
     location: gossamer_diagnostics::Location,
     path: &str,
+    candidate: Option<&str>,
 ) -> gossamer_diagnostics::Diagnostic {
     if BUILTIN_TYPE_NAMES.contains(&path) {
         return out.with_help(format!(
             "`{path}` is a built-in type, in scope everywhere; drop the `use`"
         ));
+    }
+    // A path rooted at the unit itself names one of its own modules, so
+    // neither the standard library nor a spelling drawn from it is what the
+    // reader needs.
+    if is_relative_path(path) {
+        return match candidate {
+            Some(known) => out.with_suggestion(gossamer_diagnostics::Suggestion::replacement(
+                location,
+                format!("did you mean `{known}`?"),
+                known.to_string(),
+            )),
+            None => out.with_help(
+                "a `crate::` / `super::` / `self::` path names a module of this package \
+                 or an item one declares; a file is a module, so add the file that \
+                 declares it, or correct the path"
+                    .to_string(),
+            ),
+        };
     }
     match closest_module_path(path) {
         Some(known) => out.with_suggestion(gossamer_diagnostics::Suggestion::replacement(
@@ -661,7 +680,9 @@ impl ResolveDiagnostic {
                 plural,
                 optional,
             } => missing_argument_help(out, missing, *plural, optional),
-            ResolveError::UnknownModulePath { path } => unknown_module_help(out, location, path),
+            ResolveError::UnknownModulePath { path } => {
+                unknown_module_help(out, location, path, self.in_scope_candidate.as_deref())
+            }
             ResolveError::DuplicateItem { name } => out.with_help(format!(
                 "rename or remove one `{name}` declaration in this module"
             )),
@@ -725,6 +746,13 @@ impl ResolveDiagnostic {
             ResolveError::UnresolvedName { .. } => out,
         }
     }
+}
+
+/// `true` when `path` is rooted at the compilation unit rather than at a
+/// package: `crate`, `root`, `self` and `super` all anchor inside it.
+pub(crate) fn is_relative_path(path: &str) -> bool {
+    let head = path.split("::").next().unwrap_or(path);
+    matches!(head, "crate" | "root" | "self" | "super")
 }
 
 /// Closest real standard library module path to `path`.

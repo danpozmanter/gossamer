@@ -100,6 +100,12 @@ pub struct UseDecl {
     pub alias: Option<Ident>,
     /// Optional `{ item1, item2 as x, ... }` brace-list after the target.
     pub list: Option<Vec<UseListEntry>>,
+    /// Inline modules enclosing the declaration, outermost first, empty at
+    /// the file's own level. A `use` written inside a `mod { }` body is
+    /// hoisted to the file's imports, and a `self` / `super` / `crate` path
+    /// is anchored at the module it was written in, so the anchor travels
+    /// with it.
+    pub module: Vec<String>,
 }
 
 impl UseDecl {
@@ -112,6 +118,7 @@ impl UseDecl {
             target,
             alias: None,
             list: None,
+            module: Vec::new(),
         }
     }
 }

@@ -138,6 +138,15 @@ struct Resolver {
     /// one of these directly - the crate root is the implicit base, the
     /// same default Rust gives `use`.
     local_module_paths: std::collections::HashSet<String>,
+    /// Every non-module item path this compilation unit declares, joined
+    /// with `::` (`Colorize`, `config::Options`). A `use` rooted at the
+    /// crate may name an item as well as the module holding it.
+    local_item_paths: std::collections::HashSet<String>,
+    /// Every name a `use` in this compilation unit binds. A relative path
+    /// may name one: the modules a file declares and the names it imports
+    /// share one namespace, and an import's own source is a package or a
+    /// Rust binding this unit cannot see the items of.
+    unit_import_names: std::collections::HashSet<String>,
     /// Declaring module and declared visibility of every item this unit
     /// defines, keyed by its [`DefId`]. Drives the `pub` check.
     item_homes: std::collections::HashMap<DefId, ItemHome>,
@@ -189,6 +198,8 @@ impl Resolver {
             module_scopes: std::collections::HashMap::new(),
             collect_mod_stack: Vec::new(),
             local_module_paths: std::collections::HashSet::new(),
+            local_item_paths: std::collections::HashSet::new(),
+            unit_import_names: std::collections::HashSet::new(),
             item_homes: std::collections::HashMap::new(),
             module_visibility: std::collections::HashMap::new(),
             current_module: Vec::new(),
@@ -203,6 +214,8 @@ impl Resolver {
 
     fn run(&mut self, source: &SourceFile) {
         self.local_module_paths = collect_module_paths(&source.items);
+        self.local_item_paths = collect_item_paths(&source.items);
+        self.unit_import_names = collect_import_names(&source.uses);
         self.precollect_project_aliases(source);
         self.collect_imports(&source.uses);
         self.collect_items(&source.items);
@@ -275,10 +288,28 @@ impl Resolver {
         // diagnostic is rendered, and locals live nowhere else.
         let candidate = match &error {
             ResolveError::UnresolvedName { name } => self.closest_visible_name(name),
+            ResolveError::UnknownModulePath { path } => self.closest_local_module_path(path),
             _ => None,
         };
         self.diagnostics
             .push(ResolveDiagnostic::new(error, span).with_candidate(candidate));
+    }
+
+    /// Closest module of this unit to a `crate::` / `super::` / `self::` path
+    /// that named none, spelled back under the root the import was written
+    /// with. `None` for a path anchored outside the unit, whose neighbours are
+    /// the standard library's rather than this unit's.
+    fn closest_local_module_path(&self, path: &str) -> Option<String> {
+        if !crate::diagnostic::is_relative_path(path) {
+            return None;
+        }
+        let (root, written) = path.split_once("::")?;
+        let known = gossamer_diagnostics::suggest(
+            written,
+            self.local_module_paths.iter().map(String::as_str),
+            2,
+        )?;
+        Some(format!("{root}::{known}"))
     }
 
     /// Closest name currently in scope to `name`, for a "did you mean" hint.
@@ -405,9 +436,15 @@ impl Resolver {
         // introduced has to be respelled before any name-keyed dispatch
         // sees it. Without the record a constant or a variant reached
         // through the import type-checks and is unbound at run time.
-        if self.local_module_paths.contains(&target) && name != target {
+        // A relative path names a module by its path from the unit root, which
+        // is the key the module's items registered under, so it is anchored
+        // before the lookup: `use self::filter as f` names `engine::filter`.
+        let named = self
+            .anchored_local_module(&use_decl.module, &target)
+            .unwrap_or_else(|| target.clone());
+        if self.local_module_paths.contains(&named) && name != named {
             self.resolutions
-                .insert_module_alias(name.clone(), target.clone());
+                .insert_module_alias(name.clone(), named.clone());
         }
         self.define_import(&name, use_decl.id, use_decl.span, &target);
     }
@@ -452,6 +489,7 @@ impl Resolver {
             p.segments[0].name.as_str(),
             "self" | "super" | "crate" | "root"
         ) {
+            self.reject_invalid_relative_use_path(use_decl, p);
             return;
         }
         if p.segments[0].name != "std" {
@@ -530,6 +568,17 @@ impl Resolver {
             }
             target.push_str("::");
             target.push_str(&entry.name.name);
+            // An entry naming a module of this unit is reached under the
+            // module's own path, which is the key its items registered under,
+            // so the name the entry introduced is respelled to it before any
+            // name-keyed dispatch sees it.
+            let named = self
+                .anchored_local_module(&use_decl.module, &target)
+                .unwrap_or_else(|| target.clone());
+            if self.local_module_paths.contains(&named) && imported != named {
+                self.resolutions
+                    .insert_module_alias(imported.clone(), named.clone());
+            }
             self.define_import(&imported, use_decl.id, use_decl.span, &target);
         }
     }
@@ -541,6 +590,10 @@ impl Resolver {
         let Some(head) = path.segments.first() else {
             return;
         };
+        if crate::diagnostic::is_relative_path(&head.name) {
+            self.reject_invalid_relative_use_list(use_decl, path, list);
+            return;
+        }
         if head.name != "std" {
             return;
         }
@@ -623,6 +676,148 @@ impl Resolver {
             && self
                 .local_module_paths
                 .contains(&segments[..segments.len() - 1].join("::"))
+    }
+
+    /// Validates a `use` path rooted at `self`, `super`, `crate` or `root`.
+    ///
+    /// Such a path names something this unit declares or it names nothing, and
+    /// binding a name nothing declares puts a module in scope that no module
+    /// defines. That binding then stands in front of every path headed by it,
+    /// so the use site resolves against the import, reports nothing, and leaves
+    /// the failure to run time.
+    fn reject_invalid_relative_use_path(
+        &mut self,
+        use_decl: &UseDecl,
+        path: &gossamer_ast::ModulePath,
+    ) {
+        let segments: Vec<&str> = path.segments.iter().map(|s| s.name.as_str()).collect();
+        let respelled = self.respell_alias_head(&segments.join("::"));
+        let respelled: Vec<&str> = respelled.split("::").collect();
+        let candidates = self.relative_candidates(&use_decl.module, &respelled);
+        // A path that is nothing but its anchor names the module it was
+        // written in, which is always there.
+        if candidates.is_empty() {
+            return;
+        }
+        if candidates
+            .iter()
+            .any(|path| self.names_local_declaration(path))
+        {
+            return;
+        }
+        self.emit(
+            ResolveError::UnknownModulePath {
+                path: segments.join("::"),
+            },
+            use_decl.span,
+        );
+    }
+
+    /// Validates each entry of a `use` list rooted at `self`, `super`,
+    /// `crate` or `root`. Every entry binds a name of its own, so each is the
+    /// whole path the list's root and that entry's own segments spell.
+    fn reject_invalid_relative_use_list(
+        &mut self,
+        use_decl: &UseDecl,
+        path: &gossamer_ast::ModulePath,
+        list: &[UseListEntry],
+    ) {
+        let base: Vec<&str> = path.segments.iter().map(|s| s.name.as_str()).collect();
+        for entry in list {
+            let mut segments = base.clone();
+            segments.extend(entry.prefix.iter().map(|s| s.name.as_str()));
+            // A `self` entry names the module the list is rooted at, which the
+            // root itself has already been taken to name.
+            if entry.name.name != "self" {
+                segments.push(entry.name.name.as_str());
+            }
+            let respelled = self.respell_alias_head(&segments.join("::"));
+            let respelled: Vec<&str> = respelled.split("::").collect();
+            let candidates = self.relative_candidates(&use_decl.module, &respelled);
+            if candidates.is_empty()
+                || candidates
+                    .iter()
+                    .any(|path| self.names_local_declaration(path))
+            {
+                continue;
+            }
+            self.emit(
+                ResolveError::UnknownModulePath {
+                    path: segments.join("::"),
+                },
+                use_decl.span,
+            );
+        }
+    }
+
+    /// Paths a `self` / `super` / `crate` / `root` target could name, spelled
+    /// from the unit root, most specific first.
+    ///
+    /// `module` is the chain of inline modules the import was written in, so a
+    /// `self` / `super` chain lands on exactly one path. `crate` and `root`
+    /// anchor at the root of the package the import belongs to, which is the
+    /// unit root for the package being compiled and the dependency's own
+    /// module for one the bundler embedded, so every enclosing prefix is a
+    /// root it could mean.
+    fn relative_candidates(&self, module: &[String], segments: &[&str]) -> Vec<String> {
+        let anchor = segments
+            .iter()
+            .take_while(|s| matches!(**s, "self" | "super" | "crate" | "root"))
+            .count();
+        if anchor == segments.len() {
+            return Vec::new();
+        }
+        let rest = segments[anchor..].join("::");
+        let under = |prefix: &[String]| {
+            if prefix.is_empty() {
+                rest.clone()
+            } else {
+                format!("{}::{rest}", prefix.join("::"))
+            }
+        };
+        if segments[..anchor]
+            .iter()
+            .any(|s| matches!(*s, "crate" | "root"))
+        {
+            return (0..=module.len())
+                .rev()
+                .map(|d| under(&module[..d]))
+                .collect();
+        }
+        let supers = segments[..anchor].iter().filter(|s| **s == "super").count();
+        vec![under(&module[..module.len().saturating_sub(supers)])]
+    }
+
+    /// The declared module a relative `use` target names, spelled from the unit
+    /// root, which is the key the module's items register under.
+    fn anchored_local_module(&self, module: &[String], target: &str) -> Option<String> {
+        if !crate::diagnostic::is_relative_path(target) {
+            return None;
+        }
+        let segments: Vec<&str> = target.split("::").collect();
+        self.relative_candidates(module, &segments)
+            .into_iter()
+            .find(|path| self.local_module_paths.contains(path))
+    }
+
+    /// `true` when `path` names a module or an item this unit declares.
+    ///
+    /// Both sets are read off this unit's own syntax, so unlike a path into a
+    /// package the leaf is checked too: `crate::engine::nowhere` names nothing
+    /// even though `crate::engine` names a module.
+    fn names_local_declaration(&self, path: &str) -> bool {
+        if self.local_module_paths.contains(path) || self.local_item_paths.contains(path) {
+            return true;
+        }
+        // The head may instead name something the unit imported - a package's
+        // module, a Rust binding's - whose items live outside this unit. What
+        // it exports is checked where that import is, so the path is taken on
+        // the strength of its head, as a path into a package is.
+        let head = path.split("::").next().unwrap_or(path);
+        self.unit_import_names.contains(head)
+            || crate::external::all_external_module_paths()
+                .iter()
+                .any(|known| known == head)
     }
 
     /// Reports an unresolved name, naming the rename when the name is a
@@ -2634,6 +2829,112 @@ fn collect_module_paths(items: &[gossamer_ast::Item]) -> std::collections::HashS
 
     let mut out = std::collections::HashSet::new();
     walk(items, "", &mut out);
+    out
+}
+
+/// Every non-module item this unit declares, keyed by its `::`-joined path
+/// from the unit root. An enum's variants are included: a `use` may name one.
+fn collect_item_paths(items: &[gossamer_ast::Item]) -> std::collections::HashSet<String> {
+    fn qualify(prefix: &str, name: &str) -> String {
+        if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}::{name}")
+        }
+    }
+
+    fn walk(
+        items: &[gossamer_ast::Item],
+        prefix: &str,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        for item in items {
+            let name = match &item.kind {
+                ItemKind::Fn(decl) => &decl.name.name,
+                ItemKind::Struct(decl) => &decl.name.name,
+                ItemKind::Trait(decl) => &decl.name.name,
+                ItemKind::TypeAlias(decl) => &decl.name.name,
+                ItemKind::Const(decl) => &decl.name.name,
+                ItemKind::Static(decl) => &decl.name.name,
+                ItemKind::Enum(decl) => {
+                    let path = qualify(prefix, &decl.name.name);
+                    for variant in &decl.variants {
+                        out.insert(qualify(&path, &variant.name.name));
+                    }
+                    out.insert(path);
+                    continue;
+                }
+                ItemKind::Mod(decl) => {
+                    if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                        walk(inner, &qualify(prefix, &decl.name.name), out);
+                    }
+                    continue;
+                }
+                ItemKind::Impl(decl) => {
+                    // An associated item is named through its type, which is
+                    // the only path a `use` could reach it by.
+                    let gossamer_ast::TypeKind::Path(ty) = &decl.self_ty.kind else {
+                        continue;
+                    };
+                    let Some(last) = ty.segments.last() else {
+                        continue;
+                    };
+                    let path = qualify(prefix, &last.name.name);
+                    for assoc in &decl.items {
+                        match assoc {
+                            gossamer_ast::ImplItem::Fn(f) => {
+                                out.insert(qualify(&path, &f.name.name));
+                            }
+                            gossamer_ast::ImplItem::Type { name, .. }
+                            | gossamer_ast::ImplItem::Const { name, .. } => {
+                                out.insert(qualify(&path, &name.name));
+                            }
+                        }
+                    }
+                    continue;
+                }
+                ItemKind::AttrItem(_) => continue,
+            };
+            out.insert(qualify(prefix, name));
+        }
+    }
+
+    let mut out = std::collections::HashSet::new();
+    walk(items, "", &mut out);
+    out
+}
+
+/// Every name the unit's `use` declarations bind from outside it, renames
+/// included. A `mod { }` body's imports are hoisted here, so this is the whole
+/// of what any module of the unit reaches by import.
+///
+/// A relative import is left out: it names something inside the unit, so it is
+/// not a source of names the unit cannot see, and counting it would let a
+/// `use crate::missing` stand as its own justification.
+fn collect_import_names(uses: &[UseDecl]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for use_decl in uses {
+        if let gossamer_ast::UseTarget::Module(path) = &use_decl.target
+            && path
+                .segments
+                .first()
+                .is_some_and(|head| crate::diagnostic::is_relative_path(&head.name))
+        {
+            continue;
+        }
+        match &use_decl.list {
+            Some(list) => out.extend(list.iter().map(|entry| {
+                entry
+                    .alias
+                    .as_ref()
+                    .map_or_else(|| entry.name.name.clone(), |alias| alias.name.clone())
+            })),
+            None => out.extend(use_decl.alias.as_ref().map_or_else(
+                || tail_name(&use_decl.target),
+                |alias| Some(alias.name.clone()),
+            )),
+        }
+    }
     out
 }
 

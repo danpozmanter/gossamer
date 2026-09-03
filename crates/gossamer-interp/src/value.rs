@@ -3234,43 +3234,8 @@ impl fmt::Display for Value {
                 // `gos_rt_error_display` path. `.message()` stays
                 // top-level-only. Other structs keep the default
                 // `Name { f: v, … }` shape used everywhere else.
-                if inner.name == "errors::Error" {
-                    if let Some(msg) = inner
-                        .fields
-                        .iter()
-                        .find(|(n, _)| (**n) == "message")
-                        .map(|(_, v)| v.clone())
-                    {
-                        write!(out, "{msg}")?;
-                        let mut cursor = inner
-                            .fields
-                            .iter()
-                            .find(|(n, _)| (**n) == "cause")
-                            .map(|(_, v)| v.clone());
-                        while let Some(Self::Variant(link)) = cursor {
-                            if link.name != "Some" || link.fields.is_empty() {
-                                break;
-                            }
-                            let Self::Struct(cause) = &link.fields[0] else {
-                                break;
-                            };
-                            if cause.name != "errors::Error" {
-                                break;
-                            }
-                            let Some((_, m)) =
-                                cause.fields.iter().find(|(n, _)| (**n) == "message")
-                            else {
-                                break;
-                            };
-                            write!(out, ": {m}")?;
-                            cursor = cause
-                                .fields
-                                .iter()
-                                .find(|(n, _)| (**n) == "cause")
-                                .map(|(_, v)| v.clone());
-                        }
-                        return Ok(());
-                    }
+                if let Some(text) = error_chain_text(self) {
+                    return out.write_str(&text);
                 }
                 write_struct(
                     out,
@@ -3851,6 +3816,54 @@ fn source_facing_nested_item_name(name: &str) -> &str {
     } else {
         name
     }
+}
+
+/// The colon-joined cause chain an `errors::Error` renders as ("outer: mid:
+/// root"), or `None` for any other value.
+///
+/// `{}` and `{:?}` both answer this text on every tier, so the plain
+/// formatter and the walk that renders operands carrying their own
+/// rendering share one definition of it. `.message()` stays top-level-only.
+pub(crate) fn error_chain_text(value: &Value) -> Option<String> {
+    let Value::Struct(inner) = value else {
+        return None;
+    };
+    if inner.name != "errors::Error" {
+        return None;
+    }
+    let message = inner
+        .fields
+        .iter()
+        .find(|(n, _)| (**n) == "message")
+        .map(|(_, v)| v.clone())?;
+    let mut text = format!("{message}");
+    let mut cursor = inner
+        .fields
+        .iter()
+        .find(|(n, _)| (**n) == "cause")
+        .map(|(_, v)| v.clone());
+    while let Some(Value::Variant(link)) = cursor {
+        if link.name != "Some" || link.fields.is_empty() {
+            break;
+        }
+        let Value::Struct(cause) = &link.fields[0] else {
+            break;
+        };
+        if cause.name != "errors::Error" {
+            break;
+        }
+        let Some((_, m)) = cause.fields.iter().find(|(n, _)| (**n) == "message") else {
+            break;
+        };
+        text.push_str(": ");
+        text.push_str(&m.to_string());
+        cursor = cause
+            .fields
+            .iter()
+            .find(|(n, _)| (**n) == "cause")
+            .map(|(_, v)| v.clone());
+    }
+    Some(text)
 }
 
 /// Renders one element of an aggregate. A float always keeps a fractional

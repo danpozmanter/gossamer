@@ -487,7 +487,7 @@ The same path was imported twice in the same `use` list. Drop the duplicate.
 
 **Resolve** - unknown module path
 
-The `use` names a `std::` module path that does not exist. Every module has exactly one canonical path (e.g. JSON lives at `std::encoding::json`); check `gos doc` or the stdlib reference for the module's path.
+The `use` names a module path that does not exist. A `std::` module has exactly one canonical path (e.g. JSON lives at `std::encoding::json`); check `gos doc` or the stdlib reference for it. A `crate::` / `super::` / `self::` path names a module of this package or an item one declares, and a file is a module: add the file that declares it, or correct the path.
 
 ## `GR0006` <a id="gr0006"></a>
 

@@ -201,6 +201,7 @@ pub(crate) fn use_decl_module_with_list(segments: &[&str], list: Vec<UseListEntr
         target: UseTarget::Module(ModulePath::from_names(segments.iter().copied())),
         alias: None,
         list: Some(list),
+        module: Vec::new(),
     }
 }
 

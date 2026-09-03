@@ -1,6 +1,13 @@
 #![allow(clippy::too_many_lines, clippy::wildcard_imports)]
 use super::*;
 
+/// How a spawned goroutine is named in the diagnostic registry.
+struct GoroutineOrigin {
+    name: String,
+    file: String,
+    line: u32,
+}
+
 impl Vm {
     /// Invokes a top-level function by name.
     pub fn call(&self, name: &str, args: Vec<Value>) -> RuntimeResult<Value> {
@@ -435,10 +442,20 @@ impl Vm {
     /// not block. Programs that mix `gos` invocations within one
     /// process would see stale per-worker state here; the bench-game
     /// shape (one program per process) does not.
-    fn spawn_on_pool<F>(&self, task: F)
+    fn spawn_on_pool<F>(&self, origin: GoroutineOrigin, task: F)
     where
         F: FnOnce(&mut Vm) + Send + 'static,
     {
+        // Every goroutine is published to the process-wide diagnostic
+        // registry, so `pprof::goroutine_profile` and the goroutine dump
+        // describe a VM goroutine exactly as they describe one the compiled
+        // scheduler runs. Ids come from that registry's own counter, which
+        // is its single allocator.
+        let gid = gossamer_runtime::sigquit::next_id();
+        gossamer_runtime::sigquit::register(gid, origin.name);
+        if !origin.file.is_empty() {
+            gossamer_runtime::sigquit::set_position(gid, origin.file, origin.line);
+        }
         let globals = Arc::clone(&self.globals);
         let mir_bodies = self.mir_bodies.borrow().clone();
         let tcx_snapshot = self.tcx_snapshot.borrow().clone();
@@ -453,6 +470,18 @@ impl Vm {
         crate::vm::goroutine::GoroutinePool::spawn(
             crate::vm::goroutine::pool(),
             Box::new(move || {
+                // The entry describes a live goroutine, so it is retired on
+                // every path out of the task, a panic included, and the
+                // worker is left bound to no goroutine for the next one.
+                struct Registered(u32);
+                impl Drop for Registered {
+                    fn drop(&mut self) {
+                        gossamer_runtime::sigquit::set_active_gid(u32::MAX);
+                        gossamer_runtime::sigquit::unregister(self.0);
+                    }
+                }
+                let _registered = Registered(gid);
+                gossamer_runtime::sigquit::set_active_gid(gid);
                 thread_local! {
                     static THREAD_VM: std::cell::OnceCell<std::cell::RefCell<Option<Vm>>> =
                         const { std::cell::OnceCell::new() };
@@ -503,12 +532,38 @@ impl Vm {
         );
     }
 
+    /// How a spawned goroutine is filed in the diagnostic registry:
+    /// the callee's own source-level name and definition site, which is what
+    /// the compiled tier's profile shows for the same spawn.
+    fn goroutine_origin(callee: &Value) -> GoroutineOrigin {
+        match callee {
+            Value::Closure(closure) => {
+                let site = closure
+                    .chunk
+                    .instruction_locations
+                    .iter()
+                    .find_map(|entry| entry.location);
+                GoroutineOrigin {
+                    name: closure.chunk.name.to_string(),
+                    file: site.map(|loc| loc.file.to_string()).unwrap_or_default(),
+                    line: site.map_or(0, |loc| loc.line),
+                }
+            }
+            other => GoroutineOrigin {
+                name: other.type_name(),
+                file: String::new(),
+                line: 0,
+            },
+        }
+    }
+
     /// Spawns a goroutine that runs `callee(args)` through the
     /// bytecode VM. A panic in the spawned callee is isolated to its
     /// worker: it is delivered to the panic hook (if any) or reported
     /// on stderr, and never propagates to the spawning thread.
     pub(crate) fn spawn_goroutine_native(&self, callee: Value, args: Vec<Value>) {
-        self.spawn_on_pool(move |vm| {
+        let origin = Self::goroutine_origin(&callee);
+        self.spawn_on_pool(origin, move |vm| {
             if let Err(err) = vm.dispatch_call(&callee, args) {
                 if !vm.invoke_panic_hook(&crate::panic_message(&err)) {
                     // Report an unobserved goroutine panic with the same single
@@ -536,7 +591,15 @@ impl Vm {
         sink: Box<dyn FnOnce(RuntimeResult<Value>) + Send>,
     ) {
         use crate::value::SpawnTarget;
-        self.spawn_on_pool(move |vm| {
+        let origin = match &target {
+            SpawnTarget::Named(name) => GoroutineOrigin {
+                name: name.clone(),
+                file: String::new(),
+                line: 0,
+            },
+            SpawnTarget::Callable(callee) => Self::goroutine_origin(callee),
+        };
+        self.spawn_on_pool(origin, move |vm| {
             let outcome = match target {
                 SpawnTarget::Named(name) => match vm.lookup_global(&name) {
                     Some(global) => vm.apply(global, args),
@@ -573,7 +636,8 @@ impl Vm {
             crate::stdlib_builtins::cohort::register_child(cohort, reason)
         };
         crate::stdlib_builtins::cohort::note_child_handle(channel.identity(), cohort, index);
-        self.spawn_on_pool(move |vm| {
+        let origin = Self::goroutine_origin(&callee);
+        self.spawn_on_pool(origin, move |vm| {
             crate::stdlib_builtins::cohort::enter_child(cohort);
             let result = vm.dispatch_call(&callee, args);
             // A child fails by panicking or by answering `Err`, the same
