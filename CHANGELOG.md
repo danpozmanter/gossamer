@@ -73,11 +73,12 @@
   reported them correctly.
 - A struct read out of a `Map` and handed back through `Ok(..)` keeps its
   container fields alive for the caller. The wrap's field retains are keyed on
-  the payload's type rather than on a local the drop pass owns, but the pass
-  left early when its ownership sets were all empty - which a sibling match arm
-  built by a call is enough to make true. The entry the map still held was then
-  freed under it, and the next lookup read a length out of reclaimed storage:
-  a wrong answer on the compiled tiers where the bytecode VM was correct.
+  the payload being one the frame does not own rather than on a local the drop
+  pass owns, but the pass left early when its ownership sets were all empty -
+  which a sibling match arm built by a call is enough to make true. The entry
+  the map still held was then freed under it, and the next lookup read a length
+  out of reclaimed storage: a wrong answer on the compiled tiers where the
+  bytecode VM was correct.
 - `gos build` creates the output's directory before linking. A manifest
   `output = "target/debug/app"` names one no earlier phase creates, and every
   linker writes temporaries beside the output before the output itself, so a

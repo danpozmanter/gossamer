@@ -2725,19 +2725,32 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         })
         .collect();
 
-    // The statement-position field bookings below - a struct copy, a
-    // sub-aggregate extract, an aggregate construction, and the `Ok(v)` /
-    // `Err(v)` payload wrap - are keyed on the OPERAND'S TYPE rather than on
-    // any of the sets above, so a body carrying none of those sets can still
-    // owe a field retain. `get_def`-shaped code is the case: nothing is
-    // releasable, no aggregate is owned, and the only work is retaining the
-    // fields of a payload read out of a container and handed to the caller.
-    // Leaving on the seven sets alone dropped that retain and freed the
-    // container's own fields under it.
-    let owes_field_retains = body
-        .locals
-        .iter()
-        .any(|local| !agg_rc_fields(local.ty).is_empty());
+    // An `Ok(v)` / `Err(v)` wrap of a payload the frame does not own owes that
+    // payload's fields a share: the wrap copies the aggregate's words, and the
+    // consumer's own bindings release what it hands them. None of the sets
+    // above records that work - it is keyed on the payload being an extraction,
+    // not on any local the pass classifies as owned - and a sibling match arm
+    // built by a call is enough to leave every one of them empty, so the exit
+    // has to ask for it directly. A payload the frame BUILT is excluded: it
+    // owns its fields already, and a share minted for it would have no
+    // releaser.
+    let owes_extracted_payload_retain = body.blocks.iter().flat_map(|b| &b.stmts).any(|stmt| {
+        let StatementKind::Assign {
+            rvalue: Rvalue::CallIntrinsic { name, args },
+            ..
+        } = &stmt.kind
+        else {
+            return false;
+        };
+        *name == "gos_rt_result_new"
+            && args.iter().any(|op| {
+                matches!(op, Operand::Copy(src)
+                    if src.projection.is_empty()
+                        && (src.local.0 as usize) < n_locals
+                        && extraction_seed[src.local.0 as usize]
+                        && !agg_rc_fields(body.locals[src.local.0 as usize].ty).is_empty())
+            })
+    });
     if releasable.is_empty()
         && retain_sites.is_empty()
         && terminator_retains.is_empty()
@@ -2745,7 +2758,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         && param_agg_locals.is_empty()
         && ref_agg_locals.is_empty()
         && returned_map_field_sites.is_empty()
-        && !owes_field_retains
+        && !owes_extracted_payload_retain
     {
         return;
     }
