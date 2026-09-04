@@ -47,22 +47,28 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use std::sync::channel
-    use std::time
     use std::testing
 
     #[test]
     fn both_values_arrive() {
         let tx1, rx1 = channel()
         let tx2, rx2 = channel()
-        spawn(|| super::slow_sender(tx1))
-        spawn(|| super::fast_sender(tx2))
-        time::sleep(60)
+        // Both senders and both reads belong to the block: the channels are
+        // unbuffered, so each send completes only once its read takes the
+        // value, and the block is not left until both senders have. Each
+        // sender sends exactly one value and closes nothing, so one read is
+        // the whole drain - a `while let` would wait for a close that never
+        // comes.
         let mut total = 0
-        while let Some(v) = rx1.recv() {
-            total += v
-        }
-        while let Some(v) = rx2.recv() {
-            total += v
+        let _ = cohort {
+            spawn(|| super::slow_sender(tx1))
+            spawn(|| super::fast_sender(tx2))
+            if let Some(v) = rx1.recv() {
+                total += v
+            }
+            if let Some(v) = rx2.recv() {
+                total += v
+            }
         }
         let _ = testing::check_eq(total, 3, "slow(1) + fast(2) = 3")
     }

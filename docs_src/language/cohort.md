@@ -64,11 +64,11 @@ let shard = shards[i]
 spawn(|| index_shard(shard))
 ```
 
-## `main` is already a cohort
+## `main` is already a cohort, and only `main`
 
-Every program's `main` runs inside an implicit root cohort, so every
-`spawn` belongs to one even without a block written around it. Two
-things follow:
+Every program's `main` runs inside an implicit root cohort, so a `spawn`
+written there belongs to one without a block around it. Two things
+follow:
 
 - No goroutine outlives the program.
 - A spawned goroutine that fails, and whose handle nobody joins, is
@@ -81,6 +81,29 @@ gossamer: spawned goroutine failed with nobody to observe it: connection refused
 The root cohort's policy is collect-all, so one failing goroutine never
 cancels another's work. Writing `cohort { }` explicitly is how you ask
 for a tighter boundary than "the whole program".
+
+The exemption stops at `main`. A `spawn` in any other function - a free
+function, a method in an `impl` block, a `#[test]` body - must be written
+lexically inside a `cohort { }` in that same function body, at any nesting
+depth and through any number of closures. Anywhere else it is `GT0086`:
+
+```gossamer
+fn handle(id: i64) -> Result<i64, errors::Error> {
+    let tx, rx = channel()
+    spawn(|| tx.send(id))         // GT0086
+    Err(errors::new("failed"))    // strands the child
+}
+```
+
+The child there attaches to whatever cohort `handle`'s caller happens to
+be inside, which neither side of the call says: the signature does not
+mention spawning, and the caller cannot see what it took on. With no
+cohort anywhere in the program it is the root, whose extent is the
+process - so a long-running server accumulates one stranded goroutine per
+call and reclaims none of them. Opening a block around the spawns and the
+code that collects from them is the fix; there is no suppression
+attribute, because a helper that spawns and hands its handles back for
+the caller to join is the leak this rule exists to refuse.
 
 ## Failure and cancellation
 

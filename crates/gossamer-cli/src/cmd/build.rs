@@ -1052,6 +1052,29 @@ fn locate_host_lld() -> std::result::Result<(PathBuf, &'static [&'static str]), 
     )))
 }
 
+/// Creates the directory `out_path` is written into.
+///
+/// Every linker writes its temporaries beside the output before it writes the
+/// output itself - mold's `.mold-XXXXXX` is the one that names the directory in
+/// its error - so the directory has to exist ahead of the link rather than be
+/// implied by `-o`. A manifest `output = "target/debug/app"` names one that no
+/// earlier phase creates, which `--out-dir` does create for the paths carrying
+/// it.
+fn ensure_output_dir(out_path: &Path) -> std::result::Result<(), NativeBuildError> {
+    let Some(parent) = out_path.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    fs::create_dir_all(parent).map_err(|e| {
+        NativeBuildError::Io(anyhow!(
+            "creating output directory {}: {e}",
+            parent.display()
+        ))
+    })
+}
+
 fn try_native_build(
     unit_name: &str,
     input_path: &PathBuf,
@@ -1129,6 +1152,7 @@ fn try_native_build(
     // refuse non-Linux cross targets earlier). Key it off the host
     // build env so a Windows-GNU `gos` keeps the mingw `link_posix`
     // path it uses today.
+    ensure_output_dir(out_path)?;
     let phase_started = Instant::now();
     let link_result = if !lt.is_cross && cfg!(all(windows, target_env = "msvc")) {
         link_windows_msvc(&object_paths, &runtime_lib, &extra_archives, out_path, opts)

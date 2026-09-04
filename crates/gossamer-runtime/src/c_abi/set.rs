@@ -144,6 +144,53 @@ pub unsafe extern "C" fn gos_rt_set_clone(src: *const GosSet) -> *mut GosSet {
     })
 }
 
+/// Replaces the set a by-value aggregate field holds with its own clone.
+///
+/// `slot` is the field's storage address. Emitted after a copy that would
+/// otherwise leave two aggregates naming one table: a `GosSet` has no
+/// reference count, so a copied field takes a value of its own the way a set
+/// binding does. Null-safe.
+///
+/// # Safety
+/// `slot` addresses a `*mut GosSet` field, or is null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_field_clone(slot: *mut *mut GosSet) {
+    ffi_entry!((), {
+        if slot.is_null() {
+            return;
+        }
+        let s = unsafe { slot.read_unaligned() };
+        if s.is_null() {
+            return;
+        }
+        let cloned = unsafe { gos_rt_set_clone(s) };
+        unsafe { slot.write_unaligned(cloned) };
+    });
+}
+
+/// Frees the set a by-value aggregate field owns and nulls the slot.
+///
+/// Nulling makes the release idempotent, so the drop pass may book it at more
+/// than one exit edge of the same field without the second booking touching a
+/// freed table. Null-safe.
+///
+/// # Safety
+/// `slot` addresses a `*mut GosSet` field, or is null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_field_release(slot: *mut *mut GosSet) {
+    ffi_entry!((), {
+        if slot.is_null() {
+            return;
+        }
+        let s = unsafe { slot.read_unaligned() };
+        if s.is_null() {
+            return;
+        }
+        unsafe { slot.write_unaligned(std::ptr::null_mut()) };
+        unsafe { crate::c_abi::gos_rt_set_free(s) };
+    });
+}
+
 /// `*dst = src` through a `&mut Set`: the table every holder of the
 /// reference names keeps its identity and takes a copy of `src`'s elements.
 ///

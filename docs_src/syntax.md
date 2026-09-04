@@ -440,7 +440,10 @@ to the block, which cannot be left until each child has finished, and a
 child's panic or `Err` becomes the block's error after its siblings are
 cancelled. `main` runs inside an implicit root cohort, so a spawned
 goroutine can never outlive the program and a failure nobody joined is
-reported at exit rather than lost. Settings ride the header:
+reported at exit rather than lost - and because that root is main's
+alone, a `spawn` in any other function must be written lexically inside a
+`cohort { }` in that same function body, or the checker reports `GT0086`.
+Settings ride the header:
 `cohort(policy: Policy::CollectAll)`, `cohort(timeout: 500)`, and
 `cohort(isolation: Isolation::Thread)` for FFI or CPU-bound children that
 need a thread of their own. See [cohorts](language/cohort.md).

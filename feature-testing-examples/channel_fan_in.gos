@@ -43,16 +43,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use std::sync::channel
-    use std::time
     use std::testing
 
     #[test]
     fn fan_in_total() {
         let tx, rx = channel::unbounded()
-        spawn(|| super::worker(1, tx, 10))
-        spawn(|| super::worker(2, tx, 20))
-        spawn(|| super::worker(3, tx, 30))
-        time::sleep(50)
+        // The block joins every sender before it is left, so the drain
+        // below reads a channel every send has already reached.
+        let _ = cohort {
+            spawn(|| super::worker(1, tx, 10))
+            spawn(|| super::worker(2, tx, 20))
+            spawn(|| super::worker(3, tx, 30))
+        }
         let mut total = 0
         while let Some(v) = rx.try_recv() {
             total += v

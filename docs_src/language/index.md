@@ -31,7 +31,7 @@ One page per language feature. Source is `crates/gossamer-std/src/manifest/featu
 | [`lang::select`](select.md) | Channel multiplex select expression. |
 | [`lang::channel`](channel.md) | Typed channel via `std::sync::channel`. |
 | [`lang::weak_references`](weak_references.md) | `Weak<T>` downgrade/upgrade handles. Native collection is thread-local only and the bytecode VM has no cycle collector, so cross-tier cyclic reclamation is not yet a Stable guarantee. |
-| [`lang::spawn`](spawn.md) | Goroutine spawn: `spawn(f)` -> `JoinHandle<T>`, `.join()` -> `Result<T, String>`. The child attaches to the enclosing cohort, so nothing is detached. |
+| [`lang::spawn`](spawn.md) | Goroutine spawn: `spawn(f)` -> `JoinHandle<T>`, `.join()` -> `Result<T, String>`. The child attaches to the `cohort { }` the call is written inside, which every `spawn` outside `main` must have (GT0086), so nothing is detached and nothing is attached by accident. |
 | [`lang::builtin_calls`](builtin_calls.md) | The compiler-known call names, written without a sigil: the format family (print/println/eprint/eprintln/format/panic), the desugaring calls (matches/todo/unimplemented/unreachable/dbg), and codegen. The set is closed and there are no user-defined macros. |
 | [`lang::doctest`](doctest.md) | Fenced code in `//` doc comments runs under `gos test`. |
 | [`lang::cfg`](cfg.md) | Conditional compilation attribute. |

@@ -96,6 +96,53 @@ unsafe fn max_heap_sift_down_i64(buf: *mut i64, len: usize, start_i: usize) {
     }
 }
 
+/// Replaces the heap a by-value aggregate field holds with its own store.
+///
+/// `slot` is the field's storage address. A heap IS a `GosVec`, but its push
+/// and pop write the store in place rather than through a copy-on-write, so a
+/// copied field takes a store of its own the way a heap binding does rather
+/// than a share of the same one. Null-safe.
+///
+/// # Safety
+/// `slot` addresses a `*mut GosVec` field, or is null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_field_clone(slot: *mut *mut GosVec) {
+    ffi_entry!((), {
+        if slot.is_null() {
+            return;
+        }
+        let v = unsafe { slot.read_unaligned() };
+        if v.is_null() {
+            return;
+        }
+        let cloned = unsafe { crate::c_abi::string::gos_rt_vec_clone(v) };
+        unsafe { slot.write_unaligned(cloned) };
+    });
+}
+
+/// Frees the heap a by-value aggregate field owns and nulls the slot.
+///
+/// Nulling makes the release idempotent, so the drop pass may book it at more
+/// than one exit edge of the same field without the second booking touching a
+/// freed store. Null-safe.
+///
+/// # Safety
+/// `slot` addresses a `*mut GosVec` field, or is null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bheap_field_release(slot: *mut *mut GosVec) {
+    ffi_entry!((), {
+        if slot.is_null() {
+            return;
+        }
+        let v = unsafe { slot.read_unaligned() };
+        if v.is_null() {
+            return;
+        }
+        unsafe { slot.write_unaligned(std::ptr::null_mut()) };
+        unsafe { crate::c_abi::map::gos_rt_vec_free(v) };
+    });
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_bheap_max_new_i64() -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), { unsafe { gos_rt_vec_new(8) } })

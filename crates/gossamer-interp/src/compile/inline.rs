@@ -215,19 +215,40 @@ impl<'tcx> FnBuilder<'tcx> {
         // binding's home.
         let saved_cell_names = std::mem::take(&mut self.capture_cell_names);
         let capture_cell_mark = self.capture_cells.len();
-        for (pattern, arg) in info.params.iter().zip(arg_regs.iter()) {
+        for (idx, (pattern, arg)) in info.params.iter().zip(arg_regs.iter()).enumerate() {
             if let HirPatKind::Binding {
                 name: param_name,
                 mutable,
             } = &pattern.kind
             {
+                // A `Map` / `Set` / slot-container argument, and a struct
+                // carrying one, reaches an ordinary call as a value of its own
+                // unless the callee only reads it. An inlined body owes the
+                // caller the same: without the copy the callee's write, or a
+                // field it hands back, lands on the caller's own table.
+                let takes_own_value = args.get(idx).is_some_and(|a| {
+                    is_path_expr(a)
+                        && (self.expr_is_map(a)
+                            || self.expr_is_hashset(a)
+                            || self.expr_is_slot_container(a)
+                            || self.expr_is_aggregate_with_container(a))
+                        && !self.callee_only_reads_param(callee, idx)
+                        && !matches!(self.tcx.kind(a.ty), Some(TyKind::Ref { .. }))
+                });
                 // A parameter the callee may write gets a register of
                 // its own, the way a `let` binding does. Binding it to
                 // the argument register is what makes the read-only
                 // case free, and is exactly what a `mut` parameter must
                 // not do: it takes the caller's value, not the caller's
                 // variable.
-                let bound = if *mutable {
+                let bound = if takes_own_value {
+                    let dst = self.alloc_reg();
+                    self.emit(Op::CloneMapLike { dst, src: arg.reg });
+                    TypedReg {
+                        reg: dst,
+                        kind: RegKind::Value,
+                    }
+                } else if *mutable {
                     self.bind_to_fresh(*arg)
                 } else {
                     *arg

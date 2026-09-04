@@ -47,10 +47,12 @@ fn bump(m: Mutex) {
 fn tick() {
     COUNTER = 0
     let m = Mutex::new()
-    let h1 = spawn(|| bump(m))
-    let h2 = spawn(|| bump(m))
-    let _ = h1.join()
-    let _ = h2.join()
+    let _ = cohort {
+        let h1 = spawn(|| bump(m))
+        let h2 = spawn(|| bump(m))
+        let _ = h1.join()
+        let _ = h2.join()
+    }
     println("{}", COUNTER)
 }
 "#;

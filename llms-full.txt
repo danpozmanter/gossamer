@@ -355,11 +355,14 @@ Write clear, low-complexity, concise code.
 - **Goroutines under a `cohort { }`** for concurrent work: `spawn`
   inside the block, which joins every child on every exit path and
   reports the first failure. `spawn` is the only way to start one, and
-  it always attaches to the enclosing cohort - `main` is an implicit
-  root cohort, so nothing is left unaccounted for. A closure body runs
-  on the child, so bind an operand you need read at the spawn site
-  first. Channels carry values; `sync::Mutex` only when shared memory
-  is simpler.
+  a `spawn` MUST be written lexically inside a `cohort { }` in its own
+  function - `main` is the one exemption, since the root cohort's
+  extent is main's own. Anywhere else it is `GT0086`, because a
+  function that spawns without opening a cohort hands its children to
+  whatever cohort its caller happens to be in, which neither side's
+  signature says. A closure body runs on the child, so bind an operand
+  you need read at the spawn site first. Channels carry values;
+  `sync::Mutex` only when shared memory is simpler.
 - **`arena { ... }`** for object graphs that die together:
   bump-allocated, freed wholesale at every exit. Nothing allocated
   inside may be referenced after the block - statically enforced
@@ -606,10 +609,18 @@ spawned goroutine never outlives the program and a failure nobody joined
 is reported on stderr at exit instead of vanishing.
 
 `spawn(f)` returns a `JoinHandle<T>` (`handle.join()` ->
-`Result<T, String>`) and attaches to the enclosing cohort. There is no
-detached form. `spawn(f, reason: "fetch users")` labels the goroutine, and
-the cohort's reports name a labelled child by that label instead of by its
-spawn index. Typed channels: `recv()` blocks until a value arrives or the
+`Result<T, String>`) and attaches to the cohort it is written inside.
+There is no detached form, and there is no ambient one either: a `spawn`
+must sit lexically inside a `cohort { }` in the same function body, or
+the checker reports `GT0086`. `main` is the only exemption - the root
+cohort's extent is main's own extent, so a child started there does not
+outlive the scope that owns it, which is not true of any other function.
+A helper that spawns and hands its handles back to the caller is the
+shape the rule refuses: move the spawns into the caller's cohort and let
+the helper take or answer a closure.
+
+`spawn(f, reason: "fetch users")` labels the goroutine, and the cohort's
+reports name a labelled child by that label instead of by its spawn index. Typed channels: `recv()` blocks until a value arrives or the
 channel is closed, and closing is the producer's job - `close()` is what
 ends a `while let Some(v) = rx.recv()` drain, and a send into a closed
 channel panics with `send on closed channel`.

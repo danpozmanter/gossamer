@@ -1057,7 +1057,7 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "GP0048",
         "Parser",
         "`go` is retired",
-        "Every goroutine is a `spawn` attached to the enclosing cohort, and `main` is an implicit root cohort. `go` evaluated its operands at the spawn site, so `--fix` hoists a computed operand into a temporary.",
+        "Every goroutine is a `spawn` attached to the `cohort { }` it is written inside, which every `spawn` outside `main` must have (GT0086). `go` evaluated its operands at the spawn site, so `--fix` hoists a computed operand into a temporary.",
     ),
     (
         "GP0049",
@@ -1118,6 +1118,12 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "Types",
         "ordered container over a type that writes its own `cmp`",
         "A heap, a `BTreeSet`, or a `BTreeMap` keeps its elements in the order they went in and reads them back with no comparator to call, so an element or key whose type writes its own `cmp` would silently not be ordered by it. A sequence orders on demand and does route through the type's `cmp`: sort a `Vec<T>`, or key the container on a value that carries the order.",
+    ),
+    (
+        "GT0086",
+        "Types",
+        "`spawn` outside a `cohort` block",
+        "A `spawn` must be written lexically inside a `cohort { }` in its own function body; `main` is the one exemption, since the root cohort's extent is main's own. Elsewhere the child attaches to whatever cohort the caller happens to be inside, which neither the callee's signature nor the call site says, and to the root cohort - whose extent is the process - when the program has none. Open a block around the spawns and the code that collects from them.",
     ),
     (
         "GP0052",

@@ -67,7 +67,14 @@ impl ProjectId {
     /// uses this as the default `use` binding name.
     #[must_use]
     pub fn tail(&self) -> &str {
-        self.path().rsplit('/').next().unwrap_or(self.domain())
+        let path = self.path();
+        // `"".rsplit('/')` yields one empty item rather than none, so the
+        // no-path case has to be answered before the split rather than by a
+        // fallback after it.
+        if path.is_empty() {
+            return self.domain();
+        }
+        path.rsplit('/').next().unwrap_or(path)
     }
 }
 
@@ -133,6 +140,16 @@ mod tests {
         assert_eq!(id.domain(), "example.com");
         assert_eq!(id.path(), "math");
         assert_eq!(id.tail(), "math");
+    }
+
+    #[test]
+    fn a_domain_only_id_tails_to_its_domain() {
+        // A reverse-DNS id with no path segment is what names the binary a
+        // `gos build` writes, so an empty tail leaves the output path a bare
+        // directory and the link fails.
+        let id = ProjectId::parse("net.example.postwisp").unwrap();
+        assert_eq!(id.path(), "");
+        assert_eq!(id.tail(), "net.example.postwisp");
     }
 
     #[test]

@@ -2,12 +2,12 @@
 // through methods that take `self` BY VALUE while the caller still owns the
 // aggregate and reads it afterwards.
 //
-// A by-value parameter names a value the callee owns: its map field is swapped
-// for a clone on entry and freed at every exit, both through the field's
-// address. The callee's parameter storage therefore has to be its own frame's,
-// never the caller's aggregate, or the first by-value call empties the table
-// the caller goes on to read. Bit-identical on the VM, Cranelift, and LLVM
-// tiers.
+// A by-value parameter the callee can write, or whose field can outlive the
+// call, names a value the callee owns: its map field is swapped for a clone on
+// entry and freed at every exit, both through the field's address. The
+// callee's parameter storage therefore has to be its own frame's, never the
+// caller's aggregate, or the first by-value call empties the table the caller
+// goes on to read. Bit-identical on the VM, Cranelift, and LLVM tiers.
 
 struct IC {
     memory: Map<i64, i64>

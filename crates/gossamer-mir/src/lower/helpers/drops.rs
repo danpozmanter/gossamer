@@ -95,6 +95,40 @@ pub(crate) enum FieldRcKind {
     /// on more than one exit edge stays a no-op. Both take the FIELD's
     /// address rather than the map word.
     Map,
+    /// A `Set` / `BTreeSet` field, owned the way a [`FieldRcKind::Map`] field
+    /// is: a `GosSet` carries no reference count either.
+    Set,
+    /// A `Deque` / `Queue` / `Stack` field. The three share the `GosDeque`
+    /// header, which carries no reference count.
+    Deque,
+    /// A `MinHeap` / `MaxHeap` field. A heap IS a `GosVec`, but its push and
+    /// pop write the store in place rather than through a copy-on-write, so a
+    /// copy takes a store of its own rather than a share of the same one.
+    Heap,
+}
+
+impl FieldRcKind {
+    /// The `(retain, release)` helper pair for a field whose container carries
+    /// no reference count of its own, or `None` for a reference-counted one.
+    ///
+    /// "Retain" is a clone for these: a share of one container is a copy of
+    /// its storage, since nothing counts holders. Both helpers take the
+    /// FIELD's address and write the slot back.
+    pub(crate) const fn value_container_helpers(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::Map => Some(("gos_rt_map_field_clone", "gos_rt_map_field_release")),
+            Self::Set => Some(("gos_rt_set_field_clone", "gos_rt_set_field_release")),
+            Self::Deque => Some(("gos_rt_deque_field_clone", "gos_rt_deque_field_release")),
+            Self::Heap => Some(("gos_rt_bheap_field_clone", "gos_rt_bheap_field_release")),
+            Self::Rc | Self::Weak | Self::Vec => None,
+        }
+    }
+
+    /// True when a share of this field is a copy of its storage rather than a
+    /// count on shared storage.
+    pub(crate) const fn is_value_container(self) -> bool {
+        self.value_container_helpers().is_some()
+    }
 }
 
 /// One field-level retain/release in the by-value-aggregate teardown:
@@ -315,10 +349,32 @@ pub(crate) fn aggregate_rc_field_paths(tcx: &TyCtxt, ty: Ty) -> AggFieldPaths {
         // and retains the new one after it (the projected-store arm in
         // the field-gap pass), so the RHS temp's own cleanup and the
         // death free each hold their own share.
+        // The container families a struct field can hold whose storage is
+        // reached through a handle that carries no reference count. A copy of
+        // the field would otherwise name one store under two owners, so the
+        // copy takes a store of its own and the field's death frees it.
+        const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
+        const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
+        const VEC_DEQUE_DEF_LOCAL: u32 = u32::MAX - 19;
+        const BINARY_HEAP_DEF_LOCAL: u32 = u32::MAX - 28;
+        const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
+        const VEC_QUEUE_DEF_LOCAL: u32 = u32::MAX - 31;
+        const VEC_STACK_DEF_LOCAL: u32 = u32::MAX - 32;
         if matches!(tcx.kind_of(t), TyKind::Vec(_) | TyKind::Slice(_)) {
             Some(FieldRcKind::Vec)
         } else if matches!(tcx.kind_of(t), TyKind::HashMap { .. }) {
             Some(FieldRcKind::Map)
+        } else if let TyKind::Adt { def, .. } = tcx.kind_of(t)
+            && let Some(kind) = match def.local {
+                HASH_SET_DEF_LOCAL | BTREE_SET_DEF_LOCAL => Some(FieldRcKind::Set),
+                VEC_DEQUE_DEF_LOCAL | VEC_QUEUE_DEF_LOCAL | VEC_STACK_DEF_LOCAL => {
+                    Some(FieldRcKind::Deque)
+                }
+                BINARY_HEAP_DEF_LOCAL | MIN_HEAP_DEF_LOCAL => Some(FieldRcKind::Heap),
+                _ => None,
+            }
+        {
+            Some(kind)
         } else if tcx.is_rc_managed(t) {
             Some(if tcx.is_weak_ty(t) {
                 FieldRcKind::Weak
@@ -1621,7 +1677,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     // `&`/`&mut` parameter, and the extract mints the same
                     // share either way, so ownership is read through the
                     // pointee - the identical predicate the retain pass uses.
-                    // A [`FieldRcKind::Map`] field is excluded there and so is
+                    // A value-container field is excluded there and so is
                     // excluded here: no share is minted for one, so none is
                     // owed back.
                     Rvalue::Use(Operand::Copy(p))
@@ -1630,7 +1686,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         if let crate::ir::Projection::Field(fidx) = p.projection[0] {
                             let base_ty = pointee_of(tcx, body.locals[p.local.0 as usize].ty);
                             if agg_rc_fields(base_ty).iter().any(|(path, kind)| {
-                                path.as_slice() == [fidx] && *kind != FieldRcKind::Map
+                                path.as_slice() == [fidx] && !kind.is_value_container()
                             }) {
                                 owned[i] = true;
                                 if matches!(
@@ -2331,12 +2387,12 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // is when the base is owned. The referent keeps its own, so the fields
     // are read through the pointee type.
     //
-    // A [`FieldRcKind::Map`] field is not one of them: a `GosMap` carries no
-    // reference count, so the extract is a borrow of the owner's map and the
-    // whole ownership story is the owner's own `gos_rt_map_field_clone` /
-    // `gos_rt_map_field_release` schedule. Routing one through `rc_helper`
-    // would reach `gos_rt_rc_retain`, which reads a header the allocation
-    // does not carry.
+    // A value-container field (a `Map`, `Set`, `Deque`, or heap) is not one of
+    // them: its handle carries no reference count, so the extract is a borrow
+    // of the owner's storage and the whole ownership story is the owner's own
+    // field-clone / field-release schedule. Routing one through `rc_helper`
+    // would reach `gos_rt_rc_retain`, which reads a header the allocation does
+    // not carry.
     for (block_idx, block) in body.blocks.iter().enumerate() {
         for (stmt_idx, stmt) in block.stmts.iter().enumerate() {
             if let StatementKind::Assign { place, rvalue } = &stmt.kind
@@ -2348,7 +2404,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 && (src.local.0 as usize) < n_locals
                 && agg_rc_fields(pointee_of(tcx, body.locals[src.local.0 as usize].ty))
                     .iter()
-                    .any(|(path, kind)| path.as_slice() == [fidx] && *kind != FieldRcKind::Map)
+                    .any(|(path, kind)| path.as_slice() == [fidx] && !kind.is_value_container())
             {
                 retain_sites.push((block_idx, stmt_idx, place.local, 1));
             }
@@ -2584,6 +2640,10 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     //
     // Kept apart from `agg_locals` because a parameter must NOT be
     // zero-initialised: its slots arrive holding the caller's values.
+    //
+    // A parameter the body only reads is left out: the caller holds every
+    // field for the whole call, so the pair would cancel, and a `Map`
+    // field's retain copies the whole table.
     let param_agg_locals: Vec<(usize, AggFieldPaths)> = (1..=arity.min(n_locals.saturating_sub(1)))
         .filter(|&i| {
             !body.locals[i].region
@@ -2592,6 +2652,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     gossamer_types::TyKind::Ref { .. }
                 )
         })
+        .filter(|&i| !param_fields_only_read(body, Local(u32::try_from(i).unwrap_or(0))))
         .filter_map(|i| {
             let fields = agg_rc_fields(body.locals[i].ty);
             (!fields.is_empty()).then_some((i, fields))
@@ -2664,6 +2725,19 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         })
         .collect();
 
+    // The statement-position field bookings below - a struct copy, a
+    // sub-aggregate extract, an aggregate construction, and the `Ok(v)` /
+    // `Err(v)` payload wrap - are keyed on the OPERAND'S TYPE rather than on
+    // any of the sets above, so a body carrying none of those sets can still
+    // owe a field retain. `get_def`-shaped code is the case: nothing is
+    // releasable, no aggregate is owned, and the only work is retaining the
+    // fields of a payload read out of a container and handed to the caller.
+    // Leaving on the seven sets alone dropped that retain and freed the
+    // container's own fields under it.
+    let owes_field_retains = body
+        .locals
+        .iter()
+        .any(|local| !agg_rc_fields(local.ty).is_empty());
     if releasable.is_empty()
         && retain_sites.is_empty()
         && terminator_retains.is_empty()
@@ -2671,6 +2745,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         && param_agg_locals.is_empty()
         && ref_agg_locals.is_empty()
         && returned_map_field_sites.is_empty()
+        && !owes_field_retains
     {
         return;
     }
@@ -2880,7 +2955,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     .map(|(p, k)| (p.clone(), *k))
                 {
                     field_gaps[bi][si].push((false, place.local, path.clone(), kind));
-                    let wants_retain = if kind == FieldRcKind::Map {
+                    let wants_retain = if kind.is_value_container() {
                         map_source_kept
                     } else {
                         !source_moved
@@ -2988,18 +3063,13 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                                 .chain(param_agg_locals.iter())
                                 .chain(borrow_copy_agg_locals.iter())
                                 .find(|(l, _)| *l == place.local.0 as usize)
-                                .is_some_and(|(_, fields)| {
-                                    fields
-                                        .iter()
-                                        .any(|(p, k)| *p == path && *k == FieldRcKind::Map)
+                                .and_then(|(_, fields)| {
+                                    fields.iter().find_map(|(p, k)| {
+                                        (*p == path && k.is_value_container()).then_some(*k)
+                                    })
                                 });
-                            if owns {
-                                field_gaps[bi][si + 1].push((
-                                    true,
-                                    place.local,
-                                    path,
-                                    FieldRcKind::Map,
-                                ));
+                            if let Some(kind) = owns {
+                                field_gaps[bi][si + 1].push((true, place.local, path, kind));
                             }
                         }
                     }
@@ -3187,8 +3257,16 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         (false, FieldRcKind::Weak) => "gos_rt_rc_weak_release",
                         (true, FieldRcKind::Vec) => "gos_rt_vec_retain",
                         (false, FieldRcKind::Vec) => "gos_rt_vec_free",
-                        (true, FieldRcKind::Map) => "gos_rt_map_field_clone",
-                        (false, FieldRcKind::Map) => "gos_rt_map_field_release",
+                        (retain, other) => match other.value_container_helpers() {
+                            Some((clone, release)) => {
+                                if retain {
+                                    clone
+                                } else {
+                                    release
+                                }
+                            }
+                            None => unreachable!("every non-value-container kind is matched above"),
+                        },
                     };
                     let dest = Local(u32::try_from(next_unit).expect("local overflow"));
                     next_unit += 1;
@@ -3230,6 +3308,209 @@ fn mints_owned_string(name: &str) -> bool {
             | "gos_rt_option_default_with"
             | "gos_rt_result_default_with"
     ) || gossamer_abi::mints_owned_string(name)
+}
+
+/// True when the body only READS a by-value aggregate parameter: nothing
+/// writes its slots, its words are never copied out whole, and no value read
+/// out of it reaches a call, container, reference, or global that keeps it
+/// past the call.
+///
+/// Such a parameter needs no share of its own. The caller holds every field
+/// for the whole call, so the frame's entry retain and its return release
+/// cancel, and eliding the pair is what keeps a read-only accessor on a
+/// `Map`-carrying struct proportional to the work it does: a `GosMap` has no
+/// reference count, so its retain copies the entire table.
+///
+/// Conservative by construction - every use the walk does not recognise as a
+/// plain read answers `false`, and the parameter keeps its own share.
+fn param_fields_only_read(body: &Body, p: Local) -> bool {
+    use crate::ir::{Operand, Rvalue, StatementKind, Terminator};
+
+    // Locals holding a value read out of `p`'s slots, through bare copies.
+    // Whatever they reach, the parameter's field reaches.
+    let mut carries: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                    continue;
+                };
+                if !place.projection.is_empty() {
+                    continue;
+                }
+                let Rvalue::Use(Operand::Copy(src)) = rvalue else {
+                    continue;
+                };
+                let carried = if src.local == p {
+                    !src.projection.is_empty()
+                } else {
+                    src.projection.is_empty() && carries.contains(&src.local.0)
+                };
+                if carried && carries.insert(place.local.0) {
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    // Any read of the parameter or of a local carrying one of its fields.
+    let reads = |op: &Operand| match op {
+        Operand::Copy(pl) => pl.local == p || carries.contains(&pl.local.0),
+        _ => false,
+    };
+    // The parameter's words copied out whole: every sharing rule downstream
+    // keys on such a copy, so the frame must own what it hands over.
+    let copies_whole =
+        |op: &Operand| matches!(op, Operand::Copy(pl) if pl.local == p && pl.projection.is_empty());
+    // A call that keeps what it is handed, or one whose callee this walk
+    // cannot name.
+    let keeps_args = |callee: &Operand| match callee {
+        Operand::Const(ConstValue::Str(name)) => {
+            is_consuming_call(name) || stores_aggregate_by_pointer(name)
+        }
+        Operand::FnRef { .. } => false,
+        _ => true,
+    };
+
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StatementKind::Assign { place, rvalue } => {
+                    if place.local == p {
+                        return false;
+                    }
+                    // A store through a projection hands the value to whatever
+                    // the destination is part of.
+                    let stores_into_slot = !place.projection.is_empty();
+                    match rvalue {
+                        Rvalue::Use(op) => {
+                            if copies_whole(op) || (stores_into_slot && reads(op)) {
+                                return false;
+                            }
+                        }
+                        Rvalue::UnaryOp { operand: op, .. }
+                        | Rvalue::Cast { operand: op, .. }
+                        | Rvalue::Repeat { value: op, .. } => {
+                            if copies_whole(op) || (stores_into_slot && reads(op)) {
+                                return false;
+                            }
+                        }
+                        Rvalue::BinaryOp { lhs, rhs, .. } => {
+                            if [lhs, rhs]
+                                .iter()
+                                .any(|op| copies_whole(op) || (stores_into_slot && reads(op)))
+                            {
+                                return false;
+                            }
+                        }
+                        Rvalue::Len(_) | Rvalue::StaticLoad(_) => {}
+                        Rvalue::Ref { place: pl, .. } => {
+                            if pl.local == p || carries.contains(&pl.local.0) {
+                                return false;
+                            }
+                        }
+                        Rvalue::Aggregate { operands, .. } => {
+                            if operands.iter().any(&reads) {
+                                return false;
+                            }
+                        }
+                        Rvalue::CallIntrinsic { name, args } => {
+                            // The field helpers take the ADDRESS of the place
+                            // they are handed and write the slot back, so one
+                            // over the parameter is a store, not a read.
+                            let keeps = is_consuming_call(name)
+                                || stores_aggregate_by_pointer(name)
+                                || name.starts_with("gos_store")
+                                || name.contains("_field_clone")
+                                || name.contains("_field_release");
+                            if args.iter().any(|op| {
+                                copies_whole(op) || ((keeps || stores_into_slot) && reads(op))
+                            }) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                StatementKind::StorageLive(_)
+                | StatementKind::StorageDead(_)
+                | StatementKind::Nop => {}
+                StatementKind::SetDiscriminant { place, .. } => {
+                    if place.local == p {
+                        return false;
+                    }
+                }
+                StatementKind::StaticStore { value, .. } => {
+                    if reads(value) {
+                        return false;
+                    }
+                }
+                StatementKind::IterSource { dst, source, .. } => {
+                    if dst.local == p || reads(source) {
+                        return false;
+                    }
+                }
+                StatementKind::IterAdapter {
+                    dst,
+                    upstream,
+                    closure_or_arg,
+                    ..
+                } => {
+                    if dst.local == p
+                        || upstream.local == p
+                        || carries.contains(&upstream.local.0)
+                        || closure_or_arg.as_ref().is_some_and(&reads)
+                    {
+                        return false;
+                    }
+                }
+                StatementKind::IterNext {
+                    dst_option,
+                    iter_place,
+                    ..
+                } => {
+                    if dst_option.local == p
+                        || iter_place.local == p
+                        || carries.contains(&iter_place.local.0)
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+        match &block.terminator {
+            Terminator::Call {
+                callee,
+                args,
+                destination,
+                ..
+            } => {
+                if destination.local == p {
+                    return false;
+                }
+                let keeps = keeps_args(callee);
+                if args
+                    .iter()
+                    .any(|op| copies_whole(op) || (keeps && reads(op)))
+                {
+                    return false;
+                }
+            }
+            Terminator::Drop { place, .. } => {
+                if place.local == p || carries.contains(&place.local.0) {
+                    return false;
+                }
+            }
+            Terminator::Goto { .. }
+            | Terminator::Return
+            | Terminator::SwitchInt { .. }
+            | Terminator::Assert { .. }
+            | Terminator::Unreachable
+            | Terminator::Panic { .. } => {}
+        }
+    }
+    true
 }
 
 /// A call the second argument's heap ownership moves through: a container
@@ -6306,7 +6587,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                     aggregate_rc_field_paths(tcx, decl.ty)
                         .iter()
                         .any(|(path, kind)| {
-                            matches!(kind, FieldRcKind::Vec | FieldRcKind::Map)
+                            (matches!(kind, FieldRcKind::Vec) || kind.is_value_container())
                                 && path.as_slice() == [idx]
                         })
                 })

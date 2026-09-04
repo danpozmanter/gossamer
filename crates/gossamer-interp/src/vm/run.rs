@@ -43,32 +43,19 @@ fn map_like_deep_clone(v: &Value) -> Value {
                 crate::stdlib_builtins::container_heap::binary_heap_deep_clone(v)
             }
             "Set" | "BTreeSet" => crate::stdlib_builtins::set::set_deep_clone(v),
-            // A user struct: rebuild it with every `Map` field deep-cloned,
-            // any depth of plain structs down, so a struct binding never
-            // shares an `Arc<Mutex<_>>` table with its source. Other fields
-            // stay cheap clones, container handles included - their copy
-            // discipline is their own and matches the compiled tier's.
+            // A user struct: rebuild it with every container field
+            // deep-cloned, any depth of plain structs down, so a struct
+            // binding never shares a table or an element store with its
+            // source. A `Map`, a `Set`, and the slot containers all reach
+            // their storage through a handle that carries no count of its
+            // holders, so a copied field takes storage of its own - which is
+            // what the compiled tiers give the same field through the drop
+            // pass's per-field clone.
             _ => {
-                let wants_clone = |f: &Value| -> bool {
-                    match f {
-                        Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_) => true,
-                        Value::Struct(inner) => !matches!(
-                            inner.name.as_str(),
-                            "Set"
-                                | "BTreeSet"
-                                | "Deque"
-                                | "Queue"
-                                | "Stack"
-                                | "MinHeap"
-                                | "MaxHeap"
-                        ),
-                        _ => false,
-                    }
-                };
-                if inner.fields.iter().any(|(_, f)| wants_clone(f)) {
+                if inner.fields.iter().any(|(_, f)| holds_shared_storage(f)) {
                     let mut rebuilt = (**inner).clone();
                     for (_, f) in rebuilt.fields.iter_mut() {
-                        if wants_clone(f) {
+                        if holds_shared_storage(f) {
                             *f = map_like_deep_clone(f);
                         }
                     }
@@ -78,6 +65,22 @@ fn map_like_deep_clone(v: &Value) -> Value {
             }
         },
         other => other.clone(),
+    }
+}
+
+/// True when a value reaches storage a plain `Value::clone` would leave shared:
+/// a map's table, a set's or a slot container's element store, or a struct
+/// holding one of those at any depth.
+fn holds_shared_storage(v: &Value) -> bool {
+    match v {
+        Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_) => true,
+        Value::Struct(inner) => {
+            matches!(
+                inner.name.as_str(),
+                "Set" | "BTreeSet" | "Deque" | "Queue" | "Stack" | "MinHeap" | "MaxHeap"
+            ) || inner.fields.iter().any(|(_, f)| holds_shared_storage(f))
+        }
+        _ => false,
     }
 }
 

@@ -1,0 +1,97 @@
+// Value semantics for every container a struct field can hold.
+//
+// A `Map`, a `Set` / `BTreeSet`, a `Deque` / `Queue` / `Stack`, and a
+// `MinHeap` / `MaxHeap` each reach their storage through a handle that carries
+// no count of its holders, so a copy of a struct holding one takes storage of
+// its own: `let b = a` leaves `a` alone whatever `b` is then pushed, and a
+// callee that writes a by-value parameter writes its own value. The field is
+// owned as well as copied - a struct that dies frees the storage its fields
+// hold, at any nesting depth. Bit-identical on the VM, Cranelift, and LLVM
+// tiers.
+
+struct Bag {
+    set: Set<i64>
+    ordered: BTreeSet<i64>
+    deque: Deque<i64>
+    queue: Queue<i64>
+    stack: Stack<i64>
+    heap: MinHeap<i64>
+    table: Map<i64, i64>
+    list: Vec<i64>
+}
+
+struct Nested {
+    bag: Bag
+    tag: i64
+}
+
+fn fill(mut b: Bag) -> i64 {
+    b.set.insert(9)
+    b.ordered.insert(9)
+    b.deque.push_back(9)
+    b.queue.push(9)
+    b.stack.push(9)
+    b.heap.push(9)
+    b.table.insert(9, 9)
+    b.list.push(9)
+    b.set.len() + b.ordered.len() + b.deque.len() + b.queue.len() + b.stack.len() + b.heap.len()
+    + b.table.len() + b.list.len()
+}
+
+fn measure(b: Bag) -> i64 {
+    b.set.len() + b.ordered.len() + b.deque.len() + b.queue.len() + b.stack.len() + b.heap.len()
+    + b.table.len() + b.list.len()
+}
+
+fn fill_nested(mut n: Nested) -> i64 {
+    n.bag.set.insert(8)
+    n.bag.heap.push(8)
+    n.bag.set.len() + n.bag.heap.len()
+}
+
+fn fresh() -> Bag {
+    let mut table = Map::new()
+    table.insert(1, 10)
+    Bag {
+        set: #{ 1 }
+        ordered: #{ 1 }
+        deque: Deque::from([1])
+        queue: Queue::from([1])
+        stack: Stack::from([1])
+        heap: MinHeap::from([1])
+        table: table
+        list: #[1]
+    }
+}
+
+fn main() {
+    let bag = fresh()
+    println("start {}", measure(bag))
+
+    // A callee that writes a by-value parameter writes its own value.
+    println("callee {} caller {}", fill(bag), measure(bag))
+
+    // A binding taken from a struct copies what its fields hold.
+    let mut copy = bag
+    copy.set.insert(7)
+    copy.deque.push_back(7)
+    copy.heap.push(7)
+    println("copy {} source {}", measure(copy), measure(bag))
+
+    let nested = Nested { bag: fresh(), tag: 3 }
+    println(
+        "nested callee {} caller {} {}"
+        fill_nested(nested), nested.bag.set.len(), nested.bag.heap.len()
+    )
+
+    // Repeated so the JIT promotes the loop, and so a share taken per call
+    // would show up as growth in the caller's own storage.
+    let mut total = 0
+    for _ in 0..2000 {
+        total += measure(bag)
+        total += fill(bag)
+        let scratch = bag
+        total += scratch.set.len()
+    }
+    println("hot {} caller {}", total, measure(bag))
+}

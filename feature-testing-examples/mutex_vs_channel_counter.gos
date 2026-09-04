@@ -6,7 +6,6 @@
 // version demonstrates the safe concurrent ownership model.
 
 use std::sync::{Mutex, channel}
-use std::time
 
 fn counter_with_mutex() -> i64 {
     let counter = Mutex::new()
@@ -31,17 +30,19 @@ fn channel_worker(tx: channel::Sender<i64>) {
 
 fn counter_with_channel() -> i64 {
     let tx, rx = channel(2)
-
-    spawn(|| channel_worker(tx))
-    spawn(|| channel_worker(tx))
-
-    // Allow the scheduler to run the goroutines before blocking on recv.
-    time::sleep(50)
-
     let mut total = 0
-    for _ in 0..2 {
-        if let Some(v) = rx.recv() {
-            total += v
+
+    // The workers and the reads that collect from them belong to one block:
+    // it joins both children on every exit path, so the total is read once
+    // each has sent rather than after a beat, and neither child can outlive
+    // the call that started it.
+    let _ = cohort {
+        spawn(|| channel_worker(tx))
+        spawn(|| channel_worker(tx))
+        for _ in 0..2 {
+            if let Some(v) = rx.recv() {
+                total += v
+            }
         }
     }
     total

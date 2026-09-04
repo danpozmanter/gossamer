@@ -2105,3 +2105,210 @@ fn a_sequence_wrapped_into_a_returned_carrier_mints_no_extra_share() {
         "no share is minted for a payload the caller takes over: {calls:?}",
     );
 }
+
+/// A by-value aggregate parameter the body only reads takes no share of its
+/// own: the caller holds every field for the whole call, so the entry retain
+/// and the return release would cancel. A `Map` field's retain is a copy of
+/// the whole table (a `GosMap` has no reference count), so an accessor that
+/// keeps one costs the map's size on every call.
+#[test]
+fn read_only_by_value_aggregate_param_borrows_its_map_field() {
+    let source = r"
+struct K {
+    m: Map<i64, i64>
+    pos: i64
+}
+
+impl K {
+    fn read(self, k: i64) -> i64 {
+        self.m.get_or(k, 0)
+    }
+}
+";
+    let (bodies, _) = build(source);
+    let body = bodies.iter().find(|b| b.name == "K::read").expect("body");
+    let receiver = Local(1);
+    assert_eq!(
+        field_rc_calls_on(body, "gos_rt_map_field_clone", receiver, 0),
+        0,
+        "a read-only receiver must borrow the caller's table, not copy it"
+    );
+    assert_eq!(
+        field_rc_calls_on(body, "gos_rt_map_field_release", receiver, 0),
+        0,
+        "nothing was minted for the receiver, so nothing is released"
+    );
+}
+
+/// A by-value aggregate parameter the body WRITES keeps its own share: the
+/// store lands on the callee's value, and the caller's map is untouched.
+#[test]
+fn written_by_value_aggregate_param_owns_its_map_field() {
+    let source = r"
+struct K {
+    m: Map<i64, i64>
+    pos: i64
+}
+
+fn bump(mut k: K) -> i64 {
+    k.m.insert(1, 2)
+    k.m.len()
+}
+";
+    let (bodies, _) = build(source);
+    let body = bodies.iter().find(|b| b.name == "bump").expect("body");
+    let param = Local(1);
+    assert_eq!(
+        field_rc_calls_on(body, "gos_rt_map_field_clone", param, 0),
+        1,
+        "a written parameter takes one table of its own at entry"
+    );
+    assert_eq!(
+        field_rc_calls_on(body, "gos_rt_map_field_release", param, 0),
+        1,
+        "and gives it back at the return"
+    );
+}
+
+/// A struct copy takes storage of its own for every container field, not just
+/// the `Map` one: a `Set`, a `Deque`, and a heap each reach their elements
+/// through a handle that carries no count of its holders, so two structs
+/// naming one store would see each other's writes and free it twice.
+#[test]
+fn struct_copy_clones_every_container_field() {
+    let source = r"
+struct Bag {
+    set: Set<i64>
+    deque: Deque<i64>
+    heap: MinHeap<i64>
+}
+
+fn copy_it() -> i64 {
+    let a = Bag { set: #{1}, deque: Deque::from([1]), heap: MinHeap::from([1]) }
+    let mut b = a
+    b.set.insert(2)
+    a.set.len() + b.set.len()
+}
+";
+    let (bodies, _) = build(source);
+    let body = bodies.iter().find(|b| b.name == "copy_it").expect("body");
+    for helper in [
+        "gos_rt_set_field_clone",
+        "gos_rt_deque_field_clone",
+        "gos_rt_bheap_field_clone",
+    ] {
+        assert!(
+            call_symbol_names(body).iter().any(|n| n == helper),
+            "a struct copy must give each container field storage of its own ({helper})"
+        );
+    }
+    for helper in [
+        "gos_rt_set_field_release",
+        "gos_rt_deque_field_release",
+        "gos_rt_bheap_field_release",
+    ] {
+        assert!(
+            call_symbol_names(body).iter().any(|n| n == helper),
+            "and the storage it took has to be freed ({helper})"
+        );
+    }
+}
+
+/// A by-value parameter the body WRITES owns each container field it carries,
+/// exactly as it owns a `Map` one.
+#[test]
+fn written_by_value_param_owns_every_container_field() {
+    let source = r"
+struct Bag {
+    set: Set<i64>
+    deque: Deque<i64>
+}
+
+fn fill(mut b: Bag) -> i64 {
+    b.set.insert(2)
+    b.set.len() + b.deque.len()
+}
+";
+    let (bodies, _) = build(source);
+    let body = bodies.iter().find(|b| b.name == "fill").expect("body");
+    let param = Local(1);
+    assert_eq!(
+        field_rc_calls_on(body, "gos_rt_set_field_clone", param, 0),
+        1,
+        "a written parameter takes one set of its own at entry"
+    );
+    assert_eq!(
+        field_rc_calls_on(body, "gos_rt_deque_field_clone", param, 1),
+        1,
+        "and one deque of its own"
+    );
+    assert_eq!(
+        field_rc_calls_on(body, "gos_rt_set_field_release", param, 0),
+        1,
+        "both given back at the return"
+    );
+    assert_eq!(
+        field_rc_calls_on(body, "gos_rt_deque_field_release", param, 1),
+        1,
+        "both given back at the return"
+    );
+}
+
+/// A payload read out of a container and wrapped in `Ok(..)` retains its RC
+/// fields, whatever else the body does.
+///
+/// The wrap's retain is keyed on the payload's TYPE, not on any local the drop
+/// pass classifies as owned, so a body that owns nothing else still owes it.
+/// The pass's early exit consulted only its ownership sets, and a sibling match
+/// arm whose expression is a call (here a concatenation) leaves every one of
+/// them empty - so the retain went unbooked, the caller's release freed the
+/// fields, and the container's own entry was left naming freed storage.
+#[test]
+fn wrapped_container_payload_retains_its_fields_without_other_owned_locals() {
+    let source = r#"
+struct Def { name: String, cols: Vec<String> }
+struct Eng { tables: Map<String, Def> }
+
+fn get_def(eng: Eng, table: String) -> Result<Def, String> {
+    match eng.tables.get(table) {
+        Some(d) => return Ok(d),
+        None => return Err("no such table: " + table),
+    }
+}
+"#;
+    let (bodies, _) = build(source);
+    let body = bodies.iter().find(|b| b.name == "get_def").expect("body");
+    assert_eq!(
+        projected_rc_calls(body, "gos_rt_rc_retain", 0),
+        1,
+        "the payload's String field is retained for the caller"
+    );
+    assert_eq!(
+        projected_rc_calls(body, "gos_rt_vec_retain", 1),
+        1,
+        "and so is its Vec field"
+    );
+}
+
+/// Calls to `name` whose argument is `<some local>.field`.
+fn projected_rc_calls(body: &gossamer_mir::Body, name: &str, field: u32) -> usize {
+    body.blocks
+        .iter()
+        .flat_map(|b| b.stmts.iter())
+        .filter(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name: n, args },
+                    ..
+                } if *n == name
+                    && matches!(
+                        args.first(),
+                        Some(Operand::Copy(p))
+                            if p.projection.as_slice()
+                                == [gossamer_mir::Projection::Field(field)]
+                    )
+            )
+        })
+        .count()
+}

@@ -1385,6 +1385,18 @@ pub const REGISTRY: &[(&str, &str)] = &[
             that carries the order.",
     ),
     (
+        "GT0086",
+        "A `spawn` was written in a function with no `cohort { }` of its own.\n\
+            `spawn` attaches its child to the cohort the goroutine is inside at\n\
+            that moment, which is dynamic state a signature says nothing\n\
+            about: the child joins whatever cohort the caller happens to be\n\
+            in, and the root cohort - whose extent is the process - when there\n\
+            is none. Open a `cohort { }` around the spawns and the code that\n\
+            collects from them. `main` is exempt: the root cohort's extent is\n\
+            main's own, so a child there does not outlive the scope that owns\n\
+            it.",
+    ),
+    (
         "GX0001",
         "An operation received a value of an incompatible type. The\n\
                      diagnostic names the type that was required and the type\n\

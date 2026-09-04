@@ -76,20 +76,27 @@ fn phase_insecure() {
             return }
     }
     let tx, rx = channel()
-    spawn(|| insecure_client(addr, tx))
-    let stream, _peer = match listener.accept() {
-        Ok(p) => p
-        Err(e) => { println("insecure accept failed: {}", e)
-            return }
-    }
-    let _ = stream.read(512)
-    let _ = stream.write(#[1, 2, 3, 4, 5])
-    let _ = stream.close()
-    let _ = listener.close()
-    let code = match rx.recv() {
-        Some(c) => c
-        None => { println("no insecure result")
-            return }
+    let mut code = CONNECT_FAILED
+    // The client and the server side it talks to belong to one block: the
+    // channel is unbuffered, so the client's result reaches the read below
+    // rather than a cohort the caller happens to be in, and the block is not
+    // left until the client has finished.
+    let _ = cohort {
+        spawn(|| insecure_client(addr, tx))
+        let stream, _peer = match listener.accept() {
+            Ok(p) => p
+            Err(e) => { println("insecure accept failed: {}", e)
+                return }
+        }
+        let _ = stream.read(512)
+        let _ = stream.write(#[1, 2, 3, 4, 5])
+        let _ = stream.close()
+        let _ = listener.close()
+        code = match rx.recv() {
+            Some(c) => c
+            None => { println("no insecure result")
+                return }
+        }
     }
     if code == REJECTED {
         println("insecure rejected junk peer")

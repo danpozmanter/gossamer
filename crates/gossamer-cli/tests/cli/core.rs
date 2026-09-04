@@ -1874,6 +1874,41 @@ fn build_honours_project_output_field_in_manifest() {
 }
 
 #[test]
+fn build_creates_the_output_directory_before_linking() {
+    // A manifest `output = "target/debug/app"` names a directory no earlier
+    // phase creates. Every linker writes temporaries beside the output before
+    // the output itself - mold's `.mold-XXXXXX` names the directory in its
+    // error - so the link fails outright on a tree with no `target/`.
+    let dir = env::temp_dir().join(format!("gos-build-outdir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/outdir\"\nversion = \"0.1.0\"\n\
+         output = \"build/bin/outdir\"\n",
+    )
+    .unwrap();
+    let source_path = dir.join("src/main.gos");
+    std::fs::write(&source_path, "fn main() { println(\"ok\") }\n").unwrap();
+    let out = Command::new(gos_bin())
+        .arg("build")
+        .arg(&source_path)
+        .current_dir(&dir)
+        .output()
+        .expect("spawn build");
+    let expected = dir
+        .join("build")
+        .join("bin")
+        .join(format!("outdir{}", std::env::consts::EXE_SUFFIX));
+    let ok = out.status.success();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let exists = expected.exists();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(ok, "build into a missing directory failed: {stderr}");
+    assert!(exists, "expected build output at {}", expected.display());
+}
+
+#[test]
 fn build_inside_project_names_binary_after_project_id_tail() {
     // Rust's convention: `cargo build` writes `target/debug/<package>`,
     // not `target/debug/main`. Gossamer follows the same rule when a

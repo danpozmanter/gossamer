@@ -499,22 +499,22 @@ fn builtin_runtime_cycle_collection_supported(_args: &[Value]) -> RuntimeResult<
     Ok(Value::Bool(false))
 }
 
+/// `runtime::scheduler_stats_json()`. The counters describe the scheduler
+/// the caller's goroutines are actually running on, which under the
+/// interpreter is its own worker pool rather than the `MultiScheduler` the
+/// compiled tiers use: that one never sees a VM goroutine, so reading it
+/// here reported a program's own children as zero.
+///
+/// `steps`, `yields`, `steals`, `parks` and `unparks` name work-stealing
+/// mechanics the pool does not have - it takes each task from one shared
+/// queue and runs it to completion on a worker thread, with no step loop and
+/// no per-worker deques to steal between - so they read as zero.
 fn builtin_runtime_scheduler_stats_json(_args: &[Value]) -> RuntimeResult<Value> {
-    let scheduler = gossamer_runtime::sched_global::scheduler();
-    let stats = scheduler.stats();
+    let stats = crate::vm::goroutine::pool_stats();
     Ok(Value::String(format!(
-        "{{\"spawned\":{},\"finished\":{},\"steps\":{},\"yields\":{},\"steals\":{},\"injects\":{},\"parks\":{},\"unparks\":{},\"live_goroutines\":{},\"worker_count\":{},\"worker_count_cap\":{}}}",
-        stats.spawned,
-        stats.finished,
-        stats.steps,
-        stats.yields,
-        stats.steals,
-        stats.injects,
-        stats.parks,
-        stats.unparks,
-        scheduler.live_goroutines(),
-        scheduler.worker_count(),
-        gossamer_runtime::sched::MultiScheduler::worker_count_cap(),
+        "{{\"spawned\":{},\"finished\":{},\"steps\":0,\"yields\":0,\"steals\":0,\"injects\":{},\"parks\":0,\"unparks\":0,\"live_goroutines\":{},\"worker_count\":{},\"worker_count_cap\":{}}}",
+        stats.spawned, stats.finished, stats.injects, stats.live, stats.worker_count,
+        stats.worker_count_cap,
     )
     .into()))
 }

@@ -267,8 +267,12 @@ impl<'a> Builder<'a> {
                                 crate::lower::FieldRcKind::Weak => "gos_rt_rc_weak_retain",
                                 crate::lower::FieldRcKind::Rc => "gos_rt_rc_retain",
                                 // Takes the field's address and swaps in a
-                                // clone: a map cannot be co-owned.
-                                crate::lower::FieldRcKind::Map => "gos_rt_map_field_clone",
+                                // clone: a container with no reference count
+                                // cannot be co-owned.
+                                other => match other.value_container_helpers() {
+                                    Some((clone, _)) => clone,
+                                    None => continue,
+                                },
                             };
                             let retain_dest = self.fresh(i64_ty);
                             self.emit_assign(

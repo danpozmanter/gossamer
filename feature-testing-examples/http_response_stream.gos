@@ -1,8 +1,13 @@
-// Cross-tier regression for a response body the handler writes as it
-// goes. The handler answers immediately with the stream as its body and a
-// goroutine feeds it; the server frames each write to the client. This is
-// what server-sent events, a large download, and a progressive render all
-// need, and what a fully-buffered `Response::text` cannot do.
+// Cross-tier regression for a response body written through
+// `http::ResponseStream` rather than built as one buffer: the handler opens a
+// stream, a goroutine writes each event into it and closes it, and the server
+// frames every write to the client. This is the shape server-sent events, a
+// large download, and a progressive render are built on.
+//
+// The writer runs inside the handler's own `cohort { }`, which owns it: a
+// handler is an ordinary function, so a child it starts cannot be left
+// running past the answer it returns. The stream's writes are still separate
+// frames on the wire; what the block fixes is who joins the writer.
 //
 // Binds port 0, so it needs no port lock. Self-terminating: the client
 // runs in main and the program returns normally.
@@ -11,7 +16,9 @@ use std::{errors, http, time}
 
 fn events(_r: http::Request) -> Result<http::Response, errors::Error> {
     let body = http::ResponseStream::new()
-    spawn(|| feed(body))
+    cohort {
+        spawn(|| feed(body))
+    }?
     Ok(http::Response::stream(200, "text/event-stream", body))
 }
 

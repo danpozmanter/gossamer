@@ -3233,10 +3233,34 @@ enum FormatSegment {
 /// literal text. Empty name parts (`{:spec}`) and bare identifiers/numbers are
 /// not flagged.
 fn format_name_looks_like_expr(inner: &str) -> bool {
-    let name = inner.split(':').next().unwrap_or("").trim();
+    let name = match format_spec_colon(inner) {
+        Some(idx) => &inner[..idx],
+        None => inner,
+    }
+    .trim();
     !name.is_empty()
         && !is_capture_name(name)
         && !name.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Byte offset of the `:` that introduces a placeholder's format spec, or
+/// `None` when the placeholder is all name. A `::` is a path separator, so it
+/// belongs to the name part: `{runtime::root()}` is one expression with no
+/// spec, not a `runtime` capture rendered under a `:root()` spec.
+fn format_spec_colon(inner: &str) -> Option<usize> {
+    let bytes = inner.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b':' {
+            if bytes.get(i + 1) == Some(&b':') {
+                i += 2;
+                continue;
+            }
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Splits a template into `FormatSegment`s. `{{` / `}}` escape
@@ -3693,6 +3717,48 @@ mod tests {
                     .iter()
                     .any(|d| matches!(d.error, ParseError::PipePlaceholderRetired)),
                 "{source} should report the retired placeholder: {diags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_qualified_placeholder_is_malformed() {
+        // The name part runs to the spec's `:`, and a `::` is a path
+        // separator rather than that colon, so these are expressions in
+        // placeholder position and not a `runtime` capture under a spec.
+        for source in [
+            r#"println("{runtime::root()}")"#,
+            r#"println("{runtime::root}")"#,
+            r#"println("{std::nope::bar()}")"#,
+            r#"println("{a::b:>8}")"#,
+        ] {
+            let (_expr, diags) = parse_expr_with_diagnostics(source);
+            assert!(
+                diags
+                    .iter()
+                    .any(|d| matches!(d.error, ParseError::MalformedFormatPlaceholder { .. })),
+                "{source} should report a malformed placeholder: {diags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_placeholders_survive_the_path_check() {
+        for source in [
+            r#"println("{x}")"#,
+            r#"println("{}", x)"#,
+            r#"println("{:?}", x)"#,
+            r#"println("{x:>8}")"#,
+            r#"println("{x:.2}")"#,
+            r#"println("{a.b}")"#,
+            r#"println("{t.0}")"#,
+        ] {
+            let (_expr, diags) = parse_expr_with_diagnostics(source);
+            assert!(
+                !diags
+                    .iter()
+                    .any(|d| matches!(d.error, ParseError::MalformedFormatPlaceholder { .. })),
+                "{source} is a well-formed placeholder: {diags:?}"
             );
         }
     }

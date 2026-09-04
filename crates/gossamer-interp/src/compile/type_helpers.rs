@@ -95,32 +95,82 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     /// Whether `expr` is a by-value struct or tuple holding, at any nesting
-    /// depth, a field whose entries live behind `Arc<Mutex<_>>` (a `Map`). A
-    /// plain register copy of such a value would share that field's backing
-    /// table between the binding and its source, so the binding takes a deep
-    /// clone the way a bare `Map` binding does.
-    pub(crate) fn expr_is_aggregate_with_map(&self, expr: &HirExpr) -> bool {
-        self.ty_holds_map_like(self.unwrap_ref(expr.ty), 0)
+    /// depth, a field that reaches its storage through a handle carrying no
+    /// count of its holders: a `Map`, a `Set` / `BTreeSet`, a `Deque` /
+    /// `Queue` / `Stack`, or a `MinHeap` / `MaxHeap`. A plain register copy of
+    /// such a value would share that field's storage between the binding and
+    /// its source, so the binding takes a deep clone the way a bare container
+    /// binding does.
+    pub(crate) fn expr_is_aggregate_with_container(&self, expr: &HirExpr) -> bool {
+        self.ty_holds_shared_container(self.unwrap_ref(expr.ty), 0)
     }
 
-    fn ty_holds_map_like(&self, ty: gossamer_types::Ty, depth: u32) -> bool {
+    /// The register a function answers with, cloned when the answer is a map
+    /// read straight out of an aggregate's field.
+    ///
+    /// The caller keeps the struct the field belongs to, so the value handed
+    /// back has to be one of its own - exactly what a `let` binding of the
+    /// same field takes. A bare local or parameter is not one: its own copy
+    /// discipline already ran where it was bound.
+    pub(crate) fn cloned_returned_field_container(
+        &mut self,
+        expr: &gossamer_hir::HirExpr,
+        reg: Reg,
+    ) -> Reg {
+        use gossamer_hir::HirExprKind;
+        if !matches!(
+            expr.kind,
+            HirExprKind::Field { .. } | HirExprKind::TupleIndex { .. }
+        ) {
+            return reg;
+        }
+        if !self.expr_is_map(expr) {
+            return reg;
+        }
+        let dst = self.alloc_reg();
+        self.emit(crate::bytecode::Op::CloneMapLike { dst, src: reg });
+        dst
+    }
+
+    fn ty_holds_shared_container(&self, ty: gossamer_types::Ty, depth: u32) -> bool {
+        const HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
+        const BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
+        const VEC_DEQUE_DEF_LOCAL: u32 = u32::MAX - 19;
+        const BINARY_HEAP_DEF_LOCAL: u32 = u32::MAX - 28;
+        const MIN_HEAP_DEF_LOCAL: u32 = u32::MAX - 30;
+        const VEC_QUEUE_DEF_LOCAL: u32 = u32::MAX - 31;
+        const VEC_STACK_DEF_LOCAL: u32 = u32::MAX - 32;
         if depth > 8 {
             return false;
         }
         match self.tcx.kind(ty) {
             Some(TyKind::HashMap { .. }) => true,
+            Some(TyKind::Adt { def, .. })
+                if matches!(
+                    def.local,
+                    HASH_SET_DEF_LOCAL
+                        | BTREE_SET_DEF_LOCAL
+                        | VEC_DEQUE_DEF_LOCAL
+                        | VEC_QUEUE_DEF_LOCAL
+                        | VEC_STACK_DEF_LOCAL
+                        | BINARY_HEAP_DEF_LOCAL
+                        | MIN_HEAP_DEF_LOCAL
+                ) =>
+            {
+                true
+            }
             Some(TyKind::Adt { def, .. }) => {
                 self.tcx.struct_field_tys(*def).is_some_and(|fields| {
                     fields
                         .to_vec()
                         .iter()
-                        .any(|f| self.ty_holds_map_like(*f, depth + 1))
+                        .any(|f| self.ty_holds_shared_container(*f, depth + 1))
                 })
             }
             Some(TyKind::Tuple(elems)) => elems
                 .clone()
                 .iter()
-                .any(|e| self.ty_holds_map_like(*e, depth + 1)),
+                .any(|e| self.ty_holds_shared_container(*e, depth + 1)),
             _ => false,
         }
     }

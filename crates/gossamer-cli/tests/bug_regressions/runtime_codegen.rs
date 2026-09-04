@@ -1282,23 +1282,24 @@ fn main() {
 /// Goroutines stranded on several channels must not hold the process at
 /// exit. The root cohort reports what it abandons and the pool drain shares
 /// its deadline, so the run ends on both tiers instead of waiting forever.
+///
+/// The spawns are `main`'s own: it is the one function whose children may
+/// attach to the root cohort, everywhere else `GT0086` requires a block.
 #[test]
 fn stranded_goroutines_on_several_channels_still_exit() {
     let src = r#"
 use std::sync::channel
 
-fn round(r: i64) {
-    let tx, rx = channel()
-    for i in 0..2 {
-        let tx = tx
-        spawn(|| { tx.send(r * 10 + i) }, reason: "w")
-    }
-    let first = rx.recv()
-    println("round {r}: {first}")
-}
-
 fn main() {
-    for r in 1..=3 { round(r) }
+    for r in 1..=3 {
+        let tx, rx = channel()
+        for i in 0..2 {
+            let tx = tx
+            spawn(|| { tx.send(r * 10 + i) }, reason: "w")
+        }
+        let first = rx.recv()
+        println("round {r}: {first}")
+    }
     println("main done")
 }
 "#;
@@ -1419,4 +1420,64 @@ fn main() {
             native.0
         );
     }
+}
+
+/// A struct read out of a `Map` and handed back through `Ok(..)` keeps its
+/// container fields alive for the caller, so the entry the map still holds
+/// stays readable on every later lookup.
+///
+/// The payload wrap's field retains are keyed on the payload's type, not on
+/// any local the drop pass owns, so a body owning nothing else still needs
+/// them. Reading the map a second time is what makes a missing retain visible:
+/// the first read's release frees the entry's own `Vec`, and its length then
+/// reads as whatever the allocator handed out next.
+#[test]
+fn a_map_entry_survives_being_handed_back_through_a_result() {
+    let src = r#"
+struct Def { name: String, cols: Vec<String> }
+struct Eng { tables: Map<String, Def> }
+
+fn get_def(eng: Eng, table: String) -> Result<Def, String> {
+    match eng.tables.get(table) {
+        Some(d) => return Ok(d),
+        None => return Err("no such table: " + table),
+    }
+}
+
+fn probe(eng: &mut Eng, table: String) -> i64 {
+    match get_def(*eng, table) {
+        Ok(d) => d.cols.len(),
+        Err(_) => -1,
+    }
+}
+
+fn create(eng: &mut Eng, name: String, cols: Vec<String>) {
+    let mut def = Def { name: name, cols: #[] }
+    for col in cols {
+        def.cols.push(col)
+    }
+    eng.tables.insert(name, def)
+}
+
+fn main() {
+    let mut eng = Eng { tables: Map::new() }
+    create(&mut eng, "users", #["username", "email", "password", "role", "created_at"])
+    println("{} {} {}", probe(&mut eng, "users"), probe(&mut eng, "users"), probe(&mut eng, "users"))
+}
+"#;
+    let dir = fresh_dir("map_entry_through_result");
+    let path = write_source(&dir, "map_entry_through_result", src);
+    let expected = "5 5 5";
+
+    let run = run_vm(&path);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert!(run.0.contains(expected), "vm: {:?}", run.0);
+
+    let native_dir = dir.join("native");
+    fs::create_dir_all(&native_dir).unwrap();
+    let bin = build_native(&path, &native_dir).expect("native build");
+    let native = run_native(&bin);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert!(native.0.contains(expected), "native: {:?}", native.0);
 }

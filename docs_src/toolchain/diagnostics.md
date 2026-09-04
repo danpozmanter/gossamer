@@ -68,6 +68,7 @@ version. This page is auto-generated from the catalogue in
 | [`GT0083`](#gt0083) | Types | write through a value that is not a reference |
 | [`GT0084`](#gt0084) | Types | impl of a trait the language supplies itself |
 | [`GT0085`](#gt0085) | Types | ordered container over a type that writes its own `cmp` |
+| [`GT0086`](#gt0086) | Types | `spawn` outside a `cohort` block |
 | [`GP0052`](#gp0052) | Parser | build-time validated call without a literal |
 | [`GP0056`](#gp0056) | Parser | retired cohort isolation spelling |
 | [`GP0053`](#gp0053) | Parser | `Display` rendering declared as `to_string` |
@@ -367,7 +368,7 @@ No operation is withheld outside an `unsafe` block or from a safe `fn`. The keyw
 
 **Parser** - `go` is retired
 
-Every goroutine is a `spawn` attached to the enclosing cohort, and `main` is an implicit root cohort. `go` evaluated its operands at the spawn site, so `--fix` hoists a computed operand into a temporary.
+Every goroutine is a `spawn` attached to the `cohort { }` it is written inside, which every `spawn` outside `main` must have (GT0086). `go` evaluated its operands at the spawn site, so `--fix` hoists a computed operand into a temporary.
 
 ## `GP0049` <a id="gp0049"></a>
 
@@ -429,6 +430,12 @@ Hashing, copying, release, marker safety, and the `Into` / `TryInto` / `IntoIter
 
 A heap, a `BTreeSet`, or a `BTreeMap` keeps its elements in the order they went in and reads them back with no comparator to call, so an element or key whose type writes its own `cmp` would silently not be ordered by it. A sequence orders on demand and does route through the type's `cmp`: sort a `Vec<T>`, or key the container on a value that carries the order.
 
+## `GT0086` <a id="gt0086"></a>
+
+**Types** - `spawn` outside a `cohort` block
+
+A `spawn` must be written lexically inside a `cohort { }` in its own function body; `main` is the one exemption, since the root cohort's extent is main's own. Elsewhere the child attaches to whatever cohort the caller happens to be inside, which neither the callee's signature nor the call site says, and to the root cohort - whose extent is the process - when the program has none. Open a block around the spawns and the code that collects from them.
+
 ## `GP0052` <a id="gp0052"></a>
 
 **Parser** - build-time validated call without a literal
@@ -487,7 +494,7 @@ The same path was imported twice in the same `use` list. Drop the duplicate.
 
 **Resolve** - unknown module path
 
-The `use` names a module path that does not exist. A `std::` module has exactly one canonical path (e.g. JSON lives at `std::encoding::json`); check `gos doc` or the stdlib reference for it. A `crate::` / `super::` / `self::` path names a module of this package or an item one declares, and a file is a module: add the file that declares it, or correct the path.
+The `use` names a `std::` module path that does not exist. Every module has exactly one canonical path (e.g. JSON lives at `std::encoding::json`); check `gos doc` or the stdlib reference for the module's path.
 
 ## `GR0006` <a id="gr0006"></a>
 

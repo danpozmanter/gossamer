@@ -78,14 +78,17 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use std::sync::channel
-    use std::time
     use std::testing
 
     #[test]
     fn channel_counter_reaches_target() {
         let tx, rx = channel::unbounded()
-        spawn(|| super::increment_via_channel(tx, 20))
-        time::sleep(20)
+        // The channel is unbounded, so the sender never waits for a reader:
+        // the block joins it, and the close that ends the drain is owed only
+        // once it has finished.
+        let _ = cohort {
+            spawn(|| super::increment_via_channel(tx, 20))
+        }
         tx.close()
         let mut n = 0
         while let Some(_) = rx.recv() {
@@ -97,9 +100,10 @@ mod tests {
     #[test]
     fn two_goroutines_sum_correctly() {
         let tx, rx = channel::unbounded()
-        spawn(|| super::increment_via_channel(tx, 30))
-        spawn(|| super::increment_via_channel(tx, 30))
-        time::sleep(30)
+        let _ = cohort {
+            spawn(|| super::increment_via_channel(tx, 30))
+            spawn(|| super::increment_via_channel(tx, 30))
+        }
         tx.close()
         let mut total = 0
         while let Some(v) = rx.recv() {

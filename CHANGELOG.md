@@ -1,7 +1,28 @@
 # Changelog
 
-## 0.58.10 - Bounded exit drain, goroutine profiles on the VM
+## 0.58.10 - By-value parameters that only read, container fields as values, spawn inside a cohort
 
+- A by-value aggregate parameter a function only reads costs the work it does
+  rather than the size of what it holds. The drop pass gave every one a share of
+  each container field it carries, and a `GosMap` has no reference count, so
+  that share copied the whole table: an accessor on a struct with a `Map` field
+  ran the map's length per call, which made a loop over it quadratic and put the
+  compiled tiers hundreds of times behind the bytecode VM.
+- A struct or tuple carrying a `Map` reaches a callee as a value of its own on
+  the bytecode VM, matching the compiled tiers. The call-site copy covered a
+  bare `Map` argument but not one nested in an aggregate, and the user-function
+  inliner bound such a parameter straight to the caller's register, so a
+  callee's `insert` landed on the caller's table.
+- A function that hands back a `Map` field answers a table of its own on the
+  bytecode VM, so an `insert` through the answer is not visible through the
+  struct it came from.
+- `gos run` no longer faults on a function that returns a `Map` read out of an
+  aggregate field. The JIT passed the field-swap helper a bare local's value -
+  the map pointer itself - where the helper reads a slot address.
+- A `Set`, `BTreeSet`, `Deque`, `Queue`, `Stack`, `MinHeap`, or `MaxHeap` held
+  as a struct field is copied and owned like every other container field. Only
+  `Vec`, `Map`, and `String` fields were tracked, so `let b = a` left both
+  structs naming one element store and the store was never freed.
 - A program that leaves a goroutine running exits on the bytecode VM instead of
   hanging. The root cohort's wait was bounded and the goroutine pool's was not,
   and the pool's ended only once every goroutine had classified itself as
@@ -32,6 +53,40 @@
   that renders values supplying their own rendering had no case for an error, so
   it printed the struct where the compiled tiers printed the message. Cause
   chains join with `: ` there as everywhere.
+- A `spawn` must be written lexically inside a `cohort { }` in its own function
+  body, or `gos check` reports `GT0086`; `main` is the one exemption. `spawn`
+  attaches its child to the cohort the goroutine is inside at that moment, so a
+  function that spawned without opening one handed its children to whatever
+  cohort its caller happened to be in - and to the root cohort, whose extent is
+  the process, when the program had none. Neither the callee's signature nor
+  the call site said so, and a long-running server accumulated one stranded
+  goroutine per call.
+- A format placeholder holding a path expression is reported as `GP0021`, as
+  `{x + 1}` already was. The name part was split from the spec at the first
+  `:`, which read a `::` path separator as the spec's colon, so
+  `println("{runtime::root()}")` passed `gos check` and printed its own
+  placeholder text instead of calling anything.
+- `runtime::scheduler_stats_json()` counts the goroutines the caller actually
+  started on the bytecode VM. It read the scheduler the compiled tiers run on,
+  which never sees a VM goroutine, so a program with children live reported
+  `"spawned":0` and `"live_goroutines":0` beside a `runtime::root()` that
+  reported them correctly.
+- A struct read out of a `Map` and handed back through `Ok(..)` keeps its
+  container fields alive for the caller. The wrap's field retains are keyed on
+  the payload's type rather than on a local the drop pass owns, but the pass
+  left early when its ownership sets were all empty - which a sibling match arm
+  built by a call is enough to make true. The entry the map still held was then
+  freed under it, and the next lookup read a length out of reclaimed storage:
+  a wrong answer on the compiled tiers where the bytecode VM was correct.
+- `gos build` creates the output's directory before linking. A manifest
+  `output = "target/debug/app"` names one no earlier phase creates, and every
+  linker writes temporaries beside the output before the output itself, so a
+  build in a tree with no `target/` failed in the linker.
+- A project whose `id` carries no `/` builds. Its name falls back to the
+  domain, as documented, but the split answering that name reads an empty path
+  as one empty segment rather than none, so the fallback never ran and a
+  reverse-DNS id like `net.example.app` named the binary "" - leaving the
+  linker's `-o` pointing at a directory.
 
 ## 0.58.9 - Join outcomes under cancellation, trait catalog on the site
 

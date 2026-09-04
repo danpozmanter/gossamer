@@ -531,6 +531,53 @@ pub unsafe extern "C" fn gos_rt_deque_assign(dst: *mut GosDeque, src: *mut GosDe
     });
 }
 
+/// Replaces the deque a by-value aggregate field holds with its own clone.
+///
+/// `slot` is the field's storage address. A `GosDeque` has no reference count,
+/// so a copied field takes an element store of its own the way a deque binding
+/// does. `Queue` and `Stack` are the same header and route through here.
+/// Null-safe.
+///
+/// # Safety
+/// `slot` addresses a `*mut GosDeque` field, or is null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_field_clone(slot: *mut *mut GosDeque) {
+    ffi_entry!((), {
+        if slot.is_null() {
+            return;
+        }
+        let d = unsafe { slot.read_unaligned() };
+        if d.is_null() {
+            return;
+        }
+        let cloned = unsafe { gos_rt_deque_clone(d) };
+        unsafe { slot.write_unaligned(cloned) };
+    });
+}
+
+/// Frees the deque a by-value aggregate field owns and nulls the slot.
+///
+/// Nulling makes the release idempotent, so the drop pass may book it at more
+/// than one exit edge of the same field without the second booking touching a
+/// freed store. Null-safe.
+///
+/// # Safety
+/// `slot` addresses a `*mut GosDeque` field, or is null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_field_release(slot: *mut *mut GosDeque) {
+    ffi_entry!((), {
+        if slot.is_null() {
+            return;
+        }
+        let d = unsafe { slot.read_unaligned() };
+        if d.is_null() {
+            return;
+        }
+        unsafe { slot.write_unaligned(std::ptr::null_mut()) };
+        unsafe { gos_rt_deque_free(d) };
+    });
+}
+
 /// `Queue::clone` - the same header a deque has.
 ///
 /// # Safety

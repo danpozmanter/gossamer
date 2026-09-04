@@ -443,6 +443,12 @@ impl<'a> Lowerer<'a> {
                 | "gos_rt_option_slot_release"
                 | "gos_rt_map_field_release"
                 | "gos_rt_map_field_clone"
+                | "gos_rt_set_field_release"
+                | "gos_rt_set_field_clone"
+                | "gos_rt_deque_field_release"
+                | "gos_rt_deque_field_clone"
+                | "gos_rt_bheap_field_release"
+                | "gos_rt_bheap_field_clone"
         ) {
             // The helpers read the payload word beside the discriminant, so
             // they take the carrier's address. A local holds the carrier

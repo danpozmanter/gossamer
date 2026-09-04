@@ -336,6 +336,12 @@ impl<'a> Lowerer<'a> {
                         | "gos_rt_map_set_vec_values"
                         | "gos_rt_map_field_release"
                         | "gos_rt_map_field_clone"
+                        | "gos_rt_set_field_release"
+                        | "gos_rt_set_field_clone"
+                        | "gos_rt_deque_field_release"
+                        | "gos_rt_deque_field_clone"
+                        | "gos_rt_bheap_field_release"
+                        | "gos_rt_bheap_field_clone"
                 )
             {
                 return self.lower_guarded_walk_intrinsic(name, args);

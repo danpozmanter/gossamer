@@ -107,6 +107,14 @@ pub(crate) struct GoroutinePool {
     /// queue non-empty and no worker idle, means nothing can ever free a
     /// worker on its own.
     completions: AtomicU64,
+    /// Tasks ever enqueued, counted monotonically. `outstanding` falls as
+    /// tasks finish, so it cannot answer how many goroutines a program has
+    /// started; this reports that for `runtime::scheduler_stats_json`.
+    spawned: AtomicU64,
+    /// Tasks ever pulled off the shared queue by a worker. The pool has one
+    /// queue and no per-worker deques, so every task a worker runs was taken
+    /// from it - the counterpart to `MultiStats::injects`.
+    injects: AtomicU64,
 }
 
 struct PoolInner {
@@ -131,6 +139,8 @@ impl GoroutinePool {
             workers: AtomicUsize::new(0),
             idle: AtomicUsize::new(0),
             completions: AtomicU64::new(0),
+            spawned: AtomicU64::new(0),
+            injects: AtomicU64::new(0),
         });
         // wasm32 is single-threaded: there are no worker threads. `go` /
         // `spawn` run the goroutine body to completion immediately (see
@@ -161,6 +171,7 @@ impl GoroutinePool {
                         let mut inner = p.inner.lock();
                         loop {
                             if let Some(task) = inner.queue.pop_front() {
+                                p.injects.fetch_add(1, Ordering::Relaxed);
                                 break Some(task);
                             }
                             if inner.shutting_down {
@@ -235,6 +246,7 @@ impl GoroutinePool {
         // `drain()`, so a drain cannot observe an empty program while a
         // concurrent goroutine spawn is about to enqueue work.
         pool.outstanding.fetch_add(1, Ordering::AcqRel);
+        pool.spawned.fetch_add(1, Ordering::Relaxed);
         note_progress();
         inner.queue.push_back(task);
         drop(inner);
@@ -246,8 +258,11 @@ impl GoroutinePool {
     /// `gossamer_coro::suspend`, which panics with the documented
     /// "blocking not supported in the playground" message.
     #[cfg(target_arch = "wasm32")]
-    pub(crate) fn spawn(_pool: &Arc<Self>, task: GoroutineTask) {
+    pub(crate) fn spawn(pool: &Arc<Self>, task: GoroutineTask) {
+        pool.spawned.fetch_add(1, Ordering::Relaxed);
+        pool.injects.fetch_add(1, Ordering::Relaxed);
         task();
+        pool.completions.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Starts the one background thread that grows `pool`, and only when
@@ -392,6 +407,42 @@ fn warn_worker_ceiling_once() {
 /// builds the pool with the bounded default worker count.
 pub(crate) fn pool() -> &'static Arc<GoroutinePool> {
     POOL.get_or_init(|| GoroutinePool::new(default_worker_count()))
+}
+
+/// The goroutine pool's counters, in the shape
+/// `runtime::scheduler_stats_json` reports.
+pub(crate) struct PoolStats {
+    pub(crate) spawned: u64,
+    pub(crate) finished: u64,
+    pub(crate) injects: u64,
+    pub(crate) live: u64,
+    pub(crate) worker_count: usize,
+    pub(crate) worker_count_cap: usize,
+}
+
+/// Snapshot of the pool that runs VM goroutines. The compiled tiers run
+/// theirs on `MultiScheduler` and report its counters; this is the same
+/// reading for the tier the interpreter actually schedules on. A program
+/// that has never spawned has no pool, and reads as all zeroes.
+pub(crate) fn pool_stats() -> PoolStats {
+    let Some(pool) = POOL.get() else {
+        return PoolStats {
+            spawned: 0,
+            finished: 0,
+            injects: 0,
+            live: 0,
+            worker_count: 0,
+            worker_count_cap: MAX_WORKERS,
+        };
+    };
+    PoolStats {
+        spawned: pool.spawned.load(Ordering::Acquire),
+        finished: pool.completions.load(Ordering::Acquire),
+        injects: pool.injects.load(Ordering::Acquire),
+        live: pool.outstanding.load(Ordering::Acquire),
+        worker_count: pool.workers.load(Ordering::Relaxed),
+        worker_count_cap: MAX_WORKERS,
+    }
 }
 
 /// Goroutine tasks queued or running. A task that has not started yet is

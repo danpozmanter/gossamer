@@ -477,6 +477,10 @@ pub fn compile_fn(
         let BlockResult::ValueIn(reg) = result else {
             unreachable!()
         };
+        let reg = match body.block.tail.as_deref() {
+            Some(tail) => builder.cloned_returned_field_container(tail, reg),
+            None => reg,
+        };
         builder.emit(Op::Return { value: reg });
     } else {
         builder.emit(Op::ReturnUnit);

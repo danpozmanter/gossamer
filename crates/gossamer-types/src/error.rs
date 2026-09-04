@@ -150,6 +150,16 @@ pub enum TypeError {
         /// The element type the annotation named.
         found: String,
     },
+    /// A `spawn` that no `cohort { }` in the same function body encloses.
+    /// The child would attach to whatever cohort the caller happens to be
+    /// inside, which the callee's signature says nothing about.
+    #[error(
+        "`spawn` in `{function}` is not inside a `cohort` block, so its child would attach to the caller's cohort and outlive this call"
+    )]
+    SpawnOutsideCohort {
+        /// Name of the function the spawn was written in.
+        function: String,
+    },
     /// A container that orders its elements internally named an element
     /// whose type writes its own `cmp`. The container keeps its elements in
     /// its own order and never calls a comparator, so the order the type
@@ -984,7 +994,11 @@ pub enum TypeError {
 
 impl TypeError {
     /// Returns a short stable tag useful for snapshot tests.
+    // A stable tag per variant is a data table, not control flow: the lint
+    // counts its rows as function length, and splitting the table would cost
+    // the exhaustiveness that makes a new variant fail to compile here.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub const fn tag(&self) -> &'static str {
         match self {
             Self::TypeMismatch { .. } => "type-mismatch",
@@ -993,6 +1007,7 @@ impl TypeError {
             Self::ArgumentTypeMismatch { .. } => "argument-type-mismatch",
             Self::SlotCollectionElement { .. } => "slot-collection-element",
             Self::ContainerIgnoresUserOrder { .. } => "container-ignores-user-order",
+            Self::SpawnOutsideCohort { .. } => "spawn-outside-cohort",
             Self::UnresolvedMethod { .. } => "unresolved-method",
             Self::PrivateMethod { .. } => "private-method",
             Self::PrivateField { .. } => "private-field",
@@ -1108,6 +1123,7 @@ impl TypeError {
             Self::ArgumentTypeMismatch { .. } => "GT0001",
             Self::SlotCollectionElement { .. } => "GT0068",
             Self::ContainerIgnoresUserOrder { .. } => "GT0085",
+            Self::SpawnOutsideCohort { .. } => "GT0086",
             Self::UnresolvedMethod { .. } => "GT0002",
             Self::UnresolvedOp { .. } | Self::UnresolvedOpImpl { .. } => "GT0003",
             Self::NonExhaustiveMatch { .. } => "GT0004",
@@ -1826,6 +1842,18 @@ impl TypeDiagnostic {
                          as in `fn f<T: {name}>(value: T)`"
                     ))
                     .with_note("there is no `dyn`, so a trait has no value shape of its own");
+            }
+            TypeError::SpawnOutsideCohort { .. } => {
+                out = out
+                    .with_help(
+                        "open a `cohort { }` around the spawns and the code that collects \
+                         from them, so the block owns every child it starts",
+                    )
+                    .with_note(
+                        "a cohort joins every child on every exit path; without one the \
+                         child attaches to whatever cohort the caller is in, and to the \
+                         root cohort - whose extent is the process - when there is none",
+                    );
             }
             TypeError::ContainerIgnoresUserOrder { owner, elem } => {
                 out = out

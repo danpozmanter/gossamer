@@ -196,7 +196,10 @@ impl<'tcx> FnBuilder<'tcx> {
 
     pub(crate) fn compile_return(&mut self, value: Option<&HirExpr>) -> RuntimeResult<Reg> {
         let reg = match value {
-            Some(value) => self.compile_expr(value)?,
+            Some(value) => {
+                let reg = self.compile_expr(value)?;
+                self.cloned_returned_field_container(value, reg)
+            }
             None => self.load_unit(),
         };
         // `return` leaves every enclosing block: run all pending defer

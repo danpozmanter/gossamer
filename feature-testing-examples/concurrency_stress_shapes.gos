@@ -21,17 +21,22 @@ fn produce(tx: Sender<i64>, base: i64) {
 // bounds the drain; closing is the job of whoever owns the last handle.
 fn fan_in() -> i64 {
     let tx, rx = channel()
-    for p in 0..PRODUCERS {
-        let sender = tx.clone()
-        let __spawn_arg_0 = p * PER_PRODUCER
-        spawn(|| produce(sender, __spawn_arg_0))
-    }
     let mut total = 0
-    let mut seen = 0
-    while seen < PRODUCERS * PER_PRODUCER {
-        let Some(v) = rx.recv() else { break }
-        total += v
-        seen += 1
+    // The producers and the drain that consumes them share one block: the
+    // channel is unbuffered, so every send completes only as the drain takes
+    // it, and the block is not left until every producer has finished.
+    let _ = cohort {
+        for p in 0..PRODUCERS {
+            let sender = tx.clone()
+            let __spawn_arg_0 = p * PER_PRODUCER
+            spawn(|| produce(sender, __spawn_arg_0))
+        }
+        let mut seen = 0
+        while seen < PRODUCERS * PER_PRODUCER {
+            let Some(v) = rx.recv() else { break }
+            total += v
+            seen += 1
+        }
     }
     total
 }
@@ -59,18 +64,23 @@ fn feed_jobs(tx: Sender<i64>) {
 fn fan_out() -> i64 {
     let jobs, jobs_rx = channel()
     let results, results_rx = channel()
-    for _ in 0..WORKERS {
-        let rx = jobs_rx.clone()
-        let tx = results.clone()
-        spawn(|| square_all(rx, tx))
-    }
-    spawn(|| feed_jobs(jobs))
     let mut total = 0
-    let mut seen = 0
-    while seen < PER_PRODUCER {
-        let Some(v) = results_rx.recv() else { break }
-        total += v
-        seen += 1
+    // Workers, feeder, and drain all belong to the block: the feeder's close
+    // ends every worker's loop, and the block is not left until each has
+    // finished.
+    let _ = cohort {
+        for _ in 0..WORKERS {
+            let rx = jobs_rx.clone()
+            let tx = results.clone()
+            spawn(|| square_all(rx, tx))
+        }
+        spawn(|| feed_jobs(jobs))
+        let mut seen = 0
+        while seen < PER_PRODUCER {
+            let Some(v) = results_rx.recv() else { break }
+            total += v
+            seen += 1
+        }
     }
     total
 }
@@ -95,12 +105,16 @@ fn pipeline() -> i64 {
     let feed, feed_rx = channel()
     let mid, mid_rx = channel()
     let out, out_rx = channel()
-    spawn(|| stage_double(feed_rx, mid))
-    spawn(|| stage_offset(mid_rx, out))
-    spawn(|| produce_range(feed))
     let mut total = 0
-    while let Some(v) = out_rx.recv() {
-        total += v
+    // Every stage and the sink that reads the last one belong to the block,
+    // so the chain is joined where it was started.
+    let _ = cohort {
+        spawn(|| stage_double(feed_rx, mid))
+        spawn(|| stage_offset(mid_rx, out))
+        spawn(|| produce_range(feed))
+        while let Some(v) = out_rx.recv() {
+            total += v
+        }
     }
     total
 }
@@ -121,16 +135,20 @@ fn echo_once(tx: Sender<i64>, value: i64) {
 // runtime is tracking a large set of independent parked pairs at once.
 fn many_channels() -> i64 {
     let mut receivers: Vec<Receiver<i64>> = #[]
-    for i in 0..CHANNEL_PAIRS {
-        let tx, rx = channel()
-        let __spawn_arg_0 = i * i
-        spawn(|| echo_once(tx, __spawn_arg_0))
-        receivers.push(rx)
-    }
     let mut total = 0
-    for rx in receivers {
-        while let Some(v) = rx.recv() {
-            total += v
+    // Each sender parks on its own unbuffered channel until the drain below
+    // reaches it, so both loops belong to the block that joins them.
+    let _ = cohort {
+        for i in 0..CHANNEL_PAIRS {
+            let tx, rx = channel()
+            let __spawn_arg_0 = i * i
+            spawn(|| echo_once(tx, __spawn_arg_0))
+            receivers.push(rx)
+        }
+        for rx in receivers {
+            while let Some(v) = rx.recv() {
+                total += v
+            }
         }
     }
     total
@@ -140,10 +158,14 @@ fn many_channels() -> i64 {
 // park on a full buffer and are woken by the receiver draining it.
 fn buffered_backpressure() -> i64 {
     let tx, rx = channel(8)
-    spawn(|| produce_range(tx))
     let mut count = 0
-    while let Some(_) = rx.recv() {
-        count += 1
+    // The producer parks on a full buffer until the drain frees a slot, so
+    // the two belong to one block.
+    let _ = cohort {
+        spawn(|| produce_range(tx))
+        while let Some(_) = rx.recv() {
+            count += 1
+        }
     }
     count
 }

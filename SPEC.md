@@ -1388,6 +1388,12 @@ observed through its join handle is reported on stderr at exit instead of
 vanishing. The root's policy is `CollectAll`, so one child's failure never
 cancels another's work.
 
+The root cohort is `main`'s alone. Its extent is the process, which is the
+same extent `main` has, and is longer than any other function's - so a
+`spawn` in a function other than `main` must be written lexically inside a
+`cohort { }` in that same function body. Anywhere else it is `GT0086`. See
+[Spawn scope](#spawn-scope).
+
 ```
 fn gather() -> Result<(), errors::Error> {
   cohort {
@@ -1446,13 +1452,37 @@ and yields its outcome as `Result<T, String>`: `Ok(value)` on a normal
 return, or `Err(message)` if the goroutine panicked.
 
 `spawn` is the only way to start a goroutine. Every one attaches to the
-enclosing cohort, and `main` runs inside an implicit root cohort, so a
-goroutine never outlives the block that started it and a failure nobody
-joined is still reported. There is no detached form.
+cohort it is written inside, so a goroutine never outlives the block that
+started it and a failure nobody joined is still reported. There is no
+detached form.
 
 Ownership is fixed at the spawn and there is no re-parenting: nothing
 moves a running goroutine from one cohort to another, so the block a
 child belongs to is decided once, where it was written.
+
+### Spawn scope
+
+A `spawn` is an error unless one of these holds:
+
+1. it is lexically inside a `cohort { ... }` block in the same function
+   body, at any nesting depth and through any number of closures;
+2. the enclosing function is `main`, including an entry file's top-level
+   statements, which are a synthesized `main`.
+
+Anything else is `GT0086`. Without the rule the attachment is dynamic
+state: a function that spawns and opens no cohort of its own hands its
+children to whatever cohort its caller happens to be inside, and to the
+root cohort - whose extent is the process - when the program has none.
+Neither side of the call says so, since the callee's signature does not
+mention spawning and the caller cannot see what it took on. `main` is
+exempt because the root cohort's extent IS main's extent, so a child
+started there does not outlive the scope that owns it.
+
+A method in an `impl` block is a function for this purpose, including one
+named `main`. There is no escape hatch and no suppression attribute: a
+helper that spawns workers and hands the handles back for its caller to
+join is the shape the rule refuses, and the fix is to move the spawns into
+the caller's cohort and have the helper take or answer a closure.
 
 `spawn(f, reason: "..")` labels the goroutine. The label is text a report
 prints: the cohort's enumeration and drain reports name a labelled child by

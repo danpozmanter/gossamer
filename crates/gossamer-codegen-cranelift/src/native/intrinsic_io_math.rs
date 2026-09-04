@@ -1113,15 +1113,62 @@ pub(super) fn lower_intrinsic_call_io_math(
             builder.ins().call(fref, &[v, meta_val]);
             Ok(true)
         }
-        // A map a by-value aggregate field owns: the copy takes a table of
-        // its own and the field's death frees it. Both helpers read the
-        // FIELD's address, so the place is lowered to an address rather than
-        // to its word - a local holds the carrier itself, and a reference
-        // holds the address of one.
-        "gos_rt_map_field_release" | "gos_rt_map_field_clone" => {
+        // A container a by-value aggregate field owns: the copy takes storage
+        // of its own and the field's death frees it. Every one of these
+        // helpers reads the FIELD's address, so the place is lowered to an
+        // address rather than to its word - a local holds the carrier itself,
+        // and a reference holds the address of one.
+        "gos_rt_map_field_release"
+        | "gos_rt_map_field_clone"
+        | "gos_rt_set_field_release"
+        | "gos_rt_set_field_clone"
+        | "gos_rt_deque_field_release"
+        | "gos_rt_deque_field_clone"
+        | "gos_rt_bheap_field_release"
+        | "gos_rt_bheap_field_clone" => {
             let Some(Operand::Copy(place)) = args.first() else {
                 return Ok(true);
             };
+            // A bare local of map type IS the map word, and this backend keeps
+            // such a local in an SSA variable with no address of its own. The
+            // swap is expressed on the value instead: clone (or free) what the
+            // local holds and write the answer back into it, which is what the
+            // slot-address form does through memory.
+            if place.projection.is_empty()
+                && matches!(
+                    tcx.kind_of(body.local_ty(place.local)),
+                    TyKind::HashMap { .. }
+                )
+            {
+                let var = ensure_var(
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    module,
+                    &intrinsics.body_cl_types,
+                    place.local,
+                );
+                let held = builder.use_var(var);
+                let held_ty = value_type(held, builder);
+                let current = coerce_arg_to(builder, held, ptr_ty).unwrap_or(held);
+                if name == "gos_rt_map_field_clone" {
+                    let f =
+                        intrinsics.extern_fn(module, "gos_rt_map_clone", &[ptr_ty], &[ptr_ty])?;
+                    let fref = module.declare_func_in_func(f, builder.func);
+                    let call = builder.ins().call(fref, &[current]);
+                    let cloned = builder.inst_results(call)[0];
+                    let cloned = coerce_arg_to(builder, cloned, held_ty).unwrap_or(cloned);
+                    builder.def_var(var, cloned);
+                } else {
+                    let f = intrinsics.extern_fn(module, "gos_rt_map_free", &[ptr_ty], &[])?;
+                    let fref = module.declare_func_in_func(f, builder.func);
+                    builder.ins().call(fref, &[current]);
+                    let null = builder.ins().iconst(held_ty, 0);
+                    builder.def_var(var, null);
+                }
+                return Ok(true);
+            }
             let addr = lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?;
             let slot = if place.projection.is_empty()
                 && matches!(
@@ -1132,10 +1179,17 @@ pub(super) fn lower_intrinsic_call_io_math(
             } else {
                 addr
             };
-            let sym: &'static str = if name == "gos_rt_map_field_clone" {
-                "gos_rt_map_field_clone"
-            } else {
-                "gos_rt_map_field_release"
+            // The interner keeps the symbol for the module's lifetime, so the
+            // name is re-spelled as a literal rather than borrowed from the MIR.
+            let sym: &'static str = match name {
+                "gos_rt_map_field_clone" => "gos_rt_map_field_clone",
+                "gos_rt_map_field_release" => "gos_rt_map_field_release",
+                "gos_rt_set_field_clone" => "gos_rt_set_field_clone",
+                "gos_rt_set_field_release" => "gos_rt_set_field_release",
+                "gos_rt_deque_field_clone" => "gos_rt_deque_field_clone",
+                "gos_rt_deque_field_release" => "gos_rt_deque_field_release",
+                "gos_rt_bheap_field_clone" => "gos_rt_bheap_field_clone",
+                _ => "gos_rt_bheap_field_release",
             };
             let f = intrinsics.extern_fn(module, sym, &[ptr_ty], &[])?;
             let fref = module.declare_func_in_func(f, builder.func);

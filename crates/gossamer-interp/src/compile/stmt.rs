@@ -185,7 +185,7 @@ impl<'tcx> FnBuilder<'tcx> {
                             && (self.expr_is_map(init)
                                 || self.expr_is_hashset(init)
                                 || self.expr_is_slot_container(init)
-                                || self.expr_is_aggregate_with_map(init))
+                                || self.expr_is_aggregate_with_container(init))
                         {
                             // `Map` / `Set` entries live behind `Arc<Mutex<_>>`,
                             // so the plain register copy `bind_to_fresh` uses for

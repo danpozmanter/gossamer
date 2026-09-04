@@ -4092,6 +4092,7 @@ impl<'a> TypeChecker<'a> {
     /// declares, or against the unit a missing one answers.
     fn check_fn_body(&mut self, decl: &FnDecl, body: &Expr, declared_ret: Option<Ty>) {
         let ret = declared_ret.unwrap_or_else(|| self.tcx.unit());
+        self.reject_unscoped_spawns(decl, body);
         self.collect_write_arg_bindings(body);
         let prev_ret = self.current_fn_ret.replace(ret);
         // The declared return type flows into the body as its expectation
@@ -4123,6 +4124,50 @@ impl<'a> TypeChecker<'a> {
         });
         if declared_ret.is_some() && !discards_tail {
             self.unify(ret, body_ty, body.span);
+        }
+    }
+
+    /// Reports a `spawn` that no `cohort { }` in the same body encloses.
+    ///
+    /// `spawn` attaches its child to the cohort the goroutine is inside at
+    /// that moment, and a function is not a cohort. A function that spawns
+    /// without opening one hands its children to whatever cohort its caller
+    /// happens to be in - and, when the program has none, to the root cohort,
+    /// whose extent is the process. Neither side of the call says so: the
+    /// callee's signature does not mention spawning and the caller cannot see
+    /// what it took on. Requiring the block lexically is what makes the block
+    /// that joins a child the block a reader can point at.
+    ///
+    /// `main` is the exemption, and the only one. The root cohort's extent IS
+    /// main's extent, so a child started there does not outlive the scope that
+    /// owns it - the one place ambient attachment tells the truth. An entry
+    /// file's top-level statements are a synthesized `fn main` and ride the
+    /// same exemption; a method named `main` in an `impl` block does not.
+    ///
+    /// Containment is the whole test, so a closure does not break it: a
+    /// closure written inside a cohort block runs where it is written.
+    fn reject_unscoped_spawns(&mut self, decl: &FnDecl, body: &Expr) {
+        let name = decl.name.name.as_str();
+        if (name == "main" && self.current_self_ty_name.is_none()) || is_compiler_generated(name) {
+            return;
+        }
+        let mut scan = SpawnScopeScan::default();
+        gossamer_ast::visitor::Visitor::visit_expr(&mut scan, body);
+        if scan.spawns.is_empty() {
+            return;
+        }
+        for spawn in scan.spawns {
+            let scoped = scan.cohorts.iter().any(|cohort| {
+                cohort.file == spawn.file && cohort.start <= spawn.start && spawn.end <= cohort.end
+            });
+            if !scoped {
+                self.emit(
+                    TypeError::SpawnOutsideCohort {
+                        function: name.to_string(),
+                    },
+                    spawn,
+                );
+            }
         }
     }
 
@@ -17758,6 +17803,41 @@ fn body_value_span(body: &Expr) -> Span {
             .map_or(body.span, |tail| body_value_span(tail)),
         _ => body.span,
     }
+}
+
+/// Collects, from one function body, the span of every `cohort { }` block and
+/// the span of every prelude `spawn(...)` call.
+///
+/// A nested `fn` item carries its own body and its own rule, so the walk stops
+/// at one. A closure is not a boundary: it runs where it is written, so a
+/// spawn inside a closure inside a cohort block is inside that block.
+#[derive(Default)]
+struct SpawnScopeScan {
+    cohorts: Vec<Span>,
+    spawns: Vec<Span>,
+}
+
+impl gossamer_ast::visitor::Visitor for SpawnScopeScan {
+    fn visit_expr(&mut self, expr: &Expr) {
+        match &expr.kind {
+            ExprKind::Block(block) if block.kind == gossamer_ast::BlockKind::Cohort => {
+                self.cohorts.push(expr.span);
+            }
+            // The prelude `spawn`, not a module's own (`exec::spawn`).
+            ExprKind::Call { callee, .. } => {
+                if let ExprKind::Path(path) = &callee.kind
+                    && let [seg] = path.segments.as_slice()
+                    && seg.name.name == "spawn"
+                {
+                    self.spawns.push(expr.span);
+                }
+            }
+            _ => {}
+        }
+        gossamer_ast::visitor::walk_expr(self, expr);
+    }
+
+    fn visit_item(&mut self, _item: &gossamer_ast::Item) {}
 }
 
 /// True for a name the compiler synthesized rather than the user wrote.

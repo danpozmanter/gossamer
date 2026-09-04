@@ -199,6 +199,95 @@ fn a_written_cmp_reaches_the_sites_that_can_read_it() {
     );
 }
 
+/// A `spawn` attaches its child to the cohort the goroutine is inside at that
+/// moment. A function is not a cohort, so one that spawns without opening a
+/// `cohort { }` hands its children to whatever cohort its caller happens to be
+/// in - and to the root cohort, whose extent is the process, when the program
+/// has none. `main` is the one exemption: the root cohort's extent IS main's.
+#[test]
+fn a_spawn_belongs_to_a_cohort_written_around_it() {
+    gate(
+        "spawn scope",
+        &[
+            (
+                "a function that spawns and opens no cohort strands its children",
+                "use std::errors\nfn handle(id: i64) -> Result<i64, errors::Error> {\n let h = spawn(|| id)\n let _ = h.join()\n Err(errors::new(\"failed\")) }\nfn main() { let _ = handle(1) }\n",
+                Expect::Reject("GT0086"),
+            ),
+            (
+                "a method in an impl block is a function for this purpose",
+                "struct Pool { n: i64 }\nimpl Pool { fn start(&self) -> i64 { let h = spawn(|| 1)\n h.join().unwrap_or(0) } }\nfn main() { let p = Pool { n: 1 }\n println(\"{}\", p.start()) }\n",
+                Expect::Reject("GT0086"),
+            ),
+            (
+                "a method named main is still a method, not the program's main",
+                "struct T { n: i64 }\nimpl T { fn main(&self) -> i64 { let h = spawn(|| 5)\n h.join().unwrap_or(0) } }\nfn main() { let t = T { n: 1 }\n println(\"{}\", t.main()) }\n",
+                Expect::Reject("GT0086"),
+            ),
+            (
+                "a closure is not a cohort: it runs where it is written",
+                "fn run() -> i64 { let f = || { let h = spawn(|| 7)\n h.join().unwrap_or(0) }\n f() }\nfn main() { println(\"{}\", run()) }\n",
+                Expect::Reject("GT0086"),
+            ),
+            (
+                "a cohort in the same body owns the spawn",
+                "use std::errors\nfn gather() -> Result<(), errors::Error> {\n cohort {\n let a = spawn(|| 1)\n println(\"{}\", a.join()?)\n } }\nfn main() { let _ = gather() }\n",
+                Expect::Accept,
+            ),
+            (
+                "a cohort header changes nothing about the containment",
+                "use std::errors\nfn timed() -> Result<(), errors::Error> {\n cohort(timeout: 500) {\n let a = spawn(|| 4, reason: \"unit\")\n println(\"{}\", a.join()?)\n } }\nfn main() { let _ = timed() }\n",
+                Expect::Accept,
+            ),
+            (
+                "a closure inside a cohort block is inside that block",
+                "use std::errors\nfn work() -> Result<(), errors::Error> {\n cohort {\n let start = || spawn(|| 3)\n let h = start()\n println(\"{}\", h.join()?)\n } }\nfn main() { let _ = work() }\n",
+                Expect::Accept,
+            ),
+            (
+                "a nested cohort contains its own spawn and the outer one's",
+                "use std::errors\nfn outer() -> Result<(), errors::Error> {\n cohort {\n let a = spawn(|| 1)\n cohort {\n let b = spawn(|| 2)\n println(\"{}\", b.join()?)\n }?\n println(\"{}\", a.join()?)\n } }\nfn main() { let _ = outer() }\n",
+                Expect::Accept,
+            ),
+            (
+                "main is the exemption: the root cohort's extent is its own",
+                "fn main() { let h = spawn(|| 9)\n println(\"{}\", h.join().unwrap_or(0)) }\n",
+                Expect::Accept,
+            ),
+            (
+                "an entry file's top-level statements are that same main",
+                "let h = spawn(|| 11)\nprintln(\"{}\", h.join().unwrap_or(0))\n",
+                Expect::Accept,
+            ),
+            (
+                "a nested fn inside main is its own body, not main's",
+                "fn main() { fn helper() -> i64 { let h = spawn(|| 3)\n h.join().unwrap_or(0) }\n println(\"{}\", helper()) }\n",
+                Expect::Reject("GT0086"),
+            ),
+            (
+                "a trait default body is a function too",
+                "trait Starter { fn go(&self) -> i64 { let h = spawn(|| 2)\n h.join().unwrap_or(0) } }\nstruct S { n: i64 }\nimpl Starter for S {}\nfn main() { let s = S { n: 1 }\n println(\"{}\", s.go()) }\n",
+                Expect::Reject("GT0086"),
+            ),
+            (
+                "a module's own spawn is a different function",
+                "use std::process\nfn run_it() -> i64 { match process::run(\"echo\", #[\"hi\"]) { Ok(r) => r.code\n Err(_) => -1 } }\nfn main() { println(\"{}\", run_it()) }\n",
+                Expect::Accept,
+            ),
+            (
+                "an arena inside a cohort does not break containment",
+                "use std::errors\nfn work() -> Result<(), errors::Error> {\n cohort {\n arena {\n let h = spawn(|| 5)\n println(\"{}\", h.join()?)\n }\n } }\nfn main() { let _ = work() }\n",
+                Expect::Accept,
+            ),
+            (
+                "a function that spawns nothing needs no cohort",
+                "fn plain(n: i64) -> i64 { n * 2 }\nfn main() { println(\"{}\", plain(4)) }\n",
+                Expect::Accept,
+            ),
+        ],
+    );
+}
+
 #[test]
 fn references_distinguish_shared_from_mutable() {
     gate(

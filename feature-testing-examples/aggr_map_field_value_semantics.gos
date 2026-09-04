@@ -1,0 +1,95 @@
+// Value semantics for a struct that carries a `Map` field, across every shape
+// a by-value parameter takes.
+//
+// Passing an aggregate by value hands the callee a value of its own whenever
+// the callee can write it or let a field outlive the call: the caller's table
+// is untouched by the callee's `insert`, and a field the callee hands back is
+// the caller's to keep separate. A callee that only READS its parameter takes
+// no copy at all - it reads the caller's storage, so an accessor costs the
+// lookup rather than the table. The single-tail-expression shape is the one an
+// inliner rewrites, and it owes the caller the same copy a real call makes.
+// Bit-identical on the VM, Cranelift, and LLVM tiers.
+
+struct Store {
+    entries: Map<i64, i64>
+    tag: i64
+}
+
+impl Store {
+    fn get(self, k: i64) -> i64 {
+        self.entries.get_or(k, -1)
+    }
+
+    fn size(self) -> i64 {
+        self.entries.len()
+    }
+}
+
+fn insert_into(mut s: Store, k: i64, v: i64) -> i64 {
+    s.entries.insert(k, v)
+    s.entries.len()
+}
+
+fn take_entries(s: Store) -> Map<i64, i64> {
+    s.entries
+}
+
+fn take_entries_guarded(s: Store) -> Map<i64, i64> {
+    let t = s.tag
+    if t > 100 {
+        println("unreachable tag {}", t)
+    }
+    s.entries
+}
+
+impl Store {
+    fn entries_by_value(self) -> Map<i64, i64> {
+        self.entries
+    }
+
+    fn entries_by_ref(&self) -> Map<i64, i64> {
+        self.entries
+    }
+}
+
+fn main() {
+    let mut entries = Map::new()
+    entries.insert(1, 10)
+    entries.insert(2, 20)
+    let store = Store { entries: entries, tag: 7 }
+
+    println("read {} {} size {}", store.get(1), store.get(2), store.size())
+
+    println("callee size {}", insert_into(store, 3, 30))
+    println("caller size {} key3 {}", store.size(), store.get(3))
+
+    let mut taken = take_entries(store)
+    taken.insert(4, 40)
+    println("taken {} caller {} key4 {}", taken.len(), store.size(), store.get(4))
+
+    let mut guarded = take_entries_guarded(store)
+    guarded.insert(5, 50)
+    println("guarded {} caller {} key5 {}", guarded.len(), store.size(), store.get(5))
+
+    let mut by_value = store.entries_by_value()
+    by_value.insert(6, 60)
+    println("by_value {} caller {} key6 {}", by_value.len(), store.size(), store.get(6))
+
+    let mut by_ref = store.entries_by_ref()
+    by_ref.insert(7, 70)
+    println("by_ref {} caller {} key7 {}", by_ref.len(), store.size(), store.get(7))
+
+    // The read-only accessors again, often enough that the JIT promotes the
+    // loop: a share taken per call would show up here as the map's length of
+    // work on every iteration rather than the lookup's.
+    let mut total = 0
+    for i in 0..20000 {
+        total += store.get(1 + i % 2)
+        total += read_key(store, 1 + i % 2)
+    }
+    println("hot {} caller {}", total, store.size())
+}
+
+fn read_key(s: Store, k: i64) -> i64 {
+    s.entries.get_or(k, -1)
+}

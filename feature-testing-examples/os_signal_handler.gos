@@ -19,7 +19,7 @@ fn coordinator(
     num_workers: i64
     results_rx: channel::Sender<String>
 ) -> Vec<String> {
-    let mut collected: Vec<String> = Vec::from([])
+    let collected: Vec<String> = Vec::from([])
     let mut i = 0
     while i < num_workers {
         i += 1
@@ -31,16 +31,18 @@ fn run_workers(count: i64) -> Vec<String> {
     let result_tx, result_rx = channel(count)
     let stop_tx, stop_rx = channel(count)
 
-    let mut i = 0
-    while i < count {
-        let tx = result_tx.clone()
-        let stx = stop_tx.clone()
-        spawn(|| worker(i, stx, tx))
-        i += 1
+    // Both channels hold `count` slots, so no worker waits for a reader and
+    // the block joins every one of them before it is left. The close that
+    // ends the drain is owed only once they have all sent.
+    let _ = cohort {
+        let mut i = 0
+        while i < count {
+            let tx = result_tx.clone()
+            let stx = stop_tx.clone()
+            spawn(|| worker(i, stx, tx))
+            i += 1
+        }
     }
-
-    // Close originals so recv drains once goroutines finish sending
-    time::sleep(30)
     result_tx.close()
 
     let mut results: Vec<String> = Vec::from([])

@@ -3751,7 +3751,7 @@ impl<'tcx> FnBuilder<'tcx> {
     /// path.
     /// Whether `callee` names a function whose parameter `idx` it only reads,
     /// per the summary the compiled tiers lower against.
-    fn callee_only_reads_param(&self, callee: &HirExpr, idx: usize) -> bool {
+    pub(crate) fn callee_only_reads_param(&self, callee: &HirExpr, idx: usize) -> bool {
         let HirExprKind::Path { segments, .. } = &callee.kind else {
             return false;
         };
@@ -4207,7 +4207,14 @@ impl<'tcx> FnBuilder<'tcx> {
             } else if is_path_expr(&args[i])
                 && (self.expr_is_map(&args[i])
                     || self.expr_is_hashset(&args[i])
-                    || self.expr_is_slot_container(&args[i]))
+                    || self.expr_is_slot_container(&args[i])
+                    // A struct or tuple carrying a container field shares
+                    // that field's storage through a plain register copy, so
+                    // the callee's value takes a clone the way a bare
+                    // container argument does - which is what the compiled
+                    // tiers give an aggregate argument through their
+                    // struct-copy retain.
+                    || self.expr_is_aggregate_with_container(&args[i]))
                 // A callee that only reads the container, and lets nothing
                 // derived from it outlive the call, sees the caller's storage:
                 // copying it would be unobservable, and its cost is the
