@@ -27,7 +27,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use sha2::Digest;
 
@@ -847,7 +847,7 @@ fn is_reserved_claim(k: &str) -> bool {
 }
 
 fn now_unix_secs() -> i64 {
-    SystemTime::now()
+    gossamer_runtime::platform::system_time_now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
 }

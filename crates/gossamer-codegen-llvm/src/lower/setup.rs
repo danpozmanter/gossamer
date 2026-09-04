@@ -167,18 +167,23 @@ impl<'a> Lowerer<'a> {
 
     /// `true` when parameter `i` arrives as the address of the caller's
     /// flat-slot storage, which [`Self::emit_param_stores`] copies into this
-    /// body's own slot. The two must agree: the parameter attributes in
-    /// [`Self::emit_prelude`] describe exactly what that copy does with the
-    /// pointer.
-    fn param_is_by_pointer(&self, i: u32) -> bool {
+    /// body's own slot.
+    ///
+    /// A heap-pointer aggregate (`slot_count` is `None`: a recursive or
+    /// tagged enum, `http::Response`, an opaque blob handle) occupies one
+    /// word, the handle itself, and crosses every call as that word - the
+    /// shape a closure thunk, a C-ABI handler, and a direct caller all hand
+    /// over. Only a flat-slot aggregate travels by address.
+    ///
+    /// This is the single predicate for the convention: the parameter
+    /// attributes in [`Self::emit_prelude`], the entry copies in
+    /// [`Self::emit_param_stores`], and the argument shape
+    /// `lower_call_arg` produces all read it, so the three cannot disagree.
+    pub(crate) fn param_is_by_pointer(&self, i: u32) -> bool {
         let local_ty = self.body.local_ty(Local(i + 1));
-        if is_unit(self.tcx, local_ty) || !is_aggregate(self.tcx, local_ty) {
-            return false;
-        }
-        let slots = slot_count(self.tcx, local_ty);
-        let raw_runtime_handler_param =
-            self.cabi_handlers.contains_key(&self.body.name) && slots.is_none();
-        !raw_runtime_handler_param && (slots.is_some() || !self.body.name.starts_with("__closure"))
+        !is_unit(self.tcx, local_ty)
+            && is_aggregate(self.tcx, local_ty)
+            && slot_count(self.tcx, local_ty).is_some()
     }
 
     pub(crate) fn emit_prelude(&mut self) {
@@ -365,19 +370,14 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(crate) fn emit_param_stores(&mut self) {
-        // A lifted closure (`__closure_N`) is invoked through a shape thunk that
-        // forwards each argument BY VALUE (the runtime iter/sort helpers and the
-        // `Fn` fat-pointer call site pass the element word directly). A directly
-        // called function instead receives an inline aggregate BY POINTER (the
-        // caller hands over the address of its flat-slot storage). The two
-        // conventions only diverge for a heap-pointer aggregate (`slot_count`
-        // = `None`: a recursive/heap enum, opaque blob handle) whose sole word
-        // is the handle pointer: a closure gets that pointer as a value (store
-        // it, exactly like a scalar), a direct callee gets its address (copy
-        // the word out). Multi-slot aggregates (`slot_count = Some`) are always
-        // by-pointer, so both memcpy.
-        let is_closure = self.body.name.starts_with("__closure");
-        let is_runtime_handler = self.cabi_handlers.contains_key(&self.body.name);
+        // A flat-slot aggregate arrives as the address of the caller's
+        // storage and is copied into this frame's own slot; every other
+        // parameter, a one-word heap-pointer aggregate included, arrives as
+        // the word its slot holds and is stored like a scalar. The shape is
+        // the parameter's alone - the same for a lifted closure a runtime
+        // shim calls through a C function pointer, a C-ABI handler, and a
+        // direct call - so caller and callee agree without either knowing
+        // what kind of body the other is.
         for i in 0..self.body.arity {
             let local = Local(i + 1);
             let local_ty = self.body.local_ty(local);
@@ -385,12 +385,8 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             let slot = local_slot(local);
-            let aggregate = is_aggregate(self.tcx, local_ty);
-            let slots = slot_count(self.tcx, local_ty);
-            let raw_runtime_handler_param = is_runtime_handler && aggregate && slots.is_none();
-            let by_pointer =
-                aggregate && !raw_runtime_handler_param && (slots.is_some() || !is_closure);
-            if by_pointer {
+            if self.param_is_by_pointer(i) {
+                let slots = slot_count(self.tcx, local_ty);
                 let bytes = aggregate_storage_bytes(self.tcx, local_ty)
                     .unwrap_or_else(|| u64::from(slots.unwrap_or(1).max(1)) * 8);
                 writeln!(

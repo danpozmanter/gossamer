@@ -51,9 +51,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context as TaskContext, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bytes::Bytes;
+use gossamer_runtime::platform::Instant;
 use h2::RecvStream;
 use h2::server::SendResponse;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -897,17 +898,17 @@ impl ServerHandle {
     /// `true` on clean drain.
     pub fn shutdown(&self, deadline: Option<Duration>) -> bool {
         self.shutdown.store(true, Ordering::Release);
-        let target = deadline.map(|d| std::time::Instant::now() + d);
+        let target = deadline.map(|d| gossamer_runtime::platform::Instant::now() + d);
         loop {
             if self.in_flight.load(Ordering::Acquire) == 0 {
                 return true;
             }
             if let Some(end) = target
-                && std::time::Instant::now() >= end
+                && gossamer_runtime::platform::Instant::now() >= end
             {
                 return false;
             }
-            std::thread::sleep(Duration::from_millis(10));
+            gossamer_runtime::platform::sleep(Duration::from_millis(10));
         }
     }
 }

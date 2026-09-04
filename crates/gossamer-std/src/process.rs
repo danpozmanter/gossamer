@@ -11,7 +11,7 @@ pub use crate::exec::{Child, Command, ExitStatus, Output, Stdio};
 /// Returns the current process ID.
 #[must_use]
 pub fn id() -> u32 {
-    std::process::id()
+    gossamer_runtime::platform::process_id()
 }
 
 /// Exits the current process with the given status code. Drops no

@@ -233,7 +233,7 @@ impl InterruptWatchdog {
                         interrupt_fn();
                         return;
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    gossamer_runtime::platform::sleep(std::time::Duration::from_millis(10));
                 }
             })
             .ok();

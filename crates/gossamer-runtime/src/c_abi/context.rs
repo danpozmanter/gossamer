@@ -37,11 +37,12 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 
 use super::chan::GosChan;
+use crate::platform::Instant;
 
 /// Opaque heap handle for a context node.
 pub struct GosCtx {

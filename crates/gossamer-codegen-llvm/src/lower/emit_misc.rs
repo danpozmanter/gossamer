@@ -576,7 +576,7 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             let want = expected_param_tys.get(i).copied().flatten();
-            let (a_v, mut a_ty) = self.lower_call_arg(arg, want, symbol)?;
+            let (a_v, mut a_ty) = self.lower_call_arg(arg, want)?;
             if result_new_heap_copy
                 && i == 1
                 && let Some(heap_v) = self

@@ -40,8 +40,10 @@ use std::net::{
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use gossamer_runtime::platform::Instant;
+use gossamer_sched::Interest;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -51,7 +53,6 @@ use rustls::{
 
 use crate::io::IoError;
 use crate::sched_global;
-use gossamer_sched::Interest;
 
 /// Bound TCP listener.
 #[derive(Debug)]
@@ -152,7 +153,7 @@ impl TcpListener {
 
     fn wait_readable(&mut self) -> Result<(), IoError> {
         let Some(mio_handle) = self.mio.as_mut() else {
-            std::thread::sleep(Duration::from_millis(1));
+            gossamer_runtime::platform::sleep(Duration::from_millis(1));
             return Ok(());
         };
         sched_global::wait_io(mio_handle, Interest::Readable)
@@ -252,7 +253,7 @@ impl TcpStream {
             return Ok(true);
         };
         let Some(mio_handle) = self.mio.as_mut() else {
-            std::thread::sleep(Duration::from_millis(1));
+            gossamer_runtime::platform::sleep(Duration::from_millis(1));
             return Ok(Instant::now() < deadline);
         };
         sched_global::wait_io_until(mio_handle, interest, deadline)
@@ -475,7 +476,7 @@ impl TcpStream {
 
     fn wait_io(&mut self, interest: Interest) -> Result<(), IoError> {
         let Some(mio_handle) = self.mio.as_mut() else {
-            std::thread::sleep(Duration::from_millis(1));
+            gossamer_runtime::platform::sleep(Duration::from_millis(1));
             return Ok(());
         };
         sched_global::wait_io(mio_handle, interest).map_err(|e| IoError::from_std(e, "poller wait"))
@@ -972,14 +973,14 @@ pub(crate) fn connect_happy_eyeballs_std(
 
     let (tx, rx) = mpsc::channel::<Result<StdTcpStream, std::io::Error>>();
     let per_attempt_timeout = timeout;
-    let started = std::time::Instant::now();
+    let started = gossamer_runtime::platform::Instant::now();
     for (i, addr) in order.iter().copied().enumerate() {
         let stagger_for_i = stagger.checked_mul(i as u32).unwrap_or(Duration::ZERO);
         let tx_for_attempt = tx.clone();
         let started_for_attempt = started;
         std::thread::spawn(move || {
             if !stagger_for_i.is_zero() {
-                std::thread::sleep(stagger_for_i);
+                gossamer_runtime::platform::sleep(stagger_for_i);
             }
             let elapsed = started_for_attempt.elapsed();
             if elapsed >= per_attempt_timeout {
@@ -994,7 +995,7 @@ pub(crate) fn connect_happy_eyeballs_std(
 
     let deadline = started + timeout;
     loop {
-        let now = std::time::Instant::now();
+        let now = gossamer_runtime::platform::Instant::now();
         if now >= deadline {
             return Err(std::io::Error::new(
                 ErrorKind::TimedOut,
@@ -1254,8 +1255,11 @@ mod p9_tests {
     #[cfg(unix)]
     #[test]
     fn unix_socket_round_trip() {
-        let dir = std::env::temp_dir();
-        let socket_path = dir.join(format!("gos-test-unix-{}.sock", std::process::id()));
+        let dir = gossamer_runtime::platform::temp_dir();
+        let socket_path = dir.join(format!(
+            "gos-test-unix-{}.sock",
+            gossamer_runtime::platform::process_id()
+        ));
         let _ = std::fs::remove_file(&socket_path);
         let path_str = socket_path.display().to_string();
 

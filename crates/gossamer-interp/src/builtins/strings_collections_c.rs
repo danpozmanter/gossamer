@@ -916,6 +916,9 @@ fn builtin_waitgroup_wait(args: &[Value]) -> RuntimeResult<Value> {
     let cell = wg_lookup(handle)
         .ok_or_else(|| RuntimeError::Type("WaitGroup::wait: stale WaitGroup handle".to_string()))?;
     let mut count = cell.counter.lock();
+    if *count > 0 && !gossamer_runtime::platform::CAN_BLOCK {
+        return Err(RuntimeError::WouldNeverWake("WaitGroup::wait"));
+    }
     while *count > 0 {
         cell.cond.wait(&mut count);
     }
@@ -946,6 +949,9 @@ fn builtin_waitgroup_wait_ctx(args: &[Value]) -> RuntimeResult<Value> {
         }
         if crate::stdlib_builtins::context::value_is_cancelled(ctx) {
             return Ok(Value::Bool(false));
+        }
+        if !gossamer_runtime::platform::CAN_BLOCK {
+            return Err(RuntimeError::WouldNeverWake("WaitGroup::wait_ctx"));
         }
         cell.cond
             .wait_for(&mut count, std::time::Duration::from_millis(5));

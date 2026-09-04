@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn v7_is_36_chars_and_increasing() {
         let a = v7();
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        gossamer_runtime::platform::sleep(std::time::Duration::from_millis(2));
         let b = v7();
         assert_eq!(a.len(), 36);
         assert_eq!(b.len(), 36);

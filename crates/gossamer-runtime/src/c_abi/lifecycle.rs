@@ -135,7 +135,7 @@ fn wake_shutdown_watchers() {
 /// Blocks until shutdown begins.
 pub fn await_shutdown() {
     while !is_shutting_down() {
-        std::thread::sleep(POLL_INTERVAL);
+        crate::platform::sleep(POLL_INTERVAL);
     }
     // A registered flag may have been added after `begin_shutdown` ran.
     wake_shutdown_watchers();

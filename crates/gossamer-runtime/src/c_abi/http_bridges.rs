@@ -1225,7 +1225,7 @@ pub unsafe extern "C" fn gos_rt_mw_new_request_id() -> *mut c_char {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let nanos = std::time::SystemTime::now()
+        let nanos = crate::platform::system_time_now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
         alloc_cstring(format!("{nanos:x}-{n:x}").as_bytes())
@@ -1394,11 +1394,11 @@ mod static_path_tests {
     use super::{StaticResolution, gos_rt_router_new, resolve_static_path, router_add_verb};
 
     fn temp_root(tag: &str) -> std::path::PathBuf {
-        let mut dir = std::env::temp_dir();
+        let mut dir = crate::platform::temp_dir();
         dir.push(format!(
             "gossamer_static_guard_{}_{}",
             tag,
-            std::process::id()
+            crate::platform::process_id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

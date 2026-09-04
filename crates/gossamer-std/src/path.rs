@@ -869,11 +869,12 @@ mod glob_walk_tests {
     struct TmpDir(std::path::PathBuf);
     impl TmpDir {
         fn new(tag: &str) -> Self {
-            let pid = std::process::id();
-            let n = std::time::SystemTime::now()
+            let pid = gossamer_runtime::platform::process_id();
+            let n = gossamer_runtime::platform::system_time_now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.subsec_nanos());
-            let p = std::env::temp_dir().join(format!("gos-path-{tag}-{pid}-{n}"));
+            let p =
+                gossamer_runtime::platform::temp_dir().join(format!("gos-path-{tag}-{pid}-{n}"));
             std::fs::create_dir_all(&p).unwrap();
             Self(p)
         }

@@ -1453,3 +1453,168 @@ fn main() -> i64 {
     );
     assert_eq!(bodies.len(), before, "no extra bodies expected");
 }
+
+/// The discriminant reads and `SwitchInt` arm counts of one body, in block
+/// order: what a variant match costs before its arms run.
+fn dispatch_shape(body: &gossamer_mir::Body) -> (usize, Vec<usize>) {
+    let mut disc_reads = 0;
+    let mut switches = Vec::new();
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, .. },
+                ..
+            } = &stmt.kind
+                && matches!(*name, "gos_enum_disc" | "gos_enum_disc_tag")
+            {
+                disc_reads += 1;
+            }
+        }
+        if let Terminator::SwitchInt { arms, .. } = &block.terminator {
+            switches.push(arms.len());
+        }
+    }
+    (disc_reads, switches)
+}
+
+#[test]
+fn flat_enum_match_dispatches_through_one_switch() {
+    let (bodies, _) = build(
+        r#"
+enum Tree { Node(Tree, Tree), Nil }
+
+fn check(tree: Tree) -> i64 {
+    match tree {
+        Tree::Node(l, r) => 1 + check(l) + check(r),
+        Tree::Nil => 0,
+    }
+}
+
+fn main() { println("{}", check(Tree::Nil)) }
+"#,
+    );
+    let body = bodies
+        .iter()
+        .find(|b| b.name == "check")
+        .expect("check body");
+    let (disc_reads, switches) = dispatch_shape(body);
+    assert_eq!(disc_reads, 1, "one discriminant read for the whole match");
+    assert_eq!(
+        switches,
+        vec![2],
+        "one SwitchInt carrying an arm per matched variant"
+    );
+}
+
+#[test]
+fn flat_enum_match_over_three_variants_still_reads_the_tag_once() {
+    let (bodies, _) = build(
+        r#"
+enum Shape { Circle(f64), Rect(f64, f64), Empty }
+
+fn area(s: Shape) -> f64 {
+    match s {
+        Shape::Circle(r) => 3.0 * r * r,
+        Shape::Rect(w, h) => w * h,
+        Shape::Empty => 0.0,
+    }
+}
+
+fn main() { println("{}", area(Shape::Empty)) }
+"#,
+    );
+    let body = bodies.iter().find(|b| b.name == "area").expect("area body");
+    let (disc_reads, switches) = dispatch_shape(body);
+    assert_eq!(disc_reads, 1, "one discriminant read for the whole match");
+    assert_eq!(switches, vec![3], "one arm per matched variant");
+}
+
+#[test]
+fn guarded_enum_match_keeps_the_chain_lowering() {
+    let (bodies, _) = build(
+        r#"
+enum Shape { Circle(f64), Empty }
+
+fn describe(s: Shape) -> i64 {
+    match s {
+        Shape::Circle(r) if r > 1.0 => 2,
+        Shape::Circle(_) => 1,
+        Shape::Empty => 0,
+    }
+}
+
+fn main() { println("{}", describe(Shape::Empty)) }
+"#,
+    );
+    let body = bodies
+        .iter()
+        .find(|b| b.name == "describe")
+        .expect("describe body");
+    let (disc_reads, _) = dispatch_shape(body);
+    assert!(
+        disc_reads > 1,
+        "a guard needs the per-arm chain, which re-reads the tag"
+    );
+}
+
+/// A variant named by two arms keeps the first, and the switch carries one
+/// key for it. A second key with the same value is not a switch LLVM will
+/// accept, and the arm it names is unreachable anyway.
+#[test]
+fn a_repeated_variant_arm_yields_one_switch_key() {
+    let (bodies, _) = build(
+        r#"
+enum Tree { Node(Tree, Tree), Nil }
+
+fn f(t: Tree) -> i64 {
+    match t {
+        Tree::Nil => 1,
+        Tree::Nil => 2,
+        Tree::Node(l, r) => f(l) + f(r),
+    }
+}
+
+fn main() { println("{}", f(Tree::Nil)) }
+"#,
+    );
+    let body = bodies.iter().find(|b| b.name == "f").expect("f body");
+    for block in &body.blocks {
+        if let Terminator::SwitchInt { arms, .. } = &block.terminator {
+            let mut keys: Vec<i128> = arms.iter().map(|(k, _)| *k).collect();
+            let before = keys.len();
+            keys.sort_unstable();
+            keys.dedup();
+            assert_eq!(keys.len(), before, "every switch key is distinct: {arms:?}");
+        }
+    }
+}
+
+/// A catch-all arm answers every value the arms above it did not name, so a
+/// variant arm written after it is unreachable and must not claim a switch
+/// key of its own.
+#[test]
+fn a_variant_arm_after_a_catch_all_claims_no_switch_key() {
+    let (bodies, _) = build(
+        r#"
+enum Tree { Node(Tree, Tree), Nil }
+
+fn f(t: Tree) -> i64 {
+    match t {
+        _ => 0
+        Tree::Nil => 1
+    }
+}
+
+fn main() { println("{}", f(Tree::Nil)) }
+"#,
+    );
+    let body = bodies.iter().find(|b| b.name == "f").expect("f body");
+    for block in &body.blocks {
+        if let Terminator::SwitchInt { arms, .. } = &block.terminator {
+            assert!(
+                arms.is_empty(),
+                "the catch-all takes every value, so no arm is keyed: {arms:?}"
+            );
+        }
+    }
+}

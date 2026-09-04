@@ -87,16 +87,16 @@ pub fn poll_until(
     interval: std::time::Duration,
     mut condition: impl FnMut() -> bool,
 ) -> bool {
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = gossamer_runtime::platform::Instant::now() + timeout;
     loop {
         if condition() {
             return true;
         }
-        let now = std::time::Instant::now();
+        let now = gossamer_runtime::platform::Instant::now();
         if now >= deadline {
             return false;
         }
-        std::thread::sleep(interval.min(deadline.saturating_duration_since(now)));
+        gossamer_runtime::platform::sleep(interval.min(deadline.saturating_duration_since(now)));
     }
 }
 
@@ -231,17 +231,17 @@ pub fn check_ok<T, E: std::fmt::Debug>(result: Result<T, E>, message: &str) -> R
 /// bounded quiescence point without hard-coded sleeps.
 #[must_use]
 pub fn wait_for_scheduler_idle(timeout: std::time::Duration) -> bool {
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = gossamer_runtime::platform::Instant::now() + timeout;
     let scheduler = gossamer_runtime::sched_global::scheduler();
     loop {
         let stats = scheduler.stats();
         if scheduler.live_goroutines() == 0 && stats.spawned == stats.finished {
             return true;
         }
-        if std::time::Instant::now() >= deadline {
+        if gossamer_runtime::platform::Instant::now() >= deadline {
             return false;
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        gossamer_runtime::platform::sleep(std::time::Duration::from_millis(1));
     }
 }
 
@@ -289,7 +289,7 @@ impl Bencher {
         reason = "bench-harness convention"
     )]
     pub fn iter<F: FnMut()>(&mut self, mut f: F) -> std::time::Duration {
-        let started = std::time::Instant::now();
+        let started = gossamer_runtime::platform::Instant::now();
         for _ in 0..self.iter_count {
             f();
         }

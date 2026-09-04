@@ -142,7 +142,7 @@ fn write_line(msg: &str) {
 }
 
 fn format_stamp(flags: u32) -> String {
-    let now = std::time::SystemTime::now();
+    let now = gossamer_runtime::platform::system_time_now();
     let secs_since = now
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

@@ -45,7 +45,7 @@
 #![allow(clippy::too_many_lines)]
 
 use std::os::raw::c_char;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use sha2::Digest;
 
@@ -391,7 +391,7 @@ fn decode_token(token: &str) -> Result<Decoded, String> {
 }
 
 fn now_unix_secs() -> i64 {
-    SystemTime::now()
+    crate::platform::system_time_now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
 }

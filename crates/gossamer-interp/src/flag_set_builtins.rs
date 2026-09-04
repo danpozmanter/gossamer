@@ -15,7 +15,7 @@ use crate::builtins::{
     CELL_REGISTRY, FlagDef, FlagKind, NEXT_SET_ID, SET_REGISTRY, SetState, as_str, make_cell,
     ok_variant, program_args, value_to_int,
 };
-use crate::value::{RuntimeResult, SmolStr, Value};
+use crate::value::{RuntimeError, RuntimeResult, SmolStr, Value};
 
 pub(crate) fn builtin_flag_set_new(args: &[Value]) -> RuntimeResult<Value> {
     let _name = args.first().and_then(as_str).unwrap_or("");
@@ -357,7 +357,10 @@ pub(crate) fn builtin_flag_set_parse(args: &[Value]) -> RuntimeResult<Value> {
     // every program.
     if program_args.iter().any(|a| a == "--help" || a == "-h") {
         print_flag_help(&state);
-        std::process::exit(0);
+        if gossamer_runtime::platform::CAN_END_PROCESS {
+            std::process::exit(0);
+        }
+        return Err(RuntimeError::Exit(0));
     }
     let mut positional: Vec<Value> = Vec::new();
     let mut idx = 0usize;

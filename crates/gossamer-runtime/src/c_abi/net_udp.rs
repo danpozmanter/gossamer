@@ -202,7 +202,7 @@ mod tests {
         }));
 
         let sender = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(20));
+            crate::platform::sleep(Duration::from_millis(20));
             UdpSocket::bind("127.0.0.1:0")
                 .expect("bind sender")
                 .send_to(b"wake", addr)

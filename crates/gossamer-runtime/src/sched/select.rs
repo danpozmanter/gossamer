@@ -11,7 +11,7 @@
 #![forbid(unsafe_code)]
 
 use std::cell::Cell;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use super::channel::{Channel, RecvResult, SendResult};
 
@@ -29,7 +29,7 @@ fn next_random() -> u64 {
             // SystemTime nanos give plenty of entropy for a per-thread
             // seed; XOR in the thread-id to ensure two workers with
             // identical wake-up timing still diverge immediately.
-            let nanos = SystemTime::now()
+            let nanos = crate::platform::system_time_now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0u128, |d| d.as_nanos());
             let tid = std::thread::current().id();

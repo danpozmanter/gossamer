@@ -1703,64 +1703,61 @@ pub(crate) fn region_track_promoted(body: *mut std::ffi::c_char) {
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_arena_pop() {
     let pending_objs = BUMP_OBJS.with(|o| o.replace(0));
-    // Free the heap allocations this region owns before its slabs go back, and
-    // outside the `REGIONS` borrow so a free is free to open a region of its own.
-    let promoted = REGIONS.with(|r| {
-        r.borrow_mut()
-            .last_mut()
-            .map(|top| std::mem::take(&mut top.promoted))
-            .unwrap_or_default()
-    });
-    for body in promoted {
+    // Take the region out in one borrow. Everything the pop then does -
+    // freeing the strings it owns, recycling or retiring its slabs - can
+    // re-enter the allocator and open a region of its own, so none of it may
+    // run while `REGIONS` is borrowed.
+    let Some(region) = REGIONS.with(|r| r.borrow_mut().pop()) else {
+        REGION_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        return;
+    };
+    // Hand the allocator back to the parent before anything is freed, so an
+    // allocation made during this teardown lands on a region that outlives it
+    // rather than on a slab this pop is about to retire. The depth moves with
+    // the bump so `region_active` and `REGIONS` agree throughout.
+    let bump = REGIONS.with(|r| r.borrow().last().map_or(BumpState::EMPTY, |top| top.saved));
+    BUMP.with(|b| b.set(bump));
+    REGION_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    for body in region.promoted {
         // SAFETY: each body was recorded by `region_track_promoted` while this
         // region was open, is reachable from nothing after the pop (the escape
         // analysis is what licenses the region), and is freed once, here.
         unsafe { crate::c_abi::string::free_promoted_string(body) };
     }
-    let restored = REGIONS.with(|r| {
-        let mut regions = r.borrow_mut();
-        let region = regions.pop()?;
-        if rc_live_enabled() {
-            #[cfg(test)]
-            let _guard = rc_live_mutation_guard();
-            RC_LIVE.fetch_sub(region.objs + pending_objs, Ordering::Relaxed);
-        }
-        let width = region
-            .slabs
-            .iter()
-            .filter(|(_, size)| *size == REGION_SLAB_BYTES)
-            .count();
-        let retain = SLAB_RETAIN.with(|r| {
-            let widened = r.get().max(width).min(FREE_SLAB_CEILING);
-            r.set(widened);
-            widened
-        });
-        for (base, size) in region.slabs {
-            // Recycle standard-size slabs into the thread-local pool so the
-            // next region of this width reuses them without an mmap.
-            if size == REGION_SLAB_BYTES {
-                let kept = FREE_SLABS.with(|p| {
-                    let mut pool = p.borrow_mut();
-                    if pool.len() < retain {
-                        pool.push(base);
-                        true
-                    } else {
-                        false
-                    }
-                });
-                if kept {
-                    continue;
-                }
-            }
-            arena_retire(base, size);
-        }
-        // Resume the parent region's suspended bump (empty if none remains).
-        Some(regions.last().map_or(BumpState::EMPTY, |top| top.saved))
-    });
-    if let Some(bump) = restored {
-        BUMP.with(|b| b.set(bump));
+    if rc_live_enabled() {
+        #[cfg(test)]
+        let _guard = rc_live_mutation_guard();
+        RC_LIVE.fetch_sub(region.objs + pending_objs, Ordering::Relaxed);
     }
-    REGION_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    let width = region
+        .slabs
+        .iter()
+        .filter(|(_, size)| *size == REGION_SLAB_BYTES)
+        .count();
+    let retain = SLAB_RETAIN.with(|r| {
+        let widened = r.get().max(width).min(FREE_SLAB_CEILING);
+        r.set(widened);
+        widened
+    });
+    for (base, size) in region.slabs {
+        // Recycle standard-size slabs into the thread-local pool so the
+        // next region of this width reuses them without an mmap.
+        if size == REGION_SLAB_BYTES {
+            let kept = FREE_SLABS.with(|p| {
+                let mut pool = p.borrow_mut();
+                if pool.len() < retain {
+                    pool.push(base);
+                    true
+                } else {
+                    false
+                }
+            });
+            if kept {
+                continue;
+            }
+        }
+        arena_retire(base, size);
+    }
 }
 
 /// Allocate an RC-managed object with `size` payload bytes and the given
@@ -2327,25 +2324,30 @@ unsafe fn rc_block_usable_size(base: *mut u8) -> usize {
 /// keeps the parent block alive for recycling but must still drop its children
 /// exactly as a normal release would.
 unsafe fn release_rc_children(payload: *mut u8) {
+    use gossamer_abi::rc::{RC_CHILD_MAP, RC_CHILD_RC, RC_CHILD_VEC};
     let meta = unsafe { meta_of(header_ptr(payload)) };
     if meta.is_null() {
         return;
     }
+    // One pass over the meta covers every child kind. The reuse frame holds
+    // no teardown state of its own, so a Vec child is freed here rather than
+    // queued for an exit this path does not have; a Map child is queued on
+    // the same terms as every other release path, and the cascading
+    // `gos_rt_rc_release` below drains it at its own teardown exit.
     unsafe {
-        visit_children_raw(payload, |c| {
-            if crate::c_abi::string::is_gos_string(c.cast()) {
-                crate::c_abi::string::gos_rt_str_free(c.cast());
-            } else {
-                gos_rt_rc_release(c);
+        visit_entries(payload, |kind, child| match kind {
+            RC_CHILD_RC => {
+                let c = untag_rc(child);
+                if crate::c_abi::string::is_gos_string(c.cast()) {
+                    crate::c_abi::string::gos_rt_str_free(c.cast());
+                } else {
+                    gos_rt_rc_release(c);
+                }
             }
+            RC_CHILD_VEC => crate::c_abi::map::gos_rt_vec_free(child.cast()),
+            RC_CHILD_MAP => queue_map_child(child),
+            _ => {}
         });
-        // The rc_release above drained any queued Vec frees at its own
-        // exit; the reuse frame itself holds no teardown state, so the
-        // block's own Vec children release directly.
-        visit_vec_children(payload, |v| {
-            crate::c_abi::map::gos_rt_vec_free(v.cast());
-        });
-        visit_map_children(payload, queue_map_child);
     }
 }
 
@@ -2513,19 +2515,9 @@ unsafe fn rc_release_impl(root: *mut u8) {
         worklist.clear();
         // Single fused pass over the meta: string-tagged children free
         // through the tag-checking string path, RC children join the
-        // release worklist. (Two separate walks here doubled the
-        // per-free meta traversal on every internal node.)
-        unsafe {
-            visit_children_raw(root, |c| {
-                if crate::c_abi::string::is_gos_string(c.cast()) {
-                    crate::c_abi::string::gos_rt_str_free(c.cast());
-                } else {
-                    worklist.push(c);
-                }
-            });
-            visit_vec_children(root, queue_vec_child);
-            visit_map_children(root, queue_map_child);
-        }
+        // release worklist, and owned containers are queued for the
+        // outermost teardown exit.
+        unsafe { release_children_into(root, &mut worklist) };
         let _ = meta;
         unsafe { try_reclaim_zero(root) };
         while let Some(payload) = worklist.pop() {
@@ -2549,7 +2541,7 @@ unsafe fn rc_release_impl(root: *mut u8) {
                 unsafe { set_color(h, COLOR_BLACK) };
             }
             unsafe {
-                visit_children_raw_buffered(payload, &mut worklist);
+                release_children_into(payload, &mut worklist);
             }
             unsafe { try_reclaim_zero(payload) };
         }
@@ -2558,19 +2550,29 @@ unsafe fn rc_release_impl(root: *mut u8) {
 }
 
 /// Fused child dispatch for the worklist loop: strings are freed
-/// immediately, RC children are appended to `worklist`, and owned Vec
-/// children are queued for release at the outermost teardown exit.
-unsafe fn visit_children_raw_buffered(payload: *mut u8, worklist: &mut Vec<*mut u8>) {
+/// immediately, RC children are appended to `worklist`, and owned Vec and
+/// Map children are queued for release at the outermost teardown exit.
+///
+/// One pass over the node's meta covers all three kinds. A node's children
+/// are read once per teardown, which is what keeps the per-node cost
+/// proportional to the children it has rather than to the kinds it might
+/// have had.
+unsafe fn release_children_into(payload: *mut u8, worklist: &mut Vec<*mut u8>) {
+    use gossamer_abi::rc::{RC_CHILD_MAP, RC_CHILD_RC, RC_CHILD_VEC};
     unsafe {
-        visit_children_raw(payload, |c| {
-            if crate::c_abi::string::is_gos_string(c.cast()) {
-                crate::c_abi::string::gos_rt_str_free(c.cast());
-            } else {
-                worklist.push(c);
+        visit_entries(payload, |kind, child| match kind {
+            RC_CHILD_RC => {
+                let c = untag_rc(child);
+                if crate::c_abi::string::is_gos_string(c.cast()) {
+                    crate::c_abi::string::gos_rt_str_free(c.cast());
+                } else {
+                    worklist.push(c);
+                }
             }
+            RC_CHILD_VEC => queue_vec_child(child),
+            RC_CHILD_MAP => queue_map_child(child),
+            _ => {}
         });
-        visit_vec_children(payload, queue_vec_child);
-        visit_map_children(payload, queue_map_child);
     }
 }
 
@@ -2679,23 +2681,6 @@ unsafe fn visit_children_raw(payload: *mut u8, mut raw_f: impl FnMut(*mut u8)) {
     }
 }
 
-/// Call `f` for each non-null `RC_CHILD_VEC` child of `payload` - a
-/// `*mut GosVec` the node owns (the constructor retained the node's
-/// share). Teardown frees these through `gos_rt_vec_free`; co-owning
-/// paths (copy, match-binding materialisation) retain them.
-/// Call `f` for each non-null [`gossamer_abi::rc::RC_CHILD_MAP`] child of
-/// `payload` - a `*mut GosMap` the node owns outright. Teardown frees these
-/// through `gos_rt_map_free`.
-unsafe fn visit_map_children(payload: *mut u8, mut f: impl FnMut(*mut u8)) {
-    unsafe {
-        visit_entries(payload, |kind, child| {
-            if kind == gossamer_abi::rc::RC_CHILD_MAP {
-                f(child);
-            }
-        });
-    }
-}
-
 /// Replaces every owned `Map` child of `payload` with a table of its own.
 /// A `GosMap` carries no reference count, so a copy that kept the source's
 /// handle would leave one table under two owners.
@@ -2711,6 +2696,14 @@ unsafe fn clone_map_children(payload: *mut u8) {
     }
 }
 
+/// Call `f` for each non-null `RC_CHILD_VEC` child of `payload` - a
+/// `*mut GosVec` the node owns (the constructor retained the node's
+/// share). Teardown frees these through `gos_rt_vec_free`; co-owning
+/// paths (copy, match-binding materialisation) retain them.
+///
+/// The teardown paths reach every child kind through
+/// [`release_children_into`] instead, in one pass; this stays for the copy
+/// and collection paths, which want one kind at a time.
 unsafe fn visit_vec_children(payload: *mut u8, mut f: impl FnMut(*mut u8)) {
     unsafe {
         visit_entries(payload, |kind, child| {
@@ -3404,7 +3397,7 @@ unsafe fn release_shared_edge(root: *mut u8) {
         } else {
             unsafe { set_color(h, COLOR_BLACK) };
         }
-        unsafe { visit_children_raw_buffered(payload, &mut worklist) };
+        unsafe { release_children_into(payload, &mut worklist) };
         unsafe { try_reclaim(payload) };
     }
 }
@@ -3641,6 +3634,54 @@ mod tests {
 
     fn count_guard() -> RcLiveCountGuard {
         rc_live_count_guard()
+    }
+
+    /// A nested pop hands the allocator back to the parent region, so an
+    /// allocation made after it lands on a slab that outlives the pop rather
+    /// than on one the pop is retiring.
+    #[test]
+    #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
+    fn arena_pop_resumes_the_parent_region_before_retiring_slabs() {
+        let _guard = count_guard();
+        gos_rt_arena_push();
+        if !region_is_active() {
+            return;
+        }
+        let outer = crate::c_abi::gc::gos_rt_gc_alloc(64);
+        assert!(in_region_arena(outer));
+
+        gos_rt_arena_push();
+        let inner = crate::c_abi::gc::gos_rt_gc_alloc(64);
+        assert!(in_region_arena(inner));
+        gos_rt_arena_pop();
+
+        assert!(region_is_active(), "the parent region is still open");
+        let after = crate::c_abi::gc::gos_rt_gc_alloc(64);
+        assert!(
+            in_region_arena(after),
+            "an allocation after the nested pop belongs to the parent region"
+        );
+        assert!(
+            in_region_arena(outer),
+            "the parent's own object is untouched"
+        );
+        gos_rt_arena_pop();
+        assert!(!region_is_active());
+    }
+
+    /// A pop with no region open still balances the depth it was called at.
+    #[test]
+    #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
+    fn arena_pop_without_a_region_leaves_no_region_active() {
+        let _guard = count_guard();
+        gos_rt_arena_pop();
+        assert!(!region_is_active());
+        gos_rt_arena_push();
+        if !region_is_active() {
+            return;
+        }
+        gos_rt_arena_pop();
+        assert!(!region_is_active());
     }
 
     #[test]

@@ -1,0 +1,76 @@
+// A byte-keyed map answers by key CONTENT at every key length, including the
+// widths its comparison reads in different sized chunks: 1, 2, 4, 8, 16, and
+// 32 bytes are each a boundary, and a key one byte either side of one has to
+// compare the same way. Keys built separately from equal bytes are one key;
+// keys differing in the first byte, a middle byte, or the last byte are three.
+
+use std::collections::Map
+
+fn repeated(c: String, n: i64) -> String {
+    let mut s = ""
+    for _ in 0..n { s += c }
+    s
+}
+
+fn main() {
+    let widths = [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64]
+
+    // A key looked up through a separately built, equal string finds the
+    // slot the first one made.
+    let mut counts: Map<String, i64> = Map::new()
+    for w in widths {
+        let k = repeated("a", w)
+        counts.inc(k, 1)
+        counts.inc(repeated("a", w), 1)
+    }
+    let mut total = 0
+    for w in widths {
+        total += counts.get_or(repeated("a", w), 0)
+    }
+    println("distinct {} total {}", counts.len(), total)
+
+    // Differing at the first byte, a middle byte, and the last byte are
+    // three distinct keys at every width.
+    let mut variants: Map<String, i64> = Map::new()
+    for w in widths {
+        if w >= 3 {
+            let base = repeated("x", w)
+            let first = "y" + repeated("x", w - 1)
+            let last = repeated("x", w - 1) + "y"
+            let mid = repeated("x", w / 2) + "y" + repeated("x", w - w / 2 - 1)
+            variants.insert(base, w)
+            variants.insert(first, w)
+            variants.insert(last, w)
+            variants.insert(mid, w)
+        }
+    }
+    println("variants {}", variants.len())
+
+    // A shorter key is never equal to a longer one that shares its prefix.
+    let mut prefixes: Map<String, i64> = Map::new()
+    for w in widths {
+        prefixes.insert(repeated("p", w), w)
+    }
+    let mut found = 0
+    for w in widths {
+        if prefixes.get_or(repeated("p", w), -1) == w { found += 1 }
+    }
+    println("prefixes {} found {}", prefixes.len(), found)
+
+    // String-to-string keys and values take the same comparison.
+    let mut text: Map<String, String> = Map::new()
+    text.insert(repeated("k", 16), repeated("v", 16))
+    text.insert(repeated("k", 17), repeated("v", 17))
+    println("{} {}", text.get_or(repeated("k", 16), "?"), text.get_or(repeated("k", 17), "?"))
+    println("missing {}", text.get_or(repeated("k", 18), "none"))
+
+    // Removal finds the same slot a lookup does.
+    let mut removable: Map<String, i64> = Map::new()
+    for w in widths {
+        removable.insert(repeated("r", w), w)
+    }
+    for w in widths {
+        removable.remove(repeated("r", w))
+    }
+    println("emptied {}", removable.len())
+}

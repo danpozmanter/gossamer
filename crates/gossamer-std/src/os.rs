@@ -20,7 +20,7 @@ pub fn args() -> Vec<String> {
 /// it is unset or contains invalid Unicode.
 #[must_use]
 pub fn env(name: &str) -> Option<String> {
-    std::env::var(name).ok()
+    gossamer_runtime::safe_env::env_var(name)
 }
 
 /// Sets an environment variable in the current process.
@@ -191,7 +191,9 @@ pub fn home() -> Option<String> {
 /// Returns the platform-canonical temporary directory path.
 #[must_use]
 pub fn temp_dir() -> String {
-    std::env::temp_dir().to_string_lossy().into_owned()
+    gossamer_runtime::platform::temp_dir()
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Returns the OS family - `"unix"` or `"windows"`. Mirrors

@@ -109,7 +109,7 @@ fn builtin_env_vars(_args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_process_id(_args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(i64::from(std::process::id())))
+    Ok(Value::Int(i64::from(gossamer_runtime::platform::process_id())))
 }
 
 fn builtin_process_abort(_args: &[Value]) -> RuntimeResult<Value> {
@@ -125,8 +125,11 @@ fn builtin_os_arch(_args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_os_exit(args: &[Value]) -> RuntimeResult<Value> {
-    let code = args.first().and_then(value_to_int).unwrap_or(0);
-    std::process::exit(i32::try_from(code).unwrap_or(0));
+    let code = i32::try_from(args.first().and_then(value_to_int).unwrap_or(0)).unwrap_or(0);
+    if gossamer_runtime::platform::CAN_END_PROCESS {
+        std::process::exit(code);
+    }
+    Err(RuntimeError::Exit(code))
 }
 
 fn builtin_os_read_file(args: &[Value]) -> RuntimeResult<Value> {
@@ -395,13 +398,13 @@ fn builtin_time_sleep_ctx(args: &[Value]) -> RuntimeResult<Value> {
     }
     let ms = u64::try_from(ms)
         .map_err(|_| RuntimeError::Type("time::sleep_ctx: duration_ms is too large".to_string()))?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
-    while std::time::Instant::now() < deadline {
+    let deadline = gossamer_runtime::platform::Instant::now() + std::time::Duration::from_millis(ms);
+    while gossamer_runtime::platform::Instant::now() < deadline {
         if cancelled() {
             return Ok(Value::Bool(false));
         }
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        std::thread::sleep(remaining.min(std::time::Duration::from_millis(5)));
+        let remaining = deadline.saturating_duration_since(gossamer_runtime::platform::Instant::now());
+        gossamer_runtime::platform::sleep(remaining.min(std::time::Duration::from_millis(5)));
     }
     Ok(Value::Bool(!cancelled()))
 }
@@ -1378,9 +1381,9 @@ mod blocking_file_tests {
 
     #[test]
     fn whole_file_builtins_preserve_text_and_lines() {
-        let path = std::env::temp_dir().join(format!(
+        let path = gossamer_runtime::platform::temp_dir().join(format!(
             "gossamer-blocking-file-{}",
-            std::process::id()
+            gossamer_runtime::platform::process_id()
         ));
         let path_value = Value::String(path.to_string_lossy().into_owned().into());
         ok_payload(
@@ -1413,9 +1416,9 @@ mod blocking_file_tests {
         ));
         ok_payload(builtin_os_remove_file(&[renamed_value]).expect("remove file"));
 
-        let dir = std::env::temp_dir().join(format!(
+        let dir = gossamer_runtime::platform::temp_dir().join(format!(
             "gossamer-blocking-dir-{}",
-            std::process::id()
+            gossamer_runtime::platform::process_id()
         ));
         std::fs::create_dir(&dir).expect("create fixture dir");
         ok_payload(
@@ -1424,9 +1427,9 @@ mod blocking_file_tests {
         );
         assert!(!dir.exists());
 
-        let nested = std::env::temp_dir().join(format!(
+        let nested = gossamer_runtime::platform::temp_dir().join(format!(
             "gossamer-blocking-tree-{}",
-            std::process::id()
+            gossamer_runtime::platform::process_id()
         ));
         std::fs::create_dir_all(nested.join("child")).expect("create nested fixture");
         ok_payload(
@@ -1443,9 +1446,9 @@ mod blocking_file_tests {
     fn read_dir_path_field_reopens_non_utf8_directory() {
         use std::os::unix::ffi::OsStringExt;
 
-        let root = std::env::temp_dir().join(format!(
+        let root = gossamer_runtime::platform::temp_dir().join(format!(
             "gossamer-interp-non-utf8-dir-{}",
-            std::process::id()
+            gossamer_runtime::platform::process_id()
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();

@@ -124,12 +124,12 @@ fn temp_prefix(prefix: *const c_char, operation: &str) -> Result<String, i128> {
 
 fn temp_resource_path(prefix: &str) -> std::path::PathBuf {
     let n = NEXT_TEMP_RESOURCE.fetch_add(1, Ordering::Relaxed);
-    let nanos = std::time::SystemTime::now()
+    let nanos = crate::platform::system_time_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_nanos());
-    std::env::temp_dir().join(format!(
+    crate::platform::temp_dir().join(format!(
         "gossamer-{prefix}-{:x}-{nanos:x}-{n}",
-        std::process::id()
+        crate::platform::process_id()
     ))
 }
 

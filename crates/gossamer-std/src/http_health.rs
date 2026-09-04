@@ -204,7 +204,7 @@ fn run_with_timeout(probe: &dyn Probe, timeout: Duration) -> Result<(), String> 
     // a slow probe still completes (and we can report it). The
     // timeout is advisory - for hard cancellation, the probe must
     // honour its own deadline.
-    let start = std::time::Instant::now();
+    let start = gossamer_runtime::platform::Instant::now();
     let result = probe.check();
     let elapsed = start.elapsed();
     if elapsed > timeout {
@@ -400,7 +400,7 @@ mod tests {
             "slow",
             Duration::from_millis(1),
             || -> Result<(), String> {
-                std::thread::sleep(Duration::from_millis(20));
+                gossamer_runtime::platform::sleep(Duration::from_millis(20));
                 Ok(())
             },
         );

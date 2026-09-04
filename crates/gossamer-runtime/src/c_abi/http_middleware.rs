@@ -336,7 +336,7 @@ pub fn sequential_request_id() -> String {
 }
 
 /// One client's token bucket: how many tokens it held, and when.
-type Bucket = (f64, std::time::Instant);
+type Bucket = (f64, crate::platform::Instant);
 
 /// Token buckets keyed by `(configuration, client)`, so two limiters with
 /// different budgets never share a bucket and two clients never share
@@ -368,7 +368,7 @@ pub fn rate_limit_allow(config: &str, client: &str) -> bool {
         .and_then(|c| c.parse::<f64>().ok())
         .unwrap_or(0.0)
         .max(0.0);
-    let now = std::time::Instant::now();
+    let now = crate::platform::Instant::now();
     let mut guard = BUCKETS.lock();
     let table = guard.get_or_insert_with(std::collections::HashMap::new);
     if table.len() >= RATE_LIMIT_MAX_KEYS {

@@ -14,7 +14,7 @@
 
 use std::os::raw::c_char;
 #[cfg(unix)]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::string::alloc_cstring;
 use super::vec::{GosVec, gos_rt_result_new};
@@ -236,7 +236,8 @@ pub unsafe extern "C" fn gos_rt_exec_wait_timeout(pid: i64, ms: i64) -> i64 {
         }
         #[cfg(unix)]
         {
-            let deadline = Instant::now() + Duration::from_millis(ms.max(0) as u64);
+            let deadline =
+                crate::platform::Instant::now() + Duration::from_millis(ms.max(0) as u64);
             loop {
                 let mut status: libc::c_int = 0;
                 // SAFETY: waitpid with WNOHANG returns 0 if still
@@ -259,10 +260,10 @@ pub unsafe extern "C" fn gos_rt_exec_wait_timeout(pid: i64, ms: i64) -> i64 {
                     }
                     return -2;
                 }
-                if Instant::now() >= deadline {
+                if crate::platform::Instant::now() >= deadline {
                     return -1;
                 }
-                std::thread::sleep(Duration::from_millis(25));
+                crate::platform::sleep(Duration::from_millis(25));
             }
         }
         #[cfg(windows)]

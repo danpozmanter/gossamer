@@ -22,8 +22,8 @@ use std::io;
 use std::panic::AssertUnwindSafe;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Instant;
 
+use crate::platform::Instant;
 use crate::sched::{Gid, Interest, MultiScheduler, OsPoller, ParkReason, Readiness, Step, Task};
 
 static SCHEDULER: OnceLock<MultiScheduler> = OnceLock::new();

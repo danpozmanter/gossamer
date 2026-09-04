@@ -1470,6 +1470,23 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      Move the work out of the comptime region, read a file from\n\
                      inside the project, or pass `--comptime-io=full` deliberately.",
     ),
+    (
+        "GX0011",
+        "A wait was entered that nothing can end on this build. The browser\n\
+                     playground runs the VM on a single thread and settles every\n\
+                     goroutine at its spawn, so a channel receive, a `WaitGroup`, or\n\
+                     a `Barrier` that expects a goroutine still to run waits for one\n\
+                     that has already finished. Send before receiving, size a barrier\n\
+                     for the goroutines that actually arrive, or run the program with\n\
+                     `gos`, where goroutines run concurrently.",
+    ),
+    (
+        "GX0012",
+        "The program called `process::exit`. A wasm module has no process of\n\
+                     its own to end, so the browser playground stops the run and\n\
+                     reports the status the program asked for. Native builds end the\n\
+                     process and never raise this.",
+    ),
 ];
 
 /// Returns the explanation text for `code`, or `None` when the code

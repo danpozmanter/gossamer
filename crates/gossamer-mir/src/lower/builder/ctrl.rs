@@ -121,6 +121,14 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
+        // A match over one user enum's own variants, binding payloads with
+        // plain names and no guards, is what a single `SwitchInt` over the
+        // discriminant dispatches: one read, one branch, one arm per
+        // variant. The if-chain below would instead re-read the
+        // discriminant and re-compare it once per arm.
+        if let Some(enum_name) = self.flat_variant_match_enum(scrutinee.ty, arms) {
+            return self.lower_flat_variant_match(scrutinee, arms, ty, span, &enum_name);
+        }
         // Route guarded arms and any non-flat pattern shape
         // (tuple / or-pattern / nested variant binding) through
         // the if-chain lowering. The original SwitchInt path
@@ -340,6 +348,185 @@ impl<'a> Builder<'a> {
                     !matches!(arm_kind, TyKind::Var(_) | TyKind::Error | TyKind::Never);
                 if result_is_loose && arm_is_concrete {
                     self.locals[result_local.0 as usize].ty = arm_value_ty;
+                }
+                self.emit_assign(
+                    Place::local(result_local),
+                    Rvalue::Use(Operand::Copy(Place::local(value_local))),
+                    span,
+                );
+                self.terminate(Terminator::Goto { target: join_block });
+            }
+        }
+        self.set_current(join_block);
+        Some(result_local)
+    }
+
+    /// Names the enum when every arm of `arms` selects on one user enum's
+    /// own variants: no guards, each pattern either a variant of that enum
+    /// whose payload sub-patterns are plain binders or `_`, or a trailing
+    /// wildcard / binding arm. That is the shape one `SwitchInt` over the
+    /// discriminant dispatches.
+    ///
+    /// `Ok` / `Err` / `Some` / `None` are excluded even when a user enum
+    /// declares those names: the carrier arms carry payload handling of
+    /// their own that the chain lowering owns.
+    fn flat_variant_match_enum(&self, scrutinee_ty: Ty, arms: &[HirMatchArm]) -> Option<String> {
+        let enum_name = self.enum_index_name_of(scrutinee_ty)?;
+        let mut saw_variant = false;
+        for arm in arms {
+            if arm.guard.is_some() {
+                return None;
+            }
+            match &arm.pattern.kind {
+                HirPatKind::Variant { name, fields } => {
+                    if matches!(name.name.as_str(), "Ok" | "Err" | "Some" | "None") {
+                        return None;
+                    }
+                    self.enums.variant_of_enum(&enum_name, &name.name)?;
+                    // A nested or rest sub-pattern needs the chain's
+                    // recursive decode; a `..` in particular would shift
+                    // every later field's payload offset.
+                    if !fields.iter().all(|f| {
+                        matches!(f.kind, HirPatKind::Binding { .. } | HirPatKind::Wildcard)
+                    }) {
+                        return None;
+                    }
+                    saw_variant = true;
+                }
+                HirPatKind::Wildcard | HirPatKind::Binding { .. } => {}
+                _ => return None,
+            }
+        }
+        saw_variant.then_some(enum_name)
+    }
+
+    /// Lowers a [`Self::flat_variant_match_enum`] match: one discriminant
+    /// read, one `SwitchInt` with an arm per matched variant, and each
+    /// arm's payload bound inside its own block.
+    fn lower_flat_variant_match(
+        &mut self,
+        scrutinee: &HirExpr,
+        arms: &[HirMatchArm],
+        ty: Ty,
+        span: Span,
+        enum_name: &str,
+    ) -> Option<Local> {
+        let scrutinee_local = self.lower_expr(scrutinee)?;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+
+        // A payload-bearing enum's value is a pointer to `[disc, p0, ...]`,
+        // so the discriminant is read out of it; a unit-only enum's value is
+        // the discriminant already, and only needs a local the switch can
+        // name, since the MIR contract for a `SwitchInt` discriminant is an
+        // integer one.
+        let disc = self.fresh(i64_ty);
+        if self.enums.enum_has_any_payload(enum_name) {
+            let intrinsic = if self.enum_repr_tagged(enum_name) {
+                "gos_enum_disc_tag"
+            } else {
+                "gos_enum_disc"
+            };
+            self.emit_assign(
+                Place::local(disc),
+                Rvalue::CallIntrinsic {
+                    name: intrinsic,
+                    args: vec![Operand::Copy(Place::local(scrutinee_local))],
+                },
+                span,
+            );
+        } else {
+            self.emit_assign(
+                Place::local(disc),
+                Rvalue::Use(Operand::Copy(Place::local(scrutinee_local))),
+                span,
+            );
+        }
+
+        let join_block = self.new_block(span);
+        let result_local = self.fresh(ty);
+        let mut switch_arms: Vec<(i128, BlockId)> = Vec::new();
+        let mut default_block: Option<BlockId> = None;
+        let mut bodies: Vec<(BlockId, &HirMatchArm)> = Vec::with_capacity(arms.len());
+
+        for arm in arms {
+            let arm_block = self.new_block(span);
+            match &arm.pattern.kind {
+                HirPatKind::Variant { name, .. } => {
+                    let idx = self.enums.variant_of_enum(enum_name, &name.name)? as i128;
+                    // A variant named twice keeps its first arm, the way the
+                    // chain lowering's first matching predicate does; a second
+                    // key for it would leave the switch with two answers.
+                    if switch_arms.iter().all(|&(key, _)| key != idx) {
+                        switch_arms.push((idx, arm_block));
+                        bodies.push((arm_block, arm));
+                    }
+                }
+                // A catch-all answers every value the arms above it did not
+                // name, so it is the default and nothing below it can be
+                // reached - including a variant arm, which must not take a
+                // switch key away from the catch-all that precedes it.
+                _ => {
+                    default_block = Some(arm_block);
+                    bodies.push((arm_block, arm));
+                    break;
+                }
+            }
+        }
+
+        // The dispatch block is the one the discriminant read landed in;
+        // creating the panic block below moves `current` and terminates it.
+        let dispatch_block = self.current;
+        let default = default_block.unwrap_or_else(|| {
+            let panic_block = self.new_block(span);
+            self.set_current(panic_block);
+            self.terminate(Terminator::Panic {
+                message: NON_EXHAUSTIVE_MATCH_MESSAGE.to_string(),
+            });
+            panic_block
+        });
+        if let Some(block) = dispatch_block {
+            self.set_current(block);
+        }
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(disc)),
+            arms: switch_arms,
+            default,
+        });
+
+        for (arm_block, arm) in bodies {
+            self.set_current(arm_block);
+            match &arm.pattern.kind {
+                HirPatKind::Variant { name, fields } if !fields.is_empty() => {
+                    self.bind_variant_let_payload(scrutinee_local, name, fields, span);
+                }
+                HirPatKind::Binding { name, .. } => {
+                    self.bind_local(&name.name, scrutinee_local);
+                }
+                _ => {}
+            }
+            if let Some(value_local) = self.lower_expr(&arm.body) {
+                // The arm's own value carries the shape the match answers
+                // with when typeck left the match's type open, which is what
+                // a following field access or method call reads.
+                use gossamer_types::TyKind;
+                let arm_value_ty = self.locals[value_local.0 as usize].ty;
+                let result_kind = self.tcx.kind_of(self.locals[result_local.0 as usize].ty);
+                let arm_kind = self.tcx.kind_of(arm_value_ty);
+                let result_is_loose =
+                    matches!(result_kind, TyKind::Var(_) | TyKind::Error | TyKind::Never);
+                let arm_is_concrete =
+                    !matches!(arm_kind, TyKind::Var(_) | TyKind::Error | TyKind::Never);
+                if result_is_loose && arm_is_concrete {
+                    self.locals[result_local.0 as usize].ty = arm_value_ty;
+                }
+                if let Some(struct_name) = self.local_struct.get(&value_local).cloned() {
+                    self.local_struct.insert(result_local, struct_name);
+                }
+                if let Some(rk) = self.local_runtime_kind.get(&value_local).copied() {
+                    self.local_runtime_kind.insert(result_local, rk);
+                }
+                if let Some(en) = self.local_elem_struct.get(&value_local).cloned() {
+                    self.local_elem_struct.insert(result_local, en);
                 }
                 self.emit_assign(
                     Place::local(result_local),

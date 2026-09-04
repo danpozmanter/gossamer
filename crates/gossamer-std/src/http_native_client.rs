@@ -39,8 +39,9 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, LazyLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use gossamer_runtime::platform::Instant;
 use parking_lot::Mutex;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig as RustlsClientConfig, ClientConnection, RootCertStore, StreamOwned};
@@ -651,7 +652,7 @@ mod tests {
         let join = thread::spawn(move || {
             let _ = run(listener, &config, move |req| h(req));
         });
-        thread::sleep(Duration::from_millis(50));
+        gossamer_runtime::platform::sleep(Duration::from_millis(50));
         (actual, join, shutdown)
     }
 

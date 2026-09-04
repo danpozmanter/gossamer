@@ -2705,7 +2705,7 @@ impl Vm {
                 Op::Select { first, count } => {
                     let start = first as usize;
                     let arms = &chunk.select_arms[start..start + count as usize];
-                    pc = select_dispatch(arms, &mut registers[..]);
+                    pc = select_dispatch(arms, &mut registers[..])?;
                 }
                 Op::CovHit { slot } => {
                     gossamer_runtime::coverage::bump(slot as usize);
@@ -4696,7 +4696,7 @@ fn shuffled_select_order(n: usize) -> Vec<usize> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let mut x = {
-        let nanos = std::time::SystemTime::now()
+        let nanos = gossamer_runtime::platform::system_time_now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0_u64, |d| d.as_nanos() as u64);
         nanos
@@ -4804,10 +4804,10 @@ fn select_cancelled_target(
 fn select_dispatch(
     arms: &[crate::bytecode::SelectArmMeta],
     registers: &mut [Value],
-) -> crate::bytecode::InstrIdx {
+) -> RuntimeResult<crate::bytecode::InstrIdx> {
     use crate::bytecode::SelectArmKind;
     if let Some(target) = select_try_once(arms, registers) {
-        return target;
+        return Ok(target);
     }
     let channels: Vec<crate::value::Channel> = arms
         .iter()
@@ -4819,7 +4819,7 @@ fn select_dispatch(
         .collect();
     loop {
         if let Some(target) = select_try_once(arms, registers) {
-            return target;
+            return Ok(target);
         }
         // A cancelled cohort makes every blocking arm behave the way a
         // closed channel does, so a select under cancellation resolves
@@ -4827,10 +4827,16 @@ fn select_dispatch(
         if crate::stdlib_builtins::cohort::current_is_cancelled()
             && let Some(target) = select_cancelled_target(arms, registers)
         {
-            return target;
+            return Ok(target);
+        }
+        // No arm can become ready after this point on the browser build:
+        // every goroutine that could reach one of these channels has
+        // already run to completion.
+        if !gossamer_runtime::platform::CAN_BLOCK {
+            return Err(RuntimeError::WouldNeverWake("select"));
         }
         if channels.is_empty() {
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            gossamer_runtime::platform::sleep(std::time::Duration::from_millis(1));
             continue;
         }
         let waiter = crate::value::Channel::select_waiter();
@@ -4841,7 +4847,7 @@ fn select_dispatch(
             for ch in &channels {
                 ch.unregister_select_waiter(&waiter);
             }
-            return target;
+            return Ok(target);
         }
         crate::value::Channel::wait_select(&waiter);
         for ch in &channels {

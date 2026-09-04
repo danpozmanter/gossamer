@@ -134,19 +134,30 @@ function renderOutput(out, result) {
 }
 
 /// Convert a JavaScript exception from the wasm module into an actionable
-/// playground message. Rust panics on wasm often surface as a raw
-/// `RuntimeError: unreachable`, which is technically accurate but not useful
-/// to someone editing a program.
-function runtimeThrowMessage(err) {
+/// playground message. wasm32 has no unwinder, so a Rust panic ends the
+/// module with a bare `RuntimeError: unreachable`; the runtime records the
+/// panic's own message first, and `last_panic()` is what makes the report
+/// name a cause rather than the trap.
+function runtimeThrowMessage(err, rt) {
   const raw = err?.message ?? String(err);
-  if (/unreachable(?: executed)?/i.test(raw)) {
-    return [
-      "runtime error: the playground runtime trapped while executing this program.",
-      "This usually means the browser build hit an unsupported runtime path or an internal bug.",
-      "If the same source works with `gos run`, please report it with the program text.",
-    ].join("\n");
+  if (!/unreachable(?: executed)?/i.test(raw)) {
+    return "runtime error: " + raw;
   }
-  return "runtime error: " + raw;
+  let panic = "";
+  try {
+    if (rt && typeof rt.last_panic === "function") {
+      panic = String(rt.last_panic() || "");
+    }
+  } catch {
+    panic = "";
+  }
+  return [
+    panic
+      ? "runtime error: the playground runtime stopped: " + panic
+      : "runtime error: the playground runtime trapped while executing this program.",
+    "This is an internal bug in the browser build, not a mistake in the program.",
+    "If the same source works with `gos run`, please report it with the program text.",
+  ].join("\n");
 }
 
 /// Render check() diagnostics below the output; hides when empty.
@@ -312,7 +323,7 @@ export function mountPlayground(el, opts = {}) {
         result = {
           stdout: "",
           stderr: "",
-          error: runtimeThrowMessage(err),
+          error: runtimeThrowMessage(err, rt),
           fuel_used: 0,
         };
       }

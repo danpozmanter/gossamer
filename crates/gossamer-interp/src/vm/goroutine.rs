@@ -31,13 +31,14 @@ pub fn join_outstanding_goroutines() {
 /// outstanding never asks for one, which is all a target with no monotonic
 /// clock can answer - wasm32 runs a goroutine to completion at its spawn
 /// site, so its pool reaches exit already drained.
-pub(crate) fn exit_drain_deadline() -> std::time::Instant {
+pub(crate) fn exit_drain_deadline() -> gossamer_runtime::platform::Instant {
     *EXIT_DRAIN_UNTIL.get_or_init(|| {
-        std::time::Instant::now() + crate::stdlib_builtins::cohort::ROOT_DRAIN_DEADLINE
+        gossamer_runtime::platform::Instant::now()
+            + crate::stdlib_builtins::cohort::ROOT_DRAIN_DEADLINE
     })
 }
 
-static EXIT_DRAIN_UNTIL: OnceLock<std::time::Instant> = OnceLock::new();
+static EXIT_DRAIN_UNTIL: OnceLock<gossamer_runtime::platform::Instant> = OnceLock::new();
 
 /// Set once `main` has returned and the process is draining spawned work.
 /// From that point the program's participants are the outstanding
@@ -303,7 +304,7 @@ impl GoroutinePool {
             .spawn(move || {
                 loop {
                     let before = p.completions.load(Ordering::Acquire);
-                    std::thread::sleep(STARVATION_CHECK_INTERVAL);
+                    gossamer_runtime::platform::sleep(STARVATION_CHECK_INTERVAL);
                     let after = p.completions.load(Ordering::Acquire);
                     if after != before {
                         continue;
@@ -335,7 +336,7 @@ impl GoroutinePool {
     /// it is shared with the root cohort's own drain. A pool that is
     /// already settled returns without asking for one.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn drain_until(&self, until: impl FnOnce() -> std::time::Instant) {
+    pub(crate) fn drain_until(&self, until: impl FnOnce() -> gossamer_runtime::platform::Instant) {
         let mut inner = self.inner.lock();
         if self.drain_settled() {
             return;
@@ -366,7 +367,8 @@ impl GoroutinePool {
     /// wasm runs goroutines eagerly to completion in `spawn`, so there
     /// is never anything outstanding to drain at exit.
     #[cfg(target_arch = "wasm32")]
-    pub(crate) fn drain_until(&self, _until: impl FnOnce() -> std::time::Instant) {}
+    pub(crate) fn drain_until(&self, _until: impl FnOnce() -> gossamer_runtime::platform::Instant) {
+    }
 }
 
 static POOL: OnceLock<Arc<GoroutinePool>> = OnceLock::new();
@@ -549,6 +551,11 @@ impl ChannelWait {
     /// among that channel's waiters, so a handoff this caller completes is
     /// visible to the readiness count.
     pub(crate) fn enter(can_progress: impl FnOnce() -> bool) -> Option<Self> {
+        // The browser settles every goroutine at its spawn, so by the time a
+        // wait is entered there every sender that will ever run has run.
+        if !gossamer_runtime::platform::CAN_BLOCK {
+            return None;
+        }
         // Sampled before the counts: a waiter drops its count one step ahead
         // of retiring the readiness that woke it, so counts read across such a
         // step belong to two different states. `reads_as_terminal` compares
@@ -616,9 +623,10 @@ impl Drop for ChannelWait {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gossamer_runtime::platform::Instant;
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     /// A deadline past every timeout these tests set, so a drain that
     /// returns did so because the work finished.

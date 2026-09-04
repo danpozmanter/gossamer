@@ -187,6 +187,10 @@ fn configured_purge_delay() -> std::os::raw::c_long {
 /// mimalloc enum shift by the `allocator_tests` unit tests below, which assert
 /// each index still reports its documented default.
 pub fn init_process_allocator() {
+    // Settle the instrumentation switches before any user code runs: the
+    // recording hooks gate on the flag this arms, so a switch read later,
+    // from inside a hook, would never be read at all.
+    crate::c_abi::ledger::init_instrumentation_from_env();
     #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
     {
         // Capture the pristine defaults before overwriting the options we do
@@ -225,6 +229,7 @@ pub mod comptime_paths;
 pub mod comptime_policy;
 pub mod coverage;
 pub mod fs_mode;
+pub mod platform;
 pub mod pprof;
 pub mod preempt;
 pub mod race;

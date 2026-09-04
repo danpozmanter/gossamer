@@ -25,7 +25,7 @@ pub fn program_name() -> String {
 /// if it is unset or contains invalid Unicode.
 #[must_use]
 pub fn var(name: &str) -> Option<String> {
-    std::env::var(name).ok()
+    gossamer_runtime::safe_env::env_var(name)
 }
 
 /// Sets an environment variable. See [`crate::os::set_env`] for
@@ -66,7 +66,9 @@ pub fn home_dir() -> Option<String> {
 /// Returns the system's temporary-files directory.
 #[must_use]
 pub fn temp_dir() -> String {
-    std::env::temp_dir().to_string_lossy().into_owned()
+    gossamer_runtime::platform::temp_dir()
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Every environment variable this process has, by name.
@@ -75,5 +77,5 @@ pub fn temp_dir() -> String {
 /// already handed out.
 #[must_use]
 pub fn vars() -> Vec<(String, String)> {
-    std::env::vars().collect()
+    gossamer_runtime::safe_env::env_vars()
 }

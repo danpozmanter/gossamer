@@ -583,6 +583,7 @@ const SPECS: &[Spec] = &[
     // (unit and payload), fixed array - keys by value on every tier, and
     // `keys()` rebuilds the aggregate the program wrote.
     spec("feature-testing-examples/hashable_map_keys.gos"),
+    spec("feature-testing-examples/map_string_key_lengths.gos"),
     // `Map::from` / `BTreeMap::from` over a runtime sequence of pairs, the
     // tuple-returning `map` closure that feeds one, and the positional `let`
     // that takes a `split` result apart.
@@ -1183,6 +1184,7 @@ const SPECS: &[Spec] = &[
     // scanning for a terminator.
     spec("feature-testing-examples/nul_in_strings.gos"),
     spec("feature-testing-examples/recursive_enum_walk.gos"),
+    spec("feature-testing-examples/heap_enum_by_value_param.gos"),
     // Structural `==` / `!=` on heap (recursive / Box / Vec-bearing) enums:
     // equal-but-distinct allocations compare true on every tier.
     spec("feature-testing-examples/enum_struct_eq.gos"),

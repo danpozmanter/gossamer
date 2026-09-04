@@ -337,7 +337,7 @@ pub(crate) fn builtin_time_sleep(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_time_now_unix_ms(_args: &[Value]) -> RuntimeResult<Value> {
-    let ms = std::time::SystemTime::now()
+    let ms = gossamer_runtime::platform::system_time_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
     Ok(Value::Int(i64::try_from(ms).unwrap_or(i64::MAX)))

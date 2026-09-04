@@ -709,3 +709,105 @@ fn integer_abs_uses_the_integer_runtime_helper() {
         "integer abs must not call the floating-point intrinsic:\n{ir}"
     );
 }
+
+/// Lowers real source through the compiler's own pipeline, so a convention
+/// test reads the IR a `gos build` produces rather than a hand-rolled body.
+fn build_from_source(source: &str) -> (Vec<gossamer_mir::Body>, TyCtxt) {
+    let mut map = SourceMap::new();
+    let file = map.add_file("convention.gos", source.to_string());
+    let (mut sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(source, file);
+    assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
+    let (resolutions, _) = gossamer_resolve::resolve_source_file(&sf);
+    let _ = gossamer_types::normalize_caller_side_spellings(&mut sf, &resolutions);
+    let mut tcx = TyCtxt::new();
+    let (table, diagnostics) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
+    assert!(diagnostics.is_empty(), "typecheck: {diagnostics:?}");
+    let hir = gossamer_hir::lower_source_file(&sf, &resolutions, &table, &mut tcx);
+    let mut bodies = gossamer_mir::lower_program(&hir, &mut tcx);
+    for body in &mut bodies {
+        gossamer_mir::optimise(body, &tcx);
+    }
+    (bodies, tcx)
+}
+
+fn body_text<'a>(ir: &'a str, define_prefix: &str) -> &'a str {
+    let start = ir
+        .find(define_prefix)
+        .unwrap_or_else(|| panic!("{define_prefix} not found in:\n{ir}"));
+    let rest = &ir[start..];
+    let end = rest.find("\n}").unwrap_or(rest.len());
+    &rest[..end]
+}
+
+#[test]
+fn heap_enum_by_value_parameter_crosses_a_direct_call_as_the_word() {
+    let (bodies, tcx) = build_from_source(
+        r#"
+enum Tree { Node(Tree, Tree), Nil }
+
+fn check(tree: Tree) -> i64 {
+    match tree {
+        Tree::Node(l, r) => 1 + check(l) + check(r),
+        Tree::Nil => 0,
+    }
+}
+
+fn main() {
+    println("{}", check(Tree::Node(Tree::Nil, Tree::Nil)))
+}
+"#,
+    );
+    let ir = render_ir_to_string(&bodies, &tcx, false).unwrap();
+    let body = body_text(&ir, "define i64 @\"check\"(");
+
+    let signature = body.lines().next().unwrap();
+    assert_eq!(
+        signature, "define i64 @\"check\"(ptr %p0) #0 {",
+        "a one-word heap enum parameter is the word, with no by-pointer attributes:\n{ir}"
+    );
+    assert!(
+        body.contains("store ptr %p0, ptr %l1"),
+        "the entry stores the word into the local slot:\n{body}"
+    );
+    assert!(
+        !body.contains("llvm.memcpy.p0.p0.i64(ptr %l1, ptr %p0"),
+        "the entry copies nothing from a caller slot:\n{body}"
+    );
+
+    let calls: Vec<&str> = body
+        .lines()
+        .filter(|l| l.contains("call i64 @\"check\"("))
+        .collect();
+    assert_eq!(calls.len(), 2, "both recursive calls are present:\n{body}");
+    for call in calls {
+        assert!(
+            !call.contains("(ptr %l"),
+            "a recursive call passes the loaded word, not a slot address: {call}"
+        );
+    }
+}
+
+#[test]
+fn multi_slot_struct_parameter_still_arrives_by_pointer() {
+    let (bodies, tcx) = build_from_source(
+        r#"
+struct Point { x: i64, y: i64 }
+
+fn total(p: Point) -> i64 { p.x + p.y }
+
+fn main() { println("{}", total(Point { x: 1, y: 2 })) }
+"#,
+    );
+    let ir = render_ir_to_string(&bodies, &tcx, false).unwrap();
+    let body = body_text(&ir, "define i64 @\"total\"(");
+
+    let signature = body.lines().next().unwrap();
+    assert_eq!(
+        signature, "define i64 @\"total\"(ptr readonly nocapture %p0) #0 {",
+        "a flat-slot aggregate keeps the by-pointer convention:\n{ir}"
+    );
+    assert!(
+        body.contains("llvm.memcpy.p0.p0.i64(ptr %l1, ptr %p0, i64 16"),
+        "the entry copies the caller's two slots into this frame:\n{body}"
+    );
+}

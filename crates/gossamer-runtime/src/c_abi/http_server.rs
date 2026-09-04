@@ -913,7 +913,7 @@ fn handle_http_conn_limited<C: HttpIo>(
             // instead of being paid for after it left.
             scratch.request.context = 0;
             let request_deadline = (limits.request_timeout_ms != 0).then(|| {
-                std::time::Instant::now()
+                crate::platform::Instant::now()
                     + std::time::Duration::from_millis(limits.request_timeout_ms)
             });
             set_request_context_site(request_deadline, &watch_ctx);
@@ -1258,7 +1258,7 @@ fn peer_watch_loop() {
                 }
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(PEER_WATCH_INTERVAL_MS));
+        crate::platform::sleep(std::time::Duration::from_millis(PEER_WATCH_INTERVAL_MS));
     }
 }
 
@@ -1290,7 +1290,7 @@ impl Drop for DisconnectWatch {
 thread_local! {
     static REQUEST_CONTEXT_SITE: std::cell::RefCell<
         Option<(
-            Option<std::time::Instant>,
+            Option<crate::platform::Instant>,
             std::sync::Arc<std::sync::atomic::AtomicUsize>,
         )>,
     > = const { std::cell::RefCell::new(None) };
@@ -1299,7 +1299,7 @@ thread_local! {
 /// Names the request the calling thread is serving, so a handler that asks
 /// for `req.context` gets one that expires with the request.
 fn set_request_context_site(
-    deadline: Option<std::time::Instant>,
+    deadline: Option<crate::platform::Instant>,
     watch_ctx: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) {
     REQUEST_CONTEXT_SITE.with_borrow_mut(|site| {
@@ -1407,7 +1407,7 @@ impl HttpConn {
 
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let deadline = http_read_timeout_ms()
-            .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
+            .map(|ms| crate::platform::Instant::now() + std::time::Duration::from_millis(ms));
         loop {
             match std::io::Read::read(&mut self.stream, buf) {
                 Ok(n) => return Ok(n),
@@ -1431,7 +1431,7 @@ impl HttpConn {
 
     fn write_all(&mut self, mut buf: &[u8]) -> std::io::Result<()> {
         let deadline = http_write_timeout_ms()
-            .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
+            .map(|ms| crate::platform::Instant::now() + std::time::Duration::from_millis(ms));
         while !buf.is_empty() {
             match std::io::Write::write(&mut self.stream, buf) {
                 Ok(0) => {
@@ -1472,7 +1472,7 @@ impl HttpConn {
     fn wait_until(
         &mut self,
         interest: crate::sched::Interest,
-        deadline: std::time::Instant,
+        deadline: crate::platform::Instant,
     ) -> std::io::Result<bool> {
         crate::sched_global::wait_io_until(&mut self.mio_stream, interest, deadline)
     }
@@ -1839,7 +1839,7 @@ thread_local! {
 /// Appends the current HTTP-date to `out` without rendering or copying it
 /// into a String of its own.
 fn append_http_date_now(out: &mut Vec<u8>) {
-    let secs = std::time::SystemTime::now()
+    let secs = crate::platform::system_time_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
     HTTP_DATE_CACHE.with_borrow_mut(|(cached_secs, cached)| {
@@ -2272,7 +2272,7 @@ mod tests {
         }
         resumed.store(1, Ordering::Release);
         crate::sched_global::sleep_until(
-            std::time::Instant::now() + std::time::Duration::from_millis(5),
+            crate::platform::Instant::now() + std::time::Duration::from_millis(5),
         );
         resumed.store(
             usize::from(crate::c_abi::rc::region_is_active()) + 1,
@@ -3016,7 +3016,7 @@ mod tests {
         let client = std::thread::spawn(move || {
             let mut sock = TcpStream::connect(addr).unwrap();
             // The server must reach its non-blocking wait before this arrives.
-            std::thread::sleep(Duration::from_millis(20));
+            crate::platform::sleep(Duration::from_millis(20));
             sock.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
                 .unwrap();
             let _ = sock.shutdown(std::net::Shutdown::Write);
@@ -3045,8 +3045,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)] // scheduler goroutines use mmap-backed stacks
     fn nonblocking_connection_deadline_wakes_without_socket_timeout() {
+        use crate::platform::Instant;
         use std::sync::mpsc;
-        use std::time::{Duration, Instant};
+        use std::time::Duration;
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();

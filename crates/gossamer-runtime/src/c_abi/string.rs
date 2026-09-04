@@ -579,6 +579,66 @@ pub(crate) unsafe fn copy_small_bytes(src: *const u8, dst: *mut u8, n: usize) {
     }
 }
 
+/// Compares two byte slices without a libc call for short inputs.
+///
+/// The static-musl release link resolves `memcmp` to musl's scalar byte loop,
+/// and a hash table compares its candidate key on every probe that hits, so a
+/// map of short keys pays that loop per lookup (glibc hides the same cost
+/// behind a SIMD ifunc; musl does not). Short slices are compared here as a
+/// few overlapping fixed-width loads, the same shape [`copy_small_bytes`]
+/// uses for the copy side; longer ones take the standard comparison, where
+/// throughput dominates and the call is amortised.
+#[inline]
+pub(crate) fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    let n = a.len();
+    if n != b.len() {
+        return false;
+    }
+    if n >= 32 {
+        return a == b;
+    }
+    let (pa, pb) = (a.as_ptr(), b.as_ptr());
+    // SAFETY: every read below is bounded by `n`, which both slices hold, and
+    // the trailing reads start at `n - width` so they stay inside the same
+    // range. Unaligned reads are explicit.
+    unsafe {
+        if n >= 16 {
+            load64(pa) == load64(pb)
+                && load64(pa.add(8)) == load64(pb.add(8))
+                && load64(pa.add(n - 16)) == load64(pb.add(n - 16))
+                && load64(pa.add(n - 8)) == load64(pb.add(n - 8))
+        } else if n >= 8 {
+            load64(pa) == load64(pb) && load64(pa.add(n - 8)) == load64(pb.add(n - 8))
+        } else if n >= 4 {
+            load32(pa) == load32(pb) && load32(pa.add(n - 4)) == load32(pb.add(n - 4))
+        } else if n >= 2 {
+            load16(pa) == load16(pb) && load16(pa.add(n - 2)) == load16(pb.add(n - 2))
+        } else if n == 1 {
+            *pa == *pb
+        } else {
+            true
+        }
+    }
+}
+
+/// SAFETY: `p` is readable for 8 bytes.
+#[inline]
+unsafe fn load64(p: *const u8) -> u64 {
+    unsafe { p.cast::<u64>().read_unaligned() }
+}
+
+/// SAFETY: `p` is readable for 4 bytes.
+#[inline]
+unsafe fn load32(p: *const u8) -> u32 {
+    unsafe { p.cast::<u32>().read_unaligned() }
+}
+
+/// SAFETY: `p` is readable for 2 bytes.
+#[inline]
+unsafe fn load16(p: *const u8) -> u16 {
+    unsafe { p.cast::<u16>().read_unaligned() }
+}
+
 /// Copies a string part into a newly allocated builder, tolerating allocator
 /// address reuse that places the destination over stale source storage.
 #[inline]
@@ -3821,4 +3881,39 @@ pub unsafe extern "C" fn gos_rt_str_strip_suffix(s: *const c_char, suffix: *cons
             None => unsafe { gos_rt_result_new(1, 0) },
         }
     })
+}
+
+#[cfg(test)]
+mod byte_compare_tests {
+    use super::bytes_eq;
+
+    /// The short-slice comparison answers exactly what the standard one does,
+    /// at every length either path can take and at every byte position.
+    #[test]
+    fn bytes_eq_agrees_with_slice_equality_at_every_length() {
+        for len in 0..=40usize {
+            let a: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+            assert!(bytes_eq(&a, &a.clone()), "equal at len {len}");
+            assert_eq!(bytes_eq(&a, &a.clone()), a == a.clone());
+
+            for pos in 0..len {
+                let mut b = a.clone();
+                b[pos] ^= 0x80;
+                assert!(!bytes_eq(&a, &b), "byte {pos} of {len} differs");
+                assert_eq!(bytes_eq(&a, &b), a == b);
+            }
+            if len > 0 {
+                let shorter = &a[..len - 1];
+                assert!(!bytes_eq(&a, shorter), "length differs at {len}");
+            }
+        }
+    }
+
+    /// An empty slice equals an empty slice and nothing longer.
+    #[test]
+    fn bytes_eq_handles_the_empty_slice() {
+        assert!(bytes_eq(b"", b""));
+        assert!(!bytes_eq(b"", b"a"));
+        assert!(!bytes_eq(b"a", b""));
+    }
 }

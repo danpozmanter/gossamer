@@ -15,10 +15,11 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
 
+use crate::platform::Instant;
 use crate::sql::{
     ConnectionImpl, Error, IsolationLevel, Notification, StatementImpl, TransactionImpl,
 };

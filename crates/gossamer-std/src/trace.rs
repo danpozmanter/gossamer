@@ -28,9 +28,9 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::UNIX_EPOCH;
 
 use parking_lot::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::crypto::rand;
 
@@ -546,7 +546,7 @@ fn sample_u64() -> u64 {
 }
 
 fn unix_nanos() -> u128 {
-    SystemTime::now()
+    gossamer_runtime::platform::system_time_now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos())
 }
@@ -656,7 +656,7 @@ mod tests {
     fn span_records_start_and_end_nanos() {
         let span = Span::new("op");
         let start = span.start_unix_nanos;
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        gossamer_runtime::platform::sleep(std::time::Duration::from_millis(2));
         let tracer = Tracer::new();
         let bound = tracer.start_span_with_parent(
             "child",

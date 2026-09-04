@@ -411,6 +411,11 @@ pub(crate) fn builtin_mutex_lock(args: &[Value]) -> RuntimeResult<Value> {
     // mutex's condvar.
     let arc = MUTEX_REGISTRY.with(|r| r.borrow().get(&id).cloned());
     if let Some(cell) = arc {
+        // A held mutex stays held on the browser build: the goroutine that
+        // would unlock it has already run to completion.
+        if !gossamer_runtime::platform::CAN_BLOCK && cell.would_block() {
+            return Err(crate::value::RuntimeError::WouldNeverWake("Mutex::lock"));
+        }
         // Acquiring answers with the lock, not with what the mutex guards:
         // the compiled tiers carry no value back through this call, so a
         // guarded value returned here would read differently per tier.

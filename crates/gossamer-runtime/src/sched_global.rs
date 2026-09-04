@@ -30,10 +30,11 @@ use std::panic::AssertUnwindSafe;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::{Mutex, MutexGuard};
 
+use crate::platform::Instant;
 use crate::sched::{Gid, MultiScheduler, OsPoller, ParkReason, Poller, Readiness, Step};
 
 /// Wakers registered with the global poller. Keyed by [`Gid`], the
@@ -542,7 +543,7 @@ pub fn sleep_until(deadline: Instant) {
     }
     if !gossamer_coro::in_goroutine() {
         // No goroutine to park - fall back to OS-thread sleep.
-        std::thread::sleep(deadline - now);
+        crate::platform::sleep(deadline - now);
         return;
     }
     park(ParkReason::Timer, |parker| {
@@ -876,7 +877,7 @@ mod tests {
             if counter.load(Ordering::Relaxed) == 7 {
                 return;
             }
-            std::thread::sleep(Duration::from_millis(10));
+            crate::platform::sleep(Duration::from_millis(10));
         }
         panic!("spawned closure did not run within deadline");
     }
@@ -898,7 +899,7 @@ mod tests {
                 assert!(elapsed >= Duration::from_millis(15));
                 return;
             }
-            std::thread::sleep(Duration::from_millis(10));
+            crate::platform::sleep(Duration::from_millis(10));
         }
         panic!("goroutine sleep did not return within deadline");
     }
@@ -926,10 +927,10 @@ mod tests {
             return;
         }
 
-        let fifo = std::env::temp_dir().join(format!(
+        let fifo = crate::platform::temp_dir().join(format!(
             "gos-blocking-fs-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
+            crate::platform::process_id(),
+            crate::platform::system_time_now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("system clock after epoch")
                 .as_nanos()
@@ -965,7 +966,7 @@ mod tests {
             if peer_ran.load(Ordering::Acquire) {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            crate::platform::sleep(Duration::from_millis(5));
         }
         assert!(
             peer_ran.load(Ordering::Acquire),
@@ -978,7 +979,7 @@ mod tests {
                 let _ = std::fs::remove_file(&fifo);
                 return;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            crate::platform::sleep(Duration::from_millis(5));
         }
         let _ = std::fs::remove_file(&fifo);
         panic!("FIFO read did not resume after writer closed");
@@ -1031,7 +1032,7 @@ mod tests {
             if read_started.load(Ordering::Acquire) {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            crate::platform::sleep(Duration::from_millis(5));
         }
         assert!(
             read_started.load(Ordering::Acquire),
@@ -1044,7 +1045,7 @@ mod tests {
             if peer_ran.load(Ordering::Acquire) {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            crate::platform::sleep(Duration::from_millis(5));
         }
         assert!(
             peer_ran.load(Ordering::Acquire),
@@ -1055,7 +1056,7 @@ mod tests {
             if read_done.load(Ordering::Acquire) {
                 return;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            crate::platform::sleep(Duration::from_millis(5));
         }
         panic!("child stdout read did not resume after the child exited");
     }
@@ -1120,14 +1121,14 @@ mod tests {
             if writer_started.load(Ordering::Acquire) {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            crate::platform::sleep(Duration::from_millis(5));
         }
         assert!(
             writer_started.load(Ordering::Acquire),
             "terminal writer did not start"
         );
         // Let the blocking worker fill the pipe before scheduling the peer.
-        std::thread::sleep(Duration::from_millis(20));
+        crate::platform::sleep(Duration::from_millis(20));
 
         let peer = std::sync::Arc::clone(&peer_ran);
         let _ = spawn(Box::new(move || peer.store(true, Ordering::Release)));
@@ -1135,7 +1136,7 @@ mod tests {
             if peer_ran.load(Ordering::Acquire) {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            crate::platform::sleep(Duration::from_millis(5));
         }
         assert!(
             peer_ran.load(Ordering::Acquire),
@@ -1166,7 +1167,7 @@ mod tests {
                 reader.join().expect("terminal pipe reader");
                 return;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            crate::platform::sleep(Duration::from_millis(5));
         }
         let _ = reader.join();
         panic!("terminal write did not resume after pipe drain");

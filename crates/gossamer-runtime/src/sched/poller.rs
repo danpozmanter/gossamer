@@ -25,8 +25,9 @@ use std::collections::HashMap;
 use std::collections::{BinaryHeap, HashSet};
 use std::io;
 use std::time::Duration;
+
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
+use crate::platform::Instant;
 
 use super::task::Gid;
 
@@ -76,7 +77,7 @@ pub trait Poller: Send {
         // Default fallback for pollers that do not have a real
         // blocking primitive - sleeps and then drains.
         if let Some(t) = timeout {
-            std::thread::sleep(t);
+            crate::platform::sleep(t);
         }
         Ok(self.drain())
     }
@@ -513,7 +514,7 @@ mod tests {
         let mut poller = OsPoller::new().expect("OsPoller::new");
         let interrupt = poller.interrupt_handle();
         let wake = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(20));
+            crate::platform::sleep(Duration::from_millis(20));
             interrupt.wake().expect("wake poller");
         });
         let start = Instant::now();

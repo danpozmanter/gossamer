@@ -1403,10 +1403,13 @@ pub fn write_atomic(path: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
         })?
         .to_string_lossy()
         .into_owned();
-    let nanos = std::time::SystemTime::now()
+    let nanos = gossamer_runtime::platform::system_time_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
-    let tmp = parent.join(format!("{file_name}.tmp.{}.{nanos}", std::process::id()));
+    let tmp = parent.join(format!(
+        "{file_name}.tmp.{}.{nanos}",
+        gossamer_runtime::platform::process_id()
+    ));
 
     if !parent.as_os_str().is_empty() && !parent.exists() {
         stdfs::create_dir_all(parent)?;
@@ -1677,11 +1680,11 @@ impl TempDir {
     pub fn with_prefix(prefix: &str) -> io::Result<Self> {
         validate_temp_prefix(prefix)?;
         let n = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let pid = std::process::id();
-        let nanos = std::time::SystemTime::now()
+        let pid = gossamer_runtime::platform::process_id();
+        let nanos = gossamer_runtime::platform::system_time_now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
-        let mut path = std::env::temp_dir();
+        let mut path = gossamer_runtime::platform::temp_dir();
         path.push(format!("gossamer-{prefix}-{pid}-{nanos:x}-{n}"));
         stdfs::create_dir(&path)?;
         Ok(Self { path })
@@ -1801,11 +1804,11 @@ impl Drop for TempDir {
 pub fn temp_file(prefix: &str) -> io::Result<(File, PathBuf)> {
     validate_temp_prefix(prefix)?;
     let n = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
-    let nanos = std::time::SystemTime::now()
+    let pid = gossamer_runtime::platform::process_id();
+    let nanos = gossamer_runtime::platform::system_time_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
-    let mut path = std::env::temp_dir();
+    let mut path = gossamer_runtime::platform::temp_dir();
     path.push(format!("gossamer-{prefix}-{pid}-{nanos:x}-{n}"));
     let file = stdfs::OpenOptions::new()
         .create_new(true)
@@ -1832,7 +1835,7 @@ fn validate_temp_prefix(prefix: &str) -> io::Result<()> {
 #[cfg(test)]
 fn drain_for(rx: &Receiver<Event>, deadline: std::time::Duration) -> Vec<Event> {
     let mut out = Vec::new();
-    let start = std::time::Instant::now();
+    let start = gossamer_runtime::platform::Instant::now();
     while start.elapsed() < deadline {
         if let Ok(ev) = rx.recv_timeout(std::time::Duration::from_millis(50)) {
             out.push(ev);
@@ -1846,8 +1849,11 @@ mod tests {
     use super::*;
 
     fn scratch(tag: &str) -> PathBuf {
-        let mut dir = std::env::temp_dir();
-        dir.push(format!("gos-fs-{tag}-{}", std::process::id()));
+        let mut dir = gossamer_runtime::platform::temp_dir();
+        dir.push(format!(
+            "gos-fs-{tag}-{}",
+            gossamer_runtime::platform::process_id()
+        ));
         let _ = stdfs::remove_dir_all(&dir);
         dir
     }
@@ -2440,15 +2446,16 @@ mod tests {
         // There is no synchronous "watch active" ack from FSEvents /
         // ReadDirectoryChangesW / inotify, so a brief settle before the
         // triggering write is the documented platform constraint.
-        std::thread::sleep(std::time::Duration::from_millis(150));
+        gossamer_runtime::platform::sleep(std::time::Duration::from_millis(150));
         let file = dir.join("created.txt");
         stdfs::write(&file, b"hello").unwrap();
         // Wait until the matching event arrives, returning as soon as it
         // does. A generous deadline absorbs FSEvents coalescing latency
         // on a loaded CI runner without slowing the common (fast) case.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline =
+            gossamer_runtime::platform::Instant::now() + std::time::Duration::from_secs(10);
         let mut saw = false;
-        while std::time::Instant::now() < deadline {
+        while gossamer_runtime::platform::Instant::now() < deadline {
             match rx.recv_timeout(std::time::Duration::from_millis(100)) {
                 Ok(e) if e.path.ends_with("created.txt") && e.kind == EventKind::Created => {
                     saw = true;

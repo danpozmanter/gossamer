@@ -258,7 +258,7 @@ pub(crate) fn builtin_mw_new_request_id(_args: &[Value]) -> RuntimeResult<Value>
     use std::sync::atomic::AtomicU64;
     pub(crate) static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let nanos = std::time::SystemTime::now()
+    let nanos = gossamer_runtime::platform::system_time_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     Ok(Value::String(format!("{nanos:x}-{n:x}").into()))

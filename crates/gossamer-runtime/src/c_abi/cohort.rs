@@ -33,10 +33,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
 
+use crate::platform::Instant;
 use crate::sched::Gid;
 
 /// Completion policy, as spelled by `Policy::` in source.
@@ -451,10 +452,10 @@ const ROOT_DRAIN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(
 /// root drain runs on. Answers the number still outstanding, which is
 /// zero when they all finished.
 fn wait_for_drain_bounded(node: &Arc<Cohort>, deadline: std::time::Duration) -> i64 {
-    let until = std::time::Instant::now() + deadline;
+    let until = crate::platform::Instant::now() + deadline;
     let mut state = node.state.lock();
     while state.outstanding > 0 {
-        let now = std::time::Instant::now();
+        let now = crate::platform::Instant::now();
         if now >= until {
             return state.outstanding;
         }

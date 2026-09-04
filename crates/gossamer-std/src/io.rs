@@ -312,7 +312,7 @@ impl Reader for PipeReader {
                 return Ok(0);
             }
             drop(g);
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            gossamer_runtime::platform::sleep(std::time::Duration::from_millis(2));
         }
     }
 }

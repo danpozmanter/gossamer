@@ -206,7 +206,7 @@ pub fn run_ctx<R: Send + 'static>(
                 .err()
                 .unwrap_or_else(|| crate::errors::Error::new("context cancelled")));
         }
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        gossamer_runtime::platform::sleep(std::time::Duration::from_millis(2));
     }
 }
 

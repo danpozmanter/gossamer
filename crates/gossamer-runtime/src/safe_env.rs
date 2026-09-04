@@ -63,18 +63,73 @@ static ENV_MUTEX: Mutex<()> = Mutex::new(());
 /// through this API.
 pub fn set_env(name: &str, value: &str) {
     let _guard = ENV_MUTEX.lock();
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        browser_env().insert(name.to_string(), value.to_string());
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     // SAFETY: ENV_MUTEX serialises every Gossamer-side mutation
     // of the env table. POSIX `setenv` remains racy against
     // external readers; the lock contains the in-process race.
-    unsafe { std::env::set_var(name, value) }
+    unsafe {
+        std::env::set_var(name, value);
+    }
 }
 
 /// Unsets `name`. Same threading contract as [`set_env`].
 pub fn unset_env(name: &str) {
     let _guard = ENV_MUTEX.lock();
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        browser_env().remove(name);
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     // SAFETY: same lock as `set_env`. POSIX `unsetenv` shares the
     // thread-safety contract.
-    unsafe { std::env::remove_var(name) }
+    unsafe {
+        std::env::remove_var(name);
+    }
+}
+
+/// The value bound to `name`, or `None` when it is unset.
+#[must_use]
+pub fn env_var(name: &str) -> Option<String> {
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        let _guard = ENV_MUTEX.lock();
+        return browser_env().get(name).cloned();
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    std::env::var(name).ok()
+}
+
+/// Every bound variable, by name.
+#[must_use]
+pub fn env_vars() -> Vec<(String, String)> {
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        let _guard = ENV_MUTEX.lock();
+        return browser_env()
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    std::env::vars().collect()
+}
+
+/// The browser's environment table.
+///
+/// A wasm module inherits no environment and `std::env::set_var` aborts
+/// there, so the variables a program sets live here for as long as the
+/// module does - which is the whole extent of one run.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn browser_env()
+-> parking_lot::MappedMutexGuard<'static, std::collections::BTreeMap<String, String>> {
+    static TABLE: Mutex<Option<std::collections::BTreeMap<String, String>>> = Mutex::new(None);
+    parking_lot::MutexGuard::map(TABLE.lock(), |slot| {
+        slot.get_or_insert_with(Default::default)
+    })
 }
 
 /// Lock the env mutex for the duration of a closure. Lets

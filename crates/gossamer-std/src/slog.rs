@@ -142,7 +142,7 @@ impl Logger {
         fields.extend(extra);
         let record = Record {
             level,
-            time: SystemTime::now(),
+            time: gossamer_runtime::platform::system_time_now(),
             message: message.into(),
             fields,
         };

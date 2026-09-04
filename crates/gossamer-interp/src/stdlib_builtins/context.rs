@@ -31,9 +31,10 @@ use std::collections::HashMap as StdHashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gossamer_ast::Ident;
+use gossamer_runtime::platform::Instant;
 
 use crate::builtins::{BuiltinFnPub, value_to_int};
 use crate::value::{Channel, RuntimeError, RuntimeResult, Value};

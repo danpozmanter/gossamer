@@ -163,6 +163,15 @@ if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown
 else
     echo "wasm32 check skipped (run \`rustup target add wasm32-unknown-unknown\` to enable)"
 fi
+# The browser build is the only tier nothing else executes: a `cargo check`
+# proves it compiles, and a Rust panic under it aborts the module at run time.
+if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$' \
+    && command -v wasm-bindgen >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+    run_step "playground wasm smoke (every fixture must answer)" \
+        cargo run --quiet --bin gos -- run scripts/playground_smoke.gos
+else
+    echo "playground smoke skipped (needs the wasm32 target, wasm-bindgen, and node)"
+fi
 if rustup target list --installed 2>/dev/null | grep -q '^x86_64-pc-windows-gnu$'; then
     run_step "cargo check --target x86_64-pc-windows-gnu (runtime + backends)" \
         cargo check -p gossamer-runtime -p gossamer-codegen-cranelift \

@@ -903,10 +903,10 @@ mod file_handle_tests {
     }
 
     fn temp_path(name: &str) -> String {
-        let mut path = std::env::temp_dir();
+        let mut path = gossamer_runtime::platform::temp_dir();
         path.push(format!(
             "gossamer-interp-{name}-{}-{}.txt",
-            std::process::id(),
+            gossamer_runtime::platform::process_id(),
             next_fs_handle()
         ));
         path.to_string_lossy().into_owned()

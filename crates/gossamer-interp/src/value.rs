@@ -2436,10 +2436,14 @@ pub fn wake_all_channel_waiters() {
 /// The deadlock report: every participant is waiting on a channel, so the
 /// value the operation waits for can never arrive.
 #[must_use]
-pub fn deadlock_error(op: &str) -> RuntimeError {
-    RuntimeError::Panic(format!(
-        "all goroutines are asleep - deadlock! ({op} can never complete)"
-    ))
+pub fn deadlock_error(op: &'static str) -> RuntimeError {
+    if gossamer_runtime::platform::CAN_BLOCK {
+        RuntimeError::Panic(format!(
+            "all goroutines are asleep - deadlock! ({op} can never complete)"
+        ))
+    } else {
+        RuntimeError::WouldNeverWake(op)
+    }
 }
 
 /// Result of a blocking receive.
@@ -2727,6 +2731,12 @@ impl Channel {
                 return Some(msg.value);
             }
             if guard.closed || is_cancelled() {
+                return None;
+            }
+            // Nothing can send, and no cancellation can be raised, while this
+            // waits on the browser build, so waiting cannot change the answer
+            // a drained open channel gives.
+            if !gossamer_runtime::platform::CAN_BLOCK {
                 return None;
             }
             guard.waiting_receivers += 1;
@@ -4120,6 +4130,20 @@ pub enum RuntimeError {
     /// builtin, the capability class, and the option that permits it.
     #[error("{0}")]
     ComptimeDenied(String),
+    /// A wait whose target can never arrive on this build. The browser
+    /// playground runs one thread and settles every goroutine at its
+    /// spawn, so a rendezvous with a goroutine that has already finished
+    /// - or with one that can never start - has nothing to wake it.
+    #[error(
+        "error[GX0011]: {0} would wait for a goroutine this build cannot run \
+         concurrently - the browser playground settles each goroutine at its spawn"
+    )]
+    WouldNeverWake(&'static str),
+    /// The program called `process::exit` on a build with no process of
+    /// its own to end. Carries the status the program asked for, which
+    /// the host reports in place of ending anything.
+    #[error("error[GX0012]: the program exited with status {0}")]
+    Exit(i32),
 }
 
 impl RuntimeError {
@@ -4140,6 +4164,8 @@ impl RuntimeError {
             #[cfg(feature = "fuel")]
             Self::FuelExhausted => "GX0009",
             Self::ComptimeDenied(_) => "GX0010",
+            Self::WouldNeverWake(_) => "GX0011",
+            Self::Exit(_) => "GX0012",
         }
     }
 }

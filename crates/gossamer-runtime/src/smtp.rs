@@ -206,7 +206,7 @@ fn render(message: &Message<'_>, host: &str) -> String {
     out.push_str(&format!(
         "Message-ID: <{}.{}@{}>\r\n",
         crate::clock::wall_ms(),
-        std::process::id(),
+        crate::platform::process_id(),
         header_safe(host)
     ));
     out.push_str("MIME-Version: 1.0\r\n");

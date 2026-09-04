@@ -48,8 +48,9 @@ use std::path::PathBuf;
 use std::process::{self, ChildStderr, ChildStdout};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use gossamer_runtime::platform::Instant;
 use parking_lot::Mutex;
 
 use crate::context::Context;
@@ -264,7 +265,7 @@ impl Child {
             if Instant::now() >= deadline {
                 return Ok(None);
             }
-            thread::sleep(Duration::from_millis(25));
+            gossamer_runtime::platform::sleep(Duration::from_millis(25));
         }
     }
 
@@ -601,7 +602,7 @@ fn spawn_cancel_watcher(
             if has_exited(&inner) {
                 return;
             }
-            thread::sleep(Duration::from_millis(50));
+            gossamer_runtime::platform::sleep(Duration::from_millis(50));
         }
         let _ = send_signal(pid as i32, Signal::Term, false);
         let deadline = Instant::now() + grace;
@@ -609,7 +610,7 @@ fn spawn_cancel_watcher(
             if has_exited(&inner) {
                 return;
             }
-            thread::sleep(Duration::from_millis(50));
+            gossamer_runtime::platform::sleep(Duration::from_millis(50));
         }
         let _ = send_signal(pid as i32, Signal::Kill, false);
     })
@@ -681,7 +682,7 @@ pub fn terminate_live_children() {
     for (pid, group) in &live {
         let _ = send_signal(*pid as i32, Signal::Term, *group);
     }
-    thread::sleep(Duration::from_millis(100));
+    gossamer_runtime::platform::sleep(Duration::from_millis(100));
     for (pid, group) in &live {
         let _ = send_signal(*pid as i32, Signal::Kill, *group);
     }
@@ -860,7 +861,7 @@ pub fn wait_pid_timeout(pid: i64, ms: i64) -> i64 {
             if Instant::now() >= deadline {
                 return -1;
             }
-            thread::sleep(Duration::from_millis(25));
+            gossamer_runtime::platform::sleep(Duration::from_millis(25));
         }
     }
     #[cfg(windows)]
@@ -1257,7 +1258,7 @@ mod tests {
         // Cancel after a short delay so the watcher thread observes
         // the live child first.
         let _ = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(80));
+            gossamer_runtime::platform::sleep(Duration::from_millis(80));
             cancel.cancel();
         });
         let start = Instant::now();
@@ -1285,7 +1286,7 @@ mod tests {
             .process_group(true)
             .spawn()
             .expect("spawn group");
-        std::thread::sleep(Duration::from_millis(100));
+        gossamer_runtime::platform::sleep(Duration::from_millis(100));
         child.kill_group().expect("kill group");
         let status = child.wait().expect("wait");
         assert!(!status.success());

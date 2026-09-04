@@ -747,6 +747,37 @@ jobs:
       - name: Peak RSS may not grow with the loop count
         run: ./target/debug/gos run scripts/leak_oracle.gos
 
+  # The browser build is the one tier nothing else in CI executes: the docs
+  # workflow compiles it and the portability job type-checks it, and neither
+  # runs a program. wasm32-unknown-unknown has no unwinder, so a Rust panic
+  # under the playground's `run` aborts the module and the page gets a bare
+  # `RuntimeError: unreachable` - a failure shape no native suite can see.
+  playground-smoke:
+    name: Playground wasm smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v2-playground-smoke
+      - name: Resolve wasm-bindgen-cli version from Cargo.lock
+        # The CLI and the crate must be the same version; a mismatch is a
+        # hard "schema version" error at bindgen time.
+        run: |
+          WBVER=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+          echo "WBVER=$WBVER" >> "$GITHUB_ENV"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ env.WBVER }}
+      - name: Build gos
+        run: cargo build --bin gos
+      - name: Every fixture must answer rather than end the module
+        run: ./target/debug/gos run scripts/playground_smoke.gos
+
   # Cross-compilation correctness: `gos build --target aarch64-linux-*`
   # from a Linux host, run under QEMU, must match the bytecode VM. This is
   # the all-tier gate for the Linux-host cross path (gnu + musl).

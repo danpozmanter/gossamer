@@ -282,13 +282,13 @@ pub unsafe extern "C" fn gos_rt_http_server_shutdown(handle: i64, deadline_ms: i
             let _ =
                 std::net::TcpStream::connect_timeout(&sock, std::time::Duration::from_millis(200));
         }
-        let deadline =
-            std::time::Instant::now() + std::time::Duration::from_millis(deadline_ms.max(0) as u64);
+        let deadline = crate::platform::Instant::now()
+            + std::time::Duration::from_millis(deadline_ms.max(0) as u64);
         while server.in_flight.load(Ordering::Acquire) > 0 {
-            if std::time::Instant::now() >= deadline {
+            if crate::platform::Instant::now() >= deadline {
                 return 0;
             }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            crate::platform::sleep(std::time::Duration::from_millis(5));
         }
         1
     })

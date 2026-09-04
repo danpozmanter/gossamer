@@ -35,8 +35,9 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use gossamer_runtime::platform::Instant;
 use parking_lot::Mutex;
 
 use crate::errors::Error;
@@ -559,7 +560,7 @@ mod tests {
     fn deadline_expires_context() {
         let root = Context::background();
         let ctx = with_timeout(&root, Duration::from_millis(10));
-        std::thread::sleep(Duration::from_millis(20));
+        gossamer_runtime::platform::sleep(Duration::from_millis(20));
         assert!(ctx.is_cancelled());
     }
 

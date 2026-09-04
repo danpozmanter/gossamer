@@ -173,7 +173,7 @@ mod tests {
             server_done_clone.store(true, Ordering::Release);
         });
 
-        std::thread::sleep(Duration::from_millis(20));
+        gossamer_runtime::platform::sleep(Duration::from_millis(20));
 
         let result = Arc::new(parking_lot::Mutex::new(None::<Vec<u8>>));
         let result_for_g = Arc::clone(&result);
@@ -192,12 +192,12 @@ mod tests {
             done_for_g.store(true, Ordering::Release);
         }));
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        while std::time::Instant::now() < deadline {
+        let deadline = gossamer_runtime::platform::Instant::now() + Duration::from_secs(3);
+        while gossamer_runtime::platform::Instant::now() < deadline {
             if done.load(Ordering::Acquire) && server_done.load(Ordering::Acquire) {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(10));
+            gossamer_runtime::platform::sleep(Duration::from_millis(10));
         }
         let got = result.lock().clone();
         assert_eq!(got.as_deref(), Some(b"world" as &[u8]));

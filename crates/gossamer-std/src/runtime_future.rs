@@ -157,12 +157,12 @@ mod tests {
             done_for_g.store(true, Ordering::Release);
         }));
         // Spin briefly waiting for the goroutine to finish.
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while std::time::Instant::now() < deadline {
+        let deadline = gossamer_runtime::platform::Instant::now() + Duration::from_secs(2);
+        while gossamer_runtime::platform::Instant::now() < deadline {
             if done.load(Ordering::Acquire) {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            gossamer_runtime::platform::sleep(Duration::from_millis(5));
         }
         assert_eq!(*result.lock(), Some(42));
     }
@@ -181,7 +181,7 @@ mod tests {
             } else {
                 let waker = cx.waker().clone();
                 std::thread::spawn(move || {
-                    std::thread::sleep(Duration::from_millis(30));
+                    gossamer_runtime::platform::sleep(Duration::from_millis(30));
                     waker.wake();
                 });
                 Poll::Pending
@@ -210,12 +210,12 @@ mod tests {
         // retired-inbox handoff tests in sched/multi.rs). A tight
         // wall-clock bound here flakes under `cargo test --workspace`
         // load without indicating any scheduler bug.
-        let deadline = std::time::Instant::now() + Duration::from_mins(2);
-        while std::time::Instant::now() < deadline {
+        let deadline = gossamer_runtime::platform::Instant::now() + Duration::from_mins(2);
+        while gossamer_runtime::platform::Instant::now() < deadline {
             if done.load(Ordering::Acquire) {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            gossamer_runtime::platform::sleep(Duration::from_millis(5));
         }
         assert!(
             done.load(Ordering::Acquire),

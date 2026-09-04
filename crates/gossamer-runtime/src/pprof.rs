@@ -111,7 +111,7 @@ pub fn cpu_profile(duration: Duration) -> String {
     if crate::sampler::start(SAMPLE_HZ).is_err() {
         return ProfileBuffer::default().render();
     }
-    std::thread::sleep(duration);
+    crate::platform::sleep(duration);
     crate::sampler::stop();
     let raw = crate::sampler::drain();
     let mut buf = ProfileBuffer::default();
@@ -169,7 +169,7 @@ fn symbolise(pc: usize) -> Frame {
 pub fn heap_profile(duration: Duration) -> String {
     let _ = crate::sampler::drain_heap();
     crate::sampler::start_heap();
-    std::thread::sleep(duration);
+    crate::platform::sleep(duration);
     crate::sampler::stop_heap();
     let mut buf = ProfileBuffer::default();
     for sample in crate::sampler::drain_heap() {
@@ -263,7 +263,7 @@ pub fn block_profile() -> String {
 pub fn execution_trace(duration: Duration) -> String {
     let scheduler = crate::sched_global::scheduler();
     scheduler.start_execution_trace();
-    std::thread::sleep(duration);
+    crate::platform::sleep(duration);
     let events = scheduler.finish_execution_trace();
     let mut out = String::from("{\"traceEvents\":[");
     for (index, event) in events.iter().enumerate() {

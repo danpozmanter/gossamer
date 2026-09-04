@@ -19,7 +19,7 @@ use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::*;
 
@@ -60,7 +60,7 @@ static PROGRAM_NAME_PTR: AtomicUsize = AtomicUsize::new(0);
 pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char) {
     ffi_entry!((), {
         #[cfg(not(target_arch = "wasm32"))]
-        let startup_started = Instant::now();
+        let startup_started = crate::platform::Instant::now();
         // Configure the allocator before copying argv into Gossamer-owned
         // strings. Linux also has an earlier constructor for THP policy, but
         // macOS and Windows reach this C entry first; doing it here gives all
@@ -336,7 +336,7 @@ pub unsafe extern "C" fn gos_rt_os_program_name() -> *const c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_env_temp_dir() -> *const c_char {
     ffi_entry!(std::ptr::null(), {
-        let path = std::env::temp_dir();
+        let path = crate::platform::temp_dir();
         let bytes = path.to_string_lossy();
         alloc_cstring(bytes.as_bytes()).cast_const()
     })
@@ -1057,9 +1057,9 @@ mod args_tests {
     fn encoded_non_utf8_directory_path_can_be_listed_again() {
         use std::os::unix::ffi::OsStringExt;
 
-        let root = std::env::temp_dir().join(format!(
+        let root = crate::platform::temp_dir().join(format!(
             "gossamer-native-non-utf8-dir-{}",
-            std::process::id()
+            crate::platform::process_id()
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();

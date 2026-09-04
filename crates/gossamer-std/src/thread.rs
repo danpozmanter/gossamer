@@ -23,7 +23,7 @@ where
 
 /// Sleeps the current OS thread for `millis` milliseconds.
 pub fn sleep_ms(millis: u64) {
-    std::thread::sleep(Duration::from_millis(millis));
+    gossamer_runtime::platform::sleep(Duration::from_millis(millis));
 }
 
 /// Yields the current OS thread's timeslice to the scheduler.
@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn sleep_ms_short() {
-        let start = std::time::Instant::now();
+        let start = gossamer_runtime::platform::Instant::now();
         sleep_ms(5);
         assert!(start.elapsed().as_millis() >= 4);
     }

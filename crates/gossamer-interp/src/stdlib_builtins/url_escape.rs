@@ -236,6 +236,9 @@ mod tests {
         assert!(matches!(empty, Value::Bool(true)));
     }
 
+    // The socket builtins this drives are gated out of the wasm build, and
+    // that target has no loopback to bind either.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn tcp_listener_round_trip_via_loopback() {
         let listener = call(
@@ -296,6 +299,7 @@ mod tests {
         join.join().unwrap();
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn udp_round_trip_via_loopback() {
         let server = call(builtin_udp_bind, vec![Value::String("127.0.0.1:0".into())]);
@@ -353,7 +357,7 @@ mod tests {
     #[test]
     fn time_instant_returns_monotonic_handle() {
         let inst = call(builtin_time_instant_now, vec![]);
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        gossamer_runtime::platform::sleep(std::time::Duration::from_millis(2));
         let elapsed = call(builtin_time_instant_elapsed_ms, vec![inst]);
         match elapsed {
             Value::Int(n) => assert!(n >= 0),

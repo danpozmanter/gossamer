@@ -1,0 +1,58 @@
+// A recursive enum handed to a function by value is one word, the tagged
+// node pointer, and reaches the callee as that word on every tier. The
+// callee reads it, passes it on, matches it, and answers it, and the caller
+// still owns and reads the same tree afterwards.
+//
+// The same parameter shape reaches a callee three ways - a direct call, a
+// closure a combinator invokes through a function pointer, and a named
+// function in callback position - so all three have to agree on it.
+
+enum Tree {
+    Node(Tree, Tree)
+    Nil
+}
+
+fn build(depth: i64) -> Tree {
+    if depth > 0 {
+        Tree::Node(build(depth - 1), build(depth - 1))
+    } else {
+        Tree::Nil
+    }
+}
+
+fn count(tree: Tree) -> i64 {
+    match tree {
+        Tree::Node(l, r) => 1 + count(l) + count(r)
+        Tree::Nil => 0
+    }
+}
+
+fn leftmost_depth(tree: Tree, acc: i64) -> i64 {
+    match tree {
+        Tree::Node(l, _) => leftmost_depth(l, acc + 1)
+        Tree::Nil => acc
+    }
+}
+
+fn same(tree: Tree) -> Tree { tree }
+
+fn apply(f: Fn(Tree) -> i64, tree: Tree) -> i64 { f(tree) }
+
+fn main() {
+    let t = build(6)
+    println("count {}", count(t))
+    println("count again {}", count(same(t)))
+    println("depth {}", leftmost_depth(t, 0))
+    println("via callback {}", apply(count, t))
+    println("via closure {}", apply(|x| count(x) + 1, t))
+
+    let trees = #[build(2), build(3), build(4)]
+    let counts = trees.map(count)
+    println("{:?}", counts)
+
+    let total = (0..3).map(|i| count(trees[i])).sum()
+    println("total {}", total)
+
+    // The caller still owns the tree it handed over, every time.
+    println("still {}", count(t))
+}

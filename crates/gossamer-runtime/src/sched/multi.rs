@@ -30,12 +30,13 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crossbeam_deque::{Injector, Steal, Stealer, Worker as Deque};
 use parking_lot::{Condvar, Mutex};
 
 use super::task::{Gid, Step, Task};
+use crate::platform::Instant;
 
 /// Monotonic process-start anchor. Yield timestamps are encoded as
 /// `Instant::now().duration_since(*PROCESS_START).as_micros() as u64`
@@ -1068,7 +1069,7 @@ fn watchdog_loop(shared: Arc<Shared>) {
             crate::preempt::request_yield_all();
             return;
         }
-        thread::sleep(Duration::from_millis(5));
+        crate::platform::sleep(Duration::from_millis(5));
         let now_micros = now_micros_since_start();
         let preempt_micros = u64::try_from(preempt_threshold.as_micros()).unwrap_or(u64::MAX);
         let kill_micros = u64::try_from(kill_threshold.as_micros()).unwrap_or(u64::MAX);
@@ -1335,7 +1336,7 @@ mod tests {
         });
         let gid = Gid(100);
         sched.park(gid, ParkReason::Sync, 0, task);
-        std::thread::sleep(Duration::from_millis(2));
+        crate::platform::sleep(Duration::from_millis(2));
         assert!(sched.unpark(gid));
         assert!(
             sched.park_wait_stats().sync_micros >= 1_000,
@@ -1395,7 +1396,7 @@ mod tests {
                 sched.shutdown();
                 return;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            crate::platform::sleep(Duration::from_millis(5));
         }
         panic!("unparked task stranded after its home worker retired");
     }
@@ -1423,7 +1424,7 @@ mod tests {
                 sched.shutdown();
                 return;
             }
-            std::thread::sleep(Duration::from_millis(5));
+            crate::platform::sleep(Duration::from_millis(5));
         }
         panic!("inbox task stranded on retired worker");
     }

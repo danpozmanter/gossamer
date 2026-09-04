@@ -460,7 +460,7 @@ mod tests {
         let baseline = current_phase();
         assert!(signal_thread_sigurg(handle));
         // Give the dispatcher a moment to wake.
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        crate::platform::sleep(std::time::Duration::from_millis(50));
         // The phase should have moved at least once.
         assert!(current_phase() >= baseline);
     }

@@ -115,6 +115,12 @@ export function run(
   fuel_used: number;   // execution budget consumed
 };
 
+// Optional: message of the panic that ended the last `run`, or "" when
+// it ended without one. wasm32 has no unwinder, so a Rust panic aborts
+// the module and `run` never returns; the component reads this in its
+// catch so the report names a cause instead of a bare trap.
+export function last_panic(): string;
+
 // Optional: type-check without running. Drives the diagnostics list.
 export function check(source: string): {
   diagnostics: Array<{
@@ -136,6 +142,8 @@ Contract requirements:
   directly, not a promise). A module without a `run` export is treated as a load
   failure.
 - `check` is **optional**. When absent, the diagnostics list stays hidden.
+- `last_panic` is **optional**. When absent, a trap is reported without a
+  cause.
 
 ## Swapping the stub for the real wasm module
 

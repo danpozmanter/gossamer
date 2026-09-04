@@ -356,12 +356,13 @@ mod tests {
             // test's Drop deletes another's directory mid-run.
             static COUNTER: AtomicU64 = AtomicU64::new(0);
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let pid = std::process::id();
-            let nanos = std::time::SystemTime::now()
+            let pid = gossamer_runtime::platform::process_id();
+            let nanos = gossamer_runtime::platform::system_time_now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
-            let p = std::env::temp_dir().join(format!("gos-static-{tag}-{pid}-{nanos:x}-{n}"));
+            let p = gossamer_runtime::platform::temp_dir()
+                .join(format!("gos-static-{tag}-{pid}-{nanos:x}-{n}"));
             std::fs::create_dir_all(&p).expect("create tmpdir");
             Self(p)
         }

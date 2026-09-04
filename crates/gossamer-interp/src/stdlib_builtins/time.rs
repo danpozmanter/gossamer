@@ -136,18 +136,18 @@ pub(crate) fn install_time_extras(globals: &mut Vec<(&'static str, Value)>) {
 }
 
 pub(crate) fn builtin_time_now_nanos(_args: &[Value]) -> RuntimeResult<Value> {
-    let nanos = std::time::SystemTime::now()
+    let nanos = gossamer_runtime::platform::system_time_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     Ok(Value::Int(i64::try_from(nanos).unwrap_or(i64::MAX)))
 }
 
 thread_local! {
-    pub(crate) static MONOTONIC_BASE: std::cell::OnceCell<std::time::Instant> = const { std::cell::OnceCell::new() };
+    pub(crate) static MONOTONIC_BASE: std::cell::OnceCell<gossamer_runtime::platform::Instant> = const { std::cell::OnceCell::new() };
 }
 
-pub(crate) fn monotonic_base() -> std::time::Instant {
-    MONOTONIC_BASE.with(|cell| *cell.get_or_init(std::time::Instant::now))
+pub(crate) fn monotonic_base() -> gossamer_runtime::platform::Instant {
+    MONOTONIC_BASE.with(|cell| *cell.get_or_init(gossamer_runtime::platform::Instant::now))
 }
 
 pub(crate) fn builtin_time_monotonic_ms(_args: &[Value]) -> RuntimeResult<Value> {

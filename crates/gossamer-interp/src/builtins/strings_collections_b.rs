@@ -1426,7 +1426,7 @@ fn builtin_testing_wait_for_scheduler_idle(args: &[Value]) -> RuntimeResult<Valu
         Some(n) => n,
         None => 1000,
     };
-    let deadline = std::time::Instant::now()
+    let deadline = gossamer_runtime::platform::Instant::now()
         + std::time::Duration::from_millis(u64::try_from(timeout_ms).unwrap_or(0));
     let scheduler = gossamer_runtime::sched_global::scheduler();
     loop {
@@ -1434,10 +1434,10 @@ fn builtin_testing_wait_for_scheduler_idle(args: &[Value]) -> RuntimeResult<Valu
         if scheduler.live_goroutines() == 0 && stats.spawned == stats.finished {
             return Ok(Value::Bool(true));
         }
-        if std::time::Instant::now() >= deadline {
+        if gossamer_runtime::platform::Instant::now() >= deadline {
             return Ok(Value::Bool(false));
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        gossamer_runtime::platform::sleep(std::time::Duration::from_millis(1));
     }
 }
 

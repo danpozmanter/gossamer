@@ -221,12 +221,13 @@ fn builtin_shutdown(args: &[Value]) -> RuntimeResult<Value> {
     if let Ok(sock) = addr.parse::<std::net::SocketAddr>() {
         let _ = std::net::TcpStream::connect_timeout(&sock, std::time::Duration::from_millis(200));
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(deadline_ms as u64);
+    let deadline = gossamer_runtime::platform::Instant::now()
+        + std::time::Duration::from_millis(deadline_ms as u64);
     while server.in_flight.load(Ordering::Acquire) > 0 {
-        if std::time::Instant::now() >= deadline {
+        if gossamer_runtime::platform::Instant::now() >= deadline {
             return Ok(Value::Bool(false));
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        gossamer_runtime::platform::sleep(std::time::Duration::from_millis(5));
     }
     Ok(Value::Bool(true))
 }

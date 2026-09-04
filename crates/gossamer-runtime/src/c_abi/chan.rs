@@ -1089,7 +1089,7 @@ fn select_shuffle_indices(n: usize) -> Vec<usize> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let mut x = {
-        let nanos = std::time::SystemTime::now()
+        let nanos = crate::platform::system_time_now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0_u64, |d| d.as_nanos() as u64);
         nanos ^ 0xA076_1D64_78BD_642F
@@ -1377,7 +1377,7 @@ mod tests {
             }
             done_tx.store(true, Ordering::Release);
         });
-        std::thread::sleep(Duration::from_millis(20));
+        crate::platform::sleep(Duration::from_millis(20));
         assert!(
             !done.load(Ordering::Acquire),
             "unbuffered send returned before recv"

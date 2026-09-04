@@ -427,17 +427,17 @@ impl Server {
         config
             .shutdown
             .store(true, std::sync::atomic::Ordering::Release);
-        let target = deadline.map(|d| std::time::Instant::now() + d);
+        let target = deadline.map(|d| gossamer_runtime::platform::Instant::now() + d);
         loop {
             if config.in_flight.load(std::sync::atomic::Ordering::Acquire) == 0 {
                 return true;
             }
             if let Some(end) = target
-                && std::time::Instant::now() >= end
+                && gossamer_runtime::platform::Instant::now() >= end
             {
                 return false;
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            gossamer_runtime::platform::sleep(std::time::Duration::from_millis(10));
         }
     }
 }
@@ -446,12 +446,13 @@ impl Server {
 /// `http::serve` native builtin.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod server {
+    use gossamer_runtime::platform::Instant;
     use std::io::{self, BufRead, BufReader, Read, Write};
     use std::net::{Shutdown, TcpListener, TcpStream};
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use super::{BodyStream, Method, Request, Response};
 
@@ -815,7 +816,7 @@ pub mod server {
                     if let Some(ref mut mio_listener) = listener_mio {
                         wait_listener_readable(mio_listener);
                     } else {
-                        std::thread::sleep(Duration::from_millis(50));
+                        gossamer_runtime::platform::sleep(Duration::from_millis(50));
                     }
                 }
                 Err(ref e) if matches!(e.kind(), io::ErrorKind::Interrupted) => {}
@@ -1769,7 +1770,7 @@ pub mod server {
                     }
                 }
                 Err(ref e) if matches!(e.kind(), io::ErrorKind::WouldBlock) => {
-                    std::thread::sleep(Duration::from_millis(50));
+                    gossamer_runtime::platform::sleep(Duration::from_millis(50));
                 }
                 Err(ref e) if matches!(e.kind(), io::ErrorKind::Interrupted) => {}
                 Err(_) => return,

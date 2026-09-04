@@ -173,6 +173,9 @@ pub(crate) fn builtin_barrier_wait(args: &[Value]) -> RuntimeResult<Value> {
         if let Some(id) = barrier_id_of(handle) {
             let arc = BARRIER_REGISTRY.with(|r| r.borrow().get(&id).cloned());
             if let Some(b) = arc {
+                if !gossamer_runtime::platform::CAN_BLOCK && b.would_block() {
+                    return Err(RuntimeError::WouldNeverWake("Barrier::wait"));
+                }
                 b.wait();
             }
         }

@@ -596,6 +596,11 @@ impl MutexCell {
         }
     }
 
+    /// Whether a `lock` entered now would have to park.
+    pub(crate) fn would_block(&self) -> bool {
+        *self.held.lock()
+    }
+
     /// Acquires the lock, parking until it is free, and returns a
     /// clone of the protected value.
     pub(crate) fn lock(&self) -> Value {

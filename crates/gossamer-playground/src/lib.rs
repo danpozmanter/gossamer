@@ -18,8 +18,18 @@
 //! sandbox and are gated out of the linked standard library; pure
 //! computation - strings, collections, math, encoding / JSON, hashing,
 //! regex, iterators, formatting - is fully available.
+//!
+//! What the browser does provide it provides for real: the clock behind
+//! `Instant` and `time::now_ms` is the host's own, and an environment
+//! variable a program sets is readable back for the extent of the run.
+//! What it cannot provide is reported rather than taken: a filesystem
+//! call answers an error, a `process::exit` ends the run with its
+//! status, and a wait no goroutine is left to end reports `GX0011` -
+//! this target settles every goroutine at its spawn, so nothing runs
+//! alongside the program that waits.
 
 use std::cell::RefCell;
+use std::sync::Once;
 
 use gossamer_ast::{ItemKind, SourceFile};
 use gossamer_diagnostics::{Diagnostic, RenderOptions};
@@ -36,6 +46,31 @@ const ENTRY_NAME: &str = "playground.gos";
 thread_local! {
     static STDOUT_BUF: RefCell<String> = const { RefCell::new(String::new()) };
     static STDERR_BUF: RefCell<String> = const { RefCell::new(String::new()) };
+    static LAST_PANIC: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// Installs the process panic hook.
+///
+/// wasm32-unknown-unknown has no unwinder, so a Rust panic aborts the
+/// module: `catch_unwind` below never runs and `run` never returns. The
+/// hook runs first, and what it records here is what [`last_panic`]
+/// hands the page in place of a bare `unreachable`.
+fn install_panic_hook() {
+    static INSTALLED: Once = Once::new();
+    INSTALLED.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            LAST_PANIC.with(|slot| *slot.borrow_mut() = info.to_string());
+            console_error_panic_hook::hook(info);
+        }));
+    });
+}
+
+/// Message of the panic that ended the last [`run`], or the empty
+/// string when it ended without one.
+#[wasm_bindgen]
+#[must_use]
+pub fn last_panic() -> String {
+    LAST_PANIC.with(|slot| slot.borrow().clone())
 }
 
 /// Appends VM stdout into the per-thread capture buffer. Installed via
@@ -87,12 +122,13 @@ struct CheckResult {
 #[must_use]
 pub fn run(source: &str, fuel: Option<u64>) -> JsValue {
     const DEFAULT_FUEL: u64 = 100_000_000;
-    console_error_panic_hook::set_once();
+    install_panic_hook();
     let budget = fuel.unwrap_or(DEFAULT_FUEL);
     gossamer_interp::fuel::set_fuel(budget);
 
     STDOUT_BUF.with(|b| b.borrow_mut().clear());
     STDERR_BUF.with(|b| b.borrow_mut().clear());
+    LAST_PANIC.with(|b| b.borrow_mut().clear());
 
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_pipeline(source)));
 
@@ -117,7 +153,7 @@ pub fn run(source: &str, fuel: Option<u64>) -> JsValue {
 #[wasm_bindgen]
 #[must_use]
 pub fn check(source: &str) -> JsValue {
-    console_error_panic_hook::set_once();
+    install_panic_hook();
 
     let augmented = gossamer_parse::autoderive::augment_source(source);
     let mut map = SourceMap::new();
@@ -199,6 +235,12 @@ fn run_pipeline(user_source: &str) -> Result<(), String> {
 
     match call {
         Ok(_) => Ok(()),
+        // `process::exit` is a request to stop, not a failure: a zero
+        // status ends the run as quietly as returning from `main` does.
+        Err(err) if gossamer_interp::exit_status(&err) == Some(0) => Ok(()),
+        Err(err) if let Some(code) = gossamer_interp::exit_status(&err) => {
+            Err(format!("exited with status {code}"))
+        }
         Err(err) if gossamer_interp::is_panic_error(&err) => {
             Err(gossamer_interp::panic_message(&err))
         }

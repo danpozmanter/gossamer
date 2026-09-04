@@ -119,6 +119,9 @@ pub fn write(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     }
     let mut file = options.open(path)?;
     file.write_all(bytes)?;
+    // wasm32 has no file descriptor behind a `File`, so the type carries
+    // no `Drop` there and the close this names is a no-op.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::drop_non_drop))]
     drop(file);
     apply(path, mode)
 }
@@ -138,7 +141,10 @@ mod fs_mode_tests {
     use super::*;
 
     fn scratch(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("gos-fs-mode-{tag}-{}", std::process::id()));
+        let dir = crate::platform::temp_dir().join(format!(
+            "gos-fs-mode-{tag}-{}",
+            crate::platform::process_id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create scratch");
         dir

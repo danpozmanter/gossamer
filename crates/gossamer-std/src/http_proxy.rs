@@ -308,7 +308,7 @@ mod tests {
                 }
             });
         });
-        thread::sleep(Duration::from_millis(50));
+        gossamer_runtime::platform::sleep(Duration::from_millis(50));
 
         let proxy = ReverseProxy::single_host(format!("http://{actual_addr}"));
         let mut req = empty_request();

@@ -1,7 +1,31 @@
 # Changelog
 
-## 0.58.11 - Exit drains that read the clock only when they wait, enum values 
-## as one word, one switch per match, one-pass teardown, byte-key compares
+## 0.58.12 - Playground fixes: a real clock, an exit status, a wait that answers
+
+- A program that reads the clock, sleeps, sets or reads an environment
+  variable, or names a temporary directory runs in the browser playground
+  instead of ending the page's runtime. Each reached a Rust standard-library
+  shim that panics on wasm32-unknown-unknown, and that target has no unwinder,
+  so the panic aborted the module: the page reported that the runtime had
+  trapped and could name no cause. `Instant` and the wall clock now read the
+  host's own clock, so elapsed timings and `time::now_ms` answer there.
+- A `process::exit(n)` in the playground ends the run and reports the status.
+  A wasm module has no process of its own to end, so the call used to abort it.
+- A wait that nothing left in the program can end - a channel receive, a
+  `WaitGroup`, a `Barrier` - reports `GX0011` naming the wait, instead of
+  aborting inside the parking primitive. The browser runs one thread and
+  settles each goroutine at its spawn, so the goroutine such a wait expects has
+  already finished.
+- A goroutine spawned from inside another goroutine running on the same thread
+  gets a VM of its own. Both bound the one the thread caches, and the second
+  binding is what ended the run.
+- A panic that does end the browser runtime is reported with its own message.
+  The page had only the trap to go on, so an internal bug read as an unexplained
+  failure of the program.
+- `gos explain GX0011` and `GX0012` describe the two conditions the playground
+  now reports.
+
+## 0.58.11 - Exit drains that read the clock only when they wait, enum values as one word, one switch per match, one-pass teardown, byte-key compares
 
 - A program that spawns a goroutine runs in the browser playground instead of
   trapping. The drain that runs after `main` returns took a monotonic deadline
@@ -36,8 +60,7 @@
   is a byte loop, so a map of short keys paid that loop on every lookup that
   found its key.
 
-## 0.58.10 - By-value parameters that only read, container fields as values, 
-## spawn inside a cohort
+## 0.58.10 - By-value parameters that only read, container fields as values, spawn inside a cohort
 
 - A by-value aggregate parameter a function only reads costs the work it does
   rather than the size of what it holds. The drop pass gave every one a share of

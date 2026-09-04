@@ -16,10 +16,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::builtins::{BuiltinFnPub, value_to_int};
 use crate::value::{RuntimeResult, Value};
+
+use gossamer_runtime::platform::Instant;
 
 /// Completion policy, as spelled by `Policy::` in source.
 pub(crate) const POLICY_FAIL_FAST: i64 = 0;
@@ -448,9 +450,15 @@ pub(crate) fn leave_child(id: i64, index: i64, failure: Option<String>) {
 pub(crate) fn sleep_cancellable(duration: Duration) -> bool {
     let id = current_cohort();
     let Some(node) = node_of(id) else {
-        std::thread::sleep(duration);
+        gossamer_runtime::platform::sleep(duration);
         return true;
     };
+    // Nothing runs alongside this goroutine on the browser build, so the
+    // cancellation the wait would wake for is the state read here.
+    if !gossamer_runtime::platform::CAN_BLOCK {
+        gossamer_runtime::platform::sleep(duration);
+        return !chain_is_cancelled(id);
+    }
     let deadline = Instant::now() + duration;
     loop {
         if chain_is_cancelled(id) {
@@ -489,7 +497,9 @@ pub(crate) fn current_isolation() -> i64 {
 
 fn wait_for_drain(node: &Arc<CohortNode>) {
     let mut state = node.state.lock();
-    while state.outstanding > 0 {
+    // A child settles at its spawn on the browser build, so the count is
+    // already final and a wait would be for a goroutine that has finished.
+    while gossamer_runtime::platform::CAN_BLOCK && state.outstanding > 0 {
         node.progress.wait(&mut state);
     }
 }
@@ -521,7 +531,9 @@ fn drain_within_bound(node: &Arc<CohortNode>) {
 }
 
 fn wait_for_drain_bounded(node: &Arc<CohortNode>, deadline: std::time::Duration) -> i64 {
-    wait_for_drain_until(node, || std::time::Instant::now() + deadline)
+    wait_for_drain_until(node, || {
+        gossamer_runtime::platform::Instant::now() + deadline
+    })
 }
 
 /// Waits for `node`'s children until the instant `until` answers. Answers
@@ -531,14 +543,17 @@ fn wait_for_drain_bounded(node: &Arc<CohortNode>, deadline: std::time::Duration)
 /// to a wait that actually happens: children that have all finished are
 /// answered without one, which is all a target with no monotonic clock can
 /// offer.
-fn wait_for_drain_until(node: &Arc<CohortNode>, until: impl FnOnce() -> std::time::Instant) -> i64 {
+fn wait_for_drain_until(
+    node: &Arc<CohortNode>,
+    until: impl FnOnce() -> gossamer_runtime::platform::Instant,
+) -> i64 {
     let mut state = node.state.lock();
     if state.outstanding == 0 {
         return 0;
     }
     let until = until();
     while state.outstanding > 0 {
-        let now = std::time::Instant::now();
+        let now = gossamer_runtime::platform::Instant::now();
         if now >= until {
             return state.outstanding;
         }

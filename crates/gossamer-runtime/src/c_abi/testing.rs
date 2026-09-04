@@ -67,18 +67,18 @@ pub unsafe extern "C" fn gos_rt_testing_check_eq_i64(a: i64, b: i64, msg: *const
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_testing_wait_for_scheduler_idle(timeout_ms: i64) -> bool {
     ffi_entry!(false, {
-        let deadline =
-            std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms.max(0) as u64);
+        let deadline = crate::platform::Instant::now()
+            + std::time::Duration::from_millis(timeout_ms.max(0) as u64);
         let scheduler = crate::sched_global::scheduler();
         loop {
             let stats = scheduler.stats();
             if scheduler.live_goroutines() == 0 && stats.spawned == stats.finished {
                 return true;
             }
-            if std::time::Instant::now() >= deadline {
+            if crate::platform::Instant::now() >= deadline {
                 return false;
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            crate::platform::sleep(std::time::Duration::from_millis(1));
         }
     })
 }

@@ -8,8 +8,52 @@
 
 use std::sync::{
     LazyLock,
-    atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering},
 };
+
+/// Whether any counter, ledger, or sampler is armed for this process.
+///
+/// The recording hooks sit on the allocation, reference-count, and hash-probe
+/// paths, where a program that asked for none of them still has to reach every
+/// one. They read this and nothing else, so that program pays a single
+/// predictable load per hook instead of a switch of its own.
+///
+/// Armed eagerly - from the process constructor for the environment switches,
+/// and from the calls that turn a scope or the sampler on - because the hooks
+/// gate on it: a switch read lazily from inside a hook would never be read at
+/// all.
+static INSTRUMENTATION: AtomicBool = AtomicBool::new(cfg!(test));
+
+/// Reports whether any instrumentation is armed. The exact switch is
+/// re-checked in each recorder's own cold body.
+#[inline]
+pub(crate) fn instrumentation_armed() -> bool {
+    INSTRUMENTATION.load(Ordering::Relaxed)
+}
+
+/// Arms the recording hooks. Idempotent; never turned back off, so a hook
+/// that has started recording keeps a consistent count.
+pub fn arm_instrumentation() {
+    INSTRUMENTATION.store(true, Ordering::Relaxed);
+}
+
+/// Reads the instrumentation switches once and arms the hooks when any is
+/// set. Called from the runtime's process initialisation, before user code
+/// runs, so a counter never misses an event that happened before its first
+/// hook call.
+pub fn init_instrumentation_from_env() {
+    let requested = [
+        "GOS_VEC_ALLOC_STATS",
+        "GOS_RC_ALLOC_STATS",
+        "GOS_MAP_ALLOC_STATS",
+        "GOS_LEAK_LEDGER",
+    ]
+    .iter()
+    .any(|k| std::env::var_os(k).is_some());
+    if requested {
+        arm_instrumentation();
+    }
+}
 
 /// Runtime-managed work observed during one benchmark measurement scope.
 ///
@@ -50,6 +94,7 @@ static BENCHMARK_COUNTER_SCOPES: AtomicUsize = AtomicUsize::new(0);
 
 /// Start a fresh per-thread benchmark measurement scope.
 pub fn begin_benchmark_counters() {
+    arm_instrumentation();
     BENCHMARK_COUNTERS.with(|counters| {
         let (enabled, _) = counters.get();
         if !enabled {
@@ -76,6 +121,15 @@ pub fn finish_benchmark_counters() -> BenchmarkCounters {
 
 #[inline]
 fn with_benchmark_counters(update: impl FnOnce(&mut BenchmarkCounters)) {
+    if !instrumentation_armed() {
+        return;
+    }
+    with_benchmark_counters_slow(update);
+}
+
+#[cold]
+#[inline(never)]
+fn with_benchmark_counters_slow(update: impl FnOnce(&mut BenchmarkCounters)) {
     if BENCHMARK_COUNTER_SCOPES.load(Ordering::Relaxed) == 0 {
         return;
     }
@@ -305,6 +359,15 @@ fn record_vec_bytes(requested: usize, usable: usize) {
 /// layout size instead because they intentionally use a different allocator.
 #[inline]
 pub fn vec_inline_alloc(requested: usize, usable: usize) {
+    if !instrumentation_armed() {
+        return;
+    }
+    vec_inline_alloc_slow(requested, usable);
+}
+
+#[cold]
+#[inline(never)]
+fn vec_inline_alloc_slow(requested: usize, usable: usize) {
     benchmark_allocation(requested);
     if !vec_alloc_stats_enabled() {
         return;
@@ -316,6 +379,15 @@ pub fn vec_inline_alloc(requested: usize, usable: usize) {
 
 #[inline]
 pub fn vec_split_alloc(requested: usize, usable: usize) {
+    if !instrumentation_armed() {
+        return;
+    }
+    vec_split_alloc_slow(requested, usable);
+}
+
+#[cold]
+#[inline(never)]
+fn vec_split_alloc_slow(requested: usize, usable: usize) {
     benchmark_allocation(requested);
     if !vec_alloc_stats_enabled() {
         return;
@@ -327,6 +399,15 @@ pub fn vec_split_alloc(requested: usize, usable: usize) {
 
 #[inline]
 pub fn vec_owner_alloc(requested: usize, usable: usize) {
+    if !instrumentation_armed() {
+        return;
+    }
+    vec_owner_alloc_slow(requested, usable);
+}
+
+#[cold]
+#[inline(never)]
+fn vec_owner_alloc_slow(requested: usize, usable: usize) {
     benchmark_allocation(requested);
     if !vec_alloc_stats_enabled() {
         return;
@@ -338,6 +419,15 @@ pub fn vec_owner_alloc(requested: usize, usable: usize) {
 
 #[inline]
 pub fn vec_region_alloc(requested: usize) {
+    if !instrumentation_armed() {
+        return;
+    }
+    vec_region_alloc_slow(requested);
+}
+
+#[cold]
+#[inline(never)]
+fn vec_region_alloc_slow(requested: usize) {
     benchmark_allocation(requested);
     if !vec_alloc_stats_enabled() {
         return;
@@ -351,6 +441,15 @@ pub fn vec_region_alloc(requested: usize) {
 
 #[inline]
 pub fn vec_packed_conversion(rows: usize, bytes: usize) {
+    if !instrumentation_armed() {
+        return;
+    }
+    vec_packed_conversion_slow(rows, bytes);
+}
+
+#[cold]
+#[inline(never)]
+fn vec_packed_conversion_slow(rows: usize, bytes: usize) {
     if !vec_alloc_stats_enabled() {
         return;
     }
@@ -368,6 +467,15 @@ pub fn vec_packed_conversion(rows: usize, bytes: usize) {
 /// the existing block's usable size and does not increase `heap`.
 #[inline]
 pub fn rc_alloc(payload: usize, usable: usize, region: bool, reuse: bool) {
+    if !instrumentation_armed() {
+        return;
+    }
+    rc_alloc_slow(payload, usable, region, reuse);
+}
+
+#[cold]
+#[inline(never)]
+fn rc_alloc_slow(payload: usize, usable: usize, region: bool, reuse: bool) {
     benchmark_allocation(payload);
     if !rc_alloc_stats_enabled() {
         return;
@@ -408,6 +516,15 @@ pub fn map_dec() {
 
 #[inline]
 pub fn map_str_probe() {
+    if !instrumentation_armed() {
+        return;
+    }
+    map_str_probe_slow();
+}
+
+#[cold]
+#[inline(never)]
+fn map_str_probe_slow() {
     if !map_alloc_stats_enabled() {
         return;
     }
@@ -417,6 +534,15 @@ pub fn map_str_probe() {
 
 #[inline]
 pub fn map_str_key_copy(bytes: usize) {
+    if !instrumentation_armed() {
+        return;
+    }
+    map_str_key_copy_slow(bytes);
+}
+
+#[cold]
+#[inline(never)]
+fn map_str_key_copy_slow(bytes: usize) {
     if !map_alloc_stats_enabled() {
         return;
     }
@@ -427,6 +553,15 @@ pub fn map_str_key_copy(bytes: usize) {
 
 #[inline]
 pub fn map_format(entries: usize) {
+    if !instrumentation_armed() {
+        return;
+    }
+    map_format_slow(entries);
+}
+
+#[cold]
+#[inline(never)]
+fn map_format_slow(entries: usize) {
     if !map_alloc_stats_enabled() {
         return;
     }
@@ -438,6 +573,45 @@ pub fn map_format(entries: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The hot-path gate answers for every recorder, and a disarmed gate
+    /// records nothing. Tests run with instrumentation armed, so this
+    /// toggles it around the check and restores it.
+    #[test]
+    fn a_disarmed_gate_records_nothing_and_an_armed_one_records() {
+        let restore = instrumentation_armed();
+        INSTRUMENTATION.store(false, Ordering::Relaxed);
+        let before = MAP_STR_PROBES.load(Ordering::Relaxed);
+        map_str_probe();
+        assert_eq!(
+            MAP_STR_PROBES.load(Ordering::Relaxed),
+            before,
+            "a disarmed gate reaches no recorder"
+        );
+
+        arm_instrumentation();
+        assert!(instrumentation_armed());
+        map_str_probe();
+        assert!(
+            MAP_STR_PROBES.load(Ordering::Relaxed) > before,
+            "an armed gate reaches the recorder"
+        );
+        INSTRUMENTATION.store(restore, Ordering::Relaxed);
+    }
+
+    /// Beginning a measurement scope arms the gate the recorders read, or
+    /// the scope would count nothing.
+    #[test]
+    fn beginning_a_scope_arms_the_gate() {
+        let restore = instrumentation_armed();
+        INSTRUMENTATION.store(false, Ordering::Relaxed);
+        begin_benchmark_counters();
+        assert!(instrumentation_armed());
+        benchmark_allocation(8);
+        let counted = finish_benchmark_counters();
+        assert_eq!(counted.allocations, 1);
+        INSTRUMENTATION.store(restore, Ordering::Relaxed);
+    }
 
     #[test]
     fn benchmark_counters_are_scoped_and_thread_local() {

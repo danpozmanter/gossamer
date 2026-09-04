@@ -11,7 +11,8 @@
 #![forbid(unsafe_code)]
 
 use std::io;
-use std::time::Instant;
+
+use gossamer_runtime::platform::Instant;
 
 pub use gossamer_runtime::sched::{Gid, Interest, MultiScheduler, OsPoller, ParkReason, Readiness};
 pub use gossamer_runtime::sched_global::{Parker, current_gid, park, wait_io, wait_io_until};

@@ -1510,12 +1510,12 @@ mod http_shutdown_tests {
 
         gossamer_std::signal::deliver(gossamer_std::signal::sigs::SIGTERM);
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(1);
-        while std::time::Instant::now() < deadline {
+        let deadline = gossamer_runtime::platform::Instant::now() + Duration::from_secs(1);
+        while gossamer_runtime::platform::Instant::now() < deadline {
             if first.load(Ordering::Acquire) && second.load(Ordering::Acquire) {
                 return;
             }
-            std::thread::sleep(Duration::from_millis(10));
+            gossamer_runtime::platform::sleep(Duration::from_millis(10));
         }
 
         assert!(first.load(Ordering::Acquire));

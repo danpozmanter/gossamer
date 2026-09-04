@@ -196,7 +196,7 @@ impl<T> Mutex<T> {
                     self.waiters.lock().retain(|g| *g != gid);
                 }
             } else {
-                std::thread::sleep(std::time::Duration::from_millis(2));
+                gossamer_runtime::platform::sleep(std::time::Duration::from_millis(2));
             }
         }
     }
@@ -622,7 +622,7 @@ impl WaitGroup {
                 // OS-thread caller: sleep briefly to avoid
                 // busy-spinning. Cancellation will be observed
                 // within the sleep period.
-                std::thread::sleep(std::time::Duration::from_millis(2));
+                gossamer_runtime::platform::sleep(std::time::Duration::from_millis(2));
             }
         }
     }
@@ -859,6 +859,14 @@ impl Barrier {
         }
     }
 
+    /// Whether a `wait` entered now would have to block, because the
+    /// caller is not the participant that completes the barrier.
+    #[must_use]
+    pub fn would_block(&self) -> bool {
+        let state = self.state.lock();
+        state.arrived + 1 < state.expected
+    }
+
     /// Blocks until `n` participants have called `wait`.
     pub fn wait(&self) {
         let mut state = self.state.lock();
@@ -1057,9 +1065,10 @@ impl Default for Cond {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gossamer_runtime::platform::Instant;
     use std::sync::Arc;
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     #[test]
     fn wait_group_does_not_spin() {
@@ -1068,7 +1077,7 @@ mod tests {
         for _ in 0..3 {
             let wg = Arc::clone(&wg);
             thread::spawn(move || {
-                thread::sleep(Duration::from_millis(20));
+                gossamer_runtime::platform::sleep(Duration::from_millis(20));
                 wg.done();
             });
         }
@@ -1312,7 +1321,7 @@ mod tests {
             }
             *g
         });
-        thread::sleep(Duration::from_millis(50));
+        gossamer_runtime::platform::sleep(Duration::from_millis(50));
         {
             let (lock, cond) = &*pair;
             let mut g = lock.lock();
@@ -1337,7 +1346,7 @@ mod tests {
                 }
             }));
         }
-        thread::sleep(Duration::from_millis(50));
+        gossamer_runtime::platform::sleep(Duration::from_millis(50));
         {
             let (lock, cond) = &*pair;
             *lock.lock() = 1;

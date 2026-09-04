@@ -22,8 +22,8 @@
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_time_now() -> f64 {
     ffi_entry!(f64::NAN, {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
+        use std::time::UNIX_EPOCH;
+        crate::platform::system_time_now()
             .duration_since(UNIX_EPOCH)
             .map_or(0.0, |d| d.as_secs_f64())
     })
@@ -34,9 +34,9 @@ pub unsafe extern "C" fn gos_rt_time_now() -> f64 {
 // `gossamer-interp`; a single process-global base gives identical
 // `monotonic_ms` / `monotonic_nanos` deltas across the compiled
 // tiers without the thread-local indirection.
-fn monotonic_base() -> std::time::Instant {
-    static BASE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    *BASE.get_or_init(std::time::Instant::now)
+fn monotonic_base() -> crate::platform::Instant {
+    static BASE: std::sync::OnceLock<crate::platform::Instant> = std::sync::OnceLock::new();
+    *BASE.get_or_init(crate::platform::Instant::now)
 }
 
 #[unsafe(no_mangle)]

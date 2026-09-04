@@ -1345,44 +1345,42 @@ impl<'a> Lowerer<'a> {
     ///
     /// Three storage shapes co-exist:
     ///
-    /// 1. Callee expects `Ref<T>`, caller has an enum-Adt local
+    /// 1. Callee expects a one-word heap-pointer aggregate (`slot_count`
+    ///    is `None`: a recursive or tagged enum, `http::Response`, an
+    ///    opaque blob handle): load the word its slot holds and pass that.
+    ///    `emit_param_stores` binds such a parameter as the word.
+    ///
+    /// 2. Callee expects `Ref<T>`, caller has an enum-Adt local
     ///    (slot_count = None): the slot holds a GC heap pointer.
     ///    Load it and pass it directly so the callee GEPs into the
     ///    heap data without an extra indirection.
     ///
-    /// 2. Callee expects an aggregate parameter (Array, Tuple, or
-    ///    any Adt): pass the alloca ADDRESS. `emit_param_stores`
-    ///    in the callee does `memcpy(callee_slot, arg_ptr, bytes)`.
-    ///    For enum-Adt locals the alloca holds the heap pointer (8
-    ///    bytes), so the memcpy correctly copies the pointer; for
-    ///    inline structs it copies the actual field data. Without
-    ///    this bypass, `lower_place_read`'s enum-Adt load would
-    ///    return the heap pointer value and the callee would
-    ///    memcpy from the Cons-node data instead of the pointer.
+    /// 3. Callee expects a flat-slot aggregate parameter (Array, Tuple,
+    ///    or a field-bearing Adt): pass the alloca ADDRESS.
+    ///    `emit_param_stores` in the callee does
+    ///    `memcpy(callee_slot, arg_ptr, bytes)` over the field data.
     ///
-    /// 3. All other args: `lower_operand` → `lower_place_read`.
+    /// 4. All other args: `lower_operand` → `lower_place_read`.
     ///
-    /// A lifted closure (`__closure_N`) is the exception to case 2. The
-    /// runtime combinator shims call a closure body directly through a C
-    /// function pointer, handing each parameter in the shape its slot holds:
-    /// a multi-slot inline aggregate as a pointer, a one-word handle as the
-    /// word. `emit_param_stores` binds the body that way, so a direct call
-    /// site must pass a handle-shaped argument by value too.
+    /// The shape belongs to the parameter, not to the kind of body being
+    /// called: a lifted closure a runtime combinator shim invokes through a
+    /// C function pointer, a C-ABI handler, and a direct call all receive a
+    /// parameter in the same shape, which is what lets one predicate
+    /// (`param_is_by_pointer`) bind every callee.
     pub(crate) fn lower_call_arg(
         &mut self,
         op: &Operand,
         expected: Option<Ty>,
-        callee: &str,
     ) -> Result<(String, String), BuildError> {
         if let Some(want) = expected
             && let Operand::Copy(place) = op
             && place.projection.is_empty()
         {
             let local_ty = self.body.local_ty(place.local);
-            if is_aggregate(self.tcx, want)
-                && slot_count(self.tcx, want).is_none()
-                && callee.starts_with("__closure")
-            {
+            if is_aggregate(self.tcx, want) && slot_count(self.tcx, want).is_none() {
+                // The callee binds a one-word heap-pointer aggregate as the
+                // word its slot holds, so hand over that word rather than the
+                // address of the slot holding it.
                 let slot = local_slot(place.local);
                 let tmp = self.fresh();
                 writeln!(self.out, "  {tmp} = load ptr, ptr {slot}").unwrap();
@@ -1403,25 +1401,23 @@ impl<'a> Lowerer<'a> {
                 // the callee's memcpy copies the right bytes.
                 return Ok((local_slot(place.local), "ptr".to_string()));
             } else if is_aggregate(self.tcx, want)
-                && slot_count(self.tcx, want).is_none_or(|n| n == 1)
+                && slot_count(self.tcx, want) == Some(1)
                 && matches!(
                     self.tcx.kind(local_ty),
                     Some(TyKind::Var(_) | TyKind::Error | TyKind::Int(_)) | None
                 )
             {
-                // Case 2b: the callee declares a one-slot aggregate
-                // param (a tagged-pointer / bare-discriminant enum),
+                // Case 2b: the callee declares a one-slot flat aggregate
+                // param (a bare-discriminant enum, a one-field struct),
                 // but this call site's arg local is a one-word scalar
                 // - either inference left it untyped (method-call arg
                 // temporaries) or a unit-only enum lowered its value
                 // to a bare `i64` discriminant. The callee memcpys 8
                 // bytes from the arg address, so pass the slot address;
                 // passing the loaded VALUE instead makes the callee
-                // dereference the bits (read garbage or fault).
-                // Bounded to one slot (a tagged heap enum's
-                // `slot_count` is `None`, its storage one word; an
-                // `i64` slot is exactly one word) so the callee can
-                // never overread.
+                // dereference the bits (read garbage or fault). A
+                // heap-pointer param (`slot_count` `None`) takes the word
+                // itself and is answered above.
                 return Ok((local_slot(place.local), "ptr".to_string()));
             }
         }

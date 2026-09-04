@@ -1472,7 +1472,7 @@ fn run_buffered_request(
                 // settle before rebuilding the request. A yield alone often
                 // lands directly in the watchdog's next five-millisecond
                 // SIGURG tick and repeats the same failure.
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                crate::platform::sleep(std::time::Duration::from_millis(1));
             }
             Err(error) => return Err(format!("http: transport: {error}")),
         }

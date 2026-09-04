@@ -419,6 +419,7 @@ static HEAP_INDEX: AtomicUsize = AtomicUsize::new(0);
 
 /// Arms allocation sampling.
 pub fn start_heap() {
+    crate::c_abi::ledger::arm_instrumentation();
     HEAP_INDEX.store(0, Ordering::SeqCst);
     HEAP_ACCUMULATOR.store(0, Ordering::SeqCst);
     HEAP_SAMPLING.store(true, Ordering::SeqCst);
@@ -455,6 +456,19 @@ pub fn drain_heap() -> Vec<RawSample> {
 /// rather than a call per allocation.
 #[inline]
 pub fn record_allocation(bytes: usize) {
+    if !crate::c_abi::ledger::instrumentation_armed() {
+        return;
+    }
+    record_allocation_slow(bytes);
+}
+
+/// The accumulate-and-capture half, kept out of line so the allocator's own
+/// hot path carries only the gate. `start_heap_sampling` arms the shared
+/// instrumentation flag, so reaching here means some instrumentation is on
+/// and this checks whether it is this one.
+#[cold]
+#[inline(never)]
+fn record_allocation_slow(bytes: usize) {
     if !HEAP_SAMPLING.load(Ordering::Relaxed) {
         return;
     }

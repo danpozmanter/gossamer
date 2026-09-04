@@ -1,0 +1,128 @@
+// Playground gate: no program may end the browser runtime.
+//
+// wasm32-unknown-unknown has no unwinder, so a Rust panic under the
+// playground's `run` aborts the module: the page gets a bare
+// `RuntimeError: unreachable` instead of output, and every later run in
+// that tab is against a module that already trapped. Nothing else in CI
+// executes the wasm build - the docs workflow compiles it and the
+// portability job type-checks it - so this walks every fixture through
+// the real module and fails on a throw. A front-end rejection, a runtime
+// error, and an exit status all come back inside the result and are not
+// failures here.
+//
+// Usage: gos run scripts/playground_smoke.gos [bindgen-dir]
+//
+// With no argument the wasm is built and `wasm-bindgen`'d into a scratch
+// directory first, which needs the wasm32-unknown-unknown target and a
+// `wasm-bindgen` matching the version in Cargo.lock.
+
+use std::{env, fs, path, process}
+
+/// Directories whose `.gos` files are the corpus, in walk order.
+const CORPUS: [String; 2] = ["examples", "feature-testing-examples"]
+
+/// Every `.gos` file under `dir`, sorted so a failure names the same
+/// file whatever order the filesystem hands them back in.
+fn programs_in(dir: String) -> Vec<String> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries
+        Err(e) => {
+            eprintln("playground_smoke: reading {}: {}", dir, e)
+            process::exit(1)
+        }
+    }
+    let mut found = #[]
+    for entry in entries {
+        if entry.is_file && entry.name.ends_with(".gos") {
+            found.push(entry.path)
+        }
+    }
+    found.sort()
+    found
+}
+
+/// Builds the playground wasm and lays a nodejs-target `wasm-bindgen`
+/// module out in `dir`, answering whether both steps succeeded.
+fn build_runtime(dir: String) -> bool {
+    println("playground_smoke: building the playground wasm")
+    let build = process::run("cargo", #[
+        "build", "--release"
+        "--target", "wasm32-unknown-unknown"
+        "-p", "gossamer-playground"
+    ])
+    match build {
+        Ok(out) => {
+            if out.code != 0 {
+                eprintln("playground_smoke: cargo build failed:\n{}", out.stderr)
+                return false
+            }
+        }
+        Err(e) => {
+            eprintln("playground_smoke: cargo build failed: {}", e)
+            return false
+        }
+    }
+    let wasm = path::join(
+        "target/wasm32-unknown-unknown/release"
+        "gossamer_playground.wasm"
+    )
+    match process::run("wasm-bindgen", #[wasm, "--out-dir", dir, "--target", "nodejs"]) {
+        Ok(out) => {
+            if out.code != 0 {
+                eprintln("playground_smoke: wasm-bindgen failed:\n{}", out.stderr)
+                return false
+            }
+            true
+        }
+        Err(e) => {
+            eprintln("playground_smoke: wasm-bindgen failed: {}", e)
+            false
+        }
+    }
+}
+
+fn main() {
+    let mut dir = env::args().first().unwrap_or("")
+    if dir == "" {
+        dir = path::join(env::temp_dir(), "gos-playground-smoke")
+        let _ = fs::remove_dir_all(dir)
+        if let Err(e) = fs::create_dir_all(dir) {
+            eprintln("playground_smoke: creating {}: {}", dir, e)
+            process::exit(1)
+        }
+        if !build_runtime(dir) {
+            process::exit(1)
+        }
+    }
+
+    let mut argv = #["scripts/playground_smoke.js", dir]
+    let mut count = 0
+    for corpus in CORPUS {
+        for file in programs_in(corpus) {
+            argv.push(file)
+            count += 1
+        }
+    }
+    println("playground_smoke: {} program(s) through the wasm runtime", count)
+
+    let run = process::run("node", argv)
+    match run {
+        Ok(out) => {
+            for line in out.stdout.split("\n") {
+                if line.starts_with("TRAP") || line.contains("trapped") {
+                    println("{}", line)
+                }
+            }
+            if out.stderr != "" {
+                eprintln("{}", out.stderr)
+            }
+            if out.code != 0 {
+                process::exit(1)
+            }
+        }
+        Err(e) => {
+            eprintln("playground_smoke: running node: {}", e)
+            process::exit(1)
+        }
+    }
+}

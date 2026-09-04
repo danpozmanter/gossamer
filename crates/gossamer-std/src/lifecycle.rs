@@ -19,10 +19,13 @@
 
 #![forbid(unsafe_code)]
 
+use std::time::UNIX_EPOCH;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
+use gossamer_runtime::platform::Instant;
 use parking_lot::Mutex;
 
 use crate::errors::Error;
@@ -285,7 +288,7 @@ fn sd_notify(_msg: &str) {
 }
 
 fn now_unix_ms() -> i64 {
-    SystemTime::now()
+    gossamer_runtime::platform::system_time_now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
 }

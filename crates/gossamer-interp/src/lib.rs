@@ -203,6 +203,19 @@ pub fn is_panic_error(err: &value::RuntimeError) -> bool {
     err.to_string().starts_with("error[GX0005]")
 }
 
+/// The status a program asked for with `process::exit`, or `None` when
+/// `err` reports anything else.
+///
+/// Only a build with no process of its own to end raises it; a native
+/// build has already exited by the time this could be asked.
+#[must_use]
+pub fn exit_status(err: &value::RuntimeError) -> Option<i32> {
+    match err {
+        value::RuntimeError::Exit(code) => Some(*code),
+        _ => None,
+    }
+}
+
 /// The rendered payload of an `Err` value, or `None` for any other value.
 ///
 /// A fallible function reports its failure as a returned value rather than as

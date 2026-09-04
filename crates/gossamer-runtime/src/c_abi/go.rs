@@ -430,7 +430,7 @@ pub unsafe extern "C" fn gos_rt_sleep_ns(ns: i64) {
         if ns <= 0 {
             return;
         }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_nanos(ns as u64);
+        let deadline = crate::platform::Instant::now() + std::time::Duration::from_nanos(ns as u64);
         // Park on the netpoller's timer wheel so a sleeping goroutine
         // does not consume a worker slot for the full duration. The
         // worker thread is still parked on a Condvar, but the
@@ -445,7 +445,7 @@ pub unsafe extern "C" fn gos_rt_sleep_ns(ns: i64) {
             if super::cohort::current_is_cancelled() {
                 return;
             }
-            if std::time::Instant::now() >= deadline {
+            if crate::platform::Instant::now() >= deadline {
                 return;
             }
             let registered = crate::sched_global::current_gid()
@@ -489,11 +489,11 @@ pub unsafe extern "C" fn gos_rt_sleep_ms_ctx(ctx_handle: *const u8, ms: i64) -> 
             return 1;
         }
         let deadline =
-            std::time::Instant::now() + std::time::Duration::from_millis(ms.max(0) as u64);
+            crate::platform::Instant::now() + std::time::Duration::from_millis(ms.max(0) as u64);
         // Cancelling unparks every goroutine registered on the node, so the
         // sleep resumes on whichever of the two arrives first and re-parks
         // for the remainder when it was neither.
-        while std::time::Instant::now() < deadline {
+        while crate::platform::Instant::now() < deadline {
             if cancelled() {
                 return 0;
             }
@@ -533,8 +533,8 @@ pub unsafe extern "C" fn gos_rt_sleep_ms(ms: i64) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_now_ns() -> i64 {
     ffi_entry!(-1, {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
+        use std::time::UNIX_EPOCH;
+        crate::platform::system_time_now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos() as i64)
     })

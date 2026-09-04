@@ -3,7 +3,11 @@
 #![forbid(unsafe_code)]
 #![allow(missing_docs)]
 
-use std::time::{Duration as StdDuration, Instant as StdInstant, SystemTime as StdSystemTime};
+use std::time::SystemTime as StdSystemTime;
+
+use std::time::Duration as StdDuration;
+
+use gossamer_runtime::platform::Instant as StdInstant;
 
 /// Monotonic point-in-time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -202,7 +206,7 @@ pub fn sleep(duration: Duration) {
     if duration.0.is_zero() {
         return;
     }
-    let deadline = std::time::Instant::now() + duration.0;
+    let deadline = gossamer_runtime::platform::Instant::now() + duration.0;
     crate::sched_global::sleep_until(deadline);
 }
 
@@ -241,7 +245,7 @@ pub fn sleep_ctx(
             .err()
             .unwrap_or_else(|| crate::errors::Error::new("context cancelled")));
     }
-    let deadline = std::time::Instant::now() + duration.0;
+    let deadline = gossamer_runtime::platform::Instant::now() + duration.0;
     crate::sched_global::sleep_until(deadline);
     ctx.deregister_waiter(gid);
     if ctx.is_cancelled() {
@@ -613,15 +617,15 @@ impl Ticker {
         let stop_for_thread = std::sync::Arc::clone(&stop);
         let std_interval = interval.0;
         let handle = std::thread::spawn(move || {
-            let mut next = std::time::Instant::now() + std_interval;
+            let mut next = gossamer_runtime::platform::Instant::now() + std_interval;
             while !stop_for_thread.load(std::sync::atomic::Ordering::Acquire) {
-                let now = std::time::Instant::now();
+                let now = gossamer_runtime::platform::Instant::now();
                 if now < next {
                     let remaining = next - now;
                     // Sleep in short slices so we observe stop
                     // promptly without busy-looping.
                     let slice = std::cmp::min(remaining, std::time::Duration::from_millis(100));
-                    std::thread::sleep(slice);
+                    gossamer_runtime::platform::sleep(slice);
                     continue;
                 }
                 tick();
@@ -658,17 +662,17 @@ pub fn after_func(delay: Duration, f: impl FnOnce() + Send + 'static) -> TimerHa
     let cancelled_for_thread = std::sync::Arc::clone(&cancelled);
     let std_delay = delay.0;
     let handle = std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std_delay;
+        let deadline = gossamer_runtime::platform::Instant::now() + std_delay;
         loop {
             if cancelled_for_thread.load(std::sync::atomic::Ordering::Acquire) {
                 return;
             }
-            let now = std::time::Instant::now();
+            let now = gossamer_runtime::platform::Instant::now();
             if now >= deadline {
                 break;
             }
             let slice = std::cmp::min(deadline - now, std::time::Duration::from_millis(100));
-            std::thread::sleep(slice);
+            gossamer_runtime::platform::sleep(slice);
         }
         if !cancelled_for_thread.load(std::sync::atomic::Ordering::Acquire) {
             f();
@@ -1393,11 +1397,11 @@ mod tests {
             let _t = Ticker::start(Duration::from_millis(10), move || {
                 counter_for_tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             });
-            std::thread::sleep(std::time::Duration::from_millis(40));
+            gossamer_runtime::platform::sleep(std::time::Duration::from_millis(40));
         }
         // After drop, no more ticks should land.
         let snapshot = counter.load(std::sync::atomic::Ordering::Relaxed);
-        std::thread::sleep(std::time::Duration::from_millis(80));
+        gossamer_runtime::platform::sleep(std::time::Duration::from_millis(80));
         let post = counter.load(std::sync::atomic::Ordering::Relaxed);
         assert_eq!(snapshot, post, "ticker should stop on drop");
     }

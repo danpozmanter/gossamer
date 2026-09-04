@@ -137,6 +137,112 @@ const MAP_VALUE_NONE: u8 = 0;
 const MAP_VALUE_RC: u8 = 1;
 const MAP_VALUE_VEC: u8 = 2;
 
+/// A map key of raw bytes.
+///
+/// Equality is [`bytes_eq`] rather than the standard slice comparison: a hash
+/// table confirms the key on every probe that hits, and under the static-musl
+/// release link the standard comparison is a libc byte loop. Hashing is the
+/// slice's own, so a key hashes identically however it was built.
+#[derive(Clone, Debug)]
+pub(crate) struct ByteKey(Box<[u8]>);
+
+impl ByteKey {
+    /// The key's bytes.
+    #[inline]
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<Box<[u8]>> for ByteKey {
+    #[inline]
+    fn from(bytes: Box<[u8]>) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<Vec<u8>> for ByteKey {
+    #[inline]
+    fn from(bytes: Vec<u8>) -> Self {
+        Self(bytes.into_boxed_slice())
+    }
+}
+
+impl From<&[u8]> for ByteKey {
+    #[inline]
+    fn from(bytes: &[u8]) -> Self {
+        Self(bytes.into())
+    }
+}
+
+impl PartialEq for ByteKey {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        crate::c_abi::string::bytes_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for ByteKey {}
+
+impl PartialOrd for ByteKey {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ByteKey {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl std::hash::Hash for ByteKey {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&*self.0, state);
+    }
+}
+
+/// The borrowed form of [`ByteKey`], so a lookup by slice hashes and compares
+/// exactly as the owned key it is matched against.
+#[repr(transparent)]
+pub(crate) struct ByteKeyRef([u8]);
+
+impl ByteKeyRef {
+    /// Views `bytes` as a lookup key.
+    #[inline]
+    pub(crate) fn new(bytes: &[u8]) -> &Self {
+        // SAFETY: `repr(transparent)` over `[u8]`, so the two have identical
+        // layout and metadata and the reference is valid for the same region.
+        unsafe { &*(std::ptr::from_ref::<[u8]>(bytes) as *const ByteKeyRef) }
+    }
+}
+
+impl PartialEq for ByteKeyRef {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        crate::c_abi::string::bytes_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for ByteKeyRef {}
+
+impl std::hash::Hash for ByteKeyRef {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.0, state);
+    }
+}
+
+impl std::borrow::Borrow<ByteKeyRef> for ByteKey {
+    #[inline]
+    fn borrow(&self) -> &ByteKeyRef {
+        ByteKeyRef::new(&self.0)
+    }
+}
+
 enum MapStorage {
     Empty,
     I64I64(FxHashMap<i64, i64>),
@@ -146,12 +252,12 @@ enum MapStorage {
     /// keys), the saved 8 B per entry compounds visibly: ~8 MB
     /// off a 1 M-entry table. Same applies to `StrStr` keys and
     /// the `Bytes` byte-erased fallback.
-    StrI64(FxHashMap<Box<[u8]>, i64>),
-    StrStr(FxHashMap<Box<[u8]>, Box<[u8]>>),
+    StrI64(FxHashMap<ByteKey, i64>),
+    StrStr(FxHashMap<ByteKey, Box<[u8]>>),
     StrBytes(StrBytesStorage),
     I64Bytes(I64BytesStorage),
     I64Str(FxHashMap<i64, Box<[u8]>>),
-    Bytes(FxHashMap<Box<[u8]>, Box<[u8]>>),
+    Bytes(FxHashMap<ByteKey, Box<[u8]>>),
     /// Struct / aggregate keys: the key is the flat content bytes of the
     /// aggregate (so two distinct allocations of an equal value hash and
     /// compare equal, matching the VM), the value is an 8-byte word - an
@@ -162,7 +268,7 @@ enum MapStorage {
     /// the entries is what lets a snapshot turn the stored bytes back into
     /// the aggregate the program wrote.
     SkeyVal {
-        entries: FxHashMap<Box<[u8]>, i64>,
+        entries: FxHashMap<ByteKey, i64>,
         desc: Box<[u8]>,
     },
     /// Enum keys: the key is the canonical encoding of the enum node's
@@ -172,7 +278,7 @@ enum MapStorage {
     /// keeps the representative node the map retained, which a snapshot hands
     /// back as the value the program wrote.
     EkeyVal {
-        entries: FxHashMap<Box<[u8]>, EnumEntry>,
+        entries: FxHashMap<ByteKey, EnumEntry>,
     },
 }
 
@@ -286,7 +392,7 @@ impl I64BytesStorage {
 
 #[derive(Clone)]
 struct StrBytesStorage {
-    entries: FxHashMap<Box<[u8]>, u64>,
+    entries: FxHashMap<ByteKey, u64>,
     data: Vec<u8>,
     live_bytes: usize,
     reserve_entries: usize,
@@ -311,12 +417,12 @@ impl StrBytesStorage {
     }
 
     fn get(&self, key: &[u8]) -> Option<&[u8]> {
-        let (start, len) = Self::bounds(*self.entries.get(key)?);
+        let (start, len) = Self::bounds(*self.entries.get(ByteKeyRef::new(key))?);
         self.data.get(start..start + len)
     }
 
     fn contains_key(&self, key: &[u8]) -> bool {
-        self.entries.contains_key(key)
+        self.entries.contains_key(ByteKeyRef::new(key))
     }
 
     fn len(&self) -> usize {
@@ -326,7 +432,7 @@ impl StrBytesStorage {
     fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
         self.entries.iter().map(|(key, span)| {
             let (start, len) = Self::bounds(*span);
-            (key.as_ref(), &self.data[start..start + len])
+            (key.as_slice(), &self.data[start..start + len])
         })
     }
 
@@ -342,7 +448,7 @@ impl StrBytesStorage {
         let start = self.data.len();
         self.data.extend_from_slice(value);
         let span = Self::span(start, value.len());
-        if let Some(old) = self.entries.get_mut(key) {
+        if let Some(old) = self.entries.get_mut(ByteKeyRef::new(key)) {
             self.live_bytes -= Self::bounds(*old).1;
             *old = span;
             self.live_bytes += value.len();
@@ -350,14 +456,14 @@ impl StrBytesStorage {
             return false;
         }
         self.entries
-            .insert(crate::c_abi::string::boxed_bytes(key), span);
+            .insert(crate::c_abi::string::boxed_bytes(key).into(), span);
         self.live_bytes += value.len();
         self.compact_if_needed();
         true
     }
 
     fn remove(&mut self, key: &[u8]) -> Option<Vec<u8>> {
-        let span = self.entries.remove(key)?;
+        let span = self.entries.remove(ByteKeyRef::new(key))?;
         let (start, len) = Self::bounds(span);
         let value = self.data[start..start + len].to_vec();
         self.live_bytes -= len;
@@ -463,11 +569,16 @@ unsafe fn map_entry_parts(
             .collect(),
         MapStorage::StrI64(inner) => inner
             .iter()
-            .map(|(k, v)| (bytes(k), unsafe { value_part(*v, value_kind, value_desc) }))
+            .map(|(k, v)| {
+                (bytes(k.as_slice()), unsafe {
+                    value_part(*v, value_kind, value_desc)
+                })
+            })
             .collect(),
-        MapStorage::StrStr(inner) | MapStorage::Bytes(inner) => {
-            inner.iter().map(|(k, v)| (bytes(k), bytes(v))).collect()
-        }
+        MapStorage::StrStr(inner) | MapStorage::Bytes(inner) => inner
+            .iter()
+            .map(|(k, v)| (bytes(k.as_slice()), bytes(v)))
+            .collect(),
         MapStorage::I64Str(inner) => inner
             .iter()
             .map(|(k, v)| (EntryPart::Word(*k), bytes(v)))
@@ -480,12 +591,16 @@ unsafe fn map_entry_parts(
             .collect(),
         MapStorage::SkeyVal { entries, .. } => entries
             .iter()
-            .map(|(k, v)| (bytes(k), unsafe { value_part(*v, value_kind, value_desc) }))
+            .map(|(k, v)| {
+                (bytes(k.as_slice()), unsafe {
+                    value_part(*v, value_kind, value_desc)
+                })
+            })
             .collect(),
         MapStorage::EkeyVal { entries } => entries
             .iter()
             .map(|(k, entry)| {
-                (bytes(k), unsafe {
+                (bytes(k.as_slice()), unsafe {
                     value_part(entry.value, value_kind, value_desc)
                 })
             })
@@ -671,10 +786,7 @@ pub unsafe extern "C" fn gos_rt_map_insert(m: *mut GosMap, key: *const u8, val: 
         let MapStorage::Bytes(inner) = &mut *storage else {
             return;
         };
-        if inner
-            .insert(k.into_boxed_slice(), v.into_boxed_slice())
-            .is_none()
-        {
+        if inner.insert(k.into(), v.into_boxed_slice()).is_none() {
             map.len_cache += 1;
         }
     });
@@ -700,7 +812,7 @@ pub unsafe extern "C" fn gos_rt_map_get(m: *const GosMap, key: *const u8, val_ou
             );
             return 0;
         };
-        if let Some(v) = inner.get(k) {
+        if let Some(v) = inner.get(ByteKeyRef::new(k)) {
             unsafe {
                 std::ptr::copy_nonoverlapping(v.as_ptr(), val_out, v.len());
             }
@@ -740,7 +852,10 @@ unsafe fn map_get_or_str_i64_impl(m: *const GosMap, key: *const c_char, default:
         let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
-            MapStorage::StrI64(inner) => inner.get(key_bytes).copied().unwrap_or(default),
+            MapStorage::StrI64(inner) => inner
+                .get(ByteKeyRef::new(key_bytes))
+                .copied()
+                .unwrap_or(default),
             _ => default,
         }
     })
@@ -788,7 +903,7 @@ pub unsafe extern "C" fn gos_rt_map_get_or_str_str(
         let MapStorage::StrStr(inner) = &*storage else {
             return alloc_cstring(default_bytes);
         };
-        match inner.get(key_bytes) {
+        match inner.get(ByteKeyRef::new(key_bytes)) {
             Some(v) => alloc_cstring(v),
             None => alloc_cstring(default_bytes),
         }
@@ -963,7 +1078,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_skey(
         let MapStorage::SkeyVal { entries, .. } = &mut *storage else {
             return;
         };
-        let prev = entries.insert(k.into_boxed_slice(), val);
+        let prev = entries.insert(k.into(), val);
         if prev.is_none() {
             map.len_cache += 1;
         }
@@ -1002,7 +1117,9 @@ pub unsafe extern "C" fn gos_rt_map_get_skey_opt(
         let map = unsafe { &*m };
         let storage = map.storage.lock();
         let payload: Option<i64> = match &*storage {
-            MapStorage::SkeyVal { entries, .. } => entries.get(k.as_slice()).copied(),
+            MapStorage::SkeyVal { entries, .. } => {
+                entries.get(ByteKeyRef::new(k.as_slice())).copied()
+            }
             _ => None,
         };
         if let Some(v) = payload
@@ -1034,7 +1151,9 @@ pub unsafe extern "C" fn gos_rt_map_contains_skey(
         let map = unsafe { &*m };
         let storage = map.storage.lock();
         match &*storage {
-            MapStorage::SkeyVal { entries, .. } => entries.contains_key(k.as_slice()),
+            MapStorage::SkeyVal { entries, .. } => {
+                entries.contains_key(ByteKeyRef::new(k.as_slice()))
+            }
             _ => false,
         }
     })
@@ -1201,11 +1320,11 @@ unsafe fn map_insert_str_i64_impl(m: *mut GosMap, key: *const c_char, val: i64, 
         let MapStorage::StrI64(inner) = &mut *storage else {
             return;
         };
-        let prev = if let Some(slot) = inner.get_mut(key_bytes) {
+        let prev = if let Some(slot) = inner.get_mut(ByteKeyRef::new(key_bytes)) {
             Some(std::mem::replace(slot, val))
         } else {
             crate::c_abi::ledger::map_str_key_copy(key_bytes.len());
-            inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), val);
+            inner.insert(crate::c_abi::string::boxed_bytes(key_bytes).into(), val);
             map.len_cache += 1;
             None
         };
@@ -1263,7 +1382,9 @@ unsafe fn map_get_str_i64_impl(m: *const GosMap, key: *const c_char) -> i64 {
         let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
-            MapStorage::StrI64(inner) => inner.get(key_bytes).copied().unwrap_or(0),
+            MapStorage::StrI64(inner) => {
+                inner.get(ByteKeyRef::new(key_bytes)).copied().unwrap_or(0)
+            }
             _ => 0,
         }
     })
@@ -1291,10 +1412,10 @@ unsafe fn map_get_str_opt_impl(m: *const GosMap, key: *const c_char) -> i128 {
         let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let storage = map.storage.lock();
         let payload: Option<i64> = match &*storage {
-            MapStorage::StrI64(inner) => inner.get(key_bytes).copied(),
-            MapStorage::StrStr(inner) | MapStorage::Bytes(inner) => {
-                inner.get(key_bytes).map(|bs| alloc_cstring(bs) as i64)
-            }
+            MapStorage::StrI64(inner) => inner.get(ByteKeyRef::new(key_bytes)).copied(),
+            MapStorage::StrStr(inner) | MapStorage::Bytes(inner) => inner
+                .get(ByteKeyRef::new(key_bytes))
+                .map(|bs| alloc_cstring(bs) as i64),
             MapStorage::StrBytes(inner) => inner
                 .get(key_bytes)
                 .map(|bs| unsafe { byte_vec_from_slice(bs) } as i64),
@@ -1351,11 +1472,11 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_str(
         let MapStorage::StrStr(inner) = &mut *storage else {
             return;
         };
-        if let Some(slot) = inner.get_mut(key_bytes) {
+        if let Some(slot) = inner.get_mut(ByteKeyRef::new(key_bytes)) {
             *slot = crate::c_abi::string::boxed_bytes(val_bytes);
         } else {
             inner.insert(
-                crate::c_abi::string::boxed_bytes(key_bytes),
+                crate::c_abi::string::boxed_bytes(key_bytes).into(),
                 crate::c_abi::string::boxed_bytes(val_bytes),
             );
             map.len_cache += 1;
@@ -1390,7 +1511,7 @@ pub unsafe extern "C" fn gos_rt_map_get_str_str(
         let MapStorage::StrStr(inner) = &*storage else {
             return empty_cstring();
         };
-        match inner.get(key_bytes) {
+        match inner.get(ByteKeyRef::new(key_bytes)) {
             Some(v) => alloc_cstring(v),
             None => empty_cstring(),
         }
@@ -1407,8 +1528,8 @@ unsafe fn map_contains_key_str_impl(m: *const GosMap, key: *const c_char) -> boo
         let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
-            MapStorage::StrI64(inner) => inner.contains_key(key_bytes),
-            MapStorage::StrStr(inner) => inner.contains_key(key_bytes),
+            MapStorage::StrI64(inner) => inner.contains_key(ByteKeyRef::new(key_bytes)),
+            MapStorage::StrStr(inner) => inner.contains_key(ByteKeyRef::new(key_bytes)),
             MapStorage::StrBytes(inner) => inner.contains_key(key_bytes),
             _ => false,
         }
@@ -1438,7 +1559,7 @@ unsafe fn map_remove_str_impl(m: *mut GosMap, key: *const c_char) -> bool {
         let mut storage = map.storage.lock();
         let owned_values = map_has_owned_values(map);
         let removed = match &mut *storage {
-            MapStorage::StrI64(inner) => match inner.remove(key_bytes) {
+            MapStorage::StrI64(inner) => match inner.remove(ByteKeyRef::new(key_bytes)) {
                 Some(old) => {
                     if owned_values {
                         unsafe { release_owned_value(map, old) };
@@ -1447,7 +1568,7 @@ unsafe fn map_remove_str_impl(m: *mut GosMap, key: *const c_char) -> bool {
                 }
                 None => false,
             },
-            MapStorage::StrStr(inner) => inner.remove(key_bytes).is_some(),
+            MapStorage::StrStr(inner) => inner.remove(ByteKeyRef::new(key_bytes)).is_some(),
             MapStorage::StrBytes(inner) => inner.remove(key_bytes).is_some(),
             _ => false,
         };
@@ -1526,12 +1647,12 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
         // hashbrown table hash the slice without first allocating an
         // owned key. Only the first occurrence of each unique k-mer
         // pays the `to_vec()` cost.
-        if let Some(v) = inner.get_mut(key_slice) {
+        if let Some(v) = inner.get_mut(ByteKeyRef::new(key_slice)) {
             *v += by;
             return *v;
         }
         crate::c_abi::ledger::map_str_key_copy(key_slice.len());
-        inner.insert(crate::c_abi::string::boxed_bytes(key_slice), by);
+        inner.insert(crate::c_abi::string::boxed_bytes(key_slice).into(), by);
         map.len_cache += 1;
         by
     })
@@ -1557,12 +1678,12 @@ unsafe fn map_inc_str_i64_impl(m: *mut GosMap, key: *const c_char, by: i64) -> i
         let MapStorage::StrI64(inner) = &mut *storage else {
             return 0;
         };
-        if let Some(v) = inner.get_mut(key_bytes) {
+        if let Some(v) = inner.get_mut(ByteKeyRef::new(key_bytes)) {
             *v += by;
             return *v;
         }
         crate::c_abi::ledger::map_str_key_copy(key_bytes.len());
-        inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), by);
+        inner.insert(crate::c_abi::string::boxed_bytes(key_bytes).into(), by);
         map.len_cache += 1;
         by
     })
@@ -1616,11 +1737,11 @@ unsafe fn map_or_insert_str_i64_impl(
             } else {
                 unsafe { crate::c_abi::gos_str_arg_bytes(default as usize as *const c_char) }
             };
-            let stored = if let Some(v) = inner.get(key_bytes) {
+            let stored = if let Some(v) = inner.get(ByteKeyRef::new(key_bytes)) {
                 alloc_cstring(v)
             } else {
                 let value = crate::c_abi::string::boxed_bytes(default_bytes);
-                inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), value);
+                inner.insert(crate::c_abi::string::boxed_bytes(key_bytes).into(), value);
                 map.len_cache += 1;
                 alloc_cstring(default_bytes)
             };
@@ -1642,7 +1763,7 @@ unsafe fn map_or_insert_str_i64_impl(
         let MapStorage::StrI64(inner) = &mut *storage else {
             return default;
         };
-        if let Some(v) = inner.get(key_bytes).copied() {
+        if let Some(v) = inner.get(ByteKeyRef::new(key_bytes)).copied() {
             // Key present: hand back the stored value. For a copy-blob
             // value (Vec / struct handle) the result remains an interior
             // borrow, just like Rust's `&mut V`; the caller must not own or
@@ -1667,7 +1788,7 @@ unsafe fn map_or_insert_str_i64_impl(
         // Key absent: the compiler's consuming-call retain supplies the
         // map's independent value share. The return below is a borrow of
         // that stored value and therefore does not create another share.
-        inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), default);
+        inner.insert(crate::c_abi::string::boxed_bytes(key_bytes).into(), default);
         map.len_cache += 1;
         if typed_key {
             unsafe { crate::c_abi::string::consume_moved_string_typed(key.cast_mut()) };
@@ -2957,7 +3078,7 @@ unsafe fn map_word_entries(m: *const GosMap) -> Vec<(Option<Vec<u8>>, i64, i64)>
         MapStorage::StrI64(inner) => {
             let mut out: Vec<(Option<Vec<u8>>, i64, i64)> = inner
                 .iter()
-                .map(|(k, v)| (Some(k.as_ref().to_vec()), 0, *v))
+                .map(|(k, v)| (Some(k.as_slice().to_vec()), 0, *v))
                 .collect();
             out.sort_by(|a, b| a.0.cmp(&b.0));
             out
@@ -3011,15 +3132,15 @@ unsafe fn map_aggregate_entries(m: *const GosMap) -> Vec<DescEntry> {
     match &*storage {
         MapStorage::SkeyVal { entries, desc } => {
             let slots = desc.len();
-            let mut keys: Vec<&Box<[u8]>> = entries.keys().collect();
-            keys.sort_by_cached_key(|key| skey_order(key, desc));
+            let mut keys: Vec<&ByteKey> = entries.keys().collect();
+            keys.sort_by_cached_key(|key| skey_order(key.as_slice(), desc));
             keys.into_iter()
                 .filter_map(|k| {
                     // A field-less key owns no slots, yet the renderer reads
                     // through the buffer's address, so it always points at
                     // storage of its own.
                     let mut key_slots = vec![0i64; slots.max(1)];
-                    if !decode_skey_into(k, desc, &mut key_slots) {
+                    if !decode_skey_into(k.as_slice(), desc, &mut key_slots) {
                         return None;
                     }
                     let owned_strings = desc
@@ -3039,17 +3160,17 @@ unsafe fn map_aggregate_entries(m: *const GosMap) -> Vec<DescEntry> {
                         key_by_word: false,
                         owned_strings,
                         owned_vecs,
-                        value: entries[k.as_ref()],
+                        value: entries[k],
                     })
                 })
                 .collect()
         }
         MapStorage::EkeyVal { entries } => {
-            let mut keys: Vec<&Box<[u8]>> = entries.keys().collect();
+            let mut keys: Vec<&ByteKey> = entries.keys().collect();
             keys.sort_unstable();
             keys.into_iter()
                 .map(|k| {
-                    let entry = &entries[k.as_ref()];
+                    let entry = &entries[k];
                     DescEntry {
                         key_slots: vec![entry.key_node as usize as i64],
                         key_by_word: true,
@@ -3134,7 +3255,7 @@ pub unsafe extern "C" fn gos_rt_map_format_tagged(
             }
             MapStorage::StrI64(inner) => {
                 let mut entries: Vec<(&[u8], i64)> =
-                    inner.iter().map(|(k, v)| (k.as_ref(), *v)).collect();
+                    inner.iter().map(|(k, v)| (k.as_slice(), *v)).collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
                     let key = quote_key(k);
@@ -3146,7 +3267,7 @@ pub unsafe extern "C" fn gos_rt_map_format_tagged(
             MapStorage::StrStr(inner) => {
                 let mut entries: Vec<(&[u8], &[u8])> = inner
                     .iter()
-                    .map(|(k, v)| (k.as_ref(), v.as_ref()))
+                    .map(|(k, v)| (k.as_slice(), v.as_ref()))
                     .collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (k, v) in entries {
@@ -3360,7 +3481,7 @@ fn clone_map_storage(storage: &MapStorage, value_owner: u8) -> MapStorage {
         MapStorage::I64Str(m) => MapStorage::I64Str(m.clone()),
         MapStorage::Bytes(m) => MapStorage::Bytes(m.clone()),
         MapStorage::EkeyVal { entries } => {
-            let cloned: FxHashMap<Box<[u8]>, EnumEntry> = entries
+            let cloned: FxHashMap<ByteKey, EnumEntry> = entries
                 .iter()
                 .map(|(k, e)| {
                     if !e.key_node.is_null() {
@@ -3853,7 +3974,7 @@ pub unsafe extern "C" fn gos_rt_map_values_i64(m: *const GosMap) -> *mut GosVec 
             }
             MapStorage::StrI64(inner) => {
                 let mut rows: Vec<(&[u8], i64)> =
-                    inner.iter().map(|(k, v)| (k.as_ref(), *v)).collect();
+                    inner.iter().map(|(k, v)| (k.as_slice(), *v)).collect();
                 rows.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (_, v) in rows {
                     push_val(v);
@@ -3861,7 +3982,7 @@ pub unsafe extern "C" fn gos_rt_map_values_i64(m: *const GosMap) -> *mut GosVec 
             }
             MapStorage::SkeyVal { entries, desc } => {
                 let mut rows: Vec<(&[u8], i64)> =
-                    entries.iter().map(|(k, v)| (k.as_ref(), *v)).collect();
+                    entries.iter().map(|(k, v)| (k.as_slice(), *v)).collect();
                 rows.sort_by_cached_key(|(key, _)| skey_order(key, desc));
                 for (_, v) in rows {
                     push_val(v);
@@ -3896,8 +4017,8 @@ pub unsafe extern "C" fn gos_rt_map_keys_str(m: *const GosMap) -> *mut GosVec {
         // Sort by key (lexicographic byte order, matching the VM's
         // `SmolStr` ordering) for deterministic, cross-tier order.
         let mut keys: Vec<&[u8]> = match &*storage {
-            MapStorage::StrI64(inner) => inner.keys().map(|k| &**k).collect(),
-            MapStorage::StrStr(inner) => inner.keys().map(|k| &**k).collect(),
+            MapStorage::StrI64(inner) => inner.keys().map(ByteKey::as_slice).collect(),
+            MapStorage::StrStr(inner) => inner.keys().map(ByteKey::as_slice).collect(),
             _ => Vec::new(),
         };
         keys.sort_unstable();
@@ -3930,7 +4051,7 @@ pub unsafe extern "C" fn gos_rt_map_values_str(m: *const GosMap) -> *mut GosVec 
         match &*storage {
             MapStorage::StrStr(inner) => {
                 let mut entries: Vec<(&[u8], &[u8])> =
-                    inner.iter().map(|(k, v)| (&**k, &**v)).collect();
+                    inner.iter().map(|(k, v)| (k.as_slice(), &**v)).collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
                 for (_, v) in entries {
                     push_val(v);
@@ -3977,7 +4098,7 @@ pub unsafe extern "C" fn gos_rt_map_keys_skey(m: *const GosMap) -> *mut GosVec {
         // A field-less key occupies the one slot every inline aggregate is
         // sized at, and decodes no content into it.
         let elem_bytes = (slots.max(1) * 8) as u32;
-        let mut keys: Vec<&[u8]> = entries.keys().map(|k| &**k).collect();
+        let mut keys: Vec<&[u8]> = entries.keys().map(ByteKey::as_slice).collect();
         keys.sort_by_cached_key(|key| skey_order(key, desc));
         let out = unsafe {
             crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
@@ -4339,9 +4460,9 @@ unsafe fn map_pop_str_impl(m: *mut GosMap, key: *const c_char) -> i128 {
         let key_bytes = unsafe { crate::c_abi::gos_str_arg_bytes(key) };
         let mut storage = map.storage.lock();
         let popped: Option<i64> = match &mut *storage {
-            MapStorage::StrI64(inner) => inner.remove(key_bytes),
+            MapStorage::StrI64(inner) => inner.remove(ByteKeyRef::new(key_bytes)),
             MapStorage::StrStr(inner) | MapStorage::Bytes(inner) => {
-                inner.remove(key_bytes).map(|bs| {
+                inner.remove(ByteKeyRef::new(key_bytes)).map(|bs| {
                     let cstr = alloc_cstring(&bs);
                     cstr as i64
                 })
@@ -4393,7 +4514,7 @@ pub unsafe extern "C" fn gos_rt_map_pop_skey(
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
         let popped: Option<i64> = match &mut *storage {
-            MapStorage::SkeyVal { entries, .. } => entries.remove(k.as_slice()),
+            MapStorage::SkeyVal { entries, .. } => entries.remove(ByteKeyRef::new(k.as_slice())),
             _ => None,
         };
         if popped.is_some() {
@@ -4416,7 +4537,7 @@ pub unsafe extern "C" fn gos_rt_map_remove(m: *mut GosMap, key: *const u8) -> i3
         let k = unsafe { std::slice::from_raw_parts(key, 8) };
         let mut storage = map.storage.lock();
         let removed = match &mut *storage {
-            MapStorage::Bytes(inner) => inner.remove(k).is_some(),
+            MapStorage::Bytes(inner) => inner.remove(ByteKeyRef::new(k)).is_some(),
             _ => false,
         };
         if removed {
@@ -4638,7 +4759,7 @@ unsafe fn append_enum_canonical(node: *mut u8, desc: *const i64, out: &mut Vec<u
 unsafe fn with_ekey_entries<R>(
     m: *mut GosMap,
     install: bool,
-    f: impl FnOnce(&mut FxHashMap<Box<[u8]>, EnumEntry>, &mut i64) -> R,
+    f: impl FnOnce(&mut FxHashMap<ByteKey, EnumEntry>, &mut i64) -> R,
 ) -> Option<R> {
     if m.is_null() {
         return None;
@@ -4668,7 +4789,7 @@ unsafe fn ekey_insert(m: *mut GosMap, key: *mut u8, desc: *const i64, val: i64) 
         with_ekey_entries(m, true, |entries, len| {
             unsafe { crate::c_abi::rc::gos_rt_rc_retain(key) };
             let replaced = entries.insert(
-                bytes.into_boxed_slice(),
+                bytes.into(),
                 EnumEntry {
                     value: val,
                     key_node: key,
@@ -4697,7 +4818,9 @@ unsafe fn ekey_lookup(m: *const GosMap, key: *mut u8, desc: *const i64) -> Optio
     let MapStorage::EkeyVal { entries } = &*storage else {
         return None;
     };
-    entries.get(bytes.as_slice()).map(|e| e.value)
+    entries
+        .get(ByteKeyRef::new(bytes.as_slice()))
+        .map(|e| e.value)
 }
 
 /// `m.insert(k, v)` for an enum-keyed map, returning `Option<V>` in the
@@ -4756,10 +4879,12 @@ pub unsafe extern "C" fn gos_rt_map_pop_ekey(
         };
         let popped = unsafe {
             with_ekey_entries(m, false, |entries, len| {
-                entries.remove(bytes.as_slice()).inspect(|entry| {
-                    *len = len.saturating_sub(1);
-                    unsafe { crate::c_abi::rc::gos_rt_rc_release(entry.key_node) };
-                })
+                entries
+                    .remove(ByteKeyRef::new(bytes.as_slice()))
+                    .inspect(|entry| {
+                        *len = len.saturating_sub(1);
+                        unsafe { crate::c_abi::rc::gos_rt_rc_release(entry.key_node) };
+                    })
             })
         };
         match popped.flatten() {
@@ -4831,7 +4956,7 @@ pub unsafe extern "C" fn gos_rt_map_keys_ekey(m: *const GosMap) -> *mut GosVec {
         };
         let mut rows: Vec<(&[u8], *mut u8)> = entries
             .iter()
-            .map(|(k, e)| (&**k, e.key_node))
+            .map(|(k, e)| (k.as_slice(), e.key_node))
             .collect::<Vec<_>>();
         rows.sort_by(|a, b| a.0.cmp(b.0));
         let out = unsafe {
@@ -4860,7 +4985,7 @@ unsafe fn skey_lookup(m: *const GosMap, key: *const u8, desc: *const c_char) -> 
     let map = unsafe { &*m };
     let storage = map.storage.lock();
     match &*storage {
-        MapStorage::SkeyVal { entries, .. } => entries.get(k.as_slice()).copied(),
+        MapStorage::SkeyVal { entries, .. } => entries.get(ByteKeyRef::new(k.as_slice())).copied(),
         _ => None,
     }
 }

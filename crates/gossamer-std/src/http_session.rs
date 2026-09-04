@@ -575,7 +575,7 @@ impl SessionStore for SignedCookieStore {
 }
 
 fn unix_time_secs() -> Option<i64> {
-    std::time::SystemTime::now()
+    gossamer_runtime::platform::system_time_now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .and_then(|d| i64::try_from(d.as_secs()).ok())

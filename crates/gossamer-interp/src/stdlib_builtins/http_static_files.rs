@@ -195,8 +195,10 @@ mod tests {
 
     #[test]
     fn serve_file_reads_through_blocking_pool() {
-        let path =
-            std::env::temp_dir().join(format!("gossamer-static-file-{}", std::process::id()));
+        let path = gossamer_runtime::platform::temp_dir().join(format!(
+            "gossamer-static-file-{}",
+            gossamer_runtime::platform::process_id()
+        ));
         std::fs::write(&path, "static body").expect("write fixture");
         let result =
             builtin_static_serve_file(&[Value::String(path.to_string_lossy().into_owned().into())])

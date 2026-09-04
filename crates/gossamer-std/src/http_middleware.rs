@@ -40,7 +40,8 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+
+use gossamer_runtime::platform::Instant;
 
 use crate::http::{Headers, Request, Response, StatusCode};
 use crate::http_router::{Params, Router};
@@ -178,7 +179,7 @@ pub fn request_id<H: Handler + 'static>(inner: H) -> impl Handler {
 
 fn next_request_id() -> String {
     let n = REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let nanos = std::time::SystemTime::now()
+    let nanos = gossamer_runtime::platform::system_time_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
@@ -852,7 +853,9 @@ pub struct RateLimit {
 struct RateLimitState {
     capacity: f64,
     refill_per_sec: f64,
-    buckets: parking_lot::Mutex<std::collections::HashMap<String, (f64, std::time::Instant)>>,
+    buckets: parking_lot::Mutex<
+        std::collections::HashMap<String, (f64, gossamer_runtime::platform::Instant)>,
+    >,
     max_keys: usize,
 }
 
@@ -891,7 +894,7 @@ impl RateLimit {
                 guard.remove(&k);
             }
         }
-        let now = std::time::Instant::now();
+        let now = gossamer_runtime::platform::Instant::now();
         let entry = guard
             .entry(key.to_string())
             .or_insert_with(|| (self.inner.capacity, now));
@@ -1200,7 +1203,7 @@ mod tests {
     #[test]
     fn timeout_returns_504_when_handler_too_slow() {
         let inner = |_req: &Request, _p: &Params| -> Response {
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            gossamer_runtime::platform::sleep(std::time::Duration::from_millis(200));
             text_response(200, "late")
         };
         let wrapped = timeout(std::time::Duration::from_millis(20), inner);
@@ -1532,7 +1535,7 @@ mod transform_tests {
         assert!(!rate_limit_allow(config, client));
         // A thousand tokens a second puts one back within a millisecond;
         // waiting five covers scheduling jitter without a fixed ceiling.
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        gossamer_runtime::platform::sleep(std::time::Duration::from_millis(5));
         assert!(rate_limit_allow(config, client));
     }
 

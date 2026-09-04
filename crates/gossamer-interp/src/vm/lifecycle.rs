@@ -1035,7 +1035,7 @@ impl Vm {
         };
         let mut bodies = Arc::try_unwrap(bodies).unwrap_or_else(|shared| (*shared).clone());
         let trace = jit_call::jit_trace();
-        let started = std::time::Instant::now();
+        let started = gossamer_runtime::platform::Instant::now();
         if let Some(rss_bytes) = current_process_rss_bytes() {
             self.jit_counters.observed_rss(rss_bytes);
             profile_jit_rss("before_compile", rss_bytes);

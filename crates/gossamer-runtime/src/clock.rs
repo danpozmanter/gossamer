@@ -10,7 +10,7 @@
 //! anything takes.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 /// Whether the wall clock is pinned.
 static FROZEN: AtomicBool = AtomicBool::new(false);
@@ -20,7 +20,7 @@ static FROZEN_MS: AtomicI64 = AtomicI64::new(0);
 
 /// The real wall clock in milliseconds since the epoch.
 fn real_ms() -> i64 {
-    SystemTime::now()
+    crate::platform::system_time_now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
 }
@@ -42,7 +42,7 @@ pub fn wall_nanos() -> i64 {
     if FROZEN.load(Ordering::Acquire) {
         FROZEN_MS.load(Ordering::Acquire).saturating_mul(1_000_000)
     } else {
-        SystemTime::now()
+        crate::platform::system_time_now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos() as i64)
     }

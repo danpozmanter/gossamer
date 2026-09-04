@@ -1321,9 +1321,9 @@ mod net_registry_tests {
     #[cfg(unix)]
     #[test]
     fn unix_connect_and_accept_use_real_socket_handles() {
-        let path = std::env::temp_dir().join(format!(
+        let path = gossamer_runtime::platform::temp_dir().join(format!(
             "gossamer-net-{}-{}",
-            std::process::id(),
+            gossamer_runtime::platform::process_id(),
             next_net_id()
         ));
         let path = path.to_string_lossy().into_owned();

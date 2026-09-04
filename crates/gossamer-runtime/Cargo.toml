@@ -107,6 +107,13 @@ x509-parser = "0.18"
 tar = "0.4"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 
+# The browser has a clock; Rust's `std::time` shims for
+# wasm32-unknown-unknown panic instead of reading it. `web-time` is the
+# ecosystem's drop-in replacement, wired through `platform::{Instant,
+# SystemTime}` so no other crate names the target.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+web-time = "1"
+
 # Native-only dependencies. These either link C (mimalloc, zstd,
 # bzip2, ring via rustls), require an OS RNG/signals/sockets/dynamic
 # loader (getrandom, uuid, signal-hook, mio, libloading), or drive the

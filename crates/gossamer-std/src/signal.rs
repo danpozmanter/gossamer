@@ -103,7 +103,7 @@ impl Notifier {
             if self.try_wait() {
                 return;
             }
-            std::thread::sleep(interval);
+            gossamer_runtime::platform::sleep(interval);
         }
     }
 }
@@ -315,7 +315,7 @@ mod tests {
         let n = on(sigs::SIGHUP);
         let n2 = n.clone();
         let handle = std::thread::spawn(move || n2.wait());
-        std::thread::sleep(Duration::from_millis(20));
+        gossamer_runtime::platform::sleep(Duration::from_millis(20));
         deliver(sigs::SIGHUP);
         handle.join().expect("notifier thread");
     }
