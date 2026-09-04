@@ -521,13 +521,22 @@ fn drain_within_bound(node: &Arc<CohortNode>) {
 }
 
 fn wait_for_drain_bounded(node: &Arc<CohortNode>, deadline: std::time::Duration) -> i64 {
-    wait_for_drain_until(node, std::time::Instant::now() + deadline)
+    wait_for_drain_until(node, || std::time::Instant::now() + deadline)
 }
 
-/// Waits for `node`'s children until `until`. Answers the number still
-/// outstanding, which is zero when they all finished.
-fn wait_for_drain_until(node: &Arc<CohortNode>, until: std::time::Instant) -> i64 {
+/// Waits for `node`'s children until the instant `until` answers. Answers
+/// the number still outstanding, which is zero when they all finished.
+///
+/// The deadline arrives as a function because a monotonic reading belongs
+/// to a wait that actually happens: children that have all finished are
+/// answered without one, which is all a target with no monotonic clock can
+/// offer.
+fn wait_for_drain_until(node: &Arc<CohortNode>, until: impl FnOnce() -> std::time::Instant) -> i64 {
     let mut state = node.state.lock();
+    if state.outstanding == 0 {
+        return 0;
+    }
+    let until = until();
     while state.outstanding > 0 {
         let now = std::time::Instant::now();
         if now >= until {
@@ -642,7 +651,7 @@ pub fn close_root() {
     };
     // The root drain runs after the program's own work is done: a
     // goroutine still running here is one nothing joined.
-    let outstanding = wait_for_drain_until(&node, crate::vm::goroutine::exit_drain_deadline());
+    let outstanding = wait_for_drain_until(&node, crate::vm::goroutine::exit_drain_deadline);
     if outstanding > 0 {
         eprintln!(
             "gossamer: {outstanding} spawned goroutine(s) had not finished {} seconds after \

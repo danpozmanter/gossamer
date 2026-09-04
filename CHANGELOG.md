@@ -1,6 +1,43 @@
 # Changelog
 
-## 0.58.10 - By-value parameters that only read, container fields as values, spawn inside a cohort
+## 0.58.11 - Exit drains that read the clock only when they wait, enum values 
+## as one word, one switch per match, one-pass teardown, byte-key compares
+
+- A program that spawns a goroutine runs in the browser playground instead of
+  trapping. The drain that runs after `main` returns took a monotonic deadline
+  before it knew whether it had anything to wait for, and wasm32 has no
+  monotonic clock, so the reading ended the run after the program had finished
+  and discarded the output it had already written.
+- A `cohort { }` block whose children have all finished closes without taking a
+  deadline either, on every tier.
+- A recursive or tagged enum handed to a function by value crosses the call as
+  the one word it is. The compiled tiers wrote that word into a stack slot at
+  the call site and read it back at the callee's entry, so a walk over a tree
+  paid a store, an address, and a dependent load at every node, and the memory
+  dependence kept the optimiser from turning a tail-recursive walk into a loop.
+  The parameter's own shape now decides how it travels, as it already did for a
+  closure a runtime combinator calls and for a C-ABI handler.
+- A `match` over one enum's variants reads the discriminant once and switches
+  on it. Each arm read the tag again and compared it in turn, so a match over a
+  payload-bearing enum tested it once per arm before it could run a body.
+- A dead node's children are visited once while it is torn down. The release
+  walked the node's type layout once per kind of child, so a node carrying only
+  reference-counted children still paid for the container kinds it did not have.
+- Closing an `arena { }` region takes the region off the stack in one borrow,
+  and gives the allocator back to the parent region before it frees anything
+  the closing region owned, so an allocation made during a teardown lands on a
+  region that outlives it rather than on a slab about to be retired.
+- The allocation, reference-count, and hash-probe paths read one flag when no
+  counter, ledger, or sampler is armed. Each recorder consulted a switch of its
+  own, on paths every program reaches whether or not it asked to be measured.
+- A `Map` or `Set` keyed by a `String`, by bytes, or by an aggregate compares
+  short keys without a call into libc. A hash table confirms its candidate key
+  on every probe that hits, and the release link is static musl, whose `memcmp`
+  is a byte loop, so a map of short keys paid that loop on every lookup that
+  found its key.
+
+## 0.58.10 - By-value parameters that only read, container fields as values, 
+## spawn inside a cohort
 
 - A by-value aggregate parameter a function only reads costs the work it does
   rather than the size of what it holds. The drop pass gave every one a share of

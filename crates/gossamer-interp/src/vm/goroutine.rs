@@ -12,7 +12,7 @@ pub fn join_outstanding_goroutines() {
     MAIN_RETURNED.store(true, Ordering::Release);
     crate::value::wake_all_channel_waiters();
     if let Some(pool) = POOL.get() {
-        pool.drain_until(exit_drain_deadline());
+        pool.drain_until(exit_drain_deadline);
     }
 }
 
@@ -25,6 +25,12 @@ pub fn join_outstanding_goroutines() {
 /// independent bounds. A goroutine still running at that instant is one
 /// the root cohort has already reported and abandoned, and waiting past it
 /// would contradict that report.
+///
+/// Both drains take this as a function rather than a value: a monotonic
+/// reading belongs to a wait that actually happens. An exit with nothing
+/// outstanding never asks for one, which is all a target with no monotonic
+/// clock can answer - wasm32 runs a goroutine to completion at its spawn
+/// site, so its pool reaches exit already drained.
 pub(crate) fn exit_drain_deadline() -> std::time::Instant {
     *EXIT_DRAIN_UNTIL.get_or_init(|| {
         std::time::Instant::now() + crate::stdlib_builtins::cohort::ROOT_DRAIN_DEADLINE
@@ -319,26 +325,36 @@ impl GoroutinePool {
     }
 
     /// Blocks until every queued / in-flight task has finished, or until
-    /// `until` passes. Called by [`join_outstanding_goroutines`] at
-    /// program exit.
+    /// the instant `until` answers passes. Called by
+    /// [`join_outstanding_goroutines`] at program exit.
     ///
     /// A task can be outstanding without ever reaching a channel wait - a
     /// goroutine spinning on a computation, or parked in a blocking call -
     /// so the stuck-waiter count alone cannot decide when to stop waiting.
     /// The deadline is what makes the wait answer for every such task, and
-    /// it is shared with the root cohort's own drain.
+    /// it is shared with the root cohort's own drain. A pool that is
+    /// already settled returns without asking for one.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn drain_until(&self, until: std::time::Instant) {
+    pub(crate) fn drain_until(&self, until: impl FnOnce() -> std::time::Instant) {
         let mut inner = self.inner.lock();
-        loop {
-            let outstanding = self.outstanding.load(Ordering::Acquire);
-            if outstanding == 0 || STUCK_WAITERS.load(Ordering::Acquire) >= outstanding {
-                return;
-            }
+        if self.drain_settled() {
+            return;
+        }
+        let until = until();
+        while !self.drain_settled() {
             if self.drain_cv.wait_until(&mut inner, until).timed_out() {
                 return;
             }
         }
+    }
+
+    /// Whether waiting longer could still change what the pool holds:
+    /// nothing outstanding, or every outstanding task already counted as
+    /// permanently parked.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn drain_settled(&self) -> bool {
+        let outstanding = self.outstanding.load(Ordering::Acquire);
+        outstanding == 0 || STUCK_WAITERS.load(Ordering::Acquire) >= outstanding
     }
 
     /// Wakes a drain that is waiting on progress this pool can no longer make.
@@ -350,7 +366,7 @@ impl GoroutinePool {
     /// wasm runs goroutines eagerly to completion in `spawn`, so there
     /// is never anything outstanding to drain at exit.
     #[cfg(target_arch = "wasm32")]
-    pub(crate) fn drain_until(&self, _until: std::time::Instant) {}
+    pub(crate) fn drain_until(&self, _until: impl FnOnce() -> std::time::Instant) {}
 }
 
 static POOL: OnceLock<Arc<GoroutinePool>> = OnceLock::new();
@@ -676,7 +692,7 @@ mod tests {
         for release in releases {
             release.send(()).ok();
         }
-        pool.drain_until(far_future());
+        pool.drain_until(far_future);
     }
 
     #[test]
@@ -700,7 +716,7 @@ mod tests {
         let drain_pool = Arc::clone(&pool);
         let (drained_tx, drained_rx) = mpsc::channel();
         let drainer = std::thread::spawn(move || {
-            drain_pool.drain_until(far_future());
+            drain_pool.drain_until(far_future);
             drained_tx.send(()).expect("test receiver remains live");
         });
         drained_rx
@@ -739,7 +755,7 @@ mod tests {
             let drain_pool = Arc::clone(&pool);
             let (drained_tx, drained_rx) = mpsc::channel();
             std::thread::spawn(move || {
-                drain_pool.drain_until(far_future());
+                drain_pool.drain_until(far_future);
                 drained_tx.send(()).expect("test receiver remains live");
             });
             release_tx.send(()).expect("worker remains live");
