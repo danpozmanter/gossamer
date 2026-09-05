@@ -171,6 +171,13 @@ impl<'tcx> FnBuilder<'tcx> {
                 .clone()
                 .iter()
                 .any(|e| self.ty_holds_shared_container(*e, depth + 1)),
+            // A fixed array or vector reaches its elements the way a tuple
+            // reaches its own, so one holding a table needs the same deep
+            // copy - the compiled tiers give a cloned vector's map elements
+            // tables of their own for the same reason.
+            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem)) => {
+                self.ty_holds_shared_container(*elem, depth + 1)
+            }
             _ => false,
         }
     }

@@ -1121,7 +1121,10 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
     }
     let s = unsafe { &*src };
     match s.elem_kind {
-        vec_elem_kind::STRING | vec_elem_kind::VEC | vec_elem_kind::RC_ENUM
+        vec_elem_kind::STRING
+        | vec_elem_kind::VEC
+        | vec_elem_kind::RC_ENUM
+        | vec_elem_kind::MAP
             if s.elem_bytes == 8 =>
         {
             unsafe { (*out).elem_kind = s.elem_kind };
@@ -1140,6 +1143,15 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
                     },
                     vec_elem_kind::RC_ENUM => unsafe {
                         crate::c_abi::rc::gos_rt_rc_retain(child);
+                    },
+                    // A `GosMap` carries no reference count, so a map element
+                    // cannot be shared: the copy takes a table of its own and
+                    // the new handle goes back into the slot, leaving the
+                    // source's table to the source. Both vectors free their
+                    // elements, so one table under two of them is freed twice.
+                    vec_elem_kind::MAP => unsafe {
+                        let cloned = crate::c_abi::gos_rt_map_clone(child.cast());
+                        slot.write_unaligned((cloned as *mut u8).expose_provenance());
                     },
                     _ => unsafe {
                         let cloned = crate::c_abi::gos_rt_vec_clone(child.cast());

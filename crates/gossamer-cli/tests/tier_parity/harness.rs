@@ -241,6 +241,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/enum_carrier_payload.gos"),
     spec("feature-testing-examples/lazy_iter_element_classes.gos"),
     spec("feature-testing-examples/container_impl_and_literals.gos"),
+    spec("feature-testing-examples/container_in_tuple_array_vec.gos"),
     spec("feature-testing-examples/carrier_unwrap_or_else.gos"),
     spec("feature-testing-examples/char_escape_literals.gos"),
     spec("feature-testing-examples/by_value_container_semantics.gos"),

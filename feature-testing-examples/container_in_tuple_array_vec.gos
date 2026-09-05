@@ -1,0 +1,106 @@
+// Containers reached through a tuple position, an array slot, and a vector
+// element, rather than through a struct field.
+//
+// Two contracts meet here. A mutating method names the place it is called on,
+// so `t.0.push(v)` updates the tuple the way `s.items.push(v)` updates the
+// struct, and `f(&mut t.0)` writes back through the same place. And a `Map`, a
+// `Set`, or a slot container reaches its storage through a handle carrying no
+// count of its holders, so copying whatever holds one - a tuple, an array, a
+// vector - gives the copy storage of its own: two holders of one table would
+// each free it. Bit-identical on the VM, Cranelift, and LLVM tiers.
+
+fn extend(xs: &mut Vec<i64>) {
+    xs.push(30)
+}
+
+// A mutating method on a tuple position, and on a tuple position reached
+// through a struct field and through a second tuple.
+struct Holder {
+    pair: (Vec<i64>, i64)
+}
+
+fn tuple_places() {
+    let mut t = (#[1, 2], 0)
+    t.0.push(3)
+    extend(&mut t.0)
+    t.1 += 7
+    println("tuple len={} last={} snd={}", t.0.len(), t.0[t.0.len() - 1], t.1)
+
+    let mut sorted = (#[3, 1, 2], "ab")
+    sorted.0.sort()
+    sorted.1 += "c"
+    println("sorted first={} last={} text={}", sorted.0[0], sorted.0[2], sorted.1)
+
+    let mut h = Holder { pair: (#[1], 0) }
+    h.pair.0.push(2)
+    println("field len={}", h.pair.0.len())
+
+    let mut nested = ((#[1], 0), 0)
+    nested.0.0.push(2)
+    println("nested len={}", nested.0.0.len())
+}
+
+// A by-value parameter whose tuple position holds a table: the callee writes
+// its own, and the caller reads what it always held.
+fn fill(mut t: (Map<i64, i64>, Set<i64>, Deque<i64>)) -> i64 {
+    t.0.insert(9, 9)
+    t.1.insert(9)
+    t.2.push_back(9)
+    t.0.len() + t.1.len() + t.2.len()
+}
+
+fn tuple_copies() {
+    let mut table = Map::new()
+    let mut seen = Set::new()
+    let mut queue = Deque::new()
+    for i in 0..3 {
+        table.insert(i, i)
+        seen.insert(i)
+        queue.push_back(i)
+    }
+    let t = (table, seen, queue)
+    let inside = fill(t)
+    println("call inside={} caller={} {} {}", inside, t.0.len(), t.1.len(), t.2.len())
+
+    let mut copy = t
+    copy.0.insert(8, 8)
+    copy.1.insert(8)
+    copy.2.push_back(8)
+    println("copy copy={} {} {} source={} {} {}"
+        copy.0.len(), copy.1.len(), copy.2.len()
+        t.0.len(), t.1.len(), t.2.len())
+}
+
+// An array slot and a vector element holding a table: the same rule, and the
+// copy's own tables are what its holder frees.
+fn slot_copies() {
+    let mut first = Map::new()
+    let mut second = Map::new()
+    for i in 0..3 {
+        first.insert(i, i)
+        second.insert(i, i * 2)
+    }
+    let arr = [first, second]
+    let mut arr_copy = arr
+    arr_copy[0].insert(8, 8)
+    println("array copy={} source={} other={}"
+        arr_copy[0].len(), arr[0].len(), arr[1].get_or(1, -1))
+
+    let mut only = Map::new()
+    only.insert(1, 1)
+    let vec = #[only]
+    let mut vec_copy = vec
+    vec_copy[0].insert(8, 8)
+    println("vector copy={} source={}", vec_copy[0].len(), vec[0].len())
+
+    let sets = [#{ 1, 2 }, #{ 3 }]
+    let mut sets_copy = sets
+    sets_copy[0].insert(9)
+    println("array-set copy={} source={}", sets_copy[0].len(), sets[0].len())
+}
+
+fn main() {
+    tuple_places()
+    tuple_copies()
+    slot_copies()
+}

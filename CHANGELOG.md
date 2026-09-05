@@ -14,6 +14,19 @@
   container beside it. Putting `self.pos` in a tuple, a struct literal, or a
   `Vec` literal booked the neighbouring table's clone, because the walk judged
   a read of any field as a read of every field.
+- A `mut` by-value aggregate parameter is copied once per call rather than
+  twice on the compiled tiers. The caller copied the aggregate and the callee's
+  own frame copied it again, so a struct carrying a `Map` paid for the table
+  twice on every call.
+- A mutating method called on a tuple position takes effect on the bytecode VM:
+  `t.0.push(v)`, `t.0.sort()`, and `f(&mut t.0)` were silently discarded, at
+  any depth and through a struct field, while the compiled tiers applied them.
+- Copying a tuple, a fixed array, or a vector that holds a `Map`, a `Set`, or a
+  slot container gives the copy storage of its own on the bytecode VM, as a
+  struct field already did: `let b = a` then a write through `b` reached `a`.
+- Copying a vector whose elements are `Map` values gives each copy a table of
+  its own on the compiled tiers. Both vectors freed the same table, so reading
+  either after the copy could end the program.
 
 ## 0.58.12 - Playground fixes: a real clock, an exit status, a wait that answers
 

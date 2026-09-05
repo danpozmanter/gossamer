@@ -845,3 +845,36 @@ println("{}", total)
         Duration::from_millis(800),
     );
 }
+
+/// A `mut` by-value aggregate parameter is copied once per call, not twice:
+/// the callee's own frame swaps its value-container fields for copies of its
+/// own on entry, so a caller that copies the aggregate first pays for the same
+/// table again. The wide run below took twice the narrow one per entry while
+/// both sides copied.
+#[test]
+fn mut_by_value_parameter_copies_its_table_once() {
+    let binary = build_release(
+        "mut_byvalue_single_copy",
+        r#"
+use std::env
+struct S { m: Map<i64, i64>, n: i64 }
+fn writer(mut s: S, k: i64) -> i64 { s.n = k; s.m.get_or(k, 0) }
+let size: i64 = env::args()[0].to_i64().unwrap_or(64)
+let mut m = Map::new()
+for i in 0..size { m.insert(i, i) }
+let s = S { m: m, n: 0 }
+let mut total: i64 = 0
+for i in 0..20000 { total += writer(s, i % 8) }
+println("{} {}", total, s.m.len())
+"#,
+    );
+    assert_output(&binary, 64, "70000 64");
+    let narrow = timed(&binary, 64);
+    let wide = timed(&binary, 2048);
+    assert_linear_and_fast(
+        "mut-by-value-single-copy",
+        narrow,
+        wide,
+        Duration::from_millis(900),
+    );
+}

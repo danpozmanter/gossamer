@@ -3475,7 +3475,9 @@ impl<'tcx> FnBuilder<'tcx> {
                         }
                     }
                 }
-                HirExprKind::Index { .. } | HirExprKind::Field { .. }
+                HirExprKind::Index { .. }
+                | HirExprKind::Field { .. }
+                | HirExprKind::TupleIndex { .. }
                     if self.place_root_is_local(receiver) =>
                 {
                     self.compile_place_store(receiver, dst)?;
@@ -4695,7 +4697,10 @@ impl<'tcx> FnBuilder<'tcx> {
         }
         matches!(
             place.kind,
-            HirExprKind::Path { .. } | HirExprKind::Field { .. } | HirExprKind::Index { .. }
+            HirExprKind::Path { .. }
+                | HirExprKind::Field { .. }
+                | HirExprKind::TupleIndex { .. }
+                | HirExprKind::Index { .. }
         )
         .then_some(place)
     }

@@ -1182,7 +1182,24 @@ impl<'a> Builder<'a> {
                 let callee_shares_storage = callee_param_shareable
                     .as_ref()
                     .is_some_and(|flags| flags.get(idx).copied().unwrap_or(false));
+                // A Gossamer callee's own frame swaps every value-container
+                // field of a by-value aggregate parameter - a `Map`, `Set`,
+                // `Deque`, or heap, none of which carries a reference count -
+                // for a copy of its own on entry, which is the independent
+                // storage a copy here would be for, so making one first copies
+                // the same table twice per call. A `Vec` or slice field is the
+                // exception the copy stays for: the callee's share of one is a
+                // retain, so its `push` would reach the caller's vector.
+                let callee_copies_its_aggregate = callee_param_shareable.is_some()
+                    && expected_ty.is_some_and(|expected| {
+                        let fields = crate::lower::aggregate_rc_field_paths(self.tcx, expected);
+                        !fields.is_empty()
+                            && fields
+                                .iter()
+                                .all(|(_, kind)| *kind != crate::lower::FieldRcKind::Vec)
+                    });
                 let owned_clone_parameter = !callee_shares_storage
+                    && !callee_copies_its_aggregate
                     && expected_ty.is_some_and(|expected| {
                         matches!(
                             self.tcx.kind_of(expected),

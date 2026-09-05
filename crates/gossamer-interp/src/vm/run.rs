@@ -34,6 +34,15 @@ fn map_like_deep_clone(v: &Value) -> Value {
         Value::StrIntMap(m) => {
             Value::StrIntMap(Arc::new(parking_lot::Mutex::new(m.lock().clone())))
         }
+        // A tuple or fixed array reaches its elements the way a struct
+        // reaches its fields, so an element holding a table takes storage of
+        // its own rather than a second handle on the source's.
+        Value::Tuple(elems) if elems.iter().any(holds_shared_storage) => {
+            Value::Tuple(Arc::new(elems.iter().map(map_like_deep_clone).collect()))
+        }
+        Value::Array(elems) if elems.iter().any(holds_shared_storage) => {
+            Value::Array(Arc::new(elems.iter().map(map_like_deep_clone).collect()))
+        }
         Value::Struct(inner) => match inner.name.as_str() {
             // The slot containers reach their elements through a registry
             // handle exactly as a `Set` does, so a binding taken from one
@@ -74,6 +83,7 @@ fn map_like_deep_clone(v: &Value) -> Value {
 fn holds_shared_storage(v: &Value) -> bool {
     match v {
         Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_) => true,
+        Value::Tuple(elems) | Value::Array(elems) => elems.iter().any(holds_shared_storage),
         Value::Struct(inner) => {
             matches!(
                 inner.name.as_str(),
