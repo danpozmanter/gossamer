@@ -34,6 +34,24 @@
 - Copying a vector whose elements are `Map` values gives each copy a table of
   its own on the compiled tiers. Both vectors freed the same table, so reading
   either after the copy could end the program.
+- An HTTP server survives a momentary shortage rather than ending on it.
+  `accept` answers `EMFILE`, `ENFILE`, `ENOBUFS`, or a peer that left during
+  the handshake while the listener is still perfectly able to answer the next
+  client, and every accept loop treated one as the end of its listener: the
+  server reported a clean exit and refused every connection after it. Such an
+  error is now waited out and retried, on the one-line `http::serve`, on a
+  `http::Server`, on the TLS server, and on h2c.
+- `[value; N]` gives every slot its own storage when the repeated value holds a
+  `Map`, a `Set`, or a slot container on the compiled tiers. All N slots named
+  one table and each freed it, so a repeat inside a loop corrupted the heap.
+- A program that declares `Box`, `Arc`, or `Rc` reaches its own associated
+  functions. `Box::new(x)` on the wrapper nothing declares stays the identity
+  it is in a managed language, but a user `impl Box { fn new(p: i64) -> Box }`
+  was passed over on the compiled tiers and the argument came back in the
+  struct's place. `String::from` is settled the same way.
+- A container bound out of a container element takes storage of its own on the
+  bytecode VM, as one bound out of a struct field already did: `let m = xs[i].m`
+  then a write through `m` reached the element's table.
 
 ## 0.58.12 - Playground fixes: a real clock, an exit status, a wait that answers
 

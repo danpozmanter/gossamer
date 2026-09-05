@@ -346,13 +346,25 @@ where
     // The loop itself can still admit a connection whose handler reaches a
     // channel, so it counts as an actor while it runs.
     let _actor = crate::sched_global::ExternalActor::enter();
+    let mut backoff = crate::accept::AcceptBackoff::new();
     loop {
         if crate::sched_global::is_shutdown_requested() {
             break;
         }
         let stream = match listener.accept() {
-            Ok((s, _)) => s,
+            Ok((s, _)) => {
+                backoff.reset();
+                s
+            }
+            // A signal delivered to this thread - the scheduler's own
+            // preemption among them - interrupts the call without touching
+            // the listener, so it is asked again at once rather than paced
+            // like a shortage.
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) if crate::accept::accept_error_is_transient(&e) => {
+                backoff.settle();
+                continue;
+            }
             Err(_) => break,
         };
         if crate::sched_global::is_shutdown_requested() {
@@ -426,13 +438,25 @@ pub(crate) fn accept_serve_with<F>(
     // The loop itself can still admit a connection whose handler reaches a
     // channel, so it counts as an actor while it runs.
     let _actor = crate::sched_global::ExternalActor::enter();
+    let mut backoff = crate::accept::AcceptBackoff::new();
     loop {
         if shutdown.load(Ordering::Acquire) || crate::sched_global::is_shutdown_requested() {
             break;
         }
         let stream = match listener.accept() {
-            Ok((s, _)) => s,
+            Ok((s, _)) => {
+                backoff.reset();
+                s
+            }
+            // A signal delivered to this thread - the scheduler's own
+            // preemption among them - interrupts the call without touching
+            // the listener, so it is asked again at once rather than paced
+            // like a shortage.
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) if crate::accept::accept_error_is_transient(&e) => {
+                backoff.settle();
+                continue;
+            }
             Err(_) => break,
         };
         if shutdown.load(Ordering::Acquire) || crate::sched_global::is_shutdown_requested() {

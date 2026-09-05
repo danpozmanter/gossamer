@@ -3017,6 +3017,30 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         field_gaps[bi][si + 1].push((true, place.local, f, w));
                     }
                 }
+                // `dest = Repeat(Copy(src))` fills every slot with the same
+                // words, so each slot names the source aggregate's field
+                // pointers. The destination releases each slot's fields at its
+                // death, so every slot takes a share of its own here - a value
+                // container a table of its own, exactly as the whole-aggregate
+                // copy above does. A repeated value that IS the managed thing
+                // rather than an aggregate holding one is minted per slot by
+                // the operand pass instead, which is what the empty field walk
+                // says.
+                if let Rvalue::Repeat {
+                    value: Operand::Copy(src),
+                    ..
+                } = rvalue
+                    && src.projection.is_empty()
+                    && (src.local.0 as usize) < body.locals.len()
+                    && !agg_rc_fields(body.locals[src.local.0 as usize].ty).is_empty()
+                    && !vec_borrow_agg[place.local.0 as usize]
+                    && !extraction_seed[place.local.0 as usize]
+                    && !enum_child_borrow[place.local.0 as usize]
+                {
+                    for (f, w) in agg_rc_fields(body.locals[place.local.0 as usize].ty) {
+                        field_gaps[bi][si + 1].push((true, place.local, f, w));
+                    }
+                }
                 // Sub-aggregate field extract `dest = Copy(src.field)` where
                 // the extracted value is itself a by-value struct/tuple: `dest`
                 // becomes its own agg-local and releases its nested RC fields at

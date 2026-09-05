@@ -221,6 +221,7 @@ pub fn collect_process_allocator(force: bool) {
     }
 }
 
+pub mod accept;
 pub mod builtins;
 pub mod c_abi;
 pub mod clock;

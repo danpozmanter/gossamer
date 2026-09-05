@@ -138,15 +138,26 @@ fn run_and_check(cmd: &mut Command) {
     let (h_body, h_code) = curl(&addr, "/health");
     let (e_body, e_code) = curl(&addr, "/echo");
     let (m_body, m_code) = curl(&addr, "/missing");
+    // A status of zero means curl reached nothing, which is the server's
+    // state to explain: it has either stopped accepting or ended. Reading
+    // that state here is what makes such a failure diagnosable instead of a
+    // bare `0 != 200`.
     let _ = child.kill();
-    let _ = child.wait();
+    let ended = child
+        .wait()
+        .map_or_else(|e| e.to_string(), |s| s.to_string());
+    let mut complaint = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = std::io::Read::read_to_string(&mut stderr, &mut complaint);
+    }
+    let server = format!("server {ended}; stderr: {}", complaint.trim());
 
-    assert_eq!(h_code, 200, "/health status");
-    assert_eq!(h_body, "ok", "/health body");
-    assert_eq!(e_code, 200, "/echo status");
-    assert_eq!(e_body, "echo /echo", "/echo body");
-    assert_eq!(m_code, 404, "/missing status");
-    assert_eq!(m_body, "not found", "/missing body");
+    assert_eq!(h_code, 200, "/health status ({server})");
+    assert_eq!(h_body, "ok", "/health body ({server})");
+    assert_eq!(e_code, 200, "/echo status ({server})");
+    assert_eq!(e_body, "echo /echo", "/echo body ({server})");
+    assert_eq!(m_code, 404, "/missing status ({server})");
+    assert_eq!(m_body, "not found", "/missing body ({server})");
 }
 
 #[test]

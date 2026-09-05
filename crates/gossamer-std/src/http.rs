@@ -763,12 +763,14 @@ pub mod server {
             Ok(c) => Some(mio::net::TcpListener::from_std(c)),
             Err(_) => None,
         };
+        let mut accept_backoff = gossamer_runtime::accept::AcceptBackoff::new();
         loop {
             if shutdown.load(Ordering::Relaxed) {
                 return;
             }
             match listener.accept() {
                 Ok((stream, _)) => {
+                    accept_backoff.reset();
                     let _ = stream.set_nonblocking(false);
                     if shutdown.load(Ordering::Relaxed) {
                         let _ = stream.shutdown(Shutdown::Both);
@@ -820,6 +822,9 @@ pub mod server {
                     }
                 }
                 Err(ref e) if matches!(e.kind(), io::ErrorKind::Interrupted) => {}
+                Err(ref e) if gossamer_runtime::accept::accept_error_is_transient(e) => {
+                    accept_backoff.settle();
+                }
                 Err(err) => {
                     if !shutdown.load(Ordering::Relaxed) {
                         eprintln!("http: accept error: {err}");
@@ -1737,12 +1742,14 @@ pub mod server {
         dispatch_tx: std::sync::mpsc::SyncSender<(Request, std::sync::mpsc::Sender<Response>)>,
     ) {
         let _ = listener.set_nonblocking(true);
+        let mut accept_backoff = gossamer_runtime::accept::AcceptBackoff::new();
         loop {
             if shutdown.load(Ordering::Relaxed) {
                 return;
             }
             match listener.accept() {
                 Ok((stream, _)) => {
+                    accept_backoff.reset();
                     let _ = stream.set_nonblocking(false);
                     if shutdown.load(Ordering::Relaxed) {
                         let _ = stream.shutdown(Shutdown::Both);
@@ -1773,6 +1780,9 @@ pub mod server {
                     gossamer_runtime::platform::sleep(Duration::from_millis(50));
                 }
                 Err(ref e) if matches!(e.kind(), io::ErrorKind::Interrupted) => {}
+                Err(ref e) if gossamer_runtime::accept::accept_error_is_transient(e) => {
+                    accept_backoff.settle();
+                }
                 Err(_) => return,
             }
         }

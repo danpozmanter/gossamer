@@ -1,0 +1,76 @@
+// `[value; N]` where the repeated value holds a container.
+//
+// A `Map`, a `Set`, and a slot container reach their storage through a handle
+// that carries no count of its holders, so every slot the repeat fills takes
+// storage of its own: N slots naming one table would each free it. A `Vec`
+// slot takes a share for the same reason its holder's death gives one back.
+// The repeat runs inside a loop so the whole release schedule runs many times
+// over. Bit-identical on the VM, Cranelift, and LLVM tiers.
+
+struct Slot {
+    m: Map<i64, i64>
+}
+
+struct Bag {
+    items: Vec<i64>
+    tags: Set<i64>
+}
+
+fn repeated_maps() {
+    let mut widest = 0
+    for _ in 0..50 {
+        let mut cells: [Slot; 3] = [Slot { m: { 0: 1 } }; 3]
+        cells[0].m.insert(7, 7)
+        cells[0].m.insert(8, 8)
+        let total = cells[0].m.len() + cells[1].m.len() + cells[2].m.len()
+        if total > widest {
+            widest = total
+        }
+    }
+    println("maps widest={}", widest)
+}
+
+fn repeated_vec_and_set() {
+    let mut bags: [Bag; 2] = [Bag { items: #[1, 2], tags: #{ 9 } }; 2]
+    bags[0].items.push(3)
+    bags[0].tags.insert(8)
+    println(
+        "bags {} {} {} {}"
+        bags[0].items.len()
+        bags[1].items.len()
+        bags[0].tags.len()
+        bags[1].tags.len()
+    )
+}
+
+fn repeated_tuples() {
+    let mut pairs: [(Map<i64, i64>, i64); 2] = [({ 0: 1 }, 5); 2]
+    pairs[0].0.insert(4, 4)
+    println("pairs {} {}", pairs[0].0.len(), pairs[1].0.len())
+}
+
+// A container bound out of an element names storage the element owns, so the
+// binding takes its own exactly as one bound out of a struct field does.
+fn bound_out_of_an_element() {
+    let cells: [Slot; 2] = [Slot { m: { 0: 1 } }; 2]
+    let mut taken = cells[0].m
+    taken.insert(9, 9)
+    println(
+        "taken {} {} {}"
+        taken.len()
+        cells[0].m.len()
+        cells[1].m.len()
+    )
+
+    let tables = #[{ 1: 1 }]
+    let mut first = tables[0]
+    first.insert(2, 2)
+    println("tables {} {}", first.len(), tables[0].len())
+}
+
+fn main() {
+    repeated_maps()
+    repeated_vec_and_set()
+    repeated_tuples()
+    bound_out_of_an_element()
+}

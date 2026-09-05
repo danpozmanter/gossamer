@@ -291,22 +291,28 @@ impl<'a> Builder<'a> {
                     return Some(local);
                 }
             }
-            // `Box::new(x)` / `Arc::new(x)` / `Rc::new(x)` are
-            // identity wrappers in a fully GC'd language - every
-            // value already lives on the GC heap. Without this
-            // identity passthrough the call lands on a generic
-            // dispatch that returns a typed-zero stub, which then
-            // landed as the `rest` payload of a `Cons(_, rest)`
-            // and segfaulted the next match arm reading disc off
-            // a null pointer (the linked_list reproducer).
-            if matches!(joined.as_str(), "Box::new" | "Arc::new" | "Rc::new") && args.len() == 1 {
+            // `Box::new(x)` / `Arc::new(x)` / `Rc::new(x)` are identity
+            // wrappers in a managed language - every value already lives on
+            // the managed heap - so the argument itself is the answer, and a
+            // generic dispatch on the name would hand back a typed zero in
+            // its place. A program that declares one of these names owns its
+            // associated functions, so `impl Box { fn new(p: i64) -> Box }`
+            // is what `Box::new(5)` reaches; the passthrough answers only for
+            // the wrapper nothing in the program declares.
+            if matches!(joined.as_str(), "Box::new" | "Arc::new" | "Rc::new")
+                && args.len() == 1
+                && !self.impl_methods.contains_key(joined.as_str())
+            {
                 return self.lower_expr(&args[0]);
             }
             // `String::from(s)` is identity for a string argument - gos
             // `String` is already the owned C-string representation and a
             // string literal is already a `String`, mirroring Rust's
             // `String::from(&str)` without a separate conversion.
-            if joined == "String::from" && args.len() == 1 {
+            if joined == "String::from"
+                && args.len() == 1
+                && !self.impl_methods.contains_key(joined.as_str())
+            {
                 return self.lower_expr(&args[0]);
             }
             // Fuse the common `format!("prefix{:08}", integer)` shape all

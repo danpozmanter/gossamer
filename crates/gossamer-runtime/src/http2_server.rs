@@ -156,9 +156,18 @@ impl<F> Drop for Deadline<F> {
 pub fn serve_h2c_with_handler(addr: &str, env_addr: usize, fn_addr: usize) -> std::io::Result<()> {
     let listener = std::net::TcpListener::bind(addr)?;
     let _ = listener.set_nonblocking(false);
+    let mut backoff = crate::accept::AcceptBackoff::new();
     loop {
         let (sock, _peer) = match listener.accept() {
-            Ok(p) => p,
+            Ok(pair) => {
+                backoff.reset();
+                pair
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) if crate::accept::accept_error_is_transient(&e) => {
+                backoff.settle();
+                continue;
+            }
             Err(_) => break Ok(()),
         };
         let _ = sock.set_nodelay(true);

@@ -828,9 +828,13 @@ fn is_path_expr(expr: &HirExpr) -> bool {
 fn is_place_expr(expr: &HirExpr) -> bool {
     match &expr.kind {
         HirExprKind::Path { .. } => true,
+        // An index names storage its container owns exactly as a field names
+        // storage its struct owns, so `xs[i]` and `xs[i].m` are places the way
+        // `s.m` and `t.0` are.
         HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
             is_place_expr(receiver)
         }
+        HirExprKind::Index { base, .. } => is_place_expr(base),
         _ => false,
     }
 }

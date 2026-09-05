@@ -1,0 +1,56 @@
+// A program that declares `Box`, `Arc`, or `Rc` owns those names.
+//
+// `Box::new(x)` on the wrapper nothing declares is an identity - every value
+// already lives on the managed heap - but a program declaring `impl Box { fn
+// new(p: i64) -> Box }` names its own associated function, and that is what
+// the call reaches. The same holds for `String::from`. Bit-identical on the
+// VM, Cranelift, and LLVM tiers.
+
+struct Box {
+    items: Vec<i64>
+}
+
+impl Box {
+    fn new(p: i64) -> Box {
+        let mut items: Vec<i64> = #[]
+        for n in 0..p {
+            items.push(n)
+        }
+        Box { items: items }
+    }
+}
+
+struct Arc {
+    label: String
+}
+
+impl Arc {
+    fn new(label: String) -> Arc {
+        Arc { label: label }
+    }
+}
+
+struct Rc {
+    count: i64
+}
+
+impl Rc {
+    fn new(count: i64) -> Rc {
+        Rc { count: count + 1 }
+    }
+}
+
+fn main() {
+    let held = Box::new(5)
+    let mut sum = 0
+    for i in 0..5 {
+        sum += held.items[i]
+    }
+    println("box len={} sum={}", held.items.len(), sum)
+
+    let named = Arc::new("shared")
+    println("arc {}", named.label)
+
+    let counted = Rc::new(2)
+    println("rc {}", counted.count)
+}
