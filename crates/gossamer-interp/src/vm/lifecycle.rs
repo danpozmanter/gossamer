@@ -521,17 +521,20 @@ impl Vm {
                 HirItemKind::Impl(decl) => {
                     for method in &decl.methods {
                         let params: Vec<Ty> = method.params.iter().map(|p| p.ty).collect();
-                        fn_param_tys.insert(method.name.name.clone(), params.clone());
+                        // A method is reached by its declaring type, so it is
+                        // filed under that type alone. The bare and
+                        // module-prefixed spellings are what a free function
+                        // of the same name owns, and a call written
+                        // `run(dir)` reads its parameters from here: a
+                        // receiver filed there types the first argument as
+                        // the receiver, which lands a `&mut` cell where the
+                        // function declared a value.
                         if let Some(type_name) = &decl.self_name {
                             let qualified = format!("{}::{}", type_name.name, method.name.name);
                             fn_param_tys.insert(qualified.clone(), params.clone());
                             if let Some(prefix) = &module_prefix {
-                                fn_param_tys
-                                    .insert(format!("{prefix}::{qualified}"), params.clone());
+                                fn_param_tys.insert(format!("{prefix}::{qualified}"), params);
                             }
-                        }
-                        if let Some(prefix) = &module_prefix {
-                            fn_param_tys.insert(format!("{prefix}::{}", method.name.name), params);
                         }
                     }
                 }

@@ -2,6 +2,13 @@
 
 ## 0.58.13 - By-value parameters forwarded whole, scalar fields read beside a table
 
+- A free function keeps its own parameters beside a method of the same name. A
+  method was filed under its bare and module-prefixed spellings as well as its
+  declaring type's, so a call written `run(dir)` read the method's parameters:
+  the receiver slot wrapped the first argument in a `&mut` cell, and the callee
+  received a reference where it declared a value. A dependent package saw it
+  first, since a library's `impl` items are read after the entry file's own
+  functions.
 - A method taking `self` by value that reaches its aggregate's `Map`, `Set`, or
   `BTreeMap` field through a SECOND by-value call costs the lookups it performs
   rather than a copy of the table they read. The nested frame booked a share of

@@ -317,7 +317,7 @@ pub fn collect_impl_method_names(program: &gossamer_hir::HirProgram) -> ImplMeth
                         out.insert(qualified);
                     }
                 }
-                &decl.methods
+                continue;
             }
             gossamer_hir::HirItemKind::Trait(decl) => &decl.methods,
             _ => continue,

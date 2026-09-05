@@ -179,6 +179,81 @@ fn project_build_run(dir: &Path, id_tail: &str) -> (String, String, Option<i32>)
 }
 
 #[test]
+fn a_free_function_keeps_its_parameters_beside_a_method_of_the_same_name() {
+    // A method is reached through its declaring type, so a call written
+    // `run(name)` is the entry file's own function. Filing the method under
+    // the bare name too handed that call the method's parameters, and the
+    // receiver slot wrapped the argument in a `&mut` cell: the string
+    // reached the callee as a reference and concatenating it failed.
+    let dir = write_project(
+        "free-fn-vs-method",
+        "example.com/shadow",
+        &[
+            (
+                "src/engine/mod.gos",
+                "pub struct Store { pub n: i64 }\n\n\
+                 pub fn open(name: String) -> Result<Store, String> {\n\
+                 \x20   Ok(Store { n: tail(name).len() })\n\
+                 }\n\n\
+                 fn tail(name: String) -> String { name + \"/END\" }\n",
+            ),
+            (
+                "src/engine/plan.gos",
+                "use crate::engine\n\n\
+                 pub struct Prepared { pub tag: i64 }\n\n\
+                 impl Prepared {\n\
+                 \x20   pub fn run(&mut self, st: &mut engine::Store, extra: i64) -> i64 {\n\
+                 \x20       self.tag + st.n + extra\n\
+                 \x20   }\n\
+                 }\n\n\
+                 pub fn drive(st: &mut engine::Store) -> i64 {\n\
+                 \x20   let mut p = Prepared { tag: 1 }\n\
+                 \x20   p.run(st, 2)\n\
+                 }\n",
+            ),
+            (
+                "src/main.gos",
+                "use engine\n\
+                 use engine::plan\n\n\
+                 fn main() {\n\
+                 \x20   if let Err(e) = run(\"abc\") { println(\"ERR {}\", e) }\n\
+                 \x20   let mut st = engine::Store { n: 3 }\n\
+                 \x20   println(\"{}\", plan::drive(&mut st))\n\
+                 }\n\n\
+                 fn run(name: String) -> Result<(), String> {\n\
+                 \x20   let st = engine::open(name)?\n\
+                 \x20   println(\"n = {}\", st.n)\n\
+                 \x20   Ok(())\n\
+                 }\n",
+            ),
+        ],
+    );
+
+    let (out, err, code) = project_run_vm(&dir);
+    assert_eq!(
+        code,
+        Some(0),
+        "vm run failed:\nstdout: {out}\nstderr: {err}"
+    );
+    assert!(out.contains("n = 7"), "vm stdout: {out}\nstderr: {err}");
+    assert!(
+        out.contains('6'),
+        "the method still answers its own call: {out}"
+    );
+
+    let (bout, berr, bcode) = project_build_run(&dir, "shadow");
+    assert_eq!(
+        bcode,
+        Some(0),
+        "native run failed:\nstdout: {bout}\nstderr: {berr}"
+    );
+    assert!(
+        bout.contains("n = 7"),
+        "native stdout: {bout}\nstderr: {berr}"
+    );
+}
+
+#[test]
 fn cross_file_project_bundles_sibling_modules() {
     let dir = fresh_dir("cross-file");
     let src = dir.join("src");
