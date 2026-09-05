@@ -846,35 +846,68 @@ println("{}", total)
     );
 }
 
-/// A `mut` by-value aggregate parameter is copied once per call, not twice:
-/// the callee's own frame swaps its value-container fields for copies of its
-/// own on entry, so a caller that copies the aggregate first pays for the same
-/// table again. The wide run below took twice the narrow one per entry while
-/// both sides copied.
+/// A `mut` by-value aggregate parameter is copied once per call, not twice.
+/// The callee's own frame swaps its value-container fields for copies of its
+/// own on entry, which is the independent storage a caller-side copy would be
+/// for, so a caller that copies the aggregate first pays for the same table
+/// again - on every call, against the whole table, because a `GosMap` carries
+/// no reference count.
+///
+/// The claim is about which frame books the copy, so the post-RC MIR answers
+/// it directly and the same way on every machine: the caller hands the
+/// aggregate over booking nothing, and the callee books exactly one.
 #[test]
 fn mut_by_value_parameter_copies_its_table_once() {
-    let binary = build_release(
-        "mut_byvalue_single_copy",
-        r#"
-use std::env
+    const SOURCE: &str = r#"
 struct S { m: Map<i64, i64>, n: i64 }
 fn writer(mut s: S, k: i64) -> i64 { s.n = k; s.m.get_or(k, 0) }
-let size: i64 = env::args()[0].to_i64().unwrap_or(64)
-let mut m = Map::new()
-for i in 0..size { m.insert(i, i) }
-let s = S { m: m, n: 0 }
-let mut total: i64 = 0
-for i in 0..20000 { total += writer(s, i % 8) }
-println("{} {}", total, s.m.len())
-"#,
+fn drive(s: S, rounds: i64) -> i64 {
+    let mut total = 0
+    for i in 0..rounds { total += writer(s, i % 8) }
+    total
+}
+fn main() {
+    let mut m = Map::new()
+    for i in 0..8 { m.insert(i, i) }
+    println("{}", drive(S { m: m, n: 0 }, 200000))
+}
+"#;
+    let (dir, source_path) = fixture("byvalue_copy_shape", SOURCE);
+    let output = Command::new(env!("CARGO_BIN_EXE_gos"))
+        .env("GOS_DUMP_MIR_RC", "1")
+        .arg("run")
+        .arg(&source_path)
+        .output()
+        .expect("run the by-value fixture with the post-RC MIR dump");
+    assert!(
+        output.status.success(),
+        "fixture failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert_output(&binary, 64, "70000 64");
-    let narrow = timed(&binary, 64);
-    let wide = timed(&binary, 2048);
-    assert_linear_and_fast(
-        "mut-by-value-single-copy",
-        narrow,
-        wide,
-        Duration::from_millis(900),
+    let dump = String::from_utf8_lossy(&output.stderr).into_owned();
+    let _ = fs::remove_dir_all(&dir);
+
+    // Table clones booked by one body, counted between its header and the next.
+    let clones = |name: &str| -> Option<usize> {
+        let header = format!("=== MIR(post-rc) {name} ===");
+        let body = dump.split(&header).nth(1)?;
+        let body = body.split("=== MIR(post-rc) ").next().unwrap_or(body);
+        Some(body.matches("gos_rt_map_field_clone").count())
+    };
+
+    // A body that never reached the dump would make every count below vacuous.
+    let in_drive = clones("drive").unwrap_or_else(|| {
+        panic!("the calling body was never lowered, so this test proved nothing:\n{dump}")
+    });
+    let in_writer = clones("writer").unwrap_or_else(|| {
+        panic!("the called body was never lowered, so this test proved nothing:\n{dump}")
+    });
+    assert_eq!(
+        in_drive, 0,
+        "the caller copied the table its callee goes on to copy again"
+    );
+    assert_eq!(
+        in_writer, 1,
+        "a callee that writes its by-value parameter needs exactly one copy"
     );
 }
