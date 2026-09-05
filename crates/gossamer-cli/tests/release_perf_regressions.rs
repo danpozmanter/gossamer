@@ -767,3 +767,81 @@ fn main() {
          1 MiB={small}ms, 8 MiB={large}ms"
     );
 }
+
+/// A by-value `self` accessor that reaches the aggregate's `Map` field through
+/// a SECOND by-value `self` call shares that field with its caller, so the
+/// fixed number of calls below costs the lookups it performs and not the table
+/// they read: a `GosMap` carries no reference count, so a share minted for the
+/// nested parameter copies the whole table on every call. The wide run below
+/// took fifty times the narrow one while the nested frame owned a share.
+#[test]
+fn nested_by_value_self_shares_its_map_field() {
+    let binary = build_release(
+        "nested_byvalue_map_field_share",
+        r#"
+use std::env
+struct K { mem: Map<i64, i64>, pos: i64 }
+impl K {
+    fn read(self, a: i64) -> i64 { self.mem.get_or(a, 0) }
+    fn read2(self, a: i64) -> i64 { self.read(self.read(a)) }
+    fn run(&mut self, n: i64) {
+        for _ in 0..n { self.pos = self.read2(self.pos + 1) % 2000 }
+    }
+}
+let size: i64 = env::args()[0].to_i64().unwrap_or(64)
+let mut mem = Map::new()
+for i in 0..size * 2 { mem.insert(i, (i * 3) % 1_000_000) }
+let mut k = K { mem: mem, pos: 0 }
+k.run(100_000)
+println("{}", k.pos)
+"#,
+    );
+    assert_output(&binary, 64, "9");
+    let narrow = timed(&binary, 64);
+    let wide = timed(&binary, 4096);
+    assert_linear_and_fast(
+        "nested-by-value-self-map-field",
+        narrow,
+        wide,
+        Duration::from_millis(800),
+    );
+}
+
+/// A by-value `self` method that reads only the aggregate's SCALAR field pays
+/// for that field, not for the `Map` beside it: the parameter's heap fields
+/// are what a share would be minted for, and a scalar in a tuple, a struct
+/// literal, or a container names none of them. The wide run below scaled with
+/// the table while any field read at all booked its clone.
+#[test]
+fn scalar_field_read_does_not_copy_the_map_beside_it() {
+    let binary = build_release(
+        "scalar_field_beside_map",
+        r#"
+use std::env
+struct K { mem: Map<i64, i64>, pos: i64 }
+impl K {
+    fn pair(self, a: i64) -> i64 {
+        let t = (self.pos, a)
+        let v = #[self.pos, a]
+        t.0 + t.1 + v[0]
+    }
+}
+let size: i64 = env::args()[0].to_i64().unwrap_or(64)
+let mut mem = Map::new()
+for i in 0..size { mem.insert(i, i) }
+let k = K { mem: mem, pos: 3 }
+let mut total: i64 = 0
+for i in 0..200000 { total += k.pair(i % 8) }
+println("{}", total)
+"#,
+    );
+    assert_output(&binary, 64, "1900000");
+    let narrow = timed(&binary, 64);
+    let wide = timed(&binary, 4096);
+    assert_linear_and_fast(
+        "scalar-field-beside-map",
+        narrow,
+        wide,
+        Duration::from_millis(800),
+    );
+}

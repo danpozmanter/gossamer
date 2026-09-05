@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.58.13 - By-value parameters forwarded whole, scalar fields read beside a table
+
+- A method taking `self` by value that reaches its aggregate's `Map`, `Set`, or
+  `BTreeMap` field through a SECOND by-value call costs the lookups it performs
+  rather than a copy of the table they read. The nested frame booked a share of
+  every heap field it was handed, and a `GosMap` carries no reference count, so
+  that share copied the whole table on every call - the compiled tiers ran
+  fifteen to thirty times the bytecode VM on a struct whose accessors nest.
+  A callee's parameter storage is its own frame's, so handing a by-value
+  parameter on to another Gossamer function transfers nothing.
+- A by-value parameter read only for a SCALAR field costs that field, not the
+  container beside it. Putting `self.pos` in a tuple, a struct literal, or a
+  `Vec` literal booked the neighbouring table's clone, because the walk judged
+  a read of any field as a read of every field.
+
 ## 0.58.12 - Playground fixes: a real clock, an exit status, a wait that answers
 
 - A program that reads the clock, sleeps, sets or reads an environment

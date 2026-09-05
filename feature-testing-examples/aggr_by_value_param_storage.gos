@@ -7,7 +7,14 @@
 // entry and freed at every exit, both through the field's address. The
 // callee's parameter storage therefore has to be its own frame's, never the
 // caller's aggregate, or the first by-value call empties the table the caller
-// goes on to read. Bit-identical on the VM, Cranelift, and LLVM tiers.
+// goes on to read.
+//
+// Because that storage is the callee's, handing a by-value parameter WHOLE to
+// another function transfers nothing: the frame that hands it over outlives the
+// call, and the callee books whatever share it needs itself. The forwarding
+// half below gates that - a parameter passed on to a writer, to an identity, and
+// to a container that keeps it, read back through its own fields afterwards.
+// Bit-identical on the VM, Cranelift, and LLVM tiers.
 
 struct IC {
     memory: Map<i64, i64>
@@ -56,6 +63,86 @@ fn lookup(ic: IC, addr: i64) -> i64 {
     ic.memory.get_or(addr, -1)
 }
 
+// --- Forwarding a by-value parameter whole ---
+
+struct Bag {
+    counts: Map<i64, i64>
+    seen: Set<i64>
+    queue: Deque<i64>
+    items: Vec<i64>
+    tag: i64
+}
+
+// Writes land on the callee's own copy of the aggregate.
+fn bump(mut b: Bag, k: i64) -> i64 {
+    b.counts.insert(k, k * 10)
+    b.seen.insert(k)
+    b.queue.push_back(k)
+    b.items.push(k)
+    b.counts.len() + b.seen.len() + b.queue.len() + b.items.len()
+}
+
+// Hands the aggregate straight back, so the caller's binding owns the result.
+fn same(b: Bag) -> Bag { b }
+
+// A container keeps the aggregate past the call, so this frame owns a share of
+// the fields it stores and the parameter is not shared with the caller.
+fn stash(b: Bag) -> i64 {
+    let mut held: Vec<Bag> = #[]
+    held.push(b)
+    held[0].counts.len() + held[0].queue.len() + held.len()
+}
+
+fn peek(b: Bag, k: i64) -> i64 { b.counts.get_or(k, -1) + b.queue.len() }
+
+// The parameter under test: forwarded whole to each shape above, then read
+// back through its own fields.
+fn forward(b: Bag, k: i64) -> i64 {
+    let written = bump(b, k)
+    let echoed = same(b)
+    let held = stash(b)
+    let read = peek(b, k)
+    written + echoed.counts.len() + held + read + b.counts.len() + b.seen.len() +
+        b.queue.len() + b.items.len()
+}
+
+// Three by-value levels deep, every level only reading.
+fn depth3(b: Bag, k: i64) -> i64 { b.counts.get_or(k, 0) }
+fn depth2(b: Bag, k: i64) -> i64 { depth3(b, depth3(b, k)) }
+fn depth1(b: Bag, k: i64) -> i64 { depth2(b, depth2(b, k)) }
+
+fn forwarding() {
+    let mut counts = Map::new()
+    let mut seen = Set::new()
+    let mut queue = Deque::new()
+    let mut items: Vec<i64> = #[]
+    for i in 0..6 {
+        counts.insert(i, i * 2)
+        seen.insert(i)
+        queue.push_back(i)
+        items.push(i)
+    }
+    let bag = Bag { counts: counts, seen: seen, queue: queue, items: items, tag: 4 }
+    let mut total = 0
+    for r in 0..3 {
+        total += forward(bag, r + 1)
+    }
+    println(
+        "forward total={} counts={} seen={} queue={} items={}"
+        total, bag.counts.len(), bag.seen.len(), bag.queue.len(), bag.items.len()
+    )
+    println(
+        "unwritten c1={} c2={} c3={} stashed={}"
+        bag.counts.get_or(1, -1), bag.counts.get_or(2, -1), bag.counts.get_or(3, -1)
+        stash(bag)
+    )
+    let echoed = same(bag)
+    println(
+        "depth={} echoed c={} i={} tag={}"
+        depth1(bag, 2), echoed.counts.len(), echoed.items.len(), echoed.tag
+    )
+}
+
 fn main() {
     let p: Vec<i64> = #[1, 3, 1, 1, 109]
 
@@ -64,4 +151,6 @@ fn main() {
         ic.run([k, k + 1])
         println("after {} first={} last={} len={}", k, lookup(ic, 0), lookup(ic, 4), ic.memory.len())
     }
+
+    forwarding()
 }

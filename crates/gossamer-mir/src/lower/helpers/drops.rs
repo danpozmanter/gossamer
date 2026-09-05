@@ -2652,10 +2652,12 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     gossamer_types::TyKind::Ref { .. }
                 )
         })
-        .filter(|&i| !param_fields_only_read(body, Local(u32::try_from(i).unwrap_or(0))))
         .filter_map(|i| {
             let fields = agg_rc_fields(body.locals[i].ty);
             (!fields.is_empty()).then_some((i, fields))
+        })
+        .filter(|(i, fields)| {
+            !param_fields_only_read(body, Local(u32::try_from(*i).unwrap_or(0)), fields)
         })
         .collect();
 
@@ -3334,13 +3336,44 @@ fn mints_owned_string(name: &str) -> bool {
 /// `Map`-carrying struct proportional to the work it does: a `GosMap` has no
 /// reference count, so its retain copies the entire table.
 ///
+/// Handing the parameter whole to another Gossamer function is such a read:
+/// the callee books its own share if it needs one, so a nested by-value `self`
+/// costs the lookups it performs rather than a copy of the table they read.
+///
+/// `rc_fields` names the parameter's heap-managed field paths, and only a
+/// place that can reach one of them is judged at all: a scalar field owns
+/// nothing, so putting one in a tuple, a struct literal, or a container says
+/// nothing about who owns the table beside it.
+///
 /// Conservative by construction - every use the walk does not recognise as a
 /// plain read answers `false`, and the parameter keeps its own share.
-fn param_fields_only_read(body: &Body, p: Local) -> bool {
-    use crate::ir::{Operand, Rvalue, StatementKind, Terminator};
+fn param_fields_only_read(body: &Body, p: Local, rc_fields: &AggFieldPaths) -> bool {
+    use crate::ir::{Operand, Projection, Rvalue, StatementKind, Terminator};
 
-    // Locals holding a value read out of `p`'s slots, through bare copies.
-    // Whatever they reach, the parameter's field reaches.
+    // True when a place rooted in `p` can reach one of its heap-managed
+    // fields: the whole parameter can, a projection can when it lies on the
+    // path to such a field or runs through one, and a projection this walk
+    // cannot read as a field path is assumed to. A projection that reaches
+    // only scalar slots carries nothing the frame could have to own, so the
+    // uses below judge it as they judge an unrelated local.
+    let reaches_rc_field = |projection: &[Projection]| {
+        let mut path = Vec::with_capacity(projection.len());
+        for step in projection {
+            match step {
+                Projection::Field(f) => path.push(*f),
+                Projection::Discriminant => return false,
+                _ => return true,
+            }
+        }
+        rc_fields.iter().any(|(field, _)| {
+            field.starts_with(path.as_slice()) || path.starts_with(field.as_slice())
+        })
+    };
+    // A place rooted in `p` whose value shares one of its heap fields.
+    let touches_rc = |pl: &crate::ir::Place| pl.local == p && reaches_rc_field(&pl.projection);
+
+    // Locals holding a heap-managed value read out of `p`'s slots, through
+    // bare copies. Whatever they reach, the parameter's field reaches.
     let mut carries: std::collections::HashSet<u32> = std::collections::HashSet::new();
     let mut changed = true;
     while changed {
@@ -3357,7 +3390,7 @@ fn param_fields_only_read(body: &Body, p: Local) -> bool {
                     continue;
                 };
                 let carried = if src.local == p {
-                    !src.projection.is_empty()
+                    !src.projection.is_empty() && reaches_rc_field(&src.projection)
                 } else {
                     src.projection.is_empty() && carries.contains(&src.local.0)
                 };
@@ -3368,13 +3401,15 @@ fn param_fields_only_read(body: &Body, p: Local) -> bool {
         }
     }
 
-    // Any read of the parameter or of a local carrying one of its fields.
+    // Any read of one of the parameter's heap fields, or of a local carrying
+    // one.
     let reads = |op: &Operand| match op {
-        Operand::Copy(pl) => pl.local == p || carries.contains(&pl.local.0),
+        Operand::Copy(pl) => touches_rc(pl) || carries.contains(&pl.local.0),
         _ => false,
     };
-    // The parameter's words copied out whole: every sharing rule downstream
-    // keys on such a copy, so the frame must own what it hands over.
+    // The parameter's words copied out whole: the copy names the same heap
+    // values under a second owner, and every sharing rule downstream keys on
+    // one, so the frame must own what it hands over.
     let copies_whole =
         |op: &Operand| matches!(op, Operand::Copy(pl) if pl.local == p && pl.projection.is_empty());
     // A call that keeps what it is handed, or one whose callee this walk
@@ -3385,6 +3420,20 @@ fn param_fields_only_read(body: &Body, p: Local) -> bool {
         }
         Operand::FnRef { .. } => false,
         _ => true,
+    };
+    // A Gossamer callee, as opposed to a runtime symbol. Its own drop pass
+    // books whatever share its by-value aggregate parameter needs, into
+    // parameter storage that is its frame's rather than the argument's, so
+    // handing the whole parameter to one transfers no ownership: this frame
+    // outlives the nested call, and whoever owns the fields still owns them
+    // across it. A runtime symbol's contract is per-symbol instead, so a
+    // whole hand-over to one keeps the share.
+    let user_callee = |callee: &Operand| match callee {
+        Operand::FnRef { .. } => true,
+        Operand::Const(ConstValue::Str(name)) => {
+            !name.starts_with("gos_rt_") && name != "gos_load" && name != "gos_store"
+        }
+        _ => false,
     };
 
     for block in &body.blocks {
@@ -3503,9 +3552,10 @@ fn param_fields_only_read(body: &Body, p: Local) -> bool {
                     return false;
                 }
                 let keeps = keeps_args(callee);
+                let hands_over = !user_callee(callee);
                 if args
                     .iter()
-                    .any(|op| copies_whole(op) || (keeps && reads(op)))
+                    .any(|op| (hands_over && copies_whole(op)) || (keeps && reads(op)))
                 {
                     return false;
                 }
