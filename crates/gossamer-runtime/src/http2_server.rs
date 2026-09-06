@@ -291,7 +291,10 @@ async fn serve_one_stream(
         // consume them inline or copy.
         let result_ptr = unsafe { handler(env_ptr, req_ptr) };
         let mut wire_buf: Vec<u8> = Vec::with_capacity(256);
-        let ok = extract_response_into(result_ptr, &mut wire_buf);
+        // HTTP/2 frames each stream itself and carries no connection
+        // header, so the h1 writer is asked for its keep-alive form and
+        // the header is dropped with the rest of the h1 head below.
+        let ok = extract_response_into(result_ptr, &mut wire_buf, &mut true);
         // SAFETY: drop_handler_result frees the GosResult* the
         // handler returned. result_ptr is non-null and owned by
         // this frame (extracted above without taking ownership).

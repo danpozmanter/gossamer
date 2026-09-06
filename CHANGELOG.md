@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.58.13 - By-value parameters forwarded whole, scalar fields read beside a table
+## 0.58.13 - By-value parameters forwarded whole, scalar fields read beside a table, segfault fixes
 
 - A free function keeps its own parameters beside a method of the same name. A
   method was filed under its bare and module-prefixed spellings as well as its
@@ -52,6 +52,17 @@
 - A container bound out of a container element takes storage of its own on the
   bytecode VM, as one bound out of a struct field already did: `let m = xs[i].m`
   then a write through `m` reached the element's table.
+- A compiled server ends a connection its client asked to end. `Connection:
+  close` was answered with `connection: keep-alive` and the socket was held
+  open, so a client framing by close waited for one that never came, and an
+  HTTP/1.0 request got a connection its version does not keep. The interpreted
+  server already did both; a handler naming the header now decides it on either
+  tier, and its choice is no longer written twice.
+- A server whose listener stops accepting reports it instead of answering `Ok`.
+  `serve` returned success when its acceptor had gone, so a program that stopped
+  serving looked to its caller like one that had run its course.
+- A compiled 500 answer names the connection it is written on rather than
+  always claiming one that is kept.
 
 ## 0.58.12 - Playground fixes: a real clock, an exit status, a wait that answers
 

@@ -4,9 +4,11 @@
 //! different paths. Verifies the constructor + method-chain
 //! shape works identically across tiers.
 
-use std::io::BufRead;
+use std::io::{BufRead, Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 fn gos_bin() -> PathBuf {
     let mut p = std::env::current_exe().unwrap();
@@ -54,7 +56,12 @@ fn main() {
         Ok(_) => println("{}", s.addr())
         Err(e) => eprintln("listen: {}", e)
     }
-    let _ = s.serve(r)
+    // A server that stops answering says why: `serve` reports a listener
+    // that stopped, and reaching past it at all means the loop ended.
+    match s.serve(r) {
+        Ok(_) => eprintln("serve returned with no error")
+        Err(e) => eprintln("serve: {}", e)
+    }
 }
 "#;
     std::fs::write(&path, src).unwrap();
@@ -84,30 +91,64 @@ fn main() {
         Ok(_) => println("{}", s.addr())
         Err(e) => eprintln("listen: {}", e)
     }
-    let _ = s.serve(r)
+    // A server that stops answering says why: `serve` reports a listener
+    // that stopped, and reaching past it at all means the loop ended.
+    match s.serve(r) {
+        Ok(_) => eprintln("serve returned with no error")
+        Err(e) => eprintln("serve: {}", e)
+    }
 }
 "#;
     std::fs::write(&path, src).unwrap();
     path
 }
 
-fn curl(addr: &str, path: &str) -> (String, i32) {
-    let out = Command::new("curl")
-        .arg("--silent")
-        .arg("--max-time")
-        .arg("3")
-        .arg("-w")
-        .arg("\n%{http_code}")
-        .arg(format!("http://{addr}{path}"))
-        .output()
-        .expect("curl");
-    let s = String::from_utf8_lossy(&out.stdout).into_owned();
-    // Split on the last newline to recover (body, code).
-    let mut parts = s.rsplitn(2, '\n');
-    let code_s = parts.next().unwrap_or("000");
-    let body = parts.next().unwrap_or("").to_string();
-    let code: i32 = code_s.trim().parse().unwrap_or(0);
-    (body, code)
+/// One request's status code and body, or the error that stopped it in
+/// place of a code.
+///
+/// The request is made in this process rather than through `curl`: a
+/// loopback request that fails has one reason, and reading it as an
+/// `io::Error` names that reason where an external client's exit status
+/// leaves a bare zero to guess at.
+fn request(addr: SocketAddr, path: &str) -> (String, i32, String) {
+    let attempt = || -> std::io::Result<(String, i32)> {
+        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3))?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        let mut conn = std::io::BufReader::new(stream);
+        conn.get_mut().write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )?;
+        // The message is framed by its own headers, so the body is taken by
+        // length rather than by waiting for a close: a server keeping the
+        // connection alive has still answered in full.
+        let mut status = String::new();
+        conn.read_line(&mut status)?;
+        let code = status
+            .split_whitespace()
+            .nth(1)
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
+        let mut length = 0usize;
+        loop {
+            let mut header = String::new();
+            if conn.read_line(&mut header)? == 0 || header.trim().is_empty() {
+                break;
+            }
+            if let Some((name, value)) = header.split_once(':')
+                && name.trim().eq_ignore_ascii_case("content-length")
+            {
+                length = value.trim().parse().unwrap_or(0);
+            }
+        }
+        let mut body = vec![0u8; length];
+        conn.read_exact(&mut body)?;
+        Ok((String::from_utf8_lossy(&body).into_owned(), code))
+    };
+    match attempt() {
+        Ok((body, code)) => (body, code, String::new()),
+        Err(e) => (String::new(), 0, e.to_string()),
+    }
 }
 
 /// Runs one server and asks it for every route.
@@ -126,31 +167,45 @@ fn run_and_check(cmd: &mut Command) {
     let bound = std::io::BufReader::new(child.stdout.take().expect("the child's stdout"))
         .read_line(&mut announced)
         .expect("read the address the server bound");
+    let mut complaint = String::new();
     if bound == 0 {
         let _ = child.wait();
-        let mut complaint = String::new();
         if let Some(mut stderr) = child.stderr.take() {
-            let _ = std::io::Read::read_to_string(&mut stderr, &mut complaint);
+            let _ = stderr.read_to_string(&mut complaint);
         }
         panic!("the server ended before it bound: {complaint}");
     }
-    let addr = announced.trim().to_string();
-    let (h_body, h_code) = curl(&addr, "/health");
-    let (e_body, e_code) = curl(&addr, "/echo");
-    let (m_body, m_code) = curl(&addr, "/missing");
-    // A status of zero means curl reached nothing, which is the server's
-    // state to explain: it has either stopped accepting or ended. Reading
-    // that state here is what makes such a failure diagnosable instead of a
-    // bare `0 != 200`.
+    let announced = announced.trim().to_string();
+    let addr: SocketAddr = match announced.parse() {
+        Ok(addr) => addr,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            if let Some(mut stderr) = child.stderr.take() {
+                let _ = stderr.read_to_string(&mut complaint);
+            }
+            panic!(
+                "the server announced {announced:?}, which is no address: {e}; stderr: {complaint}"
+            );
+        }
+    };
+    let (h_body, h_code, h_note) = request(addr, "/health");
+    let (e_body, e_code, e_note) = request(addr, "/echo");
+    let (m_body, m_code, m_note) = request(addr, "/missing");
+    // What the server was doing while those requests ran is half of any
+    // failure here, so it is read before the assertions rather than left
+    // for a rerun to guess at.
     let _ = child.kill();
     let ended = child
         .wait()
         .map_or_else(|e| e.to_string(), |s| s.to_string());
-    let mut complaint = String::new();
     if let Some(mut stderr) = child.stderr.take() {
-        let _ = std::io::Read::read_to_string(&mut stderr, &mut complaint);
+        let _ = stderr.read_to_string(&mut complaint);
     }
-    let server = format!("server {ended}; stderr: {}", complaint.trim());
+    let server = format!(
+        "addr {announced}; server {ended}; stderr: {}; notes: {h_note}|{e_note}|{m_note}",
+        complaint.trim()
+    );
 
     assert_eq!(h_code, 200, "/health status ({server})");
     assert_eq!(h_body, "ok", "/health body ({server})");

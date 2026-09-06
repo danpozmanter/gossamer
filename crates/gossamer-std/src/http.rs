@@ -701,6 +701,11 @@ pub mod server {
         drop(dispatch_tx);
 
         let mut served: u64 = 0;
+        // Whether the loop ended because nothing can answer any more. The
+        // acceptor owns the only sender, so a disconnect means it is gone;
+        // reporting `Ok` there would tell a caller the server ran its course
+        // when it had in fact stopped listening.
+        let mut acceptor_gone = false;
         let wake_self = || {
             // Best-effort wake - acceptor is stuck in `accept()`.
             let _ = TcpStream::connect_timeout(&bound_addr, Duration::from_millis(500));
@@ -734,7 +739,10 @@ pub mod server {
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Disconnected) => {
+                    acceptor_gone = !config.shutdown.load(Ordering::Relaxed);
+                    break;
+                }
             }
         }
 
@@ -742,6 +750,11 @@ pub mod server {
         // self-connected; a stray worker panic would just drop the
         // join handle.
         let _ = acceptor.join();
+        if acceptor_gone {
+            return Err(io::Error::other(
+                "http: the acceptor stopped before a shutdown was asked for",
+            ));
+        }
         Ok(())
     }
 
@@ -1605,6 +1618,11 @@ pub mod server {
         drop(dispatch_tx);
 
         let mut served: u64 = 0;
+        // Whether the loop ended because nothing can answer any more. The
+        // acceptor owns the only sender, so a disconnect means it is gone;
+        // reporting `Ok` there would tell a caller the server ran its course
+        // when it had in fact stopped listening.
+        let mut acceptor_gone = false;
         let wake_self = || {
             let _ = TcpStream::connect_timeout(&bound, Duration::from_millis(500));
         };
@@ -1637,11 +1655,19 @@ pub mod server {
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Disconnected) => {
+                    acceptor_gone = !config.shutdown.load(Ordering::Relaxed);
+                    break;
+                }
             }
         }
         let _ = acceptor.join();
         let _ = ErrorKind::Other; // keep import live if unused.
+        if acceptor_gone {
+            return Err(io::Error::other(
+                "https: the acceptor stopped before a shutdown was asked for",
+            ));
+        }
         Ok(())
     }
 

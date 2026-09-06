@@ -39,6 +39,9 @@ use super::*;
 const STATIC_OK_RESPONSE: &[u8] =
     b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
 const RESPONSE_500_BYTES: &[u8] = b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: keep-alive\r\n\r\ninternal server error";
+/// The same answer for a connection that ends with it, so the header a
+/// client reads is the one the socket then does.
+const RESPONSE_500_CLOSE_BYTES: &[u8] = b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 21\r\nConnection: close\r\n\r\ninternal server error";
 const RESPONSE_400_BYTES: &[u8] =
     b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 const RESPONSE_413_BYTES: &[u8] =
@@ -426,7 +429,8 @@ pub(crate) fn accept_serve_with<F>(
     shutdown: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     in_flight: &std::sync::Arc<AtomicUsize>,
     serve_conn: F,
-) where
+) -> bool
+where
     F: Fn(TcpStream, String, &ServerLimits) + Send + Sync + Clone + 'static,
 {
     install_http_shutdown_signal_handler();
@@ -457,7 +461,8 @@ pub(crate) fn accept_serve_with<F>(
                 backoff.settle();
                 continue;
             }
-            Err(_) => break,
+            // The listener itself is gone, which nobody asked for.
+            Err(_) => return false,
         };
         if shutdown.load(Ordering::Acquire) || crate::sched_global::is_shutdown_requested() {
             let _ = stream.shutdown(Shutdown::Both);
@@ -509,6 +514,7 @@ pub(crate) fn accept_serve_with<F>(
             }
         }
     }
+    true
 }
 
 /// Decrements a connection's live and in-flight counts on every exit path,
@@ -913,6 +919,9 @@ fn handle_http_conn_limited<C: HttpIo>(
         // including write timeout, peer shutdown, and unwinding.
         let _request_arena = crate::c_abi::rc::RequestArenaGuard::new();
 
+        // A request the connection outlives keeps it; one that names its
+        // own end closes it once the answer is written.
+        let mut keep_alive = true;
         if fn_addr == 0 {
             // Legacy stub path: ignore the request, send static
             // 200/ok. No arena allocation happens here.
@@ -959,6 +968,15 @@ fn handle_http_conn_limited<C: HttpIo>(
                 let _ = conn.write_all(RESPONSE_400_BYTES);
                 return;
             }
+
+            keep_alive = {
+                let head: &[u8] = match &chunked_req {
+                    Some(c) => &c.canonical[..c.header_end],
+                    None => &accum[..header_end],
+                };
+                let request_line = head.split(|b| *b == b'\n').next().unwrap_or(head);
+                !request_ends_connection(request_line, &scratch.request.headers)
+            };
 
             // Chunked trailer headers (RFC 7230 §4.1.2) need no
             // extra promotion here: `splice_canonical` splices them
@@ -1018,13 +1036,20 @@ fn handle_http_conn_limited<C: HttpIo>(
                     // is incomplete). Mirrors the std server.
                     return;
                 }
+                if !keep_alive {
+                    return;
+                }
                 accum.drain(..req_end);
                 continue_sent = false;
                 continue;
             }
-            if !extract_response_into(result_ptr, &mut scratch.response_buf) {
+            if !extract_response_into(result_ptr, &mut scratch.response_buf, &mut keep_alive) {
                 report_request_error(result_ptr, &scratch.request);
-                scratch.response_buf.extend_from_slice(RESPONSE_500_BYTES);
+                scratch.response_buf.extend_from_slice(if keep_alive {
+                    RESPONSE_500_BYTES
+                } else {
+                    RESPONSE_500_CLOSE_BYTES
+                });
             }
             unsafe { drop_handler_result(result_ptr) };
             end_request_context(&mut scratch.request, &watch_ctx);
@@ -1036,6 +1061,9 @@ fn handle_http_conn_limited<C: HttpIo>(
             unsafe { gos_rt_gc_reset() };
         }
         if conn.write_all(&scratch.response_buf).is_err() {
+            return;
+        }
+        if !keep_alive {
             return;
         }
         // Drop the consumed request from the accumulator while
@@ -1918,7 +1946,40 @@ fn render_http_date(secs: i64) -> String {
     )
 }
 
-pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
+/// Whether this request's connection ends with its response.
+///
+/// HTTP/1.1 keeps a connection open unless the request says otherwise and
+/// HTTP/1.0 ends it unless the request asks to keep it, so a client that
+/// wrote `Connection: close` is answered on a connection that closes. The
+/// header carries a comma-separated token list, so a token is matched
+/// rather than the whole value.
+pub(crate) fn request_ends_connection(request_line: &[u8], headers: &[(String, String)]) -> bool {
+    let mut close = false;
+    let mut keep = false;
+    for (name, value) in headers {
+        if !name.eq_ignore_ascii_case("connection") {
+            continue;
+        }
+        for token in value.split(',') {
+            let token = token.trim();
+            close |= token.eq_ignore_ascii_case("close");
+            keep |= token.eq_ignore_ascii_case("keep-alive");
+        }
+    }
+    if close {
+        return true;
+    }
+    let http_1_0 = request_line
+        .windows(8)
+        .any(|w| w.eq_ignore_ascii_case(b"HTTP/1.0"));
+    http_1_0 && !keep
+}
+
+pub(crate) fn extract_response_into(
+    result: i128,
+    out: &mut Vec<u8>,
+    keep_alive: &mut bool,
+) -> bool {
     if super::vec::gos_rt_result_disc(result) != 0 {
         return false;
     }
@@ -1956,6 +2017,7 @@ pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
     let mut has_content_type = false;
     let mut has_date = false;
     let mut has_server = false;
+    let mut has_connection = false;
     for (k, v) in &response.headers {
         // Never emit a header whose name or value carries a CR, LF, or
         // NUL - those bytes would split the response and let an attacker
@@ -1977,6 +2039,12 @@ pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
         }
         if k.eq_ignore_ascii_case("server") {
             has_server = true;
+        }
+        // A handler naming the connection decides it: the response carries
+        // its header alone, and the connection ends with it when it says so.
+        if k.eq_ignore_ascii_case("connection") {
+            has_connection = true;
+            *keep_alive &= !v.split(',').any(|t| t.trim().eq_ignore_ascii_case("close"));
         }
         // Canonical wire casing is lowercase on every tier: the
         // interp server writes through the lowercase-keyed
@@ -2014,7 +2082,14 @@ pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
         out.extend_from_slice(buf.format(body_bytes.len()).as_bytes());
         out.extend_from_slice(b"\r\n");
     }
-    out.extend_from_slice(b"connection: keep-alive\r\n\r\n");
+    if !has_connection {
+        out.extend_from_slice(if *keep_alive {
+            b"connection: keep-alive\r\n".as_slice()
+        } else {
+            b"connection: close\r\n".as_slice()
+        });
+    }
+    out.extend_from_slice(b"\r\n");
     out.extend_from_slice(body_bytes);
     true
 }
@@ -2381,7 +2456,7 @@ mod tests {
 
     fn rendered(result: i128) -> String {
         let mut out = Vec::new();
-        assert!(extract_response_into(result, &mut out));
+        assert!(extract_response_into(result, &mut out, &mut true));
         unsafe { drop_handler_result(result) };
         String::from_utf8_lossy(&out).to_ascii_lowercase()
     }
@@ -2409,7 +2484,7 @@ mod tests {
         unsafe { (*resp).body_bytes = Some(vec![0x41, 0x00, 0x42, 0x00, 0x43]) };
         let result = super::super::vec::pack_result(0, resp as i64);
         let mut out = Vec::new();
-        assert!(extract_response_into(result, &mut out));
+        assert!(extract_response_into(result, &mut out, &mut true));
         unsafe { drop_handler_result(result) };
         let text = String::from_utf8_lossy(&out).into_owned();
         assert!(
@@ -2435,7 +2510,7 @@ mod tests {
         }
         let result = super::super::vec::pack_result(0, resp as i64);
         let mut out = Vec::new();
-        assert!(extract_response_into(result, &mut out));
+        assert!(extract_response_into(result, &mut out, &mut true));
         unsafe { drop_handler_result(result) };
         let text = String::from_utf8_lossy(&out).into_owned();
         assert!(
@@ -3207,7 +3282,7 @@ mod tests {
         }
         let result = super::super::vec::pack_result(0, resp as i64);
         let mut out = Vec::new();
-        assert!(extract_response_into(result, &mut out));
+        assert!(extract_response_into(result, &mut out, &mut true));
         unsafe { drop_handler_result(result) };
         // Raw bytes - no case folding before the assertions.
         let text = String::from_utf8_lossy(&out).into_owned();

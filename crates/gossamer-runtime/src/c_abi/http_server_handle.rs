@@ -249,7 +249,7 @@ pub unsafe extern "C" fn gos_rt_http_server_serve(
         let limits = server.limits.lock().clone();
         let env_addr = handler_env as usize;
         let fn_addr = handler_fn as usize;
-        super::http_server::accept_serve_with(
+        let served = super::http_server::accept_serve_with(
             listener,
             &limits,
             &server.shutdown,
@@ -258,6 +258,9 @@ pub unsafe extern "C" fn gos_rt_http_server_serve(
                 super::http_server::serve_one_connection(stream, peer, limits, env_addr, fn_addr);
             },
         );
+        if !served {
+            return err_result("http::Server::serve: the listener stopped accepting");
+        }
         crate::c_abi::vec::pack_result(0, 0)
     })
 }

@@ -574,29 +574,24 @@ fn map_format_slow(entries: usize) {
 mod tests {
     use super::*;
 
-    /// The hot-path gate answers for every recorder, and a disarmed gate
-    /// records nothing. Tests run with instrumentation armed, so this
-    /// toggles it around the check and restores it.
+    /// An armed gate reaches the recorder.
+    ///
+    /// The switch is one process-wide flag that arming never turns back
+    /// off, and every sibling test shares it: a test that disarmed it to
+    /// watch a recorder stay quiet would be reading a counter that another
+    /// test's map work is free to move the moment anything re-arms. What
+    /// this test owns is its own increment, which a monotonic counter
+    /// answers whatever else is running.
     #[test]
-    fn a_disarmed_gate_records_nothing_and_an_armed_one_records() {
-        let restore = instrumentation_armed();
-        INSTRUMENTATION.store(false, Ordering::Relaxed);
-        let before = MAP_STR_PROBES.load(Ordering::Relaxed);
-        map_str_probe();
-        assert_eq!(
-            MAP_STR_PROBES.load(Ordering::Relaxed),
-            before,
-            "a disarmed gate reaches no recorder"
-        );
-
+    fn an_armed_gate_reaches_the_recorder() {
         arm_instrumentation();
         assert!(instrumentation_armed());
+        let before = MAP_STR_PROBES.load(Ordering::Relaxed);
         map_str_probe();
         assert!(
             MAP_STR_PROBES.load(Ordering::Relaxed) > before,
             "an armed gate reaches the recorder"
         );
-        INSTRUMENTATION.store(restore, Ordering::Relaxed);
     }
 
     /// Beginning a measurement scope arms the gate the recorders read, or
