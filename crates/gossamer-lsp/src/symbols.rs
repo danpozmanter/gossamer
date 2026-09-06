@@ -51,7 +51,7 @@ const SYMBOL_TYPE_PARAMETER: f64 = 26.0;
 /// their type.
 pub(crate) fn document_symbols(doc: &DocumentAnalysis) -> Value {
     let mut out: Vec<Value> = Vec::new();
-    for item in &doc.sf.items {
+    for item in doc.document_items() {
         emit_item(doc, item, &mut out);
     }
     Value::Array(out)
@@ -64,7 +64,7 @@ pub(crate) fn workspace_symbols(documents: &[&DocumentAnalysis], query: &str) ->
     let mut out: Vec<Value> = Vec::new();
     let needle = query.to_ascii_lowercase();
     for doc in documents {
-        for item in &doc.sf.items {
+        for item in doc.document_items() {
             collect_workspace_symbols(doc, item, None, &needle, &mut out);
         }
     }
@@ -468,7 +468,7 @@ fn span_to_range(doc: &DocumentAnalysis, span: Span) -> Value {
 /// module body becomes one folding region.
 pub(crate) fn folding_ranges(doc: &DocumentAnalysis) -> Value {
     let mut out: Vec<Value> = Vec::new();
-    for item in &doc.sf.items {
+    for item in doc.document_items() {
         push_folding(doc, item, &mut out);
     }
     Value::Array(out)

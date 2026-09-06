@@ -1,13 +1,15 @@
 //! Mapping of diagnostics that land outside the editor's buffer back
 //! onto the user construct that produced them.
 //!
-//! The analysed text is the editor buffer followed by two appended
-//! regions: the project bundle (sibling and subdirectory modules) and
-//! the parse-time autoderive tail (`__gos_serde_*` free functions,
-//! `#[derive]` impls, stdlib struct wrappers). A diagnostic anchored in
+//! The analysed text is the package's compilation unit followed by the
+//! parse-time autoderive tail (`__gos_serde_*` free functions,
+//! `#[derive]` impls, stdlib struct wrappers). The editor's buffer is one
+//! window inside the unit - the whole of it for a package entry, the
+//! inlined body of one `mod` for any other file. A diagnostic anchored in
 //! the autoderive tail still describes a defect in the user's own code,
-//! so it is re-anchored on the type whose synthesis produced it rather
-//! than discarded.
+//! so it is re-anchored on the type whose synthesis produced it; one
+//! anchored in another file of the unit belongs to that file's own
+//! document and is dropped here.
 
 use gossamer_ast::{ItemKind, SourceFile};
 use gossamer_diagnostics::{Diagnostic, Label, Location};
@@ -21,32 +23,34 @@ struct UserType<'a> {
 
 /// Re-anchors every diagnostic whose primary span lies in the
 /// synthesized autoderive tail onto the declaration of the type the
-/// synthesis was generated for, and removes the ones with no
-/// user-visible cause.
+/// synthesis was generated for, and removes the ones that describe
+/// another file of the unit or have no user-visible cause.
 ///
-/// `user_len` is the length of the editor's buffer and `bundle_len` the
-/// length of the buffer plus the project bundle; the autoderive tail
-/// begins at `bundle_len`.
+/// `doc_start .. doc_start + user_len` is the window the editor's buffer
+/// occupies in the assembled unit and `bundle_len` the unit's own length;
+/// the autoderive tail begins at `bundle_len`.
 pub(crate) fn reanchor_out_of_buffer(
     diagnostics: &mut Vec<Diagnostic>,
     sf: &SourceFile,
     augmented: &str,
     file: FileId,
+    doc_start: u32,
     user_len: u32,
     bundle_len: u32,
 ) {
-    let user_types = collect_user_types(sf, augmented, user_len);
+    let doc_end = doc_start.saturating_add(user_len);
+    let user_types = collect_user_types(sf, augmented, doc_start, doc_end);
     diagnostics.retain_mut(|diag| {
         let Some(start) = primary_start(diag) else {
             return true;
         };
         // `<=` keeps unexpected-EOF parse errors, which point exactly at
-        // the buffer's end; the appended regions begin at least two
-        // newlines later.
-        if start <= user_len {
+        // the buffer's end; whatever follows begins at least two newlines
+        // later.
+        if start >= doc_start && start <= doc_end {
             return true;
         }
-        // A diagnostic in a bundled sibling module belongs to that
+        // A diagnostic in another module of the unit belongs to that
         // module's own file, which this document does not describe.
         if start < bundle_len {
             return false;
@@ -61,6 +65,22 @@ pub(crate) fn reanchor_out_of_buffer(
     });
 }
 
+/// Moves every span `diag` carries `by` bytes further into the text it is
+/// reported against.
+pub(crate) fn shift_spans(diag: &mut Diagnostic, by: u32) {
+    if by == 0 {
+        return;
+    }
+    for label in &mut diag.labels {
+        label.location.span.start = label.location.span.start.saturating_add(by);
+        label.location.span.end = label.location.span.end.saturating_add(by);
+    }
+    for suggestion in &mut diag.suggestions {
+        suggestion.location.span.start = suggestion.location.span.start.saturating_add(by);
+        suggestion.location.span.end = suggestion.location.span.end.saturating_add(by);
+    }
+}
+
 /// Byte offset of the diagnostic's primary span, or the first label's
 /// when no label is marked primary.
 fn primary_start(diag: &Diagnostic) -> Option<u32> {
@@ -72,23 +92,46 @@ fn primary_start(diag: &Diagnostic) -> Option<u32> {
 }
 
 /// Every struct and enum the editor's buffer declares, paired with the
-/// span of its name.
-fn collect_user_types<'a>(sf: &'a SourceFile, augmented: &str, user_len: u32) -> Vec<UserType<'a>> {
-    sf.items
-        .iter()
-        .filter(|item| item.span.start <= user_len)
-        .filter_map(|item| {
-            let name = match &item.kind {
-                ItemKind::Struct(decl) => decl.name.name.as_str(),
-                ItemKind::Enum(decl) => decl.name.name.as_str(),
-                _ => return None,
-            };
-            Some(UserType {
-                name,
-                name_span: name_span(augmented, item.span, name),
-            })
-        })
-        .collect()
+/// span of its name. The buffer is a window into the unit, so the walk
+/// descends through the `mod` items the package layout wraps it in.
+fn collect_user_types<'a>(
+    sf: &'a SourceFile,
+    augmented: &str,
+    doc_start: u32,
+    doc_end: u32,
+) -> Vec<UserType<'a>> {
+    let mut out = Vec::new();
+    collect_user_types_in(&sf.items, augmented, doc_start, doc_end, &mut out);
+    out
+}
+
+fn collect_user_types_in<'a>(
+    items: &'a [gossamer_ast::Item],
+    augmented: &str,
+    doc_start: u32,
+    doc_end: u32,
+    out: &mut Vec<UserType<'a>>,
+) {
+    for item in items {
+        if item.span.end < doc_start || item.span.start > doc_end {
+            continue;
+        }
+        let name = match &item.kind {
+            ItemKind::Struct(decl) => decl.name.name.as_str(),
+            ItemKind::Enum(decl) => decl.name.name.as_str(),
+            ItemKind::Mod(decl) => {
+                if let gossamer_ast::ModBody::Inline(items) = &decl.body {
+                    collect_user_types_in(items, augmented, doc_start, doc_end, out);
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        out.push(UserType {
+            name,
+            name_span: name_span(augmented, item.span, name),
+        });
+    }
 }
 
 /// Span of `name` inside the declaration covering `item`, falling back
@@ -251,7 +294,7 @@ mod synthesis_tests {
             ),
         ];
         let len = source.len() as u32;
-        reanchor_out_of_buffer(&mut diagnostics, &sf, source, file, len, len);
+        reanchor_out_of_buffer(&mut diagnostics, &sf, source, file, 0, len, len);
         assert!(diagnostics.is_empty());
     }
 }

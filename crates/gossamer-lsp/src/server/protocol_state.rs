@@ -28,7 +28,7 @@ use crate::inlay::{InlayHint, collect_inlays};
 use crate::navigation::{BindingInfo, DefinitionInfo, Locate, attach_resolution, locate};
 use crate::protocol::{Transport, field, field_str, field_u32, notification, response_ok};
 use crate::semantic_tokens::{TOKEN_MODIFIERS, TOKEN_TYPES, full_tokens};
-use crate::session::{CursorContext, DocumentAnalysis, analyse};
+use crate::session::{CursorContext, DocumentAnalysis, UnitCache, analyse_with};
 use crate::stdlib_index::{MemberSpec, StdlibIndex};
 use crate::symbols::{document_symbols, folding_ranges, workspace_symbols};
 use crate::workspace_index::{
@@ -340,6 +340,9 @@ fn text_position_to_offset(source: &str, line: u32, column: u32) -> Option<usize
 
 struct ServerState {
     documents: HashMap<String, DocumentAnalysis>,
+    /// Analysed compilation units, shared by every open document of the
+    /// package they assemble.
+    units: UnitCache,
     stdlib: StdlibIndex,
     workspace: WorkspaceIndex,
 }
@@ -348,15 +351,17 @@ impl ServerState {
     fn new() -> Self {
         Self {
             documents: HashMap::new(),
+            units: UnitCache::default(),
             stdlib: StdlibIndex::build(),
             workspace: WorkspaceIndex::default(),
         }
     }
 
     fn update(&mut self, uri: &str, text: &str) {
-        let analysis = analyse(uri, text);
+        let analysis = analyse_with(uri, text, &mut self.units);
         self.workspace.update(uri, &analysis);
         self.documents.insert(uri.to_string(), analysis);
+        self.units.retain_live();
     }
 
     fn apply_did_change(&mut self, uri: &str, changes: &Value) {
@@ -392,6 +397,7 @@ impl ServerState {
     fn close(&mut self, uri: &str) {
         self.documents.remove(uri);
         self.workspace.remove(uri);
+        self.units.retain_live();
     }
 
     /// Walks the workspace root advertised by `initialize` for
@@ -560,7 +566,7 @@ impl ServerState {
         else {
             return Vec::new();
         };
-        let source = doc.user_source();
+        let source = doc.source();
         let start = span.start as usize;
         let end = span.end as usize;
         let Some(name) = source.get(start..end) else {

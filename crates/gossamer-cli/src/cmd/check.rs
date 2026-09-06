@@ -34,7 +34,13 @@ pub(crate) fn dispatch(
     };
     let meta = fs::metadata(&resolved).map_err(|e| friendly_io_error(e, &resolved))?;
     if meta.is_file() {
-        return run(&resolved, timings, message_format, fix);
+        // A module of a package is checked as part of that package, through
+        // its entry: `crate::`, `super::`, and a bare sibling module name
+        // each name what they name when the whole package compiles, which is
+        // the unit `gos run` and `gos build` assemble. A loose file and an
+        // integration test under `tests/` are their own roots.
+        let target = crate::paths::enclosing_project_entry(&resolved).unwrap_or(resolved);
+        return run(&target, timings, message_format, fix);
     }
     // A project directory is checked as one bundled unit (the entry plus
     // its auto-bundled sibling / subdirectory modules), so cross-module

@@ -46,6 +46,10 @@ pub mod cache;
 pub mod credentials;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod edit;
+/// Which file is a project's compilation root. Reads the project layout
+/// from disk, so it is native-only.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod entry;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod fetch;
 #[cfg(not(target_arch = "wasm32"))]
@@ -75,6 +79,8 @@ pub use cache::{Cache, CacheError, CachedSource, Fetched, default_cache_root};
 pub use credentials::{Credential, CredentialStore, CredentialStoreError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use edit::{add_registry, pin_to_resolved, remove, tidy};
+#[cfg(not(target_arch = "wasm32"))]
+pub use entry::{EntryError, enclosing_project_entry, resolve_project_entry};
 #[cfg(not(target_arch = "wasm32"))]
 pub use fetch::{DEFAULT_REGISTRY_URL, FetchOptions, Fetcher, vendor};
 #[cfg(not(target_arch = "wasm32"))]

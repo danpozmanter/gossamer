@@ -187,6 +187,11 @@ impl WorkspaceIndex {
             if matches!(info.kind, DefKind::TypeParam | DefKind::Variant) {
                 continue;
             }
+            // The analysed unit is the whole package; a declaration in
+            // another of its files is that file's own contribution.
+            if !doc.span_in_document(info.name_span) {
+                continue;
+            }
             self.by_name
                 .entry(info.name.clone())
                 .or_default()
@@ -200,7 +205,8 @@ impl WorkspaceIndex {
             names.push(info.name.clone());
         }
         let occurrences = collect_occurrences(doc);
-        let use_occurrences = collect_use_occurrences(&doc.sf, doc.source());
+        let mut use_occurrences = collect_use_occurrences(&doc.sf, doc.source());
+        use_occurrences.retain(|occurrence| doc.span_in_document(occurrence.span));
         self.slices.insert(
             uri.to_string(),
             DocSlice {
@@ -319,7 +325,8 @@ fn collect_occurrences(doc: &DocumentAnalysis) -> Vec<SymbolOccurrence> {
             });
         }
     }
-    for item in &doc.sf.items {
+    let document_items = doc.document_items();
+    for item in &document_items {
         collect_item_decl_occurrences(item, source, &mut out);
     }
     for occurrence in doc.index.occurrences() {
@@ -378,7 +385,13 @@ fn collect_occurrences(doc: &DocumentAnalysis) -> Vec<SymbolOccurrence> {
         source,
         out: &mut out,
     };
-    walker.visit_source_file(&doc.sf);
+    // The analysed unit is the whole package; the members another of its
+    // files mentions are that file's own contribution, so the walk covers
+    // this document's items only.
+    for item in &document_items {
+        walker.visit_item(item);
+    }
+    out.retain(|occurrence| doc.span_in_document(occurrence.span));
     out
 }
 

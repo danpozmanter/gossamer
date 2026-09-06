@@ -191,6 +191,162 @@ mod tests {
             .collect()
     }
 
+    /// Writes a package whose `src/engine/bind.gos` reaches a sibling
+    /// `src/codec` directory module through `crate::`, and answers its root.
+    fn nested_module_project(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("gos-lsp-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src").join("codec")).unwrap();
+        std::fs::create_dir_all(root.join("src").join("engine")).unwrap();
+        std::fs::write(
+            root.join("project.toml"),
+            "[project]\nid = \"example.com/db\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src").join("main.gos"), "fn main() { }\n").unwrap();
+        std::fs::write(
+            root.join("src").join("codec").join("mod.gos"),
+            "pub fn tag() -> i64 { 7 }\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("src").join("engine").join("mod.gos"), "\n").unwrap();
+        root
+    }
+
+    fn file_uri(path: &std::path::Path) -> String {
+        format!("file://{}", path.display())
+    }
+
+    fn diagnostic_messages(state: &ServerState, uri: &str) -> Vec<String> {
+        let doc = state.documents.get(uri).expect("document");
+        doc.diagnostics
+            .iter()
+            .map(|diag| diag.title.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_nested_module_resolves_crate_paths_through_its_package() {
+        let root = nested_module_project("crate-path");
+        let bind = root.join("src").join("engine").join("bind.gos");
+        let source = "use crate::codec\n\npub fn one() -> i64 { codec::tag() }\n";
+        std::fs::write(&bind, source).unwrap();
+        let uri = file_uri(&bind);
+        let mut state = ServerState::new();
+        state.update(&uri, source);
+        assert_eq!(
+            diagnostic_messages(&state, &uri),
+            Vec::<String>::new(),
+            "a module of the package must resolve `crate::` against that package"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_nested_modules_diagnostic_is_reported_at_its_own_line() {
+        let root = nested_module_project("window");
+        let bind = root.join("src").join("engine").join("bind.gos");
+        let source = "use crate::codec\n\npub fn one() -> i64 { codec::missing() }\n";
+        std::fs::write(&bind, source).unwrap();
+        let uri = file_uri(&bind);
+        let mut state = ServerState::new();
+        state.update(&uri, source);
+        let doc = state.documents.get(&uri).expect("document");
+        let diag = doc.diagnostics.first().expect("a diagnostic");
+        let span = diag
+            .labels
+            .iter()
+            .find(|label| label.primary)
+            .or_else(|| diag.labels.first())
+            .expect("a label")
+            .location
+            .span;
+        let (line, _) = doc.offset_to_position(span.start);
+        assert_eq!(line, 2, "the diagnostic must land on the line the user wrote");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_nested_modules_outline_holds_only_its_own_items() {
+        let root = nested_module_project("outline");
+        let bind = root.join("src").join("engine").join("bind.gos");
+        let source = "pub fn one() -> i64 { 1 }\n";
+        std::fs::write(&bind, source).unwrap();
+        let uri = file_uri(&bind);
+        let mut state = ServerState::new();
+        state.update(&uri, source);
+        let doc = state.documents.get(&uri).expect("document");
+        let names: Vec<String> = doc
+            .document_items()
+            .iter()
+            .filter_map(|item| match &item.kind {
+                gossamer_ast::ItemKind::Fn(decl) => Some(decl.name.name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, vec!["one".to_string()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn every_document_of_one_package_shares_its_analysis() {
+        let root = nested_module_project("shared");
+        let bind = root.join("src").join("engine").join("bind.gos");
+        std::fs::write(&bind, "pub fn one() -> i64 { 1 }\n").unwrap();
+        let main = root.join("src").join("main.gos");
+        let mut state = ServerState::new();
+        state.update(&file_uri(&main), &std::fs::read_to_string(&main).unwrap());
+        state.update(&file_uri(&bind), &std::fs::read_to_string(&bind).unwrap());
+        let a = state.documents.get(&file_uri(&main)).expect("main");
+        let b = state.documents.get(&file_uri(&bind)).expect("bind");
+        assert!(
+            std::rc::Rc::ptr_eq(&a.unit, &b.unit),
+            "two files of one package analysed the same unit twice"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_comptime_read_anchors_at_the_packages_entry() {
+        // The unit is the package, so a relative read inside a comptime
+        // region resolves against the entry's directory whichever file of
+        // the package the editor has open.
+        let root = nested_module_project("comptime-anchor");
+        std::fs::write(root.join("src").join("asset.txt"), "embedded\n").unwrap();
+        std::fs::write(
+            root.join("src").join("main.gos"),
+            "use std::fs\n\nfn main() {\n    println(\"{}\", comptime { fs::read_to_string(\"asset.txt\").unwrap() })\n}\n",
+        )
+        .unwrap();
+        let bind = root.join("src").join("engine").join("bind.gos");
+        let source = "pub fn one() -> i64 { 1 }\n";
+        std::fs::write(&bind, source).unwrap();
+        let main = root.join("src").join("main.gos");
+        let main_uri = file_uri(&main);
+        // The nested file is opened first, so it is the document that
+        // triggers the package's analysis. A unit is named and cached by
+        // its entry, so the fold reads `src/` whichever document assembled
+        // it - anchoring on the open document instead would look for the
+        // asset in `src/engine/` and report a failure the entry did not
+        // cause.
+        let mut state = ServerState::new();
+        state.update(&file_uri(&bind), source);
+        state.update(&main_uri, &std::fs::read_to_string(&main).unwrap());
+        assert_eq!(
+            diagnostic_messages(&state, &main_uri),
+            Vec::<String>::new(),
+            "the fold must read the entry's own directory"
+        );
+        assert!(
+            std::rc::Rc::ptr_eq(
+                &state.documents.get(&main_uri).expect("main").unit,
+                &state.documents.get(&file_uri(&bind)).expect("bind").unit,
+            ),
+            "the entry and its module must share the unit the fold anchored"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn inlay_hints_emits_inferred_let_type() {
         let mut state = ServerState::new();

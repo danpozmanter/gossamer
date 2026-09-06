@@ -97,6 +97,7 @@ pub(crate) fn full_tokens(doc: &DocumentAnalysis) -> Vec<u32> {
         .filter_map(|token| {
             resolve_token_span(doc, &token.target).map(|span| (span, token.kind, token.modifiers))
         })
+        .filter(|(span, _, _)| doc.span_in_document(*span))
         .collect();
     tokens.sort_by_key(|(span, _, _)| span.start);
     encode(doc, &tokens)
@@ -654,7 +655,7 @@ fn resolve_token_span(doc: &DocumentAnalysis, target: &TokenTarget) -> Option<Sp
         TokenTarget::FirstNamed { within, name } => (*within, name, false),
         TokenTarget::LastNamed { within, name } => (*within, name, true),
     };
-    let source = doc.user_source();
+    let source = doc.source();
     let start = (within.start as usize).min(source.len());
     let end = (within.end as usize).min(source.len()).max(start);
     let haystack = &source[start..end];

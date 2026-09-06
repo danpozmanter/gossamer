@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.58.14 - Package modules and LSP fixes
+
+- A file of a package resolves `crate::`, `super::`, and a bare module name
+  against that package, in the editor and under `gos check <file>` alike. Both
+  assembled the compilation unit with the named file as its root, so
+  `use crate::codec` in `src/engine/bind.gos` searched `src/engine/` for a
+  module that lives at the package root: GR0005 against an import that `gos
+  run` and `gos build` compile. A directory target was already collapsed to the
+  project entry, and a file target now is too. An import that names no module
+  still reports GR0005, now against the file and line that wrote it.
+- The language server holds one analysis per package rather than one per file.
+  Opening a project analyses it once and every document is a window into that
+  unit, so a workspace scan no longer repeats the whole package's front end for
+  each of its files.
+- A diagnostic, an outline entry, a folding range, a semantic token, and a
+  workspace-symbol occurrence each describe the file the editor holds. The
+  modules bundled beside it are other files' own documents and are reported
+  against those.
+
 ## 0.58.13 - By-value parameters forwarded whole, scalar fields read beside a table, segfault fixes
 
 - A free function keeps its own parameters beside a method of the same name. A

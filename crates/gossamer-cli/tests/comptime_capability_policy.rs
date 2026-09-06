@@ -248,9 +248,13 @@ fn a_manifest_may_tighten_the_posture_and_may_never_loosen_it() {
         "project.toml",
         "[project]\nid = \"example.com/policy\"\nversion = \"0.1.0\"\ncomptime-io = \"none\"\n",
     );
-    std::fs::write(dir.join("src").join("read.gos"), READ_IN_TREE).expect("write entry");
+    // The entry is the package's compilation root, so the program under
+    // the tightened manifest replaces it rather than joining it as a
+    // second module: a file named on the command line is checked as part
+    // of the package it belongs to.
+    std::fs::write(dir.join("src").join("main.gos"), READ_IN_TREE).expect("write entry");
     std::fs::write(dir.join("src").join("asset.txt"), "embedded\n").expect("write asset");
-    denied(&check(&dir, "src/read.gos", None), "fs::read_to_string");
+    denied(&check(&dir, "src/main.gos", None), "fs::read_to_string");
 }
 
 /// A comptime region that will not evaluate must fail `gos test`, not

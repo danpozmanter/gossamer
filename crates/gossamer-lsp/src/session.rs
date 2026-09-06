@@ -7,6 +7,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::rc::Rc;
+
 use gossamer_ast::SourceFile;
 use gossamer_diagnostics::Diagnostic;
 use gossamer_lex::{FileId, SourceMap, Span};
@@ -58,41 +60,113 @@ impl<'a> CursorContext<'a> {
     dead_code,
     reason = "fields are reads from the LSP request handlers populated lazily as capabilities expand"
 )]
-pub(crate) struct DocumentAnalysis {
-    pub(crate) uri: String,
+pub(crate) struct UnitAnalysis {
     pub(crate) file: FileId,
     pub(crate) map: SourceMap,
     pub(crate) sf: SourceFile,
     pub(crate) resolutions: Resolutions,
     pub(crate) types: TypeTable,
     pub(crate) tcx: TyCtxt,
-    pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) index: DefinitionIndex,
-    /// Byte length of the text the editor actually holds. The stored
-    /// source is the AUGMENTED program (user text + synthesized
-    /// autoderive tail appended); anything the server sends back to
-    /// the client - formatting edits above all - must stay within
-    /// this prefix.
+    /// Everything the front end said about the unit as a whole, before
+    /// any one document's window narrows it.
+    unit_diagnostics: Vec<Diagnostic>,
+    /// Length of the assembled unit; the autoderive tail begins here.
+    bundle_len: u32,
+}
+
+/// Analysis result for a single document: its window into the
+/// [`UnitAnalysis`] of the package it belongs to, plus the diagnostics
+/// that window earns.
+///
+/// Every file of a package shares one unit, so an editor with the whole
+/// project open analyses it once and holds one copy of its AST and type
+/// table.
+#[allow(
+    dead_code,
+    reason = "fields are reads from the LSP request handlers populated lazily as capabilities expand"
+)]
+pub(crate) struct DocumentAnalysis {
+    pub(crate) uri: String,
+    pub(crate) unit: Rc<UnitAnalysis>,
+    pub(crate) diagnostics: Vec<Diagnostic>,
+    /// First byte of the editor's own text within the unit's source.
+    ///
+    /// The unit is the whole package, so a module of a project sits
+    /// inside the `mod` blocks its layout declares.
+    /// `doc_start .. doc_start + user_len` is the window the editor's
+    /// buffer occupies; everything the server sends back to the client
+    /// must stay inside it.
+    pub(crate) doc_start: u32,
+    /// Byte length of the text the editor actually holds.
     pub(crate) user_len: u32,
+}
+
+impl std::ops::Deref for DocumentAnalysis {
+    type Target = UnitAnalysis;
+
+    fn deref(&self) -> &Self::Target {
+        &self.unit
+    }
+}
+
+/// The analysed unit of each package a session has documents from.
+///
+/// Keyed by the unit's own name (its entry file's URI) and holding the
+/// source it was built from, so a document whose package assembles to
+/// text already analysed reuses that analysis instead of repeating it.
+#[derive(Default)]
+pub(crate) struct UnitCache {
+    entries: std::collections::HashMap<String, (String, Rc<UnitAnalysis>)>,
+}
+
+impl UnitCache {
+    /// The analysis of `unit_source`, running the pipeline only when the
+    /// cached one was built from different text.
+    fn analysed(&mut self, name: &str, unit_source: String) -> Rc<UnitAnalysis> {
+        if let Some((cached_source, analysis)) = self.entries.get(name)
+            && cached_source == &unit_source
+        {
+            return Rc::clone(analysis);
+        }
+        let analysis = Rc::new(analyse_unit(name, &unit_source));
+        self.entries
+            .insert(name.to_string(), (unit_source, Rc::clone(&analysis)));
+        analysis
+    }
+
+    /// Drops the analyses no live document refers to.
+    pub(crate) fn retain_live(&mut self) {
+        self.entries
+            .retain(|_, (_, analysis)| Rc::strong_count(analysis) > 1);
+    }
 }
 
 /// Assembles the project compilation unit for a `file://` document,
 /// using the editor's buffer for the open file and the on-disk text for
-/// everything else. Returns `source` unchanged for a document with no
-/// filesystem path or one that is not inside a project.
+/// everything else, and reports the unit's name (its entry file's URI)
+/// and where the buffer sits inside it.
+///
+/// The name is the unit's identity, so it is the entry's rather than the
+/// open document's: it is what the comptime fold anchors relative reads
+/// against, and what the manifest lookup walks up from. Returns `source`
+/// unchanged for a document with no filesystem path or one that is not
+/// inside a project.
 #[cfg(not(target_arch = "wasm32"))]
-fn bundle_project_unit(uri: &str, source: &str) -> String {
+fn bundle_project_unit(uri: &str, source: &str) -> (String, String, u32) {
     let Some(path) = uri_to_path(uri) else {
-        return source.to_string();
+        return (source.to_string(), uri.to_string(), 0);
     };
-    gossamer_pkg::bundle::bundle_entry_source(&path, source.to_string())
+    let unit = gossamer_pkg::bundle::bundle_document_unit(&path, source);
+    let name = format!("file://{}", unit.entry.display());
+    (unit.source, name, unit.window_start)
 }
 
 /// The wasm build has no filesystem to read sibling modules from, so a
 /// document is its own compilation unit there.
 #[cfg(target_arch = "wasm32")]
-fn bundle_project_unit(_uri: &str, source: &str) -> String {
-    source.to_string()
+fn bundle_project_unit(uri: &str, source: &str) -> (String, String, u32) {
+    (source.to_string(), uri.to_string(), 0)
 }
 
 /// Decodes a `file://` URI into a filesystem path, undoing the percent
@@ -121,9 +195,73 @@ fn uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(String::from_utf8(out).ok()?))
 }
 
-/// Runs the full pipeline over `source` and returns the resulting
-/// [`DocumentAnalysis`].
+/// Runs the full pipeline over `source` in a scratch cache. Callers
+/// serving an editor pass their own through [`analyse_with`], so the
+/// documents of one package share the analysis of that package.
+#[cfg(test)]
 pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
+    analyse_with(uri, source, &mut UnitCache::default())
+}
+
+/// Analyses `source` as the document at `uri`: assembles the package it
+/// belongs to, reuses `cache`'s analysis of that package when the
+/// assembled text is unchanged, and narrows the result to the window the
+/// editor's buffer occupies.
+pub(crate) fn analyse_with(uri: &str, source: &str, cache: &mut UnitCache) -> DocumentAnalysis {
+    // The source map strips a leading byte-order mark so spans and
+    // diagnostic columns share one basis with the rest of the toolchain.
+    // Measure the editor's text after the same strip, or every length
+    // derived here describes three bytes the stored source does not have.
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
+    let (bundled, unit_name, doc_start) = bundle_project_unit(uri, source);
+    let user_len = u32::try_from(source.len()).unwrap_or(u32::MAX);
+    let unit = cache.analysed(&unit_name, bundled);
+
+    let mut diagnostics = unit.unit_diagnostics.clone();
+    // A diagnostic anchored in the synthesized autoderive tail still
+    // describes a defect in the user's own declarations, so it is moved
+    // onto the construct that caused the synthesis rather than dropped:
+    // dropping it lets the editor call a file clean that `gos check`
+    // rejects. One anchored in another file of the unit is that file's.
+    crate::synthesis::reanchor_out_of_buffer(
+        &mut diagnostics,
+        &unit.sf,
+        unit.map.source(unit.file),
+        unit.file,
+        doc_start,
+        user_len,
+        unit.bundle_len,
+    );
+    // Editors should see the same default lint findings as `gos lint`.
+    // Parse the user source without the synthesized autoderive tail so
+    // lint spans and fixes can never point outside the editor buffer.
+    let (lint_sf, lint_parse_diags) = gossamer_parse::parse_source_file(source, unit.file);
+    if lint_parse_diags.is_empty() {
+        let mut registry = gossamer_lint::Registry::with_defaults();
+        gossamer_lint::apply_attributes(&lint_sf.attrs, &mut registry);
+        let mut lint_diagnostics = gossamer_lint::run(&lint_sf, source, &registry);
+        let lint_fixes = gossamer_lint::fixes(&lint_sf, &registry, source);
+        attach_lint_fixes(&mut lint_diagnostics, lint_fixes);
+        // The lint pass reads the editor's buffer on its own, so its spans
+        // are offsets into that buffer; every other diagnostic here is an
+        // offset into the assembled unit.
+        for diag in &mut lint_diagnostics {
+            crate::synthesis::shift_spans(diag, doc_start);
+        }
+        diagnostics.extend(lint_diagnostics);
+    }
+
+    DocumentAnalysis {
+        uri: uri.to_string(),
+        unit,
+        diagnostics,
+        doc_start,
+        user_len,
+    }
+}
+
+/// Runs the full front end over one assembled compilation unit.
+fn analyse_unit(name: &str, bundled: &str) -> UnitAnalysis {
     // Mirror the driver pipeline: the parse-time autoderive step
     // synthesizes the serde free functions (`from_json::<T>` and
     // friends), `#[derive]` impls, and stdlib struct wrappers. The
@@ -131,23 +269,10 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
     // unchanged; without this step the LSP reports `from_json` (and
     // every other synthesized name) as unresolved while `gos check`
     // accepts the file.
-    // Mirror the driver's project bundling too: an entry file's sibling
-    // and subdirectory modules, plus its path dependencies, form one
-    // compilation unit. Without this a cross-module reference that
-    // `gos check` / `gos run` resolve reads as an unresolved name in the
-    // editor. The bundle appends, so every span in the open buffer is
-    // unchanged.
-    // The source map strips a leading byte-order mark so spans and
-    // diagnostic columns share one basis with the rest of the toolchain.
-    // Measure the editor's text after the same strip, or every length
-    // derived here describes three bytes the stored source does not have.
-    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
-    let bundled = bundle_project_unit(uri, source);
-    let augmented = gossamer_parse::autoderive::augment_source(&bundled);
-    let user_len = u32::try_from(source.len()).unwrap_or(u32::MAX);
+    let augmented = gossamer_parse::autoderive::augment_source(bundled);
     let bundle_len = u32::try_from(bundled.len()).unwrap_or(u32::MAX);
     let mut map = SourceMap::new();
-    let file = map.add_file(uri.to_string(), augmented.clone());
+    let file = map.add_file(name.to_string(), augmented.clone());
     let (mut sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&augmented, file);
     let (resolutions, resolve_diags) = resolve_source_file(&sf);
     // A named argument, a parameter default, and a std function named in
@@ -202,7 +327,7 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
     // earlier phase has accepted it - exactly the order `gos check` uses.
     if diagnostics.is_empty()
         && let Some(diag) = crate::comptime::fold_diagnostic(
-            uri,
+            name,
             &augmented,
             &sf,
             &resolutions,
@@ -213,45 +338,19 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
     {
         diagnostics.push(diag);
     }
-    // Editors should see the same default lint findings as `gos lint`.
-    // Parse the user source without the synthesized autoderive tail so
-    // lint spans and fixes can never point outside the editor buffer.
-    let (lint_sf, lint_parse_diags) = gossamer_parse::parse_source_file(source, file);
-    if lint_parse_diags.is_empty() {
-        let mut registry = gossamer_lint::Registry::with_defaults();
-        gossamer_lint::apply_attributes(&lint_sf.attrs, &mut registry);
-        let mut lint_diagnostics = gossamer_lint::run(&lint_sf, source, &registry);
-        let lint_fixes = gossamer_lint::fixes(&lint_sf, &registry, source);
-        attach_lint_fixes(&mut lint_diagnostics, lint_fixes);
-        diagnostics.extend(lint_diagnostics);
-    }
-    // A diagnostic anchored in the synthesized autoderive tail still
-    // describes a defect in the user's own declarations, so it is moved
-    // onto the construct that caused the synthesis rather than dropped:
-    // dropping it lets the editor call a file clean that `gos check`
-    // rejects.
-    crate::synthesis::reanchor_out_of_buffer(
-        &mut diagnostics,
-        &sf,
-        &augmented,
-        file,
-        user_len,
-        bundle_len,
-    );
 
     let index = DefinitionIndex::build(&sf, &augmented, &resolutions);
 
-    DocumentAnalysis {
-        uri: uri.to_string(),
+    UnitAnalysis {
         file,
         map,
         sf,
         resolutions,
         types,
         tcx,
-        diagnostics,
         index,
-        user_len,
+        unit_diagnostics: diagnostics,
+        bundle_len,
     }
 }
 
@@ -329,7 +428,63 @@ impl DocumentAnalysis {
     /// client's buffer.
     #[must_use]
     pub(crate) fn user_source(&self) -> &str {
-        &self.map.source(self.file)[..self.user_len as usize]
+        let source = self.map.source(self.file);
+        let start = (self.doc_start as usize).min(source.len());
+        let end = start
+            .saturating_add(self.user_len as usize)
+            .min(source.len());
+        &source[start..end]
+    }
+
+    /// The unit offset a document-relative offset names.
+    #[must_use]
+    pub(crate) fn unit_offset(&self, relative: u32) -> u32 {
+        self.doc_start.saturating_add(relative)
+    }
+
+    /// Whether `offset` lies inside the editor's own buffer.
+    #[must_use]
+    pub(crate) fn in_document(&self, offset: u32) -> bool {
+        offset >= self.doc_start && offset <= self.doc_start.saturating_add(self.user_len)
+    }
+
+    /// Whether `span` lies inside the editor's own buffer.
+    #[must_use]
+    pub(crate) fn span_in_document(&self, span: Span) -> bool {
+        self.in_document(span.start) && self.in_document(span.end)
+    }
+
+    /// Every item the editor's buffer declares, reached through whatever
+    /// `mod` wrappers the package layout inlines the file under. A
+    /// wrapper is not itself a declaration of this file, so the walk
+    /// descends through it rather than reporting it.
+    #[must_use]
+    pub(crate) fn document_items(&self) -> Vec<&gossamer_ast::Item> {
+        let mut out = Vec::new();
+        self.collect_document_items(&self.sf.items, &mut out);
+        out
+    }
+
+    fn collect_document_items<'a>(
+        &self,
+        items: &'a [gossamer_ast::Item],
+        out: &mut Vec<&'a gossamer_ast::Item>,
+    ) {
+        let doc_end = self.doc_start.saturating_add(self.user_len);
+        for item in items {
+            if self.span_in_document(item.span) {
+                out.push(item);
+                continue;
+            }
+            if item.span.end < self.doc_start || item.span.start > doc_end {
+                continue;
+            }
+            if let gossamer_ast::ItemKind::Mod(decl) = &item.kind
+                && let gossamer_ast::ModBody::Inline(nested) = &decl.body
+            {
+                self.collect_document_items(nested, out);
+            }
+        }
     }
 
     /// Looks up the source span of the top-level item declaring
@@ -374,7 +529,9 @@ impl DocumentAnalysis {
         let mut utf16_column = 0u32;
         for (byte, ch) in line_text.char_indices() {
             if utf16_column == column {
-                return u32::try_from(line_start + byte).ok();
+                return u32::try_from(line_start + byte)
+                    .ok()
+                    .map(|offset| self.unit_offset(offset));
             }
             utf16_column += ch.len_utf16() as u32;
             if utf16_column > column {
@@ -384,6 +541,7 @@ impl DocumentAnalysis {
         (utf16_column == column)
             .then(|| u32::try_from(line_start + line_text.len()).ok())
             .flatten()
+            .map(|offset| self.unit_offset(offset))
     }
 
     /// Translates a UTF-8 byte offset back into an LSP 0-based
@@ -391,7 +549,8 @@ impl DocumentAnalysis {
     #[must_use]
     pub(crate) fn offset_to_position(&self, offset: u32) -> (u32, u32) {
         let source = self.user_source();
-        let mut cap = std::cmp::min(offset as usize, source.len());
+        let relative = offset.saturating_sub(self.doc_start);
+        let mut cap = std::cmp::min(relative as usize, source.len());
         while cap > 0 && !source.is_char_boundary(cap) {
             cap -= 1;
         }
@@ -407,7 +566,7 @@ impl DocumentAnalysis {
     #[must_use]
     pub(crate) fn word_at(&self, offset: u32) -> Option<&str> {
         let source = self.user_source();
-        let offset = offset as usize;
+        let offset = offset.checked_sub(self.doc_start)? as usize;
         if offset > source.len() || !source.is_char_boundary(offset) {
             return None;
         }
@@ -440,7 +599,7 @@ impl DocumentAnalysis {
     pub(crate) fn cursor_context(&self, offset: u32) -> CursorContext<'_> {
         let source = self.user_source();
         let bytes = source.as_bytes();
-        let mut end = (offset as usize).min(bytes.len());
+        let mut end = (offset.saturating_sub(self.doc_start) as usize).min(bytes.len());
         while end > 0 && !source.is_char_boundary(end) {
             end -= 1;
         }

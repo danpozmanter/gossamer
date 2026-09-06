@@ -2687,6 +2687,51 @@ fn path_dependency_links_at_build() {
 }
 
 #[test]
+fn check_of_one_package_file_resolves_its_crate_paths() {
+    // A file named on the command line is a module of the package it sits
+    // in, so it is checked as part of that package - `crate::` names the
+    // package root, not the file's own directory.
+    let root = write_project(
+        "check-member",
+        "example.com/db",
+        &[
+            ("src/main.gos", "fn main() { }\n"),
+            ("src/codec/mod.gos", "pub fn tag() -> i64 { 7 }\n"),
+            ("src/engine/mod.gos", "\n"),
+            (
+                "src/engine/bind.gos",
+                "use crate::codec\n\npub fn one() -> i64 { codec::tag() }\n",
+            ),
+        ],
+    );
+    let out = Command::new(gos_bin())
+        .arg("check")
+        .arg(root.join("src").join("engine").join("bind.gos"))
+        .output()
+        .expect("spawn gos check");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        out.status.success(),
+        "checking a package module must resolve `crate::`, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn check_of_a_loose_file_stays_its_own_unit() {
+    let dir = fresh_dir("check-loose");
+    let src = write_source(&dir, "scratch", "fn main() { println(\"hi\") }\n");
+    let out = Command::new(gos_bin())
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("spawn gos check");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let _ = fs::remove_dir_all(&dir);
+    assert!(out.status.success(), "loose file check failed: {stderr}");
+}
+
+#[test]
 fn check_rejects_unknown_path_dep_member() {
     let root = fresh_dir("path-dep-check");
     write_dep_project(

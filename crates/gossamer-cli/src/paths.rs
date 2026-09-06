@@ -299,130 +299,17 @@ pub(crate) fn default_main_entry() -> Result<PathBuf> {
     resolve_project_entry(&root)
 }
 
-/// Entry-point resolution for a project root. An explicit `[project] entry`
-/// in the manifest wins; otherwise the convention order applies:
-/// `src/main.gos`, `main.gos`, the manifest-id-named source
-/// (`src/<id-tail>.gos`, then `<id-tail>.gos`), and finally a sole
-/// `.gos` candidate under `src/` or the root. A directory with
-/// several nameless candidates is an error that lists them.
+/// Entry-point resolution for a project root, as
+/// [`gossamer_pkg::resolve_project_entry`] defines it.
+///
+/// # Errors
+///
+/// Propagates the package layer's diagnostic when the root declares a
+/// missing entry, holds several candidates, or holds none.
 pub(crate) fn resolve_project_entry(root: &Path) -> Result<PathBuf> {
-    if let Some(entry) = manifest_entry(root) {
-        let path = root.join(&entry);
-        if path.is_file() {
-            return Ok(path);
-        }
-        return Err(anyhow!(
-            "project.toml sets [project] entry = {:?} but {} does not exist",
-            entry,
-            path.display()
-        ));
-    }
-    let canonical = root.join("src").join("main.gos");
-    if canonical.is_file() {
-        return Ok(canonical);
-    }
-    let bare = root.join("main.gos");
-    if bare.is_file() {
-        return Ok(bare);
-    }
-    // A library package has no `main`; its root is the `[lib] path`, or
-    // `src/lib.gos` / `lib.gos` by convention. Resolved before the
-    // sole-candidate fallback so a library with several sibling modules
-    // roots at its own entry rather than reporting them as ambiguous.
-    if let Some(path) = manifest_lib_path(root) {
-        let path = root.join(path);
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-    for candidate in [root.join("src").join("lib.gos"), root.join("lib.gos")] {
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-    }
-    if let Some(tail) = manifest_id_tail(root) {
-        let named = root.join("src").join(format!("{tail}.gos"));
-        if named.is_file() {
-            return Ok(named);
-        }
-        let named = root.join(format!("{tail}.gos"));
-        if named.is_file() {
-            return Ok(named);
-        }
-    }
-    for dir in [root.join("src"), root.to_path_buf()] {
-        match entry_candidates(&dir).as_slice() {
-            [] => {}
-            [sole] => return Ok(sole.clone()),
-            many => {
-                let names: Vec<String> = many
-                    .iter()
-                    .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-                    .collect();
-                return Err(anyhow!(
-                    "project root {} has no src/main.gos (or main.gos), and {} holds several candidates ({}); pass a path explicitly",
-                    root.display(),
-                    dir.display(),
-                    names.join(", ")
-                ));
-            }
-        }
-    }
-    Err(anyhow!(
-        "project root {} has no src/main.gos (or main.gos) and no .gos source to run; pass a path explicitly",
-        root.display()
-    ))
+    gossamer_pkg::resolve_project_entry(root).map_err(|err| anyhow!("{err}"))
 }
 
-/// Last segment of the manifest's `[project] id`, when the root's
-/// `project.toml` parses.
-fn manifest_id_tail(root: &Path) -> Option<String> {
-    let text = fs::read_to_string(root.join("project.toml")).ok()?;
-    let manifest = gossamer_pkg::Manifest::parse(&text).ok()?;
-    Some(manifest.project.id.tail().to_string())
-}
-
-/// `[lib] path` from the root's manifest, when it declares a library.
-fn manifest_lib_path(root: &Path) -> Option<String> {
-    let text = fs::read_to_string(root.join("project.toml")).ok()?;
-    let manifest = gossamer_pkg::Manifest::parse(&text).ok()?;
-    manifest.lib.and_then(|lib| lib.path)
-}
-
-/// `[project] entry` from the root's manifest, when present and the
-/// `project.toml` parses.
-fn manifest_entry(root: &Path) -> Option<String> {
-    let text = fs::read_to_string(root.join("project.toml")).ok()?;
-    gossamer_pkg::Manifest::parse(&text).ok()?.project.entry
-}
-
-/// `.gos` files in `dir` that qualify as an entry point, sorted by
-/// name. Skips `_`-prefixed scratch files and `*_test.gos` (the
-/// same exclusions the sibling auto-bundler applies).
-fn entry_candidates(dir: &Path) -> Vec<PathBuf> {
-    let Ok(read) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut out: Vec<PathBuf> = Vec::new();
-    for dirent in read.flatten() {
-        let path = dirent.path();
-        if !path.is_file() || path.extension().and_then(|s| s.to_str()) != Some("gos") {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if stem.starts_with('_') || stem.ends_with("_test") {
-            continue;
-        }
-        out.push(path);
-    }
-    out.sort();
-    out
-}
-
-/// Recursively gathers every `.gos` file under `root`. If `root`
-/// names a single file, returns it as a one-element list.
 /// Collapses every target that belongs to a project down to that project's
 /// entry, keeping loose sources as themselves. The result is deduplicated
 /// and keeps the sweep's order, so each project is checked once, as the unit
@@ -440,20 +327,11 @@ pub(crate) fn group_targets_by_project(files: &[PathBuf]) -> Vec<PathBuf> {
 
 /// The entry of the nearest project above `file`, when it has one.
 pub(crate) fn enclosing_project_entry(file: &Path) -> Option<PathBuf> {
-    let mut dir = file.parent()?;
-    loop {
-        if dir.join("project.toml").is_file() {
-            // An integration test under `tests/` is its own program rather
-            // than a module of the package, so it stays its own unit.
-            if file.starts_with(dir.join("tests")) {
-                return None;
-            }
-            return resolve_project_entry(dir).ok();
-        }
-        dir = dir.parent()?;
-    }
+    gossamer_pkg::enclosing_project_entry(file)
 }
 
+/// Recursively gathers every `.gos` file under `root`. If `root`
+/// names a single file, returns it as a one-element list.
 pub(crate) fn collect_lint_targets(root: &PathBuf) -> Result<Vec<PathBuf>> {
     let meta = fs::metadata(root).map_err(|e| friendly_io_error(e, root))?;
     if meta.is_file() {

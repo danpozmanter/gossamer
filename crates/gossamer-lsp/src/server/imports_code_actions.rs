@@ -78,7 +78,7 @@ fn import_completion_item(doc: &DocumentAnalysis, leaf: &str, full_path: &str) -
             docs
         }),
     );
-    let insert_offset = import_insert_offset(doc.source());
+    let insert_offset = doc.unit_offset(import_insert_offset(doc.user_source()));
     let (line, col) = doc.offset_to_position(insert_offset);
     let mut start = BTreeMap::new();
     start.insert("line".to_string(), Value::Number(f64::from(line)));
@@ -108,7 +108,7 @@ fn completion_with_module_import(
     let Value::Object(mut fields) = item else {
         return item;
     };
-    let insert_offset = import_insert_offset(doc.source());
+    let insert_offset = doc.unit_offset(import_insert_offset(doc.user_source()));
     let (line, col) = doc.offset_to_position(insert_offset);
     let position = Value::Object(BTreeMap::from([
         ("line".to_string(), Value::Number(f64::from(line))),
@@ -223,7 +223,7 @@ fn import_to_code_action(
     diagnostic: &GossamerDiagnostic,
     path: &str,
 ) -> Value {
-    let insertion = import_insert_offset(doc.user_source());
+    let insertion = doc.unit_offset(import_insert_offset(doc.user_source()));
     let edit = build_text_edit(
         doc,
         Span::new(doc.file, insertion, insertion),
@@ -252,7 +252,7 @@ fn fix_all_code_action(doc: &DocumentAnalysis, uri: &str) -> Option<Value> {
         .diagnostics
         .iter()
         .flat_map(|diagnostic| diagnostic.suggestions.iter())
-        .filter(|suggestion| suggestion.location.span.end <= doc.user_len)
+        .filter(|suggestion| doc.span_in_document(suggestion.location.span))
         .collect();
     suggestions.sort_by_key(|suggestion| {
         (

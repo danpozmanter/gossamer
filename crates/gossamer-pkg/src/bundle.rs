@@ -286,6 +286,50 @@ struct BundledModule {
     spans: Vec<BundledSpan>,
 }
 
+/// The editor's unsaved text for one file of the unit, substituted for
+/// that file's on-disk contents wherever the bundler would read it.
+///
+/// A language server holds the buffer the user is typing into, which the
+/// filesystem has not seen yet; every other file of the unit still reads
+/// from disk.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Overlay<'a> {
+    entry: Option<(&'a Path, &'a str)>,
+}
+
+impl<'a> Overlay<'a> {
+    /// An overlay substituting `text` for the contents of `path`.
+    #[must_use]
+    pub fn new(path: &'a Path, text: &'a str) -> Self {
+        Self {
+            entry: Some((path, text)),
+        }
+    }
+
+    /// The contents of `path`: the overlaid text when it names the
+    /// overlaid file, and the file's own bytes otherwise.
+    fn read(self, path: &Path) -> Option<String> {
+        match self.entry {
+            Some((overlaid, text)) if same_file(overlaid, path) => Some(text.to_string()),
+            _ => fs::read_to_string(path).ok(),
+        }
+    }
+}
+
+/// Whether two paths name one file. The bundler walks a project from its
+/// entry with `Path::join`, so the paths it builds share the entry's
+/// spelling; an editor's URI may spell the same file with a different
+/// prefix, which `canonicalize` reconciles.
+fn same_file(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 /// Auto-bundles a multi-file package into the entry source so the
 /// resolver sees one inline module tree. Every sibling `*.gos` file in
 /// the entry's directory becomes `pub mod <stem> { ... }`, and every
@@ -305,12 +349,31 @@ pub fn bundle_sibling_modules(entry: &Path, source: String) -> String {
     bundle_sibling_modules_traced(entry, source).0
 }
 
+/// As [`bundle_sibling_modules`], reading `overlay`'s file from the
+/// editor's buffer rather than from disk.
+#[must_use]
+pub fn bundle_sibling_modules_overlaid(
+    entry: &Path,
+    source: String,
+    overlay: Overlay<'_>,
+) -> (String, Vec<BundledSpan>) {
+    bundle_sibling_modules_inner(entry, source, overlay)
+}
+
 /// As [`bundle_sibling_modules`], also reporting which file each region
 /// of the result came from. The entry's own region is reported too, so a
 /// nested unit (a path dependency's own package) stays attributable once
 /// it is embedded in a larger one.
 #[must_use]
 pub fn bundle_sibling_modules_traced(entry: &Path, source: String) -> (String, Vec<BundledSpan>) {
+    bundle_sibling_modules_inner(entry, source, Overlay::default())
+}
+
+fn bundle_sibling_modules_inner(
+    entry: &Path,
+    source: String,
+    overlay: Overlay<'_>,
+) -> (String, Vec<BundledSpan>) {
     let Some(dir) = entry.parent() else {
         let span = whole_file_span(entry, &source);
         return (source, vec![span]);
@@ -325,7 +388,7 @@ pub fn bundle_sibling_modules_traced(entry: &Path, source: String) -> (String, V
         return (source, vec![span]);
     }
     let entry_stem = entry.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    let mut modules = collect_package_modules(dir, Some(entry_stem));
+    let mut modules = collect_package_modules(dir, Some(entry_stem), overlay);
     // An integration test lives beside the package rather than inside it, so
     // the crate's own modules are not its siblings. Bundle them too, which is
     // what `use crate::<module>` in a `tests/` file names.
@@ -334,7 +397,7 @@ pub fn bundle_sibling_modules_traced(entry: &Path, source: String) -> (String, V
         // The package entry is the program's own root, not a module an
         // integration test reaches through `crate::`; inlining it would bring
         // its imports into a scope that already has them.
-        for module in collect_package_modules(&src, Some("main")) {
+        for module in collect_package_modules(&src, Some("main"), overlay) {
             if !existing.contains(&module.name) {
                 modules.push(module);
             }
@@ -360,7 +423,11 @@ pub fn bundle_sibling_modules_traced(entry: &Path, source: String) -> (String, V
 /// excludes the entry file at the top level; `mod.gos` is always
 /// excluded here because it is the body of its own directory module,
 /// not a sibling. Results are sorted by name for deterministic output.
-fn collect_package_modules(dir: &Path, skip_stem: Option<&str>) -> Vec<BundledModule> {
+fn collect_package_modules(
+    dir: &Path,
+    skip_stem: Option<&str>,
+    overlay: Overlay<'_>,
+) -> Vec<BundledModule> {
     let mut modules: Vec<BundledModule> = Vec::new();
     let Ok(read) = fs::read_dir(dir) else {
         return modules;
@@ -383,7 +450,7 @@ fn collect_package_modules(dir: &Path, skip_stem: Option<&str>) -> Vec<BundledMo
             if !is_valid_module_ident(stem) {
                 continue;
             }
-            let Ok(body) = fs::read_to_string(&path) else {
+            let Some(body) = overlay.read(&path) else {
                 continue;
             };
             let spans = vec![whole_file_span(&path, &body)];
@@ -408,7 +475,7 @@ fn collect_package_modules(dir: &Path, skip_stem: Option<&str>) -> Vec<BundledMo
             if dir_name.starts_with('_') || !is_valid_module_ident(dir_name) {
                 continue;
             }
-            let (body, spans) = assemble_dir_module(&path);
+            let (body, spans) = assemble_dir_module(&path, overlay);
             modules.push(BundledModule {
                 name: dir_name.to_string(),
                 body,
@@ -424,10 +491,10 @@ fn collect_package_modules(dir: &Path, skip_stem: Option<&str>) -> Vec<BundledMo
 /// Builds the body of a directory module: its `mod.gos` contents with
 /// any `mod NAME;` for a child neutralized, followed by each child file
 /// and subdirectory inlined as a nested module.
-fn assemble_dir_module(dir: &Path) -> (String, Vec<BundledSpan>) {
+fn assemble_dir_module(dir: &Path, overlay: Overlay<'_>) -> (String, Vec<BundledSpan>) {
     let mod_gos = dir.join("mod.gos");
-    let root = fs::read_to_string(&mod_gos).unwrap_or_default();
-    let children = collect_package_modules(dir, None);
+    let root = overlay.read(&mod_gos).unwrap_or_default();
+    let children = collect_package_modules(dir, None, overlay);
     let names: Vec<&str> = children.iter().map(|m| m.name.as_str()).collect();
     let mut body = neutralize_external_mod_decls(&root, &names);
     let mut spans = vec![whole_file_span(&mod_gos, &body)];
@@ -558,6 +625,79 @@ pub fn bundle_entry_source_traced(entry: &Path, source: String) -> (String, Vec<
     (bundled, spans)
 }
 
+/// A file's compilation unit: the assembled source, where its own text
+/// sits inside it, and which file each region came from.
+#[derive(Debug, Clone)]
+pub struct DocumentUnit {
+    /// The assembled compilation unit.
+    pub source: String,
+    /// The entry file `source` was assembled from.
+    pub entry: PathBuf,
+    /// Provenance of every region of `source`.
+    pub origins: Vec<BundledSpan>,
+    /// First byte of the document's own text within `source`.
+    pub window_start: u32,
+    /// Byte length of the document's own text.
+    pub window_len: u32,
+}
+
+/// Assembles the compilation unit a file is compiled as part of, using
+/// `text` for the file itself and disk for everything else.
+///
+/// A package is one unit rooted at its entry, so a module of a project is
+/// checked inside that project - `crate::`, `super::`, and a bare sibling
+/// module name all name what they name when the whole package compiles.
+/// A file under no project, an integration test under `tests/`, and a file
+/// its project's layout does not reach are each their own root.
+#[must_use]
+pub fn bundle_document_unit(path: &Path, text: &str) -> DocumentUnit {
+    let overlay = Overlay::new(path, text);
+    if let Some(entry) = crate::entry::enclosing_project_entry(path)
+        && !same_file(&entry, path)
+        && let Ok(entry_source) = fs::read_to_string(&entry)
+    {
+        let (source, mut origins) = bundle_sibling_modules_inner(&entry, entry_source, overlay);
+        let (source, dep_origins) =
+            bundle_path_dependencies_traced(&entry, source, &mut Vec::new());
+        origins.extend(dep_origins);
+        // A file the layout does not reach - a `_`-prefixed scratch file, a
+        // `*_test.gos`, a directory with no `mod.gos` - is not part of the
+        // package's unit, so it is compiled as its own root instead.
+        if let Some(window) = document_window(&origins, path, text.len()) {
+            return DocumentUnit {
+                source,
+                entry,
+                origins,
+                window_start: window.0,
+                window_len: window.1,
+            };
+        }
+    }
+    let (source, origins) = bundle_entry_source_traced(path, text.to_string());
+    DocumentUnit {
+        source,
+        entry: path.to_path_buf(),
+        origins,
+        window_start: 0,
+        window_len: u32::try_from(text.len()).unwrap_or(u32::MAX),
+    }
+}
+
+/// Where `path`'s own `len` bytes sit inside an assembled unit.
+///
+/// Module bodies are inlined verbatim, so the region attributed to `path`
+/// is exactly the text that was handed in; a region of a different length
+/// describes a different read and is declined.
+fn document_window(origins: &[BundledSpan], path: &Path, len: usize) -> Option<(u32, u32)> {
+    let len = u32::try_from(len).ok()?;
+    origins
+        .iter()
+        .find(|span| {
+            span.origin_start == 0 && span.end - span.start == len && same_file(&span.origin, path)
+        })
+        .map(|span| (span.start, len))
+}
+
 #[cfg(test)]
 mod bundle_tests {
     use std::fs;
@@ -590,6 +730,96 @@ mod bundle_tests {
         .unwrap();
         fs::write(dep.join("src").join("lib.gos"), "pub fn connect() { }\n").unwrap();
         entry
+    }
+
+    /// Writes a package whose entry reaches a `codec` directory module and
+    /// an `engine` directory module holding `bind.gos`, and answers its root.
+    fn nested_module_project(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("gos-doc-unit-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src").join("codec")).unwrap();
+        fs::create_dir_all(root.join("src").join("engine")).unwrap();
+        fs::write(root.join("project.toml"), MANIFEST).unwrap();
+        fs::write(root.join("src").join("main.gos"), "fn main() { }\n").unwrap();
+        fs::write(
+            root.join("src").join("codec").join("mod.gos"),
+            "pub fn tag() -> i64 { 7 }\n",
+        )
+        .unwrap();
+        fs::write(root.join("src").join("engine").join("mod.gos"), "\n").unwrap();
+        fs::write(
+            root.join("src").join("engine").join("bind.gos"),
+            "use crate::codec\n\npub fn one() -> i64 { codec::tag() }\n",
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn a_nested_module_is_bundled_as_part_of_its_package() {
+        let root = nested_module_project("nested");
+        let bind = root.join("src").join("engine").join("bind.gos");
+        let text = fs::read_to_string(&bind).unwrap();
+        let unit = bundle_document_unit(&bind, &text);
+        assert_eq!(unit.entry, root.join("src").join("main.gos"));
+        assert!(
+            unit.source.contains("pub mod codec {"),
+            "the package's own modules are missing from the unit:\n{}",
+            unit.source
+        );
+        let start = unit.window_start as usize;
+        assert_eq!(
+            &unit.source[start..start + unit.window_len as usize],
+            text,
+            "the window does not name the document's own text"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_editors_buffer_replaces_the_files_bytes_in_the_unit() {
+        let root = nested_module_project("overlay");
+        let bind = root.join("src").join("engine").join("bind.gos");
+        let buffer = "use crate::codec\n\npub fn two() -> i64 { codec::tag() + 1 }\n";
+        let unit = bundle_document_unit(&bind, buffer);
+        let start = unit.window_start as usize;
+        assert_eq!(
+            &unit.source[start..start + unit.window_len as usize],
+            buffer
+        );
+        assert!(
+            !unit.source.contains("pub fn one()"),
+            "the on-disk text was bundled beside the buffer:\n{}",
+            unit.source
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_package_entry_stays_the_root_of_its_own_unit() {
+        let root = nested_module_project("entry");
+        let main = root.join("src").join("main.gos");
+        let text = fs::read_to_string(&main).unwrap();
+        let unit = bundle_document_unit(&main, &text);
+        assert_eq!(unit.entry, main);
+        assert_eq!(unit.window_start, 0);
+        assert!(unit.source.starts_with(&text));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_file_under_no_project_is_its_own_unit() {
+        let dir = std::env::temp_dir().join(format!("gos-doc-unit-loose-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let loose = dir.join("scratch.gos");
+        let text = "fn main() { }\n";
+        fs::write(&loose, text).unwrap();
+        let unit = bundle_document_unit(&loose, text);
+        assert_eq!(unit.entry, loose);
+        assert_eq!(unit.window_start, 0);
+        assert_eq!(unit.source, text);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
