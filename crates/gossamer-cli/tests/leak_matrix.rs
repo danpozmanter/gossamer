@@ -31,6 +31,8 @@ const MUST_BE_BOUNDED: &[&str] = &[
     "returned_string",
     "string_in_struct",
     "string_in_nested_struct",
+    "map_in_struct_in_vec",
+    "set_in_struct_in_vec",
 ];
 
 /// (name, source). N is baked into each source, sized so a leak clears the cap.
@@ -190,6 +192,42 @@ fn main() {
     let mut i: i64 = 0
     while i < 3000000 {
         total += make(i)
+        i += 1
+    }
+    println("{}", total)
+}
+"#,
+    ),
+    (
+        // A container field takes a table of its own from the answer a call
+        // hands the struct literal, so the frame that built that answer keeps
+        // its release: without it every table a loop ever built stayed live.
+        "map_in_struct_in_vec",
+        r#"
+struct Holder { m: Map<i64, i64> }
+fn main() {
+    let mut total: i64 = 0
+    let mut i: i64 = 0
+    while i < 400000 {
+        let v = #[Holder { m: {1: 1} }]
+        total += v[0].m.len()
+        i += 1
+    }
+    println("{}", total)
+}
+"#,
+    ),
+    (
+        "set_in_struct_in_vec",
+        r#"
+struct Holder { s: Set<i64> }
+fn main() {
+    let mut total: i64 = 0
+    let mut i: i64 = 0
+    while i < 400000 {
+        let v = #[Holder { s: #{1, 2, 3} }]
+        let w = v.clone()
+        total += v[0].s.len() + w[0].s.len()
         i += 1
     }
     println("{}", total)

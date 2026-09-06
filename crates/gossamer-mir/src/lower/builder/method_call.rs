@@ -3386,6 +3386,11 @@ impl<'a> Builder<'a> {
             (Some("collections::HashSet" | "collections::BTreeSet"), "clear") => {
                 Some("gos_rt_set_clear")
             }
+            // A `GosSet` table is reached through a handle carrying no count
+            // of its holders, so the clone takes a table of its own.
+            (Some("collections::HashSet" | "collections::BTreeSet"), "clone") => {
+                Some("gos_rt_set_clone")
+            }
             (Some("collections::VecDeque"), "push_back") => Some("gos_rt_deque_push_back"),
             (Some("collections::VecDeque"), "push_front") => Some("gos_rt_deque_push_front"),
             (Some("collections::VecDeque"), "pop_front") => Some("gos_rt_deque_pop_front"),

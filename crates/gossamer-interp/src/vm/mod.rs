@@ -1098,7 +1098,7 @@ pub(crate) mod goroutine;
 mod lifecycle;
 mod native_dispatch;
 mod resolve;
-mod run;
+pub(crate) mod run;
 
 impl Default for Vm {
     fn default() -> Self {

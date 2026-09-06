@@ -1481,3 +1481,93 @@ fn main() {
     assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
     assert!(native.0.contains(expected), "native: {:?}", native.0);
 }
+
+/// A `Vec` element aggregate carrying a `Map` field keeps one table per
+/// holder across every copy the vec takes: the array-to-Vec conversion, the
+/// struct field the vec lands in, and the promoted body that reads the
+/// element's table in a loop.
+#[test]
+fn vec_of_map_field_structs_survives_copies_across_tiers() {
+    let src = r"
+struct Cell {
+    m: Map<i64, i64>
+}
+
+struct Network {
+    computers: Vec<Cell>
+}
+
+fn from_array() -> i64 {
+    let mut best = 0
+    for _ in 0..1000 {
+        let cells = Vec::from([Cell { m: {0: 1} }; 2])
+        let r = cells[0].m.len() + cells[1].m.len()
+        if r > best {
+            best = r
+        }
+    }
+    best
+}
+
+fn through_field() -> i64 {
+    let mut computers = #[]
+    for _ in 0..5 {
+        computers.push(Cell { m: {0: 1} })
+    }
+    let network = Network { computers: computers }
+    let mut signal = 0
+    for _ in 0..1000 {
+        for i in 0..5 {
+            signal += network.computers[i].m.len()
+        }
+    }
+    signal
+}
+
+fn main() {
+    println(from_array())
+    println(through_field())
+    let source = #[Cell { m: {0: 1} }]
+    let mut copy = source.clone()
+    copy[0].m.insert(9, 90)
+    println(source[0].m.len())
+    println(copy[0].m.len())
+
+    let sets = #[#{1}]
+    let mut set_copy = sets.clone()
+    set_copy[0].insert(9)
+    println(sets[0].len())
+    println(set_copy[0].len())
+}
+";
+    let expected = "2\n5000\n1\n2\n1\n2\n";
+    let dir = fresh_dir("vec_of_map_field_structs");
+    let path = write_source(&dir, "vec_of_map_field_structs", src);
+
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected);
+
+    let jit = Command::new(gos_bin())
+        .arg("run")
+        .env("GOS_JIT_ONLY", "main")
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn forced JIT");
+    let jit = run_with_timeout(jit);
+    assert_eq!(jit.2, Some(0), "jit stderr: {}", jit.1);
+    assert_eq!(jit.0, expected);
+
+    for release in [false, true] {
+        let scratch = dir.join(if release { "release" } else { "debug" });
+        fs::create_dir_all(&scratch).unwrap();
+        let bin = build_native_with_flag(&path, &scratch, release).expect("native build");
+        let native = run_native(&bin);
+        assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+        assert_eq!(native.0, expected);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}

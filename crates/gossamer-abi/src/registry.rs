@@ -1413,7 +1413,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_set_args", (I32, Ptr) -> Void, Cranelift, "Register the process argc/argv with the runtime."),
     rt!("gos_rt_set_assign", (Ptr, Ptr) -> Void, Both, "`*dst = src` through a `&mut Set`: replace the table's elements with a copy of the source's."),
     rt!("gos_rt_set_clear", (Ptr) -> Ptr, Cranelift, "Remove every element from a HashSet, returning the receiver handle."),
-    rt!("gos_rt_set_clone", (Ptr) -> Ptr, Cranelift, "Deep-clone a HashSet/BTreeSet into a fresh, independent table."),
+    rt!("gos_rt_set_clone", (Ptr) -> Ptr, Both, "Deep-clone a HashSet/BTreeSet into a fresh, independent table."),
     rt!("gos_rt_set_contains", (Ptr, Ptr) -> I64, Cranelift, "Return 1 if a HashSet contains the given element."),
     rt!("gos_rt_set_contains_ekey", (Ptr, Ptr, Ptr) -> I64, Both, "Membership test for an enum element, keyed by value."),
     rt!("gos_rt_set_contains_i64", (Ptr, I64) -> I64, Cranelift, "Return 1 if an i64-keyed HashSet contains the given element."),

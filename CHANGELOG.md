@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.58.15 - One table per holder in a container-bearing element store
+
+- A `Vec` whose elements are aggregates carrying a `Map` field hands each copy
+  of the vec a table of its own. The copy walk shared its slot children with
+  the source for a `String`, a nested `Vec`, and a heap node, but a `GosMap`
+  handle carries no count of its holders, so the copy's slot was left pointing
+  at the source's table and both vectors freed it. Reading the element's map
+  afterwards - `Vec::from([Cell { m: {0: 1} }; 2])`, or a `Vec<Cell>` reached
+  through a struct field - read a table that had been reclaimed, and the read
+  faulted with no Gossamer panic behind it.
+- An element overwritten in such a vec drops the table it displaced. The
+  release walk that runs before a slot is rewritten skipped a `Map` child, so
+  the displaced table outlived every holder of it.
+- A `Vec` whose elements reach a `Set` - as an aggregate's field or as the
+  element itself - hands each copy of the vec a table of its own, and drops the
+  one it holds when the element dies. A `Set` was in neither the element store's
+  ownership layout nor the copy walk, so two vectors read and wrote one table.
+- `x.clone()` answers a value independent of its receiver wherever the receiver
+  reaches a `Map`, a `Set`, or a slot container, at any depth through a struct
+  field, a tuple element, or a sequence slot. The bytecode VM answered a handle
+  on the receiver's own storage, and a compiled `Set` clone answered the
+  receiver itself, so a write to the copy was a write to both.
+- A `Map` built for an aggregate's field is reclaimed when the frame that built
+  it dies. The field takes a table of its own from a call's answer, and the
+  answer's own release was booked as though the field had adopted it, so a
+  struct literal built in a loop held every table it ever built.
+
 ## 0.58.14 - Package modules and LSP fixes
 
 - A file of a package resolves `crate::`, `super::`, and a bare module name

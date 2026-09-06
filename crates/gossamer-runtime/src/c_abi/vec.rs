@@ -95,6 +95,12 @@ pub mod vec_elem_kind {
     /// the width alone cannot say this, since a one-word scalar element
     /// is the value itself. Shallow free of the buffer is correct.
     pub const AGGR_FLAT: u8 = 10;
+    /// Slot-child kind (NOT a vec-level `elem_kind`): the slot word holds
+    /// a `*mut GosSet`. A `GosSet` carries no count of its holders, so a
+    /// copied slot takes a table of its own via `gos_rt_set_clone` and the
+    /// vec's teardown frees the one it holds via `gos_rt_set_free` - the
+    /// same contract [`MAP`] carries inside an `AGGR_OWNED` layout.
+    pub const SET: u8 = 11;
 }
 
 #[repr(C)]
@@ -814,6 +820,10 @@ pub(crate) unsafe fn vec_retain_slot_children(v: *const GosVec, slot: *mut u8) {
                 let cloned = crate::c_abi::gos_rt_map_clone(child.cast());
                 word.write_unaligned((cloned as *mut u8).expose_provenance());
             }
+            vec_elem_kind::SET => {
+                let cloned = crate::c_abi::set::gos_rt_set_clone(child.cast());
+                word.write_unaligned((cloned as *mut u8).expose_provenance());
+            }
             _ => {}
         });
     }
@@ -879,6 +889,7 @@ pub(crate) unsafe fn vec_release_slot_children(v: *const GosVec, slot: *const u8
             vec_elem_kind::STRING => crate::c_abi::string::gos_rt_str_free(child.cast()),
             vec_elem_kind::VEC => crate::c_abi::map::gos_rt_vec_free(child.cast()),
             vec_elem_kind::MAP => crate::c_abi::map::gos_rt_map_free(child.cast()),
+            vec_elem_kind::SET => crate::c_abi::map::gos_rt_set_free(child.cast()),
             vec_elem_kind::RC_NODE => crate::c_abi::rc::gos_rt_rc_release(child),
             _ => {}
         });
@@ -963,6 +974,7 @@ pub(crate) unsafe fn vec_release_owned_children(v: &GosVec) {
                 vec_elem_kind::STRING => crate::c_abi::string::gos_rt_str_free(child.cast()),
                 vec_elem_kind::VEC => crate::c_abi::map::gos_rt_vec_free(child.cast()),
                 vec_elem_kind::MAP => crate::c_abi::map::gos_rt_map_free(child.cast()),
+                vec_elem_kind::SET => crate::c_abi::map::gos_rt_set_free(child.cast()),
                 vec_elem_kind::RC_NODE => crate::c_abi::rc::gos_rt_rc_release(child),
                 _ => {}
             });
@@ -1173,41 +1185,41 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
                 // prior `&mut GosVec` across that call: doing so violates
                 // Stacked Borrows when the clone path later reads its fields.
                 vec_set_slot_children(out, children);
-                let o = unsafe { &*out };
-                let stride = o.elem_bytes as usize;
-                if stride == 0 || o.ptr.is_null() {
+                let (data, stride, len) = unsafe {
+                    let o = &*out;
+                    (o.ptr.as_ptr(), o.elem_bytes as usize, o.len.max(0) as usize)
+                };
+                if stride == 0 || data.is_null() {
                     return;
                 }
-                for i in 0..o.len.max(0) as usize {
-                    let slot = unsafe { o.ptr.add(i * stride) };
-                    for child in children {
-                        if child.gate >= 0 {
-                            let disc = unsafe {
-                                slot.add(child.disc_word * 8).cast::<i64>().read_unaligned()
-                            };
-                            if disc != child.gate {
-                                continue;
+                for i in 0..len {
+                    let slot = unsafe { data.add(i * stride) };
+                    // The one walk every slot-child kind goes through, so a
+                    // kind added to the layout reaches the copy as well as
+                    // the free. A `GosString` is immutable and a heap node is
+                    // counted, so both are shared; a `GosVec`, a `GosMap`,
+                    // and a `GosSet` are mutable and the copy takes storage
+                    // of its own, written back through the slot word.
+                    unsafe {
+                        visit_slot_child_words(slot, children, |word, child, kind| match kind {
+                            vec_elem_kind::STRING => {
+                                crate::c_abi::string::gos_rt_str_retain(child.cast());
                             }
-                        }
-                        let child_slot = unsafe { slot.add(child.word * 8).cast::<usize>() };
-                        let raw = unsafe { child_slot.read_unaligned() };
-                        let ptr: *mut u8 = std::ptr::with_exposed_provenance_mut(raw);
-                        if ptr.is_null() {
-                            continue;
-                        }
-                        match child.kind {
-                            vec_elem_kind::STRING => unsafe {
-                                crate::c_abi::string::gos_rt_str_retain(ptr.cast());
-                            },
-                            vec_elem_kind::VEC => unsafe {
-                                let cloned = crate::c_abi::gos_rt_vec_clone(ptr.cast());
-                                child_slot.write_unaligned(cloned.expose_provenance());
-                            },
-                            vec_elem_kind::RC_NODE => unsafe {
-                                crate::c_abi::rc::gos_rt_rc_retain(ptr);
-                            },
+                            vec_elem_kind::VEC => {
+                                let cloned = crate::c_abi::gos_rt_vec_clone(child.cast());
+                                word.write_unaligned(cloned.expose_provenance());
+                            }
+                            vec_elem_kind::MAP => {
+                                let cloned = crate::c_abi::gos_rt_map_clone(child.cast());
+                                word.write_unaligned((cloned as *mut u8).expose_provenance());
+                            }
+                            vec_elem_kind::SET => {
+                                let cloned = crate::c_abi::set::gos_rt_set_clone(child.cast());
+                                word.write_unaligned((cloned as *mut u8).expose_provenance());
+                            }
+                            vec_elem_kind::RC_NODE => crate::c_abi::rc::gos_rt_rc_retain(child),
                             _ => {}
-                        }
+                        });
                     }
                 }
             } else {
@@ -2135,16 +2147,7 @@ unsafe fn vec_release_elem_at(v: *mut GosVec, idx: i64) {
         return;
     }
     if vec.elem_kind == vec_elem_kind::AGGR_OWNED {
-        if let Some(children) = vec_slot_children(vec) {
-            unsafe {
-                visit_slot_children(slot, children, |child, kind| match kind {
-                    vec_elem_kind::STRING => crate::c_abi::string::gos_rt_str_free(child.cast()),
-                    vec_elem_kind::VEC => crate::c_abi::map::gos_rt_vec_free(child.cast()),
-                    vec_elem_kind::RC_NODE => crate::c_abi::rc::gos_rt_rc_release(child),
-                    _ => {}
-                });
-            }
-        }
+        unsafe { vec_release_slot_children(vec, slot) };
         return;
     }
     if vec.elem_bytes as usize != 8 {

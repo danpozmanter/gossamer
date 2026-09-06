@@ -4258,6 +4258,9 @@ const SLOT_KIND_STRING: i64 = 1;
 const SLOT_KIND_VEC: i64 = 2;
 const SLOT_KIND_MAP: i64 = 3;
 const SLOT_KIND_RC_NODE: i64 = 7;
+const SLOT_KIND_SET: i64 = 11;
+const SLOT_HASH_SET_DEF_LOCAL: u32 = u32::MAX - 7;
+const SLOT_BTREE_SET_DEF_LOCAL: u32 = u32::MAX - 18;
 
 /// Walks the flat slot layout of a by-value aggregate `ty`, appending one
 /// `(gate, disc_word, word, kind)` entry per RC child pointer the vec must
@@ -4330,6 +4333,19 @@ fn collect_field_rc(
             out.push((-1, 0, word, SLOT_KIND_MAP));
             *has_direct = true;
         }
+        // A `GosSet` table is reached through a handle carrying no count of
+        // its holders, exactly as a `GosMap` is, so the element store owns a
+        // table per slot: the copy paths clone one in and the free path drops
+        // it. `BTreeSet` shares the handle and the helpers.
+        TyKind::Adt { def, .. }
+            if matches!(
+                def.local,
+                SLOT_HASH_SET_DEF_LOCAL | SLOT_BTREE_SET_DEF_LOCAL
+            ) =>
+        {
+            out.push((-1, 0, word, SLOT_KIND_SET));
+            *has_direct = true;
+        }
         // `Option`/`Result`: the payload word holds a heap pointer only on
         // the side(s) whose inner type is heap-managed. Gate each side on
         // its discriminant (0 = Ok/Some, 1 = Err). Copy-blob and enum
@@ -4341,6 +4357,14 @@ fn collect_field_rc(
                     TyKind::String => Some(SLOT_KIND_STRING),
                     TyKind::Vec(_) | TyKind::Slice(_) => Some(SLOT_KIND_VEC),
                     TyKind::HashMap { .. } => Some(SLOT_KIND_MAP),
+                    TyKind::Adt { def, .. }
+                        if matches!(
+                            def.local,
+                            SLOT_HASH_SET_DEF_LOCAL | SLOT_BTREE_SET_DEF_LOCAL
+                        ) =>
+                    {
+                        Some(SLOT_KIND_SET)
+                    }
                     TyKind::Adt { .. } | TyKind::Tuple(_)
                         if tcx.is_rc_managed(t) || tcx.slot_bytes(t) > 8 =>
                     {
@@ -4445,7 +4469,22 @@ fn ensure_slot_children_meta(
 ) -> Option<String> {
     let mut children = Vec::new();
     let mut has_direct = false;
-    collect_slot_rc_children(tcx, elem, 0, 0, &mut children, &mut has_direct);
+    // A bare `Set` element IS the slot: its one word holds the table handle,
+    // which carries no count of its holders, so the store owns a table per
+    // element - minted when an element is copied in, dropped with it. The
+    // walk below descends into an aggregate's fields, so an element that is
+    // itself such a handle is named here.
+    if let gossamer_types::TyKind::Adt { def, .. } = tcx.kind_of(elem)
+        && matches!(
+            def.local,
+            SLOT_HASH_SET_DEF_LOCAL | SLOT_BTREE_SET_DEF_LOCAL
+        )
+    {
+        children.push((-1, 0, 0, SLOT_KIND_SET));
+        has_direct = true;
+    } else {
+        collect_slot_rc_children(tcx, elem, 0, 0, &mut children, &mut has_direct);
+    }
     if !has_direct || children.is_empty() {
         return None;
     }
@@ -7459,9 +7498,11 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // arbitrarily deep enum/container nesting.)
 
     // A `HashMap` consumed as an operand of a struct/tuple `Rvalue::Aggregate`
-    // is MOVED into that aggregate's field: nothing mints a share for the
-    // slot, so ownership transfers and the aggregate's field-death release is
-    // the only one. Freeing it here too would double-free.
+    // is MOVED into that aggregate's field WHEN nothing mints a share for the
+    // slot: ownership transfers and the aggregate's field-death release is the
+    // only one, so freeing it here too would double-free. A slot the retain
+    // pass gives a table of its own is the other side of that condition - the
+    // frame still owns what it built and releases it here.
     //
     // A `Vec` / `[T]` operand is the other case and is deliberately absent:
     // the construction mints the field's share, so the frame keeps the release
@@ -7470,14 +7511,37 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // such a value in a loop held every buffer it ever built.
     let moved_into_aggregate = {
         let mut moved = vec![false; body.locals.len()];
+        // A call's own answer reaching such a field is the case the field
+        // takes a table of its own for (the retain pass's aggregate arm), so
+        // the frame keeps the release of the one it built - the same schedule
+        // a `Set`, a `Deque`, and a heap operand already run.
+        let mut call_dest = vec![false; body.locals.len()];
+        for block in &body.blocks {
+            if let Terminator::Call { destination, .. } = &block.terminator
+                && destination.projection.is_empty()
+                && (destination.local.0 as usize) < call_dest.len()
+            {
+                call_dest[destination.local.0 as usize] = true;
+            }
+        }
         for block in &body.blocks {
             for stmt in &block.stmts {
                 if let StatementKind::Assign {
+                    place,
                     rvalue: Rvalue::Aggregate { operands, .. },
-                    ..
                 } = &stmt.kind
                 {
-                    for op in operands {
+                    let dest_fields = place
+                        .projection
+                        .is_empty()
+                        .then(|| {
+                            body.locals
+                                .get(place.local.0 as usize)
+                                .map(|decl| aggregate_rc_field_paths(tcx, decl.ty))
+                        })
+                        .flatten()
+                        .unwrap_or_default();
+                    for (idx, op) in operands.iter().enumerate() {
                         if let Operand::Copy(p) = op
                             && p.projection.is_empty()
                             && (p.local.0 as usize) < moved.len()
@@ -7486,7 +7550,14 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                                 TyKind::HashMap { .. }
                             )
                         {
-                            moved[p.local.0 as usize] = true;
+                            let path = [u32::try_from(idx).unwrap_or(0)];
+                            let field_takes_own = call_dest[p.local.0 as usize]
+                                && dest_fields.iter().any(|(fp, kind)| {
+                                    fp.as_slice() == path && kind.is_value_container()
+                                });
+                            if !field_takes_own {
+                                moved[p.local.0 as usize] = true;
+                            }
                         }
                     }
                 }

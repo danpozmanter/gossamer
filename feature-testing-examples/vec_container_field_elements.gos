@@ -1,0 +1,107 @@
+// A `Vec` whose elements reach a `Map` or a `Set` - as an aggregate's field or
+// as the element itself: the element store owns each table, so every way the
+// vec is copied hands the copy a table of its own and every way it is torn
+// down drops each table exactly once.
+//
+// A `GosMap` and a `GosSet` handle each carry no count of their holders, so a
+// copied slot cannot share the source's table: the vec clone, the slice, and
+// the element handed out of the store each take storage of their own, and an
+// overwritten slot drops the table it displaced. The loops run long enough for
+// the JIT to promote them, so the promoted body walks the same slots the
+// interpreter did. Bit-identical on the VM, Cranelift, and LLVM tiers.
+
+struct Cell {
+    m: Map<i64, i64>
+    tag: String
+}
+
+struct Network {
+    computers: Vec<Cell>
+}
+
+fn from_repeat_array() -> i64 {
+    let cells = Vec::from([Cell { m: { 0: 1 }, tag: "a" }; 2])
+    let mut total = 0
+    for _ in 0..2000 {
+        total += cells[0].m.len() + cells[1].m.len()
+    }
+    total
+}
+
+fn through_struct_field() -> i64 {
+    let mut computers = #[]
+    for i in 0..5 {
+        let mut m = Map::new()
+        m.insert(i, i * 10)
+        computers.push(Cell { m: m, tag: "b" })
+    }
+    let network = Network { computers: computers }
+    let mut total = 0
+    for _ in 0..1000 {
+        for i in 0..5 {
+            total += network.computers[i].m.len()
+        }
+    }
+    total
+}
+
+fn main() {
+    println("repeat {}", from_repeat_array())
+    println("field {}", through_struct_field())
+
+    let source = Vec::from([Cell { m: { 0: 1 }, tag: "src" }; 3])
+    let mut copy = source.clone()
+    copy[0].m.insert(9, 90)
+    copy[1].m.insert(8, 80)
+    println(
+        "clone src {} {} {} copy {} {} {}"
+        source[0].m.len()
+        source[1].m.len()
+        source[2].m.len()
+        copy[0].m.len()
+        copy[1].m.len()
+        copy[2].m.len()
+    )
+    println("tags {} {}", source[0].tag, copy[0].tag)
+
+    let mut view = copy[0..2]
+    view[0].m.insert(7, 70)
+    println("slice {} source-of-slice {}", view[0].m.len(), copy[0].m.len())
+
+    let mut slots = #[Cell { m: { 1: 1, 2: 2 }, tag: "old" }]
+    slots[0] = Cell { m: { 3: 3 }, tag: "new" }
+    println("overwrite {} {}", slots[0].m.len(), slots[0].tag)
+
+    let taken = copy[1]
+    println("element {} store {}", taken.m.len(), copy[1].m.len())
+
+    set_shapes()
+}
+
+struct Tally {
+    seen: Set<i64>
+}
+
+fn set_shapes() {
+    let bare = #{ 1, 2 }
+    let mut bare_copy = bare.clone()
+    bare_copy.insert(3)
+    println("set clone {} {}", bare.len(), bare_copy.len())
+
+    let held = #[Tally { seen: #{ 1 } }]
+    let mut held_copy = held.clone()
+    held_copy[0].seen.insert(5)
+    println("held clone {} {}", held[0].seen.len(), held_copy[0].seen.len())
+
+    let elems = #[#{ 1 }, #{ 2 }]
+    let mut elems_copy = elems.clone()
+    elems_copy[0].insert(7)
+    println("elem clone {} {}", elems[0].len(), elems_copy[0].len())
+
+    let mut total = 0
+    for _ in 0..2000 {
+        let scratch = #[Tally { seen: #{ 1, 2, 3 } }]
+        total += scratch[0].seen.len()
+    }
+    println("churn {}", total)
+}

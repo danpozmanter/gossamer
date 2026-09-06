@@ -24,10 +24,11 @@ fn poll_vm_backedge(countdown: &mut u16) {
 /// Deep-clones a `Map` / `IntMap` / `StrIntMap` / `Set` / `BTreeSet` value
 /// into a fresh, independent backing table; any other value clones like
 /// `Value::clone` (a cheap `Arc`/scalar copy). Shared by [`Op::CloneMapLike`]
-/// (a `let` binding or by-value call argument) and [`Op::BuildArrayRepeat`]
-/// (`#[map_value; n]`) - both need `n` independent slots, not `n` aliases of
-/// the same `Arc<Mutex<_>>` / `SET_REGISTRY` entry.
-fn map_like_deep_clone(v: &Value) -> Value {
+/// (a `let` binding or by-value call argument), [`Op::BuildArrayRepeat`]
+/// (`#[map_value; n]`), and the `clone` builtin - each needs independent
+/// storage, not a second alias of the same `Arc<Mutex<_>>` / `SET_REGISTRY`
+/// entry.
+pub(crate) fn map_like_deep_clone(v: &Value) -> Value {
     match v {
         Value::Map(m) => Value::Map(Arc::new(parking_lot::Mutex::new(m.lock().clone()))),
         Value::IntMap(m) => Value::IntMap(Arc::new(parking_lot::Mutex::new(m.lock().clone()))),

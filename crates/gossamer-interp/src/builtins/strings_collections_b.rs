@@ -634,8 +634,17 @@ fn builtin_fill(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+/// `x.clone()` - a second value, independent of the receiver.
+///
+/// A `Map`'s table and a `Set`'s / slot container's element store sit behind
+/// a handle that carries no count of its holders, so the copy takes storage
+/// of its own wherever the receiver reaches one - at any depth through a
+/// struct field, a tuple element, or a sequence slot. Everything else is a
+/// cheap `Arc`/scalar copy, which the same walk answers.
 fn builtin_clone(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(args.first().cloned().unwrap_or(Value::Unit))
+    Ok(args
+        .first()
+        .map_or(Value::Unit, crate::vm::run::map_like_deep_clone))
 }
 
 /// `x.downgrade()` - produce a non-owning [`Value::Weak`] observing the
